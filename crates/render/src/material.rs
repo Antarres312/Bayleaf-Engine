@@ -105,6 +105,24 @@ pub const CATALOG: Catalog = Catalog {
         ),
         node("time", "Time", "Inputs", "Seconds since the view started; animates the material.", &[], &[pin("seconds", "Seconds", Float)]),
         node("position", "World Position", "Inputs", "Where the pixel is in the world.", &[], &[pin("position", "Position", Vec3)]),
+        node(
+            "uv",
+            "Texture Coordinates",
+            "Inputs",
+            "Where on the shape's surface the pixel is: 0 to 1 across each face, as a vector (u, v, 0).",
+            &[],
+            &[pin("uv", "Coordinates", Vec3)],
+        ),
+        NodeDef {
+            kind: "texture",
+            label: "Image",
+            category: "Inputs",
+            description: "Colours from a PNG image, laid over the surface by its texture coordinates.",
+            inputs: &[PinDef::with("uv", "Coordinates", Vec3, PinDefault::Implicit("uv"))],
+            outputs: &[pin("color", "Color", Color), pin("alpha", "Alpha", Float)],
+            settings: &[SettingDef { name: "image", label: "Image File", kind: SettingKind::Text("") }],
+            unique: false,
+        },
         node("normal", "Normal", "Inputs", "Which way the surface faces, in world space.", &[], &[pin("normal", "Normal", Vec3)]),
         node(
             "fresnel",
@@ -156,9 +174,14 @@ pub const CATALOG: Catalog = Catalog {
     ],
 };
 
+/// Most images one material may use.
+pub const MAX_TEXTURES: usize = 4;
+
 /// A material graph turned into shader code.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompiledMaterial {
+    /// The image files its Image nodes read, by texture slot, as written in the graph.
+    pub textures: Vec<String>,
     /// WGSL `fn surface(s: SurfaceIn) -> Surface`.
     pub surface: String,
     /// Identifies the shader: equal code, equal key.
@@ -181,6 +204,8 @@ type Code = (String, Ty);
 struct Compiler<'g> {
     graph: &'g Graph,
     lines: Vec<String>,
+    textures: Vec<String>,
+    sampled: std::collections::HashSet<u32>,
     done: HashMap<(u32, &'static str), Code>,
     animated: bool,
 }
@@ -193,7 +218,7 @@ pub fn compile(graph: &Graph) -> Result<CompiledMaterial, Vec<Problem>> {
     let Some(output) = graph.nodes.iter().find(|n| n.kind == "output") else {
         return Err(vec![Problem::graph("add a Material Output node")]);
     };
-    let mut compiler = Compiler { graph, lines: Vec::new(), done: HashMap::new(), animated: false };
+    let mut compiler = Compiler { graph, lines: Vec::new(), textures: Vec::new(), sampled: Default::default(), done: HashMap::new(), animated: false };
     let mut problems = Vec::new();
     let mut fields = Vec::new();
     for (pin, want) in [("baseColor", Ty::V), ("metallic", Ty::F), ("roughness", Ty::F), ("emissive", Ty::V), ("opacity", Ty::F)] {
@@ -215,7 +240,7 @@ pub fn compile(graph: &Graph) -> Result<CompiledMaterial, Vec<Problem>> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     surface.hash(&mut hasher);
     transparent.hash(&mut hasher);
-    Ok(CompiledMaterial { surface, key: hasher.finish() | 1, transparent, animated: compiler.animated })
+    Ok(CompiledMaterial { surface, key: hasher.finish() | 1, transparent, animated: compiler.animated, textures: compiler.textures })
 }
 
 fn problem(node: u32, message: &str) -> Problem {
@@ -269,6 +294,7 @@ impl Compiler<'_> {
             PinDefault::Float(v) => (lit(v), if pin_def.ty == Any { Ty::F } else { declared }),
             PinDefault::Vec3(v) | PinDefault::Color(v) => (vec_lit(v), Ty::V),
             PinDefault::Implicit("normal") => ("s.normal".to_owned(), Ty::V),
+            PinDefault::Implicit("uv") => ("vec3<f32>(s.uv, 0.0)".to_owned(), Ty::V),
             PinDefault::Implicit(_) => ("s.position".to_owned(), Ty::V),
             PinDefault::Bool(_) | PinDefault::None => (if declared == Ty::F { "0.0f".to_owned() } else { "vec3<f32>(0.0)".to_owned() }, declared),
         })
@@ -307,6 +333,27 @@ impl Compiler<'_> {
                 ("s.time".to_owned(), Ty::F)
             }
             "position" => ("s.position".to_owned(), Ty::V),
+            "uv" => ("vec3<f32>(s.uv, 0.0)".to_owned(), Ty::V),
+            "texture" => {
+                let sample = format!("n{node}_sample");
+                if self.sampled.insert(node) {
+                    let image = graph.value(node, "image").and_then(|v| v.as_str()).unwrap_or_default().trim().to_owned();
+                    if image.is_empty() {
+                        return Err(problem(node, "choose a PNG image for this Image node"));
+                    }
+                    let slot = match self.textures.iter().position(|t| *t == image) {
+                        Some(slot) => slot,
+                        None if self.textures.len() < MAX_TEXTURES => {
+                            self.textures.push(image);
+                            self.textures.len() - 1
+                        }
+                        None => return Err(problem(node, &format!("a material may use at most {MAX_TEXTURES} images"))),
+                    };
+                    let uv = self.input_as(node, "uv", Ty::V)?;
+                    self.lines.push(format!("let {sample} = textureSampleLevel(t{slot}, material_sampler, ({uv}).xy, 0.0);"));
+                }
+                if pin == "alpha" { (format!("{sample}.a"), Ty::F) } else { (format!("{sample}.rgb"), Ty::V) }
+            }
             "normal" => ("s.normal".to_owned(), Ty::V),
             "fresnel" => {
                 let power = self.input_as(node, "power", Ty::F)?;

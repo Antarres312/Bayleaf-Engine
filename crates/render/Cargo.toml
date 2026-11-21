@@ -11,6 +11,7 @@ publish = false
 bayleaf-core = { workspace = true }
 bayleaf-scene = { workspace = true }
 bayleaf-graph = { workspace = true }
+bayleaf-assets = { workspace = true }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 pollster = { workspace = true }

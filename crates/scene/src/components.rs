@@ -124,11 +124,15 @@ pub struct Mesh {
     /// and roughness above. With a material, its Object Color node reads `color`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub material: String,
+    /// A glTF 2.0 model (`.glb`, or `.gltf` with its buffers beside it), relative to the project
+    /// folder; drawn instead of `shape`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
 }
 
 impl Default for Mesh {
     fn default() -> Self {
-        Self { shape: Shape::Cube, color: [0.8, 0.8, 0.8, 1.0], metallic: 0.0, roughness: 0.5, material: String::new() }
+        Self { shape: Shape::Cube, color: [0.8, 0.8, 0.8, 1.0], metallic: 0.0, roughness: 0.5, material: String::new(), model: String::new() }
     }
 }
 
@@ -141,10 +145,8 @@ impl SceneComponent for Mesh {
         unit_range("color", &self.color)?;
         unit_range("metallic", &[self.metallic])?;
         unit_range("roughness", &[self.roughness])?;
-        if !self.material.is_empty() && (self.material.len() > 512 || !self.material.ends_with(".bmaterial")) {
-            return Err("material must be the path of a .bmaterial file (at most 512 characters)".to_owned());
-        }
-        Ok(())
+        file_field("material", &self.material, &["bmaterial"])?;
+        file_field("model", &self.model, &["glb", "gltf"])
     }
 
     fn options(field: &str) -> &'static [&'static str] {
@@ -298,6 +300,15 @@ impl SceneComponent for SpotLight {
     }
 }
 
+/// An optional file path field: empty, or at most 512 characters ending in one of `extensions`.
+fn file_field(name: &str, value: &str, extensions: &[&str]) -> Result<(), String> {
+    if value.is_empty() || (value.len() <= 512 && extensions.iter().any(|e| value.to_ascii_lowercase().ends_with(&format!(".{e}")))) {
+        Ok(())
+    } else {
+        Err(format!("{name} must be the path of a .{} file (at most 512 characters)", extensions.join(" or .")))
+    }
+}
+
 fn light_amounts(intensity: f32, range: f32) -> Result<(), String> {
     if !(intensity.is_finite() && intensity >= 0.0) {
         return Err("intensity must be 0 or more".to_owned());
@@ -310,15 +321,18 @@ fn light_amounts(intensity: f32, range: f32) -> Result<(), String> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sprite {
-    /// Linear RGBA, each 0 to 1.
+    /// Linear RGBA, each 0 to 1. With an image, it tints the image.
     pub color: [f32; 4],
     /// Width and height in scene units.
     pub size: [f32; 2],
+    /// A PNG image, relative to the project folder (or the scene's folder outside a project).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub image: String,
 }
 
 impl Default for Sprite {
     fn default() -> Self {
-        Self { color: [1.0, 1.0, 1.0, 1.0], size: [1.0, 1.0] }
+        Self { color: [1.0, 1.0, 1.0, 1.0], size: [1.0, 1.0], image: String::new() }
     }
 }
 
@@ -329,6 +343,7 @@ impl SceneComponent for Sprite {
 
     fn validate(&self) -> Result<(), String> {
         unit_range("color", &self.color)?;
+        file_field("image", &self.image, &["png"])?;
         if self.size.iter().all(|s| s.is_finite() && *s > 0.0) { Ok(()) } else { Err("size must be greater than 0".to_owned()) }
     }
 }

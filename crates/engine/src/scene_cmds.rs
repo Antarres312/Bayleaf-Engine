@@ -415,18 +415,17 @@ fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandE
             }
         },
     };
-    let mut library = session.material_library();
-    let mut warnings: Vec<String> = Vec::new();
-    let base = session.script_dir();
+    let mut materials = session.material_library();
+    let mut cache = bayleaf_render::assets::AssetCache::new();
+    let allow = |path: &std::path::Path| session.allowed(path, crate::confine::Access::Read).map_err(|e| e.to_string());
+    let mut assets =
+        bayleaf_render::FileAssets { base: session.script_dir(), materials: &mut materials, cache: &mut cache, allow: &allow, warnings: Vec::new() };
     let options = bayleaf_render::FrameOptions { show_grid: p.grid, selected: None, time: 0.0 };
-    let frame = bayleaf_render::extract_with(scene, camera, options, &mut |material| {
-        let loaded = session.allowed(&base.join(material), crate::confine::Access::Read).map_err(|e| e.to_string()).and_then(|path| library.get(&path));
-        loaded.map_err(|e| warnings.push(format!("material {material}: {e}"))).ok()
-    });
+    let frame = bayleaf_render::extract_with(scene, camera, options, &mut assets);
+    let warnings = assets.warnings;
     let gpu = bayleaf_render::HeadlessGpu::new().map_err(|e| CommandError::Failed(e.to_string()))?;
     let image = gpu.render(&frame, p.width, p.height).map_err(|e| CommandError::Failed(e.to_string()))?;
     image.write_png(&path).map_err(|e| CommandError::Failed(e.to_string()))?;
-    warnings.dedup();
     Ok(json!({ "path": path, "width": p.width, "height": p.height, "camera": source, "warnings": warnings }))
 }
 

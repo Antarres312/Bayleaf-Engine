@@ -12,9 +12,10 @@ mod headless;
 pub mod material;
 mod mesh;
 
+pub use bayleaf_assets as assets;
 pub use extract::{
-    CameraView, DrawItem, Frame, FrameOptions, LightItem, LightKind, MAX_LIGHTS, Ray, bounds, extract, extract_with, object_bounds, object_camera, pick,
-    scene_camera,
+    AssetSource, CameraView, DrawItem, FileAssets, Frame, FrameOptions, LightItem, LightKind, MAX_LIGHTS, NoAssets, Ray, bounds, extract, extract_with,
+    object_bounds, object_camera, pick, scene_camera,
 };
 pub use gpu::{COLOR_FORMAT, RenderTarget, Renderer};
 pub use headless::{HeadlessGpu, Image};

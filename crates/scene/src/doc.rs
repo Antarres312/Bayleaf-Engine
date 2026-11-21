@@ -9,9 +9,8 @@ use serde_json::Value;
 pub const FORMAT: &str = "bayleaf.scene";
 /// Version 2 replaced the single `script` component with the `scripts` list; version 3 added
 /// `mesh.material`; version 4 added point and spot lights, `directionalLight.shadows` and the
-/// `prefab` link. Older
-/// files still load.
-pub const VERSION: u32 = 4;
+/// `prefab` link; version 5 added `mesh.model` and `sprite.image`. Older files still load.
+pub const VERSION: u32 = 5;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.

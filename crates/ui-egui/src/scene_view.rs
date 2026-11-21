@@ -79,6 +79,8 @@ pub(crate) struct SceneView {
     framed_once: bool,
     /// Compiled material graphs; the one open in the graph editor shows unsaved changes live.
     pub materials: bayleaf_render::MaterialLibrary,
+    /// Loaded images and models.
+    pub assets: bayleaf_render::assets::AssetCache,
     /// When the view first drew, for the Time node of animated materials.
     started: Option<std::time::Instant>,
     /// What dragging a handle on the selected object does.
@@ -204,9 +206,10 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let started = *view.started.get_or_insert_with(std::time::Instant::now);
     let time = if editor.session.is_playing() { editor.session.play_time() as f32 } else { started.elapsed().as_secs_f32() };
     let base = editor.session.script_dir();
-    let materials = &mut view.materials;
+    let allow = |path: &std::path::Path| Ok(path.to_path_buf());
+    let mut assets = bayleaf_render::FileAssets { base, materials: &mut view.materials, cache: &mut view.assets, allow: &allow, warnings: Vec::new() };
     let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time };
-    let mut frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut |path| materials.get(&base.join(path)).ok());
+    let mut frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut assets);
     frame.highlighted = editor.also_selected.clone();
     if frame.items.iter().any(|i| i.material.as_ref().is_some_and(|m| m.animated)) {
         ui.ctx().request_repaint();
@@ -231,7 +234,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
             gpu_view.preview = Some((target, texture));
         }
         let options = FrameOptions { show_grid: false, selected: None, time };
-        let preview_frame = bayleaf_render::extract_with(editor.session.scene(), camera, options, &mut |path| materials.get(&base.join(path)).ok());
+        let preview_frame = bayleaf_render::extract_with(editor.session.scene(), camera, options, &mut assets);
         if let Some((target, texture)) = &gpu_view.preview {
             gpu_view.renderer.render(&gpu.device, &gpu.queue, target, &preview_frame);
             *texture

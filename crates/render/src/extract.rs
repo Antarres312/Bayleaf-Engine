@@ -7,7 +7,71 @@ use std::sync::Arc;
 
 use bayleaf_scene::components::{Camera, DirectionalLight, Mesh, PointLight, Projection, Shape, SpotLight, Sprite};
 
+use bayleaf_assets::{Image, MeshData};
+
 use crate::material::CompiledMaterial;
+
+/// Where a frame gets the files its scene names: materials, images and models, by the path
+/// written in the scene. `None` draws the object without it.
+pub trait AssetSource {
+    fn material(&mut self, path: &str) -> Option<Arc<CompiledMaterial>>;
+    fn image(&mut self, path: &str) -> Option<Arc<Image>>;
+    fn model(&mut self, path: &str) -> Option<Arc<MeshData>>;
+}
+
+/// Reads materials, images and models from files, relative to `base`, through caches that
+/// notice when a file changes. Every path passes `allow` first (the automation folders).
+/// Problems are kept in `warnings`, once each.
+pub struct FileAssets<'a> {
+    pub base: std::path::PathBuf,
+    pub materials: &'a mut crate::MaterialLibrary,
+    pub cache: &'a mut bayleaf_assets::AssetCache,
+    pub allow: &'a dyn Fn(&std::path::Path) -> Result<std::path::PathBuf, String>,
+    pub warnings: Vec<String>,
+}
+
+impl FileAssets<'_> {
+    fn load<T>(&mut self, path: &str, load: impl FnOnce(&mut Self, &std::path::Path) -> Result<T, String>) -> Option<T> {
+        let result = (self.allow)(&self.base.join(path)).and_then(|full| load(self, &full));
+        match result {
+            Ok(value) => Some(value),
+            Err(error) => {
+                let message = format!("{path}: {error}");
+                if !self.warnings.contains(&message) {
+                    self.warnings.push(message);
+                }
+                None
+            }
+        }
+    }
+}
+
+impl AssetSource for FileAssets<'_> {
+    fn material(&mut self, path: &str) -> Option<Arc<CompiledMaterial>> {
+        self.load(path, |s, full| s.materials.get(full))
+    }
+    fn image(&mut self, path: &str) -> Option<Arc<Image>> {
+        self.load(path, |s, full| s.cache.image(full))
+    }
+    fn model(&mut self, path: &str) -> Option<Arc<MeshData>> {
+        self.load(path, |s, full| s.cache.model(full))
+    }
+}
+
+/// Draws every object without its files.
+pub struct NoAssets;
+
+impl AssetSource for NoAssets {
+    fn material(&mut self, _: &str) -> Option<Arc<CompiledMaterial>> {
+        None
+    }
+    fn image(&mut self, _: &str) -> Option<Arc<Image>> {
+        None
+    }
+    fn model(&mut self, _: &str) -> Option<Arc<MeshData>> {
+        None
+    }
+}
 
 /// Lights beyond this count are ignored.
 pub const MAX_LIGHTS: usize = 8;
@@ -82,9 +146,26 @@ pub struct DrawItem {
     pub unlit: bool,
     /// A compiled material graph; `None` uses colour, metallic and roughness.
     pub material: Option<Arc<CompiledMaterial>>,
+    /// A loaded model, drawn instead of `shape`.
+    pub mesh: Option<Arc<MeshData>>,
+    /// Images by texture slot: a sprite's image, or a material's Texture nodes in order. A
+    /// missing image reads as white.
+    pub textures: Vec<Option<Arc<Image>>>,
 }
 
 impl DrawItem {
+    /// The box around the item before its model matrix: the model's, or the unit shape's.
+    pub fn local_bounds(&self) -> (Vec3, Vec3) {
+        if let Some(mesh) = &self.mesh {
+            return (Vec3::from(mesh.min), Vec3::from(mesh.max));
+        }
+        match self.shape {
+            Shape::Plane => (Vec3::new(-0.5, -0.001, -0.5), Vec3::new(0.5, 0.001, 0.5)),
+            Shape::Quad => (Vec3::new(-0.5, -0.5, -0.001), Vec3::new(0.5, 0.5, 0.001)),
+            Shape::Cube | Shape::Sphere => (Vec3::splat(-0.5), Vec3::splat(0.5)),
+        }
+    }
+
     pub fn is_transparent(&self) -> bool {
         self.unlit
             || match &self.material {
@@ -154,18 +235,18 @@ pub struct FrameOptions {
 /// Light used when the scene has none, so a new scene is not black.
 const FALLBACK_LIGHT: LightItem = LightItem::directional(Vec3::new(-0.4, -1.0, -0.6), Vec3::new(2.8, 2.8, 2.8), false);
 
-/// Collects the draw items and lights of `scene` as seen by `camera`, without materials.
+/// Collects the draw items and lights of `scene` as seen by `camera`, without the files it names.
 pub fn extract(scene: &Scene, camera: CameraView, options: FrameOptions) -> Frame {
-    extract_with(scene, camera, options, &mut |_| None)
+    extract_with(scene, camera, options, &mut NoAssets)
 }
 
-/// Like [`extract`], with `material` giving the compiled material of a mesh's `material` path
-/// (`None`: draw it with its colour, metallic and roughness).
-pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, material: &mut dyn FnMut(&str) -> Option<Arc<CompiledMaterial>>) -> Frame {
+/// Like [`extract`], with `assets` giving the materials, images and models the scene names.
+pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, assets: &mut dyn AssetSource) -> Frame {
     let mut items = Vec::new();
     let mut lights = Vec::new();
     for (id, world) in scene.world_matrices() {
         if let Some(mesh) = scene.get::<Mesh>(id) {
+            let material = if mesh.material.is_empty() { None } else { assets.material(&mesh.material) };
             items.push(DrawItem {
                 object: id,
                 shape: mesh.shape,
@@ -174,7 +255,9 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, ma
                 metallic: mesh.metallic,
                 roughness: mesh.roughness,
                 unlit: false,
-                material: if mesh.material.is_empty() { None } else { material(&mesh.material) },
+                textures: material.as_ref().map(|m| m.textures.iter().map(|path| assets.image(path)).collect()).unwrap_or_default(),
+                material,
+                mesh: if mesh.model.is_empty() { None } else { assets.model(&mesh.model) },
             });
         }
         if let Some(sprite) = scene.get::<Sprite>(id) {
@@ -188,6 +271,8 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, ma
                 roughness: 1.0,
                 unlit: true,
                 material: None,
+                mesh: None,
+                textures: if sprite.image.is_empty() { Vec::new() } else { vec![assets.image(&sprite.image)] },
             });
         }
         let direction = world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Y);
@@ -266,8 +351,11 @@ pub(crate) fn item_bounds<'a>(items: impl Iterator<Item = &'a DrawItem>) -> Opti
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     let mut any = false;
     for item in items {
+        let (lo, hi) = item.local_bounds();
         for corner in unit_box_corners() {
-            let p = item.model.transform_point3(corner);
+            // The unit box's corners moved onto the item's own box.
+            let local = lo + (corner + Vec3::splat(0.5)) * (hi - lo);
+            let p = item.model.transform_point3(local);
             min = min.min(p);
             max = max.max(p);
             any = true;
@@ -291,11 +379,13 @@ pub fn pick(frame: &Frame, ndc: Vec2) -> Option<StableId> {
         }
         let local = Ray { origin: inverse.transform_point3(ray.origin), direction: inverse.transform_vector3(ray.direction) };
         // `t` is shared between the world and local rays because the transform is affine.
-        let hit = match item.shape {
-            Shape::Sphere => hit_sphere(local, 0.5),
-            Shape::Cube => hit_box(local, Vec3::splat(0.5)),
-            Shape::Plane => hit_box(local, Vec3::new(0.5, 0.001, 0.5)),
-            Shape::Quad => hit_box(local, Vec3::new(0.5, 0.5, 0.001)),
+        let hit = if item.mesh.is_none() && item.shape == Shape::Sphere {
+            hit_sphere(local, 0.5)
+        } else {
+            // Models are picked by the box around them.
+            let (min, max) = item.local_bounds();
+            let center = (min + max) * 0.5;
+            hit_box(Ray { origin: local.origin - center, direction: local.direction }, (max - min) * 0.5)
         };
         if let Some(t) = hit
             && best.is_none_or(|(best_t, _)| t < best_t)

@@ -44,6 +44,8 @@ enum Kind {
     Project,
     /// A prefab (`.bprefab`): objects to place in scenes.
     Prefab,
+    /// A 3D model (`.glb`, `.gltf`).
+    Model,
     Script,
     /// A visual script (`.bscript`): a graph that is also a script.
     VisualScript,
@@ -62,6 +64,7 @@ impl Kind {
             Some("bscript") => Kind::VisualScript,
             Some("bmaterial") => Kind::Material,
             Some("png" | "jpg" | "jpeg" | "webp" | "ktx2") => Kind::Image,
+            Some("glb" | "gltf") => Kind::Model,
             _ => Kind::Other,
         }
     }
@@ -72,6 +75,7 @@ impl Kind {
             Kind::Scene => "Scene",
             Kind::Project => "Project",
             Kind::Prefab => "Prefab",
+            Kind::Model => "Model",
             Kind::Script => "Script",
             Kind::VisualScript => "Visual Script",
             Kind::Material => "Material",
@@ -125,6 +129,16 @@ impl ProjectView {
     /// Every material graph in the project, as paths relative to the project folder.
     pub(crate) fn material_files(&self) -> Vec<String> {
         self.files_of(&[Kind::Material])
+    }
+
+    /// Every 3D model (`.glb`, `.gltf`) in the project.
+    pub(crate) fn model_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::Model])
+    }
+
+    /// Every PNG image in the project (the only image format read so far).
+    pub(crate) fn image_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::Image]).into_iter().filter(|f| f.to_ascii_lowercase().ends_with(".png")).collect()
     }
 
     fn files_of(&self, kinds: &[Kind]) -> Vec<String> {
@@ -593,11 +607,15 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             painter.rect_filled(tab, s * 0.04, t.warning.gamma_multiply(0.8));
             painter.rect_filled(body, s * 0.06, t.warning);
         }
-        Kind::Scene | Kind::Project | Kind::Prefab => {
+        Kind::Scene | Kind::Project | Kind::Prefab | Kind::Model => {
             // An outlined cube seen from above and in front; filled for a project file, in the
             // accent colour for a prefab.
             let filled = kind != Kind::Scene;
-            let color = if kind == Kind::Prefab { t.pin_vector } else { t.brand };
+            let color = match kind {
+                Kind::Prefab => t.pin_vector,
+                Kind::Model => t.pin_color,
+                _ => t.brand,
+            };
             let (top, left, right, mid, bottom, lb, rb) =
                 (at(0.5, 0.12), at(0.14, 0.32), at(0.86, 0.32), at(0.5, 0.52), at(0.5, 0.9), at(0.14, 0.7), at(0.86, 0.7));
             let side = if filled { color.gamma_multiply(0.6) } else { egui::Color32::TRANSPARENT };

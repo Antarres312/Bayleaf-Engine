@@ -80,6 +80,10 @@ No crate below L6 may use egui, eframe, winit or rfd.
    surfaces on the ground. Scene format version 4. Still open: textures and sprite images (wait for the
    asset pipeline), environment lighting, shadows from point and spot lights, cascaded shadows for
    large worlds.
+   Added later: PNG images on sprites and in materials (Image and Texture Coordinates nodes, up to 4
+   images per material), glTF 2.0 models on meshes (`.glb`, or `.gltf` with its buffers beside it),
+   read by `bayleaf-assets` with size limits. Scene format version 5. Still open: JPEG and other image
+   formats, mipmaps, model materials and textures from the glTF file, skinned and animated models.
 4. **M3 Scripts (done, 2026-11-21):** WASM host on wasmi (fuel and memory limits, faults isolated per
    script), ABI v1 (`docs/script-abi.md`), Rust SDK (`crates/script-sdk`), example scripts (`scripts/`,
    built by `cargo xtask scripts`), hot reload, play mode (`play.start/stop/pause/step/input/status`)

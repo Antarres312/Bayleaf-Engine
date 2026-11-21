@@ -1,6 +1,6 @@
 [package]
 name = "bayleaf-assets"
-description = "L2: asset database with stable ids, sidecar metadata, import and cook steps."
+description = "L2: reading asset files: PNG images and glTF 2.0 models."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,12 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+glam = { workspace = true }
+gltf = { workspace = true }
+png = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

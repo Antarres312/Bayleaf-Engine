@@ -113,6 +113,21 @@ fn faces_turned_toward_the_light_are_brighter() {
     assert!(brightness(lit) > brightness(dark), "lit side {lit:?} not brighter than {dark:?}");
 }
 
+/// Gives one material for every material path, or only for the one path named.
+struct Materials(Option<&'static str>, Arc<crate::CompiledMaterial>);
+
+impl crate::AssetSource for Materials {
+    fn material(&mut self, path: &str) -> Option<Arc<crate::CompiledMaterial>> {
+        self.0.is_none_or(|only| only == path).then(|| Arc::clone(&self.1))
+    }
+    fn image(&mut self, _: &str) -> Option<Arc<bayleaf_assets::Image>> {
+        None
+    }
+    fn model(&mut self, _: &str) -> Option<Arc<bayleaf_assets::MeshData>> {
+        None
+    }
+}
+
 fn link(graph: &mut Graph, from: u32, from_pin: &str, to: u32, to_pin: &str) {
     graph.connect(&CATALOG, Link { from: PinRef::new(from, from_pin), to: PinRef::new(to, to_pin) }).unwrap();
 }
@@ -124,6 +139,9 @@ fn every_node_material() -> Graph {
     let mut previous: Option<u32> = None;
     for def in CATALOG.nodes.iter().filter(|d| d.kind != "output") {
         let id = g.add_node(&CATALOG, def.kind, [0.0, 0.0]).unwrap();
+        if def.kind == "texture" {
+            g.set_value(&CATALOG, id, "image", json!("any.png")).unwrap();
+        }
         // Feed the previous node into the first input that accepts it, then chain onwards.
         if let Some(prev) = previous {
             let prev_def = CATALOG.get(&g.node(prev).unwrap().kind).unwrap();
@@ -195,21 +213,21 @@ fn materials_change_the_drawn_colour_and_every_node_is_valid_on_the_gpu() {
     red.set_value(&CATALOG, out, "baseColor", json!([0.0, 0.0, 0.0])).unwrap();
     red.set_value(&CATALOG, out, "emissive", json!([1.0, 0.0, 0.0])).unwrap();
     let red = Arc::new(compile(&red).unwrap());
-    let frame = extract_with(&scene, camera, OPTIONS, &mut |_| Some(Arc::clone(&red)));
+    let frame = extract_with(&scene, camera, OPTIONS, &mut Materials(None, Arc::clone(&red)));
     // The mesh has no material path, so the resolver is not asked.
     assert!(frame.items[0].material.is_none());
     let id = scene.world_matrices()[0].0;
     scene
         .set_component(id, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.5, "material": "red.bmaterial"}))
         .unwrap();
-    let frame = extract_with(&scene, camera, OPTIONS, &mut |path| (path == "red.bmaterial").then(|| Arc::clone(&red)));
+    let frame = extract_with(&scene, camera, OPTIONS, &mut Materials(Some("red.bmaterial"), Arc::clone(&red)));
     let image = gpu.render(&frame, 64, 64).unwrap();
     let [r, g, b, _] = image.pixel(32, 32).unwrap();
     // The light adds a white highlight; the emission makes red dominate.
     assert!(r > 200 && r > g + 100 && r > b + 100, "expected red, got {:?}", [r, g, b]);
 
     let every = Arc::new(compile(&every_node_material()).unwrap());
-    let frame = extract_with(&scene, camera, OPTIONS, &mut |_| Some(Arc::clone(&every)));
+    let frame = extract_with(&scene, camera, OPTIONS, &mut Materials(None, Arc::clone(&every)));
     gpu.render(&frame, 32, 32).unwrap_or_else(|e| panic!("the GPU refused the generated shader: {e}\n{}", every.surface));
 }
 
@@ -294,4 +312,114 @@ fn a_surface_on_the_ground_plane_hides_the_grid_completely() {
     let differing =
         with_grid.pixels.chunks(4).zip(without.pixels.chunks(4)).skip(96 * 60).filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 6)).count();
     assert_eq!(differing, 0, "{differing} floor pixels show the grid");
+}
+
+/// A folder with `stripes.png` (left half red, right half blue) and `wall.gltf` (a 2 x 2 square
+/// facing +Z, made of two triangles).
+fn asset_folder(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("bayleaf-render-assets-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut png_bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png_bytes, 2, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&[255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+    }
+    std::fs::write(dir.join("stripes.png"), png_bytes).unwrap();
+
+    let positions: [[f32; 3]; 4] = [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]];
+    let mut bin: Vec<u8> = positions.iter().flatten().flat_map(|f| f.to_le_bytes()).collect();
+    for i in [0u16, 1, 2, 0, 2, 3] {
+        bin.extend(i.to_le_bytes());
+    }
+    std::fs::write(dir.join("wall.bin"), &bin).unwrap();
+    let gltf = json!({
+        "asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+        "buffers": [{"uri": "wall.bin", "byteLength": bin.len()}],
+        "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 48}, {"buffer": 0, "byteOffset": 48, "byteLength": 12}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [-1, -1, 0], "max": [1, 1, 0]},
+            {"bufferView": 1, "componentType": 5123, "count": 6, "type": "SCALAR"}
+        ]
+    });
+    std::fs::write(dir.join("wall.gltf"), gltf.to_string()).unwrap();
+    dir
+}
+
+fn render_with_files(gpu: &HeadlessGpu, scene: &Scene, dir: &std::path::Path, materials: &mut crate::MaterialLibrary, camera: CameraView) -> crate::Image {
+    let mut cache = bayleaf_assets::AssetCache::new();
+    let allow = |p: &std::path::Path| Ok(p.to_path_buf());
+    let mut assets = crate::FileAssets { base: dir.to_path_buf(), materials, cache: &mut cache, allow: &allow, warnings: Vec::new() };
+    let frame = extract_with(scene, camera, OPTIONS, &mut assets);
+    assert!(assets.warnings.is_empty(), "{:?}", assets.warnings);
+    gpu.render(&frame, 64, 64).unwrap()
+}
+
+#[test]
+fn sprites_show_their_image_and_materials_read_images() {
+    let Some(gpu) = gpu() else { return };
+    let dir = asset_folder("images");
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO, 50.0, 1.0);
+    let mut scene = Scene::new();
+    object(&mut scene, "sprite", json!({"color": [1, 1, 1, 1], "size": [2, 2], "image": "stripes.png"}), [0.0; 3], [0.0; 3]);
+    let image = render_with_files(&gpu, &scene, &dir, &mut crate::MaterialLibrary::new(), camera);
+    let [lr, _, lb, _] = image.pixel(14, 32).unwrap();
+    let [rr, _, rb, _] = image.pixel(50, 32).unwrap();
+    assert!(lr > 200 && lb < 60, "left half red: {lr} {lb}");
+    assert!(rb > 200 && rr < 60, "right half blue: {rr} {rb}");
+
+    // A material that shows the image as emission on a quad.
+    let mut graph = bayleaf_graph::Graph::new(&CATALOG);
+    let out = graph.nodes[0].id;
+    graph.set_value(&CATALOG, out, "baseColor", json!([0, 0, 0])).unwrap();
+    let texture = graph.add_node(&CATALOG, "texture", [0.0, 0.0]).unwrap();
+    graph.set_value(&CATALOG, texture, "image", json!("stripes.png")).unwrap();
+    link(&mut graph, texture, "color", out, "emissive");
+    std::fs::write(dir.join("striped.bmaterial"), graph.to_json()).unwrap();
+    let mut scene = Scene::new();
+    object(
+        &mut scene,
+        "mesh",
+        json!({"shape": "quad", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "material": "striped.bmaterial"}),
+        [0.0; 3],
+        [0.0; 3],
+    );
+    scene.set_component(scene.world_matrices()[0].0, "transform", json!({"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [2, 2, 1]})).unwrap();
+    let image = render_with_files(&gpu, &scene, &dir, &mut crate::MaterialLibrary::new(), camera);
+    let [lr, _, lb, _] = image.pixel(14, 32).unwrap();
+    let [rr, _, rb, _] = image.pixel(50, 32).unwrap();
+    assert!(lr > rr + 100 && rb > lb + 100, "the image shows through the material: left {lr},{lb} right {rr},{rb}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn meshes_draw_their_model_and_are_picked_by_its_box() {
+    let Some(gpu) = gpu() else { return };
+    let dir = asset_folder("model");
+    let mut scene = Scene::new();
+    let wall = object(
+        &mut scene,
+        "mesh",
+        json!({"shape": "cube", "color": [0.9, 0.9, 0.9, 1], "metallic": 0, "roughness": 0.9, "model": "wall.gltf"}),
+        [0.0; 3],
+        [0.0; 3],
+    );
+    object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3, "shadows": false}), [0.0; 3], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, 50.0, 1.0);
+    let image = render_with_files(&gpu, &scene, &dir, &mut crate::MaterialLibrary::new(), camera);
+    // The square is 2 wide, wider than the unit cube the shape would draw.
+    let edge = image.pixel(32 + 12, 32).unwrap();
+    let corner = image.pixel(1, 1).unwrap();
+    assert!(brightness(edge) > brightness(corner) + 100, "the model reaches past the unit cube: {edge:?}");
+
+    let mut cache = bayleaf_assets::AssetCache::new();
+    let allow = |p: &std::path::Path| Ok(p.to_path_buf());
+    let mut materials = crate::MaterialLibrary::new();
+    let mut assets = crate::FileAssets { base: dir.clone(), materials: &mut materials, cache: &mut cache, allow: &allow, warnings: Vec::new() };
+    let frame = extract_with(&scene, camera, OPTIONS, &mut assets);
+    assert_eq!(pick(&frame, Vec2::new(0.45, 0.0)), Some(wall), "picked by the model's box, past the unit cube");
+    std::fs::remove_dir_all(&dir).ok();
 }

@@ -50,12 +50,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let cards: Vec<ScriptCard> =
         scripts.into_iter().map(|script| ScriptCard { declared: editor.script_info.properties(&script_dir.join(&script.module)), script }).collect();
     let script_files = editor.project.script_files();
-    let material_files = editor.project.material_files();
-    // Whether the mesh's material loads, checked before drawing.
-    let material_problem = editor.session.scene().get::<bayleaf_engine::scene::components::Mesh>(id).filter(|m| !m.material.is_empty()).and_then(|m| {
-        let path = script_dir.join(&m.material);
-        editor.scene_view.materials.get(&path).err()
-    });
+    let file_fields = file_fields(editor, id, &script_dir);
     let mut open_material: Option<std::path::PathBuf> = None;
     let mut pending = None;
     let mut gesture_ended = false;
@@ -107,31 +102,34 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             let Some(kind) = kinds.iter().find(|k| k.name == *name) else { continue };
             card(ui, t, ("component card", *name), kind.label, None, kind.removable, |ui| {
                 let mut edited = value.clone();
-                // The mesh's material is picked from the project's material files below, not typed.
-                let material = (*name == "mesh")
-                    .then(|| edited.as_object_mut().and_then(|o| o.remove("material")).and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default());
+                // File fields are picked from the project's files below, not typed.
+                let fields: Vec<&FileField> = file_fields.iter().filter(|f| f.component == *name).collect();
+                let current: Vec<String> = fields
+                    .iter()
+                    .map(|f| edited.as_object_mut().and_then(|o| o.remove(f.field)).and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default())
+                    .collect();
                 let outcome = value_editor::edit_fields(ui, &mut edited, kind.name, &|field| kind.options(field));
                 gesture_ended |= outcome.ended;
                 if outcome.changed {
-                    if let (Some(material), Some(object)) = (&material, edited.as_object_mut())
-                        && !material.is_empty()
-                    {
-                        object.insert("material".to_owned(), Value::String(material.clone()));
+                    if let Some(object) = edited.as_object_mut() {
+                        for (field, path) in fields.iter().zip(&current).filter(|(_, p)| !p.is_empty()) {
+                            object.insert(field.field.to_owned(), Value::String(path.clone()));
+                        }
                     }
                     pending = Some(Pending::Set { component: kind.name, value: edited.clone() });
                 }
-                if let Some(material) = material
-                    && let Some(chosen) = material_row(ui, t, &material, &material_files, material_problem.as_deref(), &script_dir, &mut open_material)
-                {
-                    let mut value = value.clone();
-                    if let Some(object) = value.as_object_mut() {
-                        if chosen.is_empty() {
-                            object.remove("material");
-                        } else {
-                            object.insert("material".to_owned(), Value::String(chosen));
+                for (field, path) in fields.iter().zip(&current) {
+                    if let Some(chosen) = file_row(ui, t, field, path, &script_dir, &mut open_material) {
+                        let mut value = value.clone();
+                        if let Some(object) = value.as_object_mut() {
+                            if chosen.is_empty() {
+                                object.remove(field.field);
+                            } else {
+                                object.insert(field.field.to_owned(), Value::String(chosen));
+                            }
                         }
+                        pending = Some(Pending::Set { component: kind.name, value });
                     }
-                    pending = Some(Pending::Set { component: kind.name, value });
                 }
             })
             .then(|| pending = Some(Pending::Remove(kind.name)));
@@ -316,35 +314,51 @@ pub(crate) fn empty_state(ui: &mut egui::Ui, title: &str, hint: &str) {
     });
 }
 
-/// The mesh's material: a choice of the project's material files, a button that opens the chosen
-/// one in the graph editor, and a warning when it does not load. Returns a new choice ("" for none).
-fn material_row(
+/// A field that holds a file path, picked from the project's files instead of typed.
+struct FileField {
+    component: &'static str,
+    field: &'static str,
+    label: &'static str,
+    /// What an empty choice means, e.g. "None (colour above)".
+    none: &'static str,
+    /// Said when the project has no files of the kind.
+    no_files: &'static str,
+    files: Vec<String>,
+    /// Why the chosen file does not load, if it does not.
+    problem: Option<String>,
+    /// The file opens in the graph editor (materials).
+    editable: bool,
+}
+
+/// One file field: a choice of the project's files, an Edit button for graphs, and a warning
+/// when the chosen file does not load. Returns a new choice ("" for none).
+fn file_row(
     ui: &mut egui::Ui,
     t: &theme::Tokens,
+    field: &FileField,
     current: &str,
-    files: &[String],
-    problem: Option<&str>,
     base: &std::path::Path,
     open: &mut Option<std::path::PathBuf>,
 ) -> Option<String> {
+    let files = &field.files;
     let mut chosen = None;
     ui.horizontal(|ui| {
-        let label = ui.add_sized([theme::LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(egui::RichText::new("Material").color(t.text_muted)).truncate());
+        let label = ui.add_sized([theme::LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(egui::RichText::new(field.label).color(t.text_muted)).truncate());
         // Edit sits at the right edge and the list takes what is left.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if !current.is_empty() {
+            if field.editable && !current.is_empty() {
                 let edit = ui.add(egui::Button::new("Edit").min_size(egui::vec2(0.0, ROW_HEIGHT)));
-                ui.ctx().accesskit_node_builder(edit.id, |node| node.set_label("Edit material"));
-                if edit.on_hover_text("Open this material in the graph editor").clicked() {
+                ui.ctx().accesskit_node_builder(edit.id, |node| node.set_label(format!("Edit {}", field.label.to_lowercase())));
+                if edit.on_hover_text("Open it in the graph editor").clicked() {
                     *open = Some(base.join(current));
                 }
             }
-            let shown = if current.is_empty() { "None (colour above)".to_owned() } else { current.to_owned() };
-            egui::ComboBox::from_id_salt("mesh material")
+            let shown = if current.is_empty() { field.none.to_owned() } else { current.to_owned() };
+            egui::ComboBox::from_id_salt((field.component, field.field))
                 .width((ui.available_width() - 1.0).max(60.0))
                 .selected_text(egui::RichText::new(shown).color(t.text))
                 .show_ui(ui, |ui| {
-                    if ui.selectable_label(current.is_empty(), "None (colour above)").clicked() {
+                    if ui.selectable_label(current.is_empty(), field.none).clicked() {
                         chosen = Some(String::new());
                     }
                     for file in files {
@@ -353,15 +367,63 @@ fn material_row(
                         }
                     }
                     if files.is_empty() {
-                        ui.label(egui::RichText::new("No .bmaterial files in the project folder").color(t.text_muted));
+                        ui.label(egui::RichText::new(field.no_files).color(t.text_muted));
                     }
                 })
                 .response
                 .labelled_by(label.id);
         });
     });
-    if let Some(problem) = problem {
+    if let Some(problem) = &field.problem {
         ui.add(egui::Label::new(egui::RichText::new(format!("Warning: {problem}")).color(t.warning)).wrap());
     }
     chosen.filter(|c| c != current)
+}
+
+/// The file fields of `id`'s components, with the project's files of each kind and whether the
+/// chosen file loads.
+fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path::Path) -> Vec<FileField> {
+    use bayleaf_engine::scene::components::{Mesh, Sprite};
+    let scene = editor.session.scene();
+    let mesh = scene.get::<Mesh>(id).cloned();
+    let sprite = scene.get::<Sprite>(id).cloned();
+    let mut fields = Vec::new();
+    if let Some(mesh) = mesh {
+        let material = (!mesh.material.is_empty()).then(|| editor.scene_view.materials.get(&base.join(&mesh.material)).err()).flatten();
+        fields.push(FileField {
+            component: "mesh",
+            field: "material",
+            label: "Material",
+            none: "None (colour above)",
+            no_files: "No .bmaterial files in the project folder",
+            files: editor.project.material_files(),
+            problem: material,
+            editable: true,
+        });
+        let model = (!mesh.model.is_empty()).then(|| editor.scene_view.assets.model(&base.join(&mesh.model)).err()).flatten();
+        fields.push(FileField {
+            component: "mesh",
+            field: "model",
+            label: "Model",
+            none: "None (the shape above)",
+            no_files: "No .glb or .gltf files in the project folder",
+            files: editor.project.model_files(),
+            problem: model,
+            editable: false,
+        });
+    }
+    if let Some(sprite) = sprite {
+        let image = (!sprite.image.is_empty()).then(|| editor.scene_view.assets.image(&base.join(&sprite.image)).err()).flatten();
+        fields.push(FileField {
+            component: "sprite",
+            field: "image",
+            label: "Image",
+            none: "None (plain colour)",
+            no_files: "No .png files in the project folder",
+            files: editor.project.image_files(),
+            problem: image,
+            editable: false,
+        });
+    }
+    fields
 }

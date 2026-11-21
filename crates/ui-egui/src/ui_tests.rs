@@ -1,4 +1,4 @@
-﻿//! Editor tests driven through the accessibility tree, the way assistive technology sees it.
+//! Editor tests driven through the accessibility tree, the way assistive technology sees it.
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -484,4 +484,22 @@ fn a_placed_prefab_is_marked_and_its_card_unlinks_it() {
     assert!(harness.state().session.scene().component(id, "prefab").is_err());
     assert!(harness.query_by_label("Apply").is_none());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn meshes_pick_a_model_and_sprites_pick_an_image_from_the_project() {
+    let mut harness = harness();
+    harness.state_mut().dispatch("scene.object.create", &json!({ "name": "Thing", "components": { "mesh": null, "sprite": null } }), None);
+    harness.run();
+    let shows = |harness: &Harness<'static, Editor>, label: &str, value: &str| harness.query_all_by_label(label).any(|n| n.value().as_deref() == Some(value));
+    assert!(shows(&harness, "Model", "None (the shape above)"), "the Mesh card offers a model");
+    assert!(shows(&harness, "Image", "None (plain colour)"), "the Sprite card offers an image");
+    let id = harness.state().selected.unwrap();
+    harness.state_mut().dispatch(
+        "scene.component.set",
+        &json!({ "id": id, "component": "sprite", "value": { "color": [1, 1, 1, 1], "size": [1, 1], "image": "missing.png" } }),
+        None,
+    );
+    harness.run();
+    assert!(harness.query_all_by_label_contains("Warning: cannot read").next().is_some(), "a missing image says so");
 }

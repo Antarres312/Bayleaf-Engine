@@ -11,9 +11,17 @@ const SELECTION: vec3<f32> = vec3<f32>(1.0, 0.45, 0.08);
 @group(1) @binding(0) var shadow_map: texture_depth_2d;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
 
+// Images: a sprite's image in t0, or a material's Image nodes by slot. Unused slots hold a white pixel.
+@group(2) @binding(0) var t0: texture_2d<f32>;
+@group(2) @binding(1) var t1: texture_2d<f32>;
+@group(2) @binding(2) var t2: texture_2d<f32>;
+@group(2) @binding(3) var t3: texture_2d<f32>;
+@group(2) @binding(4) var material_sampler: sampler;
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(11) uv: vec2<f32>,
 };
 
 struct InstanceIn {
@@ -35,6 +43,7 @@ struct VertexOut {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec4<f32>,
     @location(3) params: vec4<f32>,
+    @location(4) uv: vec2<f32>,
 };
 
 @vertex
@@ -48,6 +57,7 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VertexOut {
     out.normal = normal_matrix * v.normal;
     out.color = i.color;
     out.params = i.params;
+    out.uv = v.uv;
     return out;
 }
 
@@ -103,6 +113,7 @@ struct SurfaceIn {
     color: vec4<f32>,
     params: vec4<f32>,
     time: f32,
+    uv: vec2<f32>,
 };
 
 // Pattern helpers for material graphs: the usual sine-based hash, and value noise made by blending
@@ -132,11 +143,12 @@ fn bl_checker(p: vec3<f32>) -> f32 {
 fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let selected = in.params.z > 0.5;
     if (in.params.w > 0.5) {
-        var unlit = in.color.rgb;
+        let image = textureSampleLevel(t0, material_sampler, in.uv, 0.0);
+        var unlit = in.color.rgb * image.rgb;
         if (selected) {
             unlit = mix(unlit, SELECTION, 0.25);
         }
-        return vec4<f32>(unlit, in.color.a);
+        return vec4<f32>(unlit, in.color.a * image.a);
     }
 
     var n = normalize(in.normal);
@@ -144,7 +156,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
         n = -n;
     }
     let v = normalize(globals.camera_pos.xyz - in.world_pos);
-    let s = surface(SurfaceIn(in.world_pos, n, v, in.color, in.params, globals.camera_pos.w));
+    let s = surface(SurfaceIn(in.world_pos, n, v, in.color, in.params, globals.camera_pos.w, in.uv));
     let base = max(s.base, vec3<f32>(0.0));
     let metallic = clamp(s.metallic, 0.0, 1.0);
     let roughness = clamp(s.roughness, 0.045, 1.0);

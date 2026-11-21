@@ -55,6 +55,9 @@ A mesh uses a material when its `material` field names a `.bmaterial` file, rela
 folder). In the Inspector, pick it from the Mesh card's Material list. The **Object Color** node reads
 the mesh's colour, so one material can be tinted per object. A material whose opacity is linked, or
 set below 1, is drawn as transparent. Materials that use **Time** animate in the scene view.
+The **Image** node reads a PNG file (relative to the project folder) by the surface's texture
+coordinates; **Texture Coordinates** gives them as a vector, to scale or move them. A material may
+use up to 4 images.
 
 While a material is open in the graph editor, the scene view shows its unsaved changes. A material
 that does not load or compile is reported in the Inspector, and `scene.render` lists it in

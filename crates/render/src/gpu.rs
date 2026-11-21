@@ -138,6 +138,14 @@ pub struct Renderer {
     shadow_view: wgpu::TextureView,
     shadow_group: wgpu::BindGroup,
     shadow_pipeline: wgpu::RenderPipeline,
+    texture_layout: wgpu::BindGroupLayout,
+    texture_sampler: wgpu::Sampler,
+    /// Uploaded images by id; 0 is a white pixel.
+    textures: HashMap<u64, (wgpu::Texture, wgpu::TextureView)>,
+    /// Texture bind groups by the images in their four slots.
+    texture_groups: HashMap<[u64; 4], wgpu::BindGroup>,
+    /// Uploaded models by id.
+    models: HashMap<u64, GpuMesh>,
 }
 
 impl Renderer {
@@ -210,9 +218,32 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&shadow_sampler) },
             ],
         });
+        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bayleaf texture layout"),
+            entries: &[
+                texture_entry(0),
+                texture_entry(1),
+                texture_entry(2),
+                texture_entry(3),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("bayleaf texture sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("bayleaf pipeline layout"),
-            bind_group_layouts: &[Some(&globals_layout), Some(&shadow_layout)],
+            bind_group_layouts: &[Some(&globals_layout), Some(&shadow_layout), Some(&texture_layout)],
             immediate_size: 0,
         });
         let shadow_pass_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -271,6 +302,11 @@ impl Renderer {
             shadow_view,
             shadow_group,
             shadow_pipeline,
+            texture_layout,
+            texture_sampler,
+            textures: HashMap::new(),
+            texture_groups: HashMap::new(),
+            models: HashMap::new(),
         }
     }
 
@@ -301,6 +337,51 @@ impl Renderer {
         self.pipelines.insert(material.key, entry);
     }
 
+    /// Puts the frame's images and models on the GPU the first time they are drawn, and makes
+    /// the image groups its items need.
+    fn upload_assets(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) {
+        self.textures.entry(0).or_insert_with(|| upload_image(device, queue, &bayleaf_assets::Image { id: 0, width: 1, height: 1, rgba: vec![255; 4] }));
+        let mut keys = vec![[0u64; 4]];
+        for item in &frame.items {
+            for image in item.textures.iter().flatten() {
+                self.textures.entry(image.id).or_insert_with(|| upload_image(device, queue, image));
+            }
+            if let Some(mesh) = &item.mesh
+                && !self.models.contains_key(&mesh.id)
+            {
+                self.models.insert(mesh.id, upload_model(device, mesh));
+            }
+            keys.push(texture_key(item));
+        }
+        for key in keys {
+            if self.texture_groups.contains_key(&key) {
+                continue;
+            }
+            let view = |slot: usize| self.textures.get(&key[slot]).or_else(|| self.textures.get(&0)).map(|(_, view)| view);
+            let (Some(v0), Some(v1), Some(v2), Some(v3)) = (view(0), view(1), view(2), view(3)) else { continue };
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("bayleaf images"),
+                layout: &self.texture_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(v0) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(v1) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(v2) },
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(v3) },
+                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&self.texture_sampler) },
+                ],
+            });
+            self.texture_groups.insert(key, group);
+        }
+    }
+
+    /// The GPU mesh an item draws.
+    fn gpu_mesh(&self, item: &DrawItem) -> Option<&GpuMesh> {
+        match &item.mesh {
+            Some(mesh) => self.models.get(&mesh.id),
+            None => self.meshes.iter().find(|(s, _)| *s == item.shape).map(|(_, m)| m),
+        }
+    }
+
     fn pipeline(&self, key: u64, transparent: bool) -> Option<&wgpu::RenderPipeline> {
         let pair = match self.pipelines.get(&key) {
             Some(Some(pair)) => pair,
@@ -317,10 +398,11 @@ impl Renderer {
         for material in frame.items.iter().filter_map(|i| i.material.as_deref()) {
             self.prepare(device, material);
         }
+        self.upload_assets(device, queue, frame);
 
-        // Opaque items grouped by material and shape, then transparent items back to front.
+        // Opaque items grouped by material, mesh and images, then transparent items back to front.
         let mut opaque: Vec<&DrawItem> = frame.items.iter().filter(|i| !i.is_transparent()).collect();
-        opaque.sort_by_key(|i| (material_key(i), shape_index(i.shape)));
+        opaque.sort_by_key(|i| (material_key(i), mesh_key(i), texture_key(i)));
         let mut transparent: Vec<&DrawItem> = frame.items.iter().filter(|i| i.is_transparent()).collect();
         let eye = frame.camera.position;
         transparent.sort_by(|a, b| distance(b.model, eye).total_cmp(&distance(a.model, eye)));
@@ -356,8 +438,8 @@ impl Renderer {
             let mut start = 0usize;
             while start < opaque.len() {
                 let first = opaque[start];
-                let run = opaque[start..].iter().take_while(|i| i.shape == first.shape).count();
-                if let Some((_, mesh)) = self.meshes.iter().find(|(s, _)| *s == first.shape) {
+                let run = opaque[start..].iter().take_while(|i| mesh_key(i) == mesh_key(first)).count();
+                if let Some(mesh) = self.gpu_mesh(first) {
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, start as u32..(start + run) as u32);
@@ -391,13 +473,19 @@ impl Renderer {
             pass.set_bind_group(1, &self.shadow_group, &[]);
             pass.set_vertex_buffer(1, self.instances.slice(..));
 
-            // Runs of opaque items that share a material and a shape are drawn as one instanced call.
+            // Every pipeline takes the image group; start with white images.
+            if let Some(group) = self.texture_groups.get(&[0; 4]) {
+                pass.set_bind_group(2, group, &[]);
+            }
+            // Runs of opaque items that share a material, a mesh and images are drawn as one instanced call.
             let mut start = 0usize;
             while start < opaque.len() {
                 let first = opaque[start];
-                let run = opaque[start..].iter().take_while(|i| material_key(i) == material_key(first) && i.shape == first.shape).count();
-                if let (Some(pipeline), Some((_, mesh))) = (self.pipeline(material_key(first), false), self.meshes.iter().find(|(s, _)| *s == first.shape)) {
+                let key = (material_key(first), mesh_key(first), texture_key(first));
+                let run = opaque[start..].iter().take_while(|i| (material_key(i), mesh_key(i), texture_key(i)) == key).count();
+                if let (Some(pipeline), Some(mesh), Some(group)) = (self.pipeline(key.0, false), self.gpu_mesh(first), self.texture_groups.get(&key.2)) {
                     pass.set_pipeline(pipeline);
+                    pass.set_bind_group(2, group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, start as u32..(start + run) as u32);
@@ -411,9 +499,12 @@ impl Renderer {
             }
 
             for (offset, item) in transparent.iter().enumerate() {
-                if let (Some(pipeline), Some((_, mesh))) = (self.pipeline(material_key(item), true), self.meshes.iter().find(|(s, _)| *s == item.shape)) {
+                if let (Some(pipeline), Some(mesh), Some(group)) =
+                    (self.pipeline(material_key(item), true), self.gpu_mesh(item), self.texture_groups.get(&texture_key(item)))
+                {
                     let index = (opaque.len() + offset) as u32;
                     pass.set_pipeline(pipeline);
+                    pass.set_bind_group(2, group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, index..index + 1);
@@ -499,7 +590,7 @@ fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
     })
 }
 
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 11 => Float32x2];
 const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
     2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
     6 => Float32x4, 7 => Float32x4, 8 => Float32x4,
@@ -590,7 +681,8 @@ fn grid_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &
 
 /// The built-in surface: the mesh component's colour, metallic and roughness.
 pub(crate) const DEFAULT_SURFACE: &str = "fn surface(s: SurfaceIn) -> Surface {
-    return Surface(s.color.rgb, s.params.x, s.params.y, vec3<f32>(0.0), s.color.a);
+    let image = textureSampleLevel(t0, material_sampler, s.uv, 0.0);
+    return Surface(s.color.rgb * image.rgb, s.params.x, s.params.y, vec3<f32>(0.0), s.color.a * image.a);
 }";
 
 /// `shader` with the shared per-frame values in front.
@@ -659,4 +751,77 @@ fn shadow_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader:
         multiview_mask: None,
         cache: None,
     })
+}
+
+fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// An image on the GPU. Images hold sRGB colours.
+fn upload_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &bayleaf_assets::Image) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some("bayleaf image"),
+            size: wgpu::Extent3d { width: image.width.max(1), height: image.height.max(1), depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &image.rgba,
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
+/// A model on the GPU.
+fn upload_model(device: &wgpu::Device, mesh: &bayleaf_assets::MeshData) -> GpuMesh {
+    let vertices: Vec<Vertex> = (0..mesh.positions.len())
+        .map(|i| Vertex {
+            position: mesh.positions[i],
+            normal: mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
+            uv: mesh.uvs.get(i).copied().unwrap_or([0.0; 2]),
+        })
+        .collect();
+    let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("bayleaf model vertices"),
+        contents: bytemuck::cast_slice(&vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+    let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("bayleaf model indices"),
+        contents: bytemuck::cast_slice(&mesh.indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    GpuMesh { vertices, indices, index_count: mesh.indices.len() as u32 }
+}
+
+/// Which mesh an item draws: a built-in shape (its index) or a model (its id, with the top bit set).
+fn mesh_key(item: &DrawItem) -> u64 {
+    match &item.mesh {
+        Some(mesh) => mesh.id | (1 << 63),
+        None => shape_index(item.shape) as u64,
+    }
+}
+
+/// The images in an item's four texture slots; 0 for an empty or missing slot.
+fn texture_key(item: &DrawItem) -> [u64; 4] {
+    let mut key = [0; 4];
+    for (slot, image) in key.iter_mut().zip(&item.textures) {
+        *slot = image.as_ref().map_or(0, |i| i.id);
+    }
+    key
 }
