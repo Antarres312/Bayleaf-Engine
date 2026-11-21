@@ -1,4 +1,4 @@
-//! Editor tests driven through the accessibility tree, the way assistive technology sees it.
+﻿//! Editor tests driven through the accessibility tree, the way assistive technology sees it.
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -374,4 +374,94 @@ fn node_values_edit_through_commands_and_problems_name_their_node() {
     harness.run();
     assert_eq!(graph(&harness).value(3, "message").and_then(|v| v.as_str()), Some("Hello there"));
     assert!(harness.state().session.history().len() <= 6, "typing merges into one undo step");
+}
+
+#[test]
+fn buttons_at_the_end_of_inspector_rows_stay_inside_their_section() {
+    let mut harness = harness();
+    // The demo's visual script declares properties; overriding one shows Reset at the end of its row.
+    let bob = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo/scripts/bob.bscript");
+    let params = json!({ "name": "Bobber", "components": {
+        "mesh": { "shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.5, "material": "missing.bmaterial" },
+        "scripts": [{ "module": bob.to_string_lossy().replace('\\', "/"), "properties": { "speed": 5.0 } }] } });
+    harness.state_mut().dispatch("scene.object.create", &params, None);
+    harness.run();
+    let section_right = |harness: &Harness<'static, Editor>, title: &str| harness.get_by_label(&format!("Remove {title}")).rect().right();
+    let reset = harness.get_by_label("Reset").rect();
+    assert!(reset.right() <= section_right(&harness, "Bob") + 0.5, "Reset ends at {} past the section edge {}", reset.right(), section_right(&harness, "Bob"));
+    let edit = harness.get_by_label("Edit material").rect();
+    assert!(edit.right() <= section_right(&harness, "Mesh") + 0.5, "Edit ends at {} past the section edge", edit.right());
+}
+
+#[test]
+fn copy_and_paste_go_through_the_clipboard_and_ctrl_d_duplicates() {
+    let mut harness = harness();
+    create_named(&mut harness, "Crate");
+    harness.event(egui::Event::Copy);
+    harness.run();
+    let copied = harness.state().clipboard.clone().expect("the copy is on the clipboard");
+    assert!(copied.contains("Crate"));
+    harness.event(egui::Event::Paste(copied));
+    harness.run();
+    let editor = harness.state();
+    assert_eq!(editor.session.scene().children(None).len(), 2);
+    assert_ne!(editor.selected, editor.session.scene().children(None).first().copied(), "the pasted copy is selected");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::D);
+    harness.run();
+    let editor = harness.state();
+    assert_eq!(editor.session.scene().children(None).len(), 3);
+    // The pasted copy keeps its name; its duplicate gets the next free number.
+    assert_eq!(editor.selected.and_then(|id| editor.session.scene().name(id)), Some("Crate 2"), "the duplicate is selected and numbered");
+    // Text that is not copied objects is refused with a reason.
+    harness.event(egui::Event::Paste("hello".to_owned()));
+    harness.run();
+    assert_eq!(harness.state().session.scene().children(None).len(), 3);
+    assert!(harness.state().status.contains("no objects"));
+}
+
+#[test]
+fn closing_with_unsaved_changes_is_stopped_and_asks_first() {
+    let mut harness = harness();
+    create_named(&mut harness, "Unsaved");
+    harness.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+    harness.run();
+    assert!(harness.state().close_asked, "the close is held back");
+    assert!(harness.query_by_label("Save changes before closing?").is_some());
+    assert!(harness.query_by_label("Scene: Untitled scene").is_some(), "it says what is unsaved");
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    assert!(!harness.state().close_asked && !harness.state().close_confirmed);
+}
+
+#[test]
+fn ctrl_and_shift_clicks_select_several_objects_and_delete_removes_them_as_one_step() {
+    let mut harness = harness();
+    for name in ["One", "Two", "Three", "Four"] {
+        create_named(&mut harness, name);
+    }
+    harness.get_by_label("One").click();
+    harness.run();
+    harness.get_by_label("Three").click_modifiers(egui::Modifiers::COMMAND);
+    harness.run();
+    assert_eq!(harness.state().selection().len(), 2, "Ctrl adds");
+    assert!(harness.query_by_label_contains("2 objects selected").is_some(), "the Inspector says what applies to all");
+    harness.get_by_label("Four").click_modifiers(egui::Modifiers::SHIFT);
+    harness.run();
+    assert_eq!(harness.state().selection().len(), 2, "Shift selects the range from Three to Four");
+    harness.get_by_label("One").click_modifiers(egui::Modifiers::SHIFT);
+    harness.run();
+    assert_eq!(harness.state().selection().len(), 4);
+    harness.get_by_label("Two").click_modifiers(egui::Modifiers::COMMAND);
+    harness.run();
+    assert_eq!(harness.state().selection().len(), 3, "Ctrl on a selected object takes it out");
+
+    let steps = harness.state().session.history().len();
+    harness.key_press(egui::Key::Delete);
+    harness.run();
+    let editor = harness.state();
+    assert_eq!(editor.session.scene().children(None).len(), 1, "only Two is left");
+    assert_eq!(editor.session.history().len(), steps + 1, "one undo step");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    harness.run();
+    assert_eq!(harness.state().session.scene().children(None).len(), 4);
 }

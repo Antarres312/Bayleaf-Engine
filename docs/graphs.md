@@ -51,8 +51,8 @@ Limits: 2000 nodes, 8000 links, text values of 256 characters.
 
 ## Materials
 
-A mesh uses a material when its `material` field names a `.bmaterial` file, relative to the scene's
-folder. In the Inspector, pick it from the Mesh card's Material list. The **Object Color** node reads
+A mesh uses a material when its `material` field names a `.bmaterial` file, relative to the project folder (or, for a scene outside any project, the scene's
+folder). In the Inspector, pick it from the Mesh card's Material list. The **Object Color** node reads
 the mesh's colour, so one material can be tinted per object. A material whose opacity is linked, or
 set below 1, is drawn as transparent. Materials that use **Time** animate in the scene view.
 

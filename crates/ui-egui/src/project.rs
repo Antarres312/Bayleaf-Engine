@@ -1,5 +1,7 @@
-//! Project panel: the files of the project folder (the open scene's folder, or the folder the editor
-//! started in). Folders on the left; the open folder's files on the right, as icons or as a list.
+//! Project panel: the game's files under **Project** (the project folder, the open scene's folder, or the folder the
+//! editor started in) and the engine's own files under **Engine**, so the two never mix. Folders on
+//! the left; the open folder's files on the right, as icons or as a list. The Engine folder is only
+//! listed on the left, never shown as a tile among the project's files.
 //!
 //! Double-click a folder to open it and a scene to load it. Drag a file onto a text field in the
 //! inspector to use its path (a script module, for example); the context menu offers the same
@@ -38,6 +40,8 @@ pub(crate) struct DraggedAsset {
 enum Kind {
     Folder,
     Scene,
+    /// A project file (`.bproject`).
+    Project,
     Script,
     /// A visual script (`.bscript`): a graph that is also a script.
     VisualScript,
@@ -51,6 +55,7 @@ impl Kind {
         match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
             Some(bayleaf_engine::scene::doc::EXTENSION) => Kind::Scene,
             Some("wasm") => Kind::Script,
+            Some(bayleaf_engine::project_cmds::PROJECT_EXTENSION) => Kind::Project,
             Some("bscript") => Kind::VisualScript,
             Some("bmaterial") => Kind::Material,
             Some("png" | "jpg" | "jpeg" | "webp" | "ktx2") => Kind::Image,
@@ -62,6 +67,7 @@ impl Kind {
         match self {
             Kind::Folder => "Folder",
             Kind::Scene => "Scene",
+            Kind::Project => "Project",
             Kind::Script => "Script",
             Kind::VisualScript => "Visual Script",
             Kind::Material => "Material",
@@ -88,7 +94,11 @@ enum ViewMode {
 /// The scanned folder and the panel's own state, kept between frames.
 #[derive(Default)]
 pub(crate) struct ProjectView {
-    root: PathBuf,
+    /// The project folder; `None` when there is none (no scene open, and the editor runs from the
+    /// engine's own folder).
+    root: Option<PathBuf>,
+    /// The engine's own folder, if it can be found.
+    engine: Option<PathBuf>,
     /// Folder -> its entries, folders first, then by name.
     tree: BTreeMap<PathBuf, Vec<Entry>>,
     scanned: Option<Instant>,
@@ -114,7 +124,9 @@ impl ProjectView {
     }
 
     fn files_of(&self, kinds: &[Kind]) -> Vec<String> {
-        let mut files: Vec<String> = self.tree.values().flatten().filter(|e| kinds.contains(&e.kind)).map(|e| relative_path(&self.root, &e.path)).collect();
+        let Some(root) = &self.root else { return Vec::new() };
+        let mut files: Vec<String> =
+            self.tree.values().flatten().filter(|e| kinds.contains(&e.kind) && e.path.starts_with(root)).map(|e| relative_path(root, &e.path)).collect();
         files.sort();
         files
     }
@@ -123,6 +135,20 @@ impl ProjectView {
 impl ProjectView {
     pub(crate) fn icon(&self) -> f32 {
         if self.icon_size > 0.0 { self.icon_size } else { ICON_DEFAULT }
+    }
+
+    /// The top folder `path` belongs to, with its name: the project first, as it may lie inside
+    /// the engine's folder (the bundled examples do).
+    fn top_of(&self, path: &Path) -> Option<(&'static str, &Path)> {
+        if let Some(root) = self.root.as_deref().filter(|r| path.starts_with(r)) {
+            return Some(("Project", root));
+        }
+        self.engine.as_deref().filter(|e| path.starts_with(e)).map(|e| ("Engine", e))
+    }
+
+    /// True when the open folder belongs to the project, so new files may be made there.
+    fn in_project(&self) -> bool {
+        self.root.as_deref().is_some_and(|r| !self.current.as_os_str().is_empty() && self.current.starts_with(r))
     }
 }
 
@@ -143,14 +169,17 @@ struct Outcome {
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
-    let root = project_root(editor);
     let mut view = std::mem::take(&mut editor.project);
+    if view.scanned.is_none() {
+        view.engine = engine_root();
+    }
+    let root = project_root(editor, view.engine.as_deref());
     if view.root != root || view.scanned.is_none_or(|at| at.elapsed() > RESCAN_INTERVAL) {
         view.rescan(root);
         ui.ctx().request_repaint_after(RESCAN_INTERVAL);
     }
     if !view.tree.contains_key(&view.current) {
-        view.current = view.root.clone();
+        view.current = view.root.clone().unwrap_or_default();
     }
 
     let mut outcome = Outcome::default();
@@ -164,8 +193,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             let slot = ui.painter().add(egui::Shape::Noop);
             let full_width = ui.max_rect().x_range();
             let mut rows = Vec::new();
-            let root = view.root.clone();
-            folder_tree(ui, &view, &root, &mut rows, &mut outcome);
+            top_folders(ui, &view, &mut rows, &mut outcome);
             theme::stripes(ui, slot, rows.into_iter(), full_width);
         });
     });
@@ -194,8 +222,13 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         Some(Action::NewGraph(domain)) => {
             let extension = if domain == "material" { "bmaterial" } else { "bscript" };
             let stem = if domain == "material" { "new_material" } else { "new_script" };
-            let folder = editor.project.current.clone();
-            let path = (1..).map(|n| folder.join(if n == 1 { format!("{stem}.{extension}") } else { format!("{stem}_{n}.{extension}") })).find(|p| !p.exists());
+            // New files go into the project only, never into the engine's folder.
+            let folder = if editor.project.in_project() { editor.project.current.clone() } else { editor.project.root.clone().unwrap_or_default() };
+            let path = if folder.as_os_str().is_empty() {
+                None
+            } else {
+                (1..).map(|n| folder.join(if n == 1 { format!("{stem}.{extension}") } else { format!("{stem}_{n}.{extension}") })).find(|p| !p.exists())
+            };
             if let Some(path) = path
                 && (editor.session.graph().is_none_or(|g| !g.dirty) || crate::confirm_discard_graph())
                 && editor.dispatch("graph.new", &json!({ "domain": domain }), None).is_some()
@@ -223,72 +256,109 @@ fn toolbar(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) {
         s.interact_size.y = LIST_ROW;
         s.button_padding = egui::vec2(6.0, 1.0);
         s.slider_rail_height = 3.0;
-        let create = ui.menu_button("+", |ui| {
-            if ui.button("New Material").on_hover_text("A material graph in this folder").clicked() {
-                outcome.action = Some(Action::NewGraph("material"));
-                ui.close();
-            }
-            if ui.button("New Visual Script").on_hover_text("A visual script in this folder").clicked() {
-                outcome.action = Some(Action::NewGraph("script"));
-                ui.close();
-            }
+        // New files are made in the project only.
+        let can_create = view.root.is_some();
+        ui.add_enabled_ui(can_create, |ui| {
+            create_menu(ui, outcome);
         });
-        ui.ctx().accesskit_node_builder(create.response.id, |node| node.set_label("Create file"));
-        create.response.on_hover_text("Create a material or visual script here");
-        let mut crumbs: Vec<PathBuf> = view.current.ancestors().take_while(|p| p.starts_with(&view.root)).map(Path::to_path_buf).collect();
-        crumbs.reverse();
-        for (i, crumb) in crumbs.iter().enumerate() {
-            if i > 0 {
-                ui.label(egui::RichText::new("/").color(t.text_muted));
+        // The first crumb names the top folder: Project or Engine.
+        match view.top_of(&view.current).map(|(name, root)| (name, root.to_path_buf())) {
+            Some((top, root)) => {
+                let mut crumbs: Vec<PathBuf> = view.current.ancestors().take_while(|p| p.starts_with(&root)).map(Path::to_path_buf).collect();
+                crumbs.reverse();
+                for (i, crumb) in crumbs.iter().enumerate() {
+                    if i > 0 {
+                        ui.label(egui::RichText::new("/").color(t.text_muted));
+                    }
+                    let name = if i == 0 {
+                        top.to_owned()
+                    } else {
+                        crumb.file_name().map_or_else(|| crumb.display().to_string(), |n| n.to_string_lossy().into_owned())
+                    };
+                    if ui.add(egui::Button::new(name).frame_when_inactive(false).small()).on_hover_text(crumb.display().to_string()).clicked() {
+                        outcome.enter = Some(crumb.clone());
+                    }
+                }
             }
-            let name = crumb.file_name().map_or_else(|| crumb.display().to_string(), |n| n.to_string_lossy().into_owned());
-            if ui.add(egui::Button::new(name).frame_when_inactive(false).small()).on_hover_text(crumb.display().to_string()).clicked() {
-                outcome.enter = Some(crumb.clone());
+            None => {
+                ui.label(egui::RichText::new("Project").small().color(t.text));
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let search =
-                ui.add_sized([SEARCH_WIDTH, LIST_ROW], egui::TextEdit::singleline(&mut view.filter).hint_text("Search").align(egui::Align2::LEFT_CENTER));
-            ui.ctx().accesskit_node_builder(search.id, |node| node.set_label("Search project files"));
-            // A short icon-size slider; Ctrl+mouse wheel over the files does the same.
-            let mut size = view.icon();
-            ui.spacing_mut().slider_width = SLIDER_WIDTH;
-            let slider = ui.add_enabled(
-                view.mode == ViewMode::Icons,
-                egui::Slider::new(&mut size, ICON_MIN..=ICON_MAX)
-                    .show_value(false)
-                    .logarithmic(true)
-                    .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
-            );
-            ui.ctx().accesskit_node_builder(slider.id, |node| node.set_label("Icon size"));
-            if slider.on_hover_text("Icon size (Ctrl + mouse wheel)").changed() {
-                view.icon_size = size;
-            }
-            for (mode, label) in [(ViewMode::List, "List"), (ViewMode::Icons, "Icons")] {
-                if ui.add(egui::Button::selectable(view.mode == mode, label).small()).on_hover_text(format!("Show files as {}", label.to_lowercase())).clicked()
-                {
-                    view.mode = mode;
-                }
-            }
+            toolbar_right(ui, view);
         });
     });
 }
 
-fn folder_tree(ui: &mut egui::Ui, view: &ProjectView, dir: &Path, rows: &mut Vec<egui::Rect>, outcome: &mut Outcome) {
-    if dir == view.root {
-        // The project folder itself is always the first row.
-        let name = dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned());
-        ui.horizontal(|ui| {
-            ui.add_space(4.0);
-            let response = folder_row(ui, &name, view.current == dir);
-            if response.clicked() {
-                outcome.enter = Some(dir.to_path_buf());
-            }
-            rows.push(response.rect);
-        });
+fn create_menu(ui: &mut egui::Ui, outcome: &mut Outcome) {
+    let create = ui.menu_button("+", |ui| {
+        if ui.button("New Material").on_hover_text("A material graph in this folder").clicked() {
+            outcome.action = Some(Action::NewGraph("material"));
+            ui.close();
+        }
+        if ui.button("New Visual Script").on_hover_text("A visual script in this folder").clicked() {
+            outcome.action = Some(Action::NewGraph("script"));
+            ui.close();
+        }
+    });
+    ui.ctx().accesskit_node_builder(create.response.id, |node| node.set_label("Create file"));
+    create.response.on_hover_text("Create a material or visual script in the project");
+}
+
+/// View switch, icon size and search, laid out from the right.
+fn toolbar_right(ui: &mut egui::Ui, view: &mut ProjectView) {
+    ui.spacing_mut().item_spacing.x = 4.0;
+    let search = ui.add_sized([SEARCH_WIDTH, LIST_ROW], egui::TextEdit::singleline(&mut view.filter).hint_text("Search").align(egui::Align2::LEFT_CENTER));
+    ui.ctx().accesskit_node_builder(search.id, |node| node.set_label("Search project files"));
+    // A short icon-size slider; Ctrl+mouse wheel over the files does the same.
+    let mut size = view.icon();
+    ui.spacing_mut().slider_width = SLIDER_WIDTH;
+    let slider = ui.add_enabled(
+        view.mode == ViewMode::Icons,
+        egui::Slider::new(&mut size, ICON_MIN..=ICON_MAX)
+            .show_value(false)
+            .logarithmic(true)
+            .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
+    );
+    ui.ctx().accesskit_node_builder(slider.id, |node| node.set_label("Icon size"));
+    if slider.on_hover_text("Icon size (Ctrl + mouse wheel)").changed() {
+        view.icon_size = size;
     }
-    for entry in view.tree.get(dir).map_or(&[][..], Vec::as_slice).iter().filter(|e| e.kind == Kind::Folder) {
+    for (mode, label) in [(ViewMode::List, "List"), (ViewMode::Icons, "Icons")] {
+        if ui.add(egui::Button::selectable(view.mode == mode, label).small()).on_hover_text(format!("Show files as {}", label.to_lowercase())).clicked() {
+            view.mode = mode;
+        }
+    }
+}
+
+/// The two top folders: Project (open) and Engine (closed until opened).
+fn top_folders(ui: &mut egui::Ui, view: &ProjectView, rows: &mut Vec<egui::Rect>, outcome: &mut Outcome) {
+    let project = view.root.clone().unwrap_or_default();
+    let tops = [("Project", Some(project), true), ("Engine", view.engine.clone(), false)];
+    for (name, dir, open) in tops {
+        let Some(dir) = dir else { continue };
+        let at_top = view.current == dir;
+        let id = ui.make_persistent_id(("project top folder", name));
+        let hover = if dir.as_os_str().is_empty() { "No project folder: open or save a scene".to_owned() } else { dir.display().to_string() };
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, open || view.current.starts_with(&dir) && !dir.as_os_str().is_empty())
+            .show_header(ui, |ui| {
+                let response = folder_row(ui, name, at_top).on_hover_text(hover);
+                if response.clicked() {
+                    outcome.enter = Some(dir.clone());
+                }
+                rows.push(response.rect);
+            })
+            .body(|ui| folder_tree(ui, view, &dir, rows, outcome));
+    }
+}
+
+fn folder_tree(ui: &mut egui::Ui, view: &ProjectView, dir: &Path, rows: &mut Vec<egui::Rect>, outcome: &mut Outcome) {
+    if dir.as_os_str().is_empty() {
+        return;
+    }
+    // The engine's folder is listed only at the top, never inside the project.
+    let folders = view.tree.get(dir).map_or(&[][..], Vec::as_slice).iter().filter(|e| e.kind == Kind::Folder && Some(&e.path) != view.engine.as_ref());
+    for entry in folders {
         let has_subfolders = view.tree.get(&entry.path).is_some_and(|children| children.iter().any(|c| c.kind == Kind::Folder));
         let is_current = view.current == entry.path;
         if has_subfolders {
@@ -323,12 +393,23 @@ fn folder_row(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
 
 /// The open folder's entries, or every file matching the search.
 fn files(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, outcome: &mut Outcome) {
+    if view.current.as_os_str().is_empty() {
+        inspector::empty_state(ui, "No project folder", "Open or save a scene to see its folder here. The engine's own files are under Engine, on the left.");
+        return;
+    }
     let filter = view.filter.trim().to_lowercase();
+    // The engine's folder is never a tile: it is chosen from the folder list only.
+    let shown = |e: &&Entry| Some(&e.path) != view.engine.as_ref();
     let entries: Vec<&Entry> = if filter.is_empty() {
-        view.tree.get(&view.current).map(|v| v.iter().collect()).unwrap_or_default()
+        view.tree.get(&view.current).map(|v| v.iter().filter(shown).collect()).unwrap_or_default()
     } else {
-        let mut found: Vec<&Entry> = view.tree.values().flatten().filter(|e| e.kind != Kind::Folder && e.name.to_lowercase().contains(&filter)).collect();
+        // Search the top folder the open folder belongs to: the project, or the engine.
+        let scope = view.top_of(&view.current).map(|(_, root)| root.to_path_buf()).unwrap_or_else(|| view.current.clone());
+        let in_scope = |e: &&Entry| e.path.starts_with(&scope);
+        let mut found: Vec<&Entry> =
+            view.tree.values().flatten().filter(|e| e.kind != Kind::Folder && e.name.to_lowercase().contains(&filter)).filter(in_scope).filter(shown).collect();
         found.sort_by(|a, b| a.path.cmp(&b.path));
+        found.dedup_by(|a, b| a.path == b.path);
         found
     };
     if entries.is_empty() {
@@ -422,14 +503,18 @@ fn list_row(ui: &mut egui::Ui, entry: &Entry, selected: bool) -> egui::Response 
 
 /// Clicks, double-clicks, dragging and the context menu, shared by tiles and list rows.
 fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry: &Entry, selected_object: bool, outcome: &mut Outcome) {
-    let relative = relative_path(&view.root, &entry.path);
+    // Project files are referred to relative to the project; engine files by their full path.
+    let relative = match &view.root {
+        Some(root) if entry.path.starts_with(root) => relative_path(root, &entry.path),
+        _ => relative_path(Path::new(""), &entry.path),
+    };
     if response.clicked() || (response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_pressed())) {
         outcome.select = Some(entry.path.clone());
     }
     if response.double_clicked() {
         match entry.kind {
             Kind::Folder => outcome.enter = Some(entry.path.clone()),
-            Kind::Scene => outcome.action = Some(Action::OpenScene(entry.path.clone())),
+            Kind::Scene | Kind::Project => outcome.action = Some(Action::OpenScene(entry.path.clone())),
             Kind::Material | Kind::VisualScript => outcome.action = Some(Action::OpenGraph(entry.path.clone())),
             _ => {}
         }
@@ -450,6 +535,10 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
             ui.close();
         }
         if entry.kind == Kind::Scene && ui.button("Open Scene").clicked() {
+            outcome.action = Some(Action::OpenScene(entry.path.clone()));
+            ui.close();
+        }
+        if entry.kind == Kind::Project && ui.button("Open Project").clicked() {
             outcome.action = Some(Action::OpenScene(entry.path.clone()));
             ui.close();
         }
@@ -493,14 +582,16 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             painter.rect_filled(tab, s * 0.04, t.warning.gamma_multiply(0.8));
             painter.rect_filled(body, s * 0.06, t.warning);
         }
-        Kind::Scene => {
-            // An outlined cube seen from above and in front.
+        Kind::Scene | Kind::Project => {
+            // An outlined cube seen from above and in front; filled for a project file.
+            let filled = kind == Kind::Project;
             let color = t.brand;
             let (top, left, right, mid, bottom, lb, rb) =
                 (at(0.5, 0.12), at(0.14, 0.32), at(0.86, 0.32), at(0.5, 0.52), at(0.5, 0.9), at(0.14, 0.7), at(0.86, 0.7));
-            painter.add(egui::Shape::convex_polygon(vec![top, right, mid, left], color.gamma_multiply(0.35), stroke(color)));
-            painter.add(egui::Shape::closed_line(vec![left, mid, bottom, lb], stroke(color)));
-            painter.add(egui::Shape::closed_line(vec![mid, right, rb, bottom], stroke(color)));
+            let side = if filled { color.gamma_multiply(0.6) } else { egui::Color32::TRANSPARENT };
+            painter.add(egui::Shape::convex_polygon(vec![top, right, mid, left], color.gamma_multiply(if filled { 0.9 } else { 0.35 }), stroke(color)));
+            painter.add(egui::Shape::convex_polygon(vec![left, mid, bottom, lb], side, stroke(color)));
+            painter.add(egui::Shape::convex_polygon(vec![mid, right, rb, bottom], side, stroke(color)));
         }
         Kind::Material => {
             // A shaded ball with a highlight.
@@ -554,9 +645,38 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
     }
 }
 
-/// The open scene's folder, or the folder the editor runs in.
-fn project_root(editor: &Editor) -> PathBuf {
-    editor.session.scene_path().and_then(Path::parent).map(Path::to_path_buf).or_else(|| std::env::current_dir().ok()).unwrap_or_else(|| PathBuf::from("."))
+/// The project folder, the open scene's folder, or the folder the editor runs in.
+fn project_root(editor: &Editor, engine: Option<&Path>) -> Option<PathBuf> {
+    if let Some(dir) = editor.session.project_dir() {
+        return Some(dir.to_path_buf());
+    }
+    let scene_folder = editor.session.scene_path().and_then(Path::parent).map(Path::to_path_buf);
+    let folder = scene_folder.filter(|f| !f.as_os_str().is_empty()).or_else(|| std::env::current_dir().ok())?;
+    project_folder(folder, engine)
+}
+
+/// `folder` as the project, unless it is the engine's folder or holds it: then there is no project,
+/// so the engine's files are never shown as the project's.
+fn project_folder(folder: PathBuf, engine: Option<&Path>) -> Option<PathBuf> {
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    match engine {
+        Some(engine) if canonical(engine).starts_with(canonical(&folder)) => None,
+        _ => Some(folder),
+    }
+}
+
+/// The engine's own folder: `BAYLEAF_ENGINE_DIR` when set; else, from the editor program, an
+/// `engine` folder beside it (an installed engine) or the source checkout it was built in.
+fn engine_root() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("BAYLEAF_ENGINE_DIR").map(PathBuf::from).filter(|d| d.is_dir()) {
+        return Some(dir);
+    }
+    let exe = std::env::current_exe().ok()?;
+    let beside = exe.parent()?.join("engine");
+    if beside.is_dir() {
+        return Some(beside);
+    }
+    exe.ancestors().find(|dir| dir.join("crates").join("engine").join("Cargo.toml").is_file()).map(Path::to_path_buf)
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
@@ -565,11 +685,25 @@ fn relative_path(root: &Path, path: &Path) -> String {
 }
 
 impl ProjectView {
-    fn rescan(&mut self, root: PathBuf) {
+    /// Reads the project folder and the engine's folder again, each with its own entry budget.
+    fn rescan(&mut self, root: Option<PathBuf>) {
         self.tree.clear();
         self.truncated = false;
+        for top in [root.clone(), self.engine.clone()].into_iter().flatten() {
+            self.scan(&top);
+        }
+        if self.root != root {
+            self.current = root.clone().unwrap_or_default();
+            self.selected = None;
+        }
+        self.root = root;
+        self.scanned = Some(Instant::now());
+    }
+
+    fn scan(&mut self, top: &Path) {
         let mut count = 0;
-        let mut pending = vec![root.clone()];
+        let mut truncated = false;
+        let mut pending = vec![top.to_path_buf()];
         while let Some(dir) = pending.pop() {
             let Ok(read) = std::fs::read_dir(&dir) else { continue };
             let mut entries: Vec<Entry> = read
@@ -588,27 +722,22 @@ impl ProjectView {
             entries.sort_by(|a, b| (a.kind != Kind::Folder).cmp(&(b.kind != Kind::Folder)).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
             count += entries.len();
             if count > MAX_ENTRIES {
-                self.truncated = true;
+                truncated = true;
                 entries.truncate(entries.len().saturating_sub(count - MAX_ENTRIES));
             }
             pending.extend(entries.iter().filter(|e| e.kind == Kind::Folder).map(|e| e.path.clone()));
             self.tree.insert(dir, entries);
-            if self.truncated {
+            if truncated {
                 break;
             }
         }
-        if self.root != root {
-            self.current = root.clone();
-            self.selected = None;
-        }
-        self.root = root;
-        self.scanned = Some(Instant::now());
+        self.truncated |= truncated;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Kind, ProjectView, relative_path};
+    use super::{Kind, ProjectView, project_folder, relative_path};
     use std::path::Path;
 
     #[test]
@@ -620,12 +749,24 @@ mod tests {
         std::fs::write(dir.join("a.bscene"), "{}").unwrap();
         std::fs::write(dir.join("scripts").join("spin.wasm"), [0u8]).unwrap();
         let mut view = ProjectView::default();
-        view.rescan(dir.clone());
+        view.rescan(Some(dir.clone()));
         let top: Vec<_> = view.tree[&dir].iter().map(|e| (e.name.as_str(), e.kind)).collect();
         assert_eq!(top, [("scripts", Kind::Folder), ("a.bscene", Kind::Scene)]);
         assert_eq!(view.tree[&dir.join("scripts")][0].kind, Kind::Script);
         assert_eq!(view.current, dir, "a new project opens at its root");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_engine_folder_and_folders_holding_it_are_never_the_project() {
+        let engine = std::env::temp_dir().join(format!("bayleaf-engine-root-{}", std::process::id()));
+        let demo = engine.join("examples").join("demo");
+        std::fs::create_dir_all(&demo).unwrap();
+        assert_eq!(project_folder(engine.clone(), Some(&engine)), None, "running from the engine's folder");
+        assert_eq!(project_folder(std::env::temp_dir(), Some(&engine)), None, "a folder that holds the engine");
+        assert_eq!(project_folder(demo.clone(), Some(&engine)), Some(demo.clone()), "a project inside the engine's examples");
+        assert_eq!(project_folder(demo.clone(), None), Some(demo));
+        std::fs::remove_dir_all(&engine).ok();
     }
 
     #[test]

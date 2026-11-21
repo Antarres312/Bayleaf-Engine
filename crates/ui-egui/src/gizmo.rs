@@ -1,0 +1,295 @@
+//! Handles drawn over the scene view for moving, turning and resizing the selected object.
+//!
+//! Move arrows follow the world axes, turn rings circle the world axes, and resize handles follow
+//! the object's own axes. Dragging a handle changes the object's transform through
+//! `scene.component.set`, as one undo step per drag. The same values can be typed in the
+//! Inspector, which is the keyboard path.
+
+use bayleaf_core::math::{EulerRot, Mat4, Quat, Vec3};
+use bayleaf_engine::scene::components::Transform;
+use egui::{Pos2, Rect, pos2};
+
+/// What dragging a handle does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Tool {
+    #[default]
+    Move,
+    Rotate,
+    Scale,
+}
+
+impl Tool {
+    pub const ALL: [Tool; 3] = [Tool::Move, Tool::Rotate, Tool::Scale];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tool::Move => "Move",
+            Tool::Rotate => "Rotate",
+            Tool::Scale => "Scale",
+        }
+    }
+
+    /// Key that picks the tool while the scene view has focus.
+    pub fn key(self) -> egui::Key {
+        match self {
+            Tool::Move => egui::Key::M,
+            Tool::Rotate => egui::Key::R,
+            Tool::Scale => egui::Key::S,
+        }
+    }
+}
+
+/// One handle: a tool and an axis (0 = X, 1 = Y, 2 = Z).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Handle {
+    pub tool: Tool,
+    pub axis: usize,
+}
+
+/// World to screen for one frame of the scene view.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Projector {
+    pub view_proj: Mat4,
+    pub rect: Rect,
+    pub eye: Vec3,
+}
+
+impl Projector {
+    /// Where a world point appears in the view; `None` behind the camera.
+    pub fn project(&self, point: Vec3) -> Option<Pos2> {
+        let clip = self.view_proj * point.extend(1.0);
+        if clip.w <= 1e-4 {
+            return None;
+        }
+        let ndc = clip.truncate() / clip.w;
+        Some(pos2(self.rect.left() + (ndc.x * 0.5 + 0.5) * self.rect.width(), self.rect.top() + (0.5 - ndc.y * 0.5) * self.rect.height()))
+    }
+}
+
+/// The world size of the handles at `origin`: a fixed share of the distance to the camera, so
+/// they keep their size on screen.
+pub(crate) fn handle_length(projector: &Projector, origin: Vec3) -> f32 {
+    projector.eye.distance(origin).max(0.01) * 0.16
+}
+
+/// The direction a handle works along or around, in world space.
+pub(crate) fn axis_dir(handle: Handle, world: Mat4) -> Vec3 {
+    match handle.tool {
+        // Resizing follows the object's own axes.
+        Tool::Scale => {
+            let column = match handle.axis {
+                0 => world.x_axis,
+                1 => world.y_axis,
+                _ => world.z_axis,
+            };
+            column.truncate().normalize_or(Vec3::AXES[handle.axis.min(2)])
+        }
+        _ => Vec3::AXES[handle.axis.min(2)],
+    }
+}
+
+/// The screen polyline of a handle: a line for move and resize, a ring for turn.
+pub(crate) fn handle_points(projector: &Projector, world: Mat4, handle: Handle) -> Vec<Pos2> {
+    let origin = world.w_axis.truncate();
+    let len = handle_length(projector, origin);
+    let dir = axis_dir(handle, world);
+    match handle.tool {
+        Tool::Move | Tool::Scale => [origin + dir * len * 0.18, origin + dir * len].iter().filter_map(|p| projector.project(*p)).collect(),
+        Tool::Rotate => {
+            let u = dir.any_orthonormal_vector();
+            let v = dir.cross(u);
+            (0..=64)
+                .filter_map(|i| {
+                    let a = i as f32 / 64.0 * std::f32::consts::TAU;
+                    projector.project(origin + (u * a.cos() + v * a.sin()) * len * 0.85)
+                })
+                .collect()
+        }
+    }
+}
+
+/// The handle of `tool` nearest to `pointer`, if one is within `reach` points.
+pub(crate) fn hit(projector: &Projector, world: Mat4, tool: Tool, pointer: Pos2, reach: f32) -> Option<Handle> {
+    (0..3)
+        .map(|axis| Handle { tool, axis })
+        .filter_map(|handle| {
+            let points = handle_points(projector, world, handle);
+            let distance = points.windows(2).map(|s| distance_to_segment(pointer, s[0], s[1])).fold(f32::INFINITY, f32::min);
+            (distance <= reach).then_some((handle, distance))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(handle, _)| handle)
+}
+
+fn distance_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let t = if ab.length_sq() > 0.0 { ((p - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0) } else { 0.0 };
+    p.distance(a + ab * t)
+}
+
+/// One object's transform when a drag started.
+#[derive(Clone, Debug)]
+pub(crate) struct Start {
+    pub object: bayleaf_core::StableId,
+    pub local: Transform,
+    /// The object's and its parent's world matrices.
+    pub world: Mat4,
+    pub parent: Mat4,
+}
+
+/// A drag in progress. The handle belongs to the first object, the primary selection; the
+/// others follow it.
+#[derive(Clone, Debug)]
+pub(crate) struct Drag {
+    pub handle: Handle,
+    pub objects: Vec<Start>,
+    pub start: Pos2,
+}
+
+/// What a drag does, the same for every dragged object.
+#[derive(Clone, Copy, Debug)]
+enum Change {
+    Move(Vec3),
+    Turn(Vec3, f32),
+    Resize(usize, f32),
+}
+
+/// The new local transform of every dragged object after dragging from `drag.start` to `pointer`.
+pub(crate) fn drag_to(projector: &Projector, drag: &Drag, pointer: Pos2) -> Vec<(bayleaf_core::StableId, Transform)> {
+    let Some(primary) = drag.objects.first() else { return Vec::new() };
+    let change = change(projector, drag.handle, primary, drag.start, pointer);
+    drag.objects.iter().map(|start| (start.object, apply(change, start))).collect()
+}
+
+fn change(projector: &Projector, handle: Handle, primary: &Start, from: Pos2, pointer: Pos2) -> Change {
+    let origin = primary.world.w_axis.truncate();
+    let len = handle_length(projector, origin);
+    let dir = axis_dir(handle, primary.world);
+    // How far along the handle's direction on screen the pointer moved, in handle lengths.
+    let along = || -> f32 {
+        let (Some(a), Some(b)) = (projector.project(origin), projector.project(origin + dir * len)) else { return 0.0 };
+        let axis = b - a;
+        if axis.length_sq() < 1.0 {
+            return 0.0;
+        }
+        (pointer - from).dot(axis) / axis.length_sq()
+    };
+    match handle.tool {
+        Tool::Move => Change::Move(dir * along() * len),
+        Tool::Scale => Change::Resize(handle.axis, (1.0 + along()).max(0.01)),
+        Tool::Rotate => {
+            let Some(center) = projector.project(origin) else { return Change::Turn(dir, 0.0) };
+            let angle = |p: Pos2| (p.y - center.y).atan2(p.x - center.x);
+            let screen = (angle(pointer) - angle(from) + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            // On screen, y points down. Seen from the side the axis points to, a turn that looks
+            // anticlockwise is a positive turn about the axis.
+            let facing = dir.dot(projector.eye - origin).signum();
+            Change::Turn(dir, -facing * screen)
+        }
+    }
+}
+
+/// `change` applied to one object, about its own origin.
+fn apply(change: Change, start: &Start) -> Transform {
+    let mut local = start.local.clone();
+    match change {
+        Change::Move(offset) => {
+            let world_target = start.world.w_axis.truncate() + offset;
+            local.position = start.parent.inverse().transform_point3(world_target).to_array();
+        }
+        Change::Resize(axis, factor) => {
+            local.scale[axis] = start.local.scale[axis] * factor;
+        }
+        Change::Turn(axis, angle) => {
+            let (_, world_rotation, _) = start.world.to_scale_rotation_translation();
+            let (_, parent_rotation, _) = start.parent.to_scale_rotation_translation();
+            let turned = Quat::from_axis_angle(axis, angle) * world_rotation;
+            let (x, y, z) = (parent_rotation.inverse() * turned).normalize().to_euler(EulerRot::XYZ);
+            local.rotation = [x.to_degrees(), y.to_degrees(), z.to_degrees()];
+        }
+    }
+    local
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Drag, Handle, Projector, Start, Tool, drag_to, hit};
+    use bayleaf_core::math::{Mat4, Vec3};
+    use bayleaf_engine::scene::components::Transform;
+    use egui::{Rect, pos2, vec2};
+
+    /// Looking down −Z from +Z at the origin, so +X is right and +Y is up on screen.
+    fn front_view() -> Projector {
+        let eye = Vec3::new(0.0, 0.0, 10.0);
+        let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+        let proj = Mat4::perspective_rh(50f32.to_radians(), 1.0, 0.1, 100.0);
+        Projector { view_proj: proj * view, rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 400.0)), eye }
+    }
+
+    fn start(n: u128, local: Transform, parent: Mat4) -> Start {
+        Start { object: bayleaf_core::StableId::from_u128(n), world: parent * local.matrix(), local, parent }
+    }
+
+    fn drag(tool: Tool, axis: usize, local: Transform, parent: Mat4) -> Drag {
+        Drag { handle: Handle { tool, axis }, objects: vec![start(1, local, parent)], start: pos2(200.0, 200.0) }
+    }
+
+    fn first(p: &Projector, d: &Drag, to: egui::Pos2) -> Transform {
+        drag_to(p, d, to).remove(0).1
+    }
+
+    #[test]
+    fn the_move_arrow_under_the_pointer_is_hit_and_moves_along_its_axis() {
+        let p = front_view();
+        let world = Mat4::IDENTITY;
+        // The X arrow runs right from the centre.
+        assert_eq!(hit(&p, world, Tool::Move, pos2(240.0, 200.0), 6.0).map(|h| h.axis), Some(0));
+        assert_eq!(hit(&p, world, Tool::Move, pos2(200.0, 160.0), 6.0).map(|h| h.axis), Some(1));
+        assert!(hit(&p, world, Tool::Move, pos2(330.0, 330.0), 6.0).is_none());
+
+        let moved = first(&p, &drag(Tool::Move, 0, Transform::default(), Mat4::IDENTITY), pos2(260.0, 230.0));
+        assert!(moved.position[0] > 0.1, "dragging right moves +X");
+        assert!(moved.position[1].abs() < 1e-5 && moved.position[2].abs() < 1e-5, "and only along X: {:?}", moved.position);
+    }
+
+    #[test]
+    fn moving_under_a_scaled_parent_keeps_the_world_motion() {
+        let p = front_view();
+        let parent = Mat4::from_scale(Vec3::splat(2.0));
+        let moved = first(&p, &drag(Tool::Move, 0, Transform::default(), parent), pos2(260.0, 200.0));
+        let alone = first(&p, &drag(Tool::Move, 0, Transform::default(), Mat4::IDENTITY), pos2(260.0, 200.0));
+        assert!((moved.position[0] * 2.0 - alone.position[0]).abs() < 1e-4, "local units are half the world units");
+    }
+
+    #[test]
+    fn turning_anticlockwise_seen_from_the_axis_is_a_positive_turn() {
+        let p = front_view();
+        // The Z axis points at the camera. Start right of the centre, end above it: a quarter turn
+        // anticlockwise on screen.
+        let mut d = drag(Tool::Rotate, 2, Transform::default(), Mat4::IDENTITY);
+        d.start = pos2(260.0, 200.0);
+        let turned = first(&p, &d, pos2(200.0, 140.0));
+        assert!((turned.rotation[2] - 90.0).abs() < 1.0, "{:?}", turned.rotation);
+    }
+
+    #[test]
+    fn resizing_grows_one_axis_and_never_flips_it() {
+        let p = front_view();
+        let grown = first(&p, &drag(Tool::Scale, 0, Transform::default(), Mat4::IDENTITY), pos2(300.0, 200.0));
+        assert!(grown.scale[0] > 1.5 && grown.scale[1] == 1.0);
+        let shrunk = first(&p, &drag(Tool::Scale, 0, Transform::default(), Mat4::IDENTITY), pos2(-400.0, 200.0));
+        assert!(shrunk.scale[0] > 0.0, "a long drag inwards stops at a small positive size");
+    }
+
+    #[test]
+    fn every_dragged_object_moves_by_the_same_amount_from_its_own_place() {
+        let p = front_view();
+        let other = Transform { position: [3.0, -1.0, 0.0], ..Transform::default() };
+        let mut d = drag(Tool::Move, 0, Transform::default(), Mat4::IDENTITY);
+        d.objects.push(start(2, other, Mat4::IDENTITY));
+        let moved = drag_to(&p, &d, pos2(260.0, 200.0));
+        let dx = moved[0].1.position[0];
+        assert!(dx > 0.1);
+        assert!((moved[1].1.position[0] - (3.0 + dx)).abs() < 1e-4 && moved[1].1.position[1] == -1.0);
+    }
+}

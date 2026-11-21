@@ -161,15 +161,20 @@ fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: 
     ui.vertical(|ui| {
         ui.set_width(width);
         for (index, item) in items.iter_mut().enumerate() {
+            // Remove sits at the right edge and the field takes what is left. The row keeps its own height.
             ui.horizontal(|ui| {
-                let button_width = if text_list { 70.0 } else { 0.0 };
-                let field_width = (ui.available_width() - button_width).max(40.0);
-                outcome.merge(edit(ui, item, index, label, field_width));
-                if text_list
-                    && ui.add_sized([button_width - 8.0, ROW_HEIGHT], egui::Button::new("Remove")).on_hover_text(format!("Remove item {}", index + 1)).clicked()
-                {
-                    remove = Some(index);
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if text_list
+                        && ui
+                            .add(egui::Button::new("Remove").min_size(egui::vec2(0.0, ROW_HEIGHT)))
+                            .on_hover_text(format!("Remove item {}", index + 1))
+                            .clicked()
+                    {
+                        remove = Some(index);
+                    }
+                    let field_width = (ui.available_width() - 1.0).max(40.0);
+                    outcome.merge(edit(ui, item, index, label, field_width));
+                });
             });
         }
         if items.is_empty() {
@@ -319,22 +324,25 @@ pub(crate) fn named_number(
     let mut reset = false;
     let outcome = ui
         .push_id(salt, |ui| {
-            row(ui, t, &title_case(name), |ui, label, width| {
-                let reset_width = if overridden { 52.0 } else { 0.0 };
-                let field_width = (width - reset_width).max(40.0);
-                let outcome = match value {
-                    Value::Number(n) => edit_number(ui, n, label, field_width),
-                    _ => Outcome::default(),
-                };
-                if overridden
-                    && ui
-                        .add_sized([reset_width - 6.0, ROW_HEIGHT], egui::Button::new("Reset").small())
-                        .on_hover_text("Go back to the script's default")
-                        .clicked()
-                {
-                    reset = true;
-                }
-                outcome
+            row(ui, t, &title_case(name), |ui, label, _| {
+                // Reset sits at the right edge and the field takes what is left, so the row never
+                // grows past the panel.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if overridden
+                        && ui
+                            .add(egui::Button::new("Reset").small().min_size(egui::vec2(0.0, ROW_HEIGHT)))
+                            .on_hover_text("Go back to the script's default")
+                            .clicked()
+                    {
+                        reset = true;
+                    }
+                    let field_width = (ui.available_width() - 1.0).max(40.0);
+                    match value {
+                        Value::Number(n) => edit_number(ui, n, label, field_width),
+                        _ => Outcome::default(),
+                    }
+                })
+                .inner
             })
         })
         .inner;

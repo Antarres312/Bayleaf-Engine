@@ -1,6 +1,6 @@
-//! Built-in scene components.
+﻿//! Built-in scene components.
 //!
-//! Axis convention: right-handed, +Y up. Cameras and lights look along their local −Z axis.
+//! Axis convention: right-handed, +Y up. Cameras and lights look along their local â’Z axis.
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -120,7 +120,7 @@ pub struct Mesh {
     pub metallic: f32,
     /// 0 for a mirror finish, 1 for fully rough.
     pub roughness: f32,
-    /// Material graph file (`.bmaterial`), relative to the scene's folder. Empty: colour, metallic
+    /// Material graph file (`.bmaterial`), relative to the project folder (or the scene's folder outside a project). Empty: colour, metallic
     /// and roughness above. With a material, its Object Color node reads `color`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub material: String,
@@ -160,7 +160,7 @@ pub enum Projection {
     Orthographic,
 }
 
-/// A viewpoint the scene can be rendered from. It looks along its local −Z axis.
+/// A viewpoint the scene can be rendered from. It looks along its local â’Z axis.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Camera {
@@ -203,7 +203,7 @@ impl SceneComponent for Camera {
     }
 }
 
-/// Light from a distant source, such as the sun. It shines along the object's local −Z axis.
+/// Light from a distant source, such as the sun. It shines along the object's local â’Z axis.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectionalLight {
@@ -261,7 +261,7 @@ impl SceneComponent for Sprite {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScriptRef {
-    /// Path to the `.wasm` module, relative to the scene file's folder.
+    /// Path to the `.wasm` module or `.bscript` visual script, relative to the project folder (or the scene file's folder outside a project).
     pub module: String,
     /// Property values changed from the script's declared defaults.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -272,7 +272,8 @@ impl ScriptRef {
     /// Display name: the module's file name without `.wasm`, in title case (`spinner.wasm` -> `Spinner`).
     pub fn display_name(&self) -> String {
         let file = self.module.rsplit(['/', '\\']).next().unwrap_or(&self.module);
-        let stem = file.strip_suffix(".wasm").unwrap_or(file);
+        // Any script file: `.wasm` modules and `.bscript` visual scripts.
+        let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
         stem.split(['_', '-', ' '])
             .filter(|w| !w.is_empty())
             .map(|w| {

@@ -9,6 +9,7 @@ mod builtin;
 pub mod confine;
 mod graph_cmds;
 mod play;
+pub mod project_cmds;
 mod scene_cmds;
 
 /// Optional world streaming, present only with the `streaming` feature.
@@ -20,6 +21,7 @@ pub use bayleaf_render as render;
 pub use bayleaf_scene as scene;
 pub use bayleaf_script as script;
 pub use graph_cmds::{GraphDoc, catalog_for_domain, catalog_for_path, problems};
+pub use scene_cmds::CLIPBOARD_FORMAT;
 
 use std::path::{Path, PathBuf};
 
@@ -88,6 +90,8 @@ pub struct Session {
     confinement: Option<confine::Confinement>,
     /// The graph open in the graph editor.
     graph: Option<GraphDoc>,
+    /// The project folder the open scene belongs to, if any.
+    project_dir: Option<PathBuf>,
 }
 
 /// How important a console line is.
@@ -171,9 +175,23 @@ impl Session {
         }
     }
 
-    /// Folder module paths in `script` components are relative to.
+    /// The folder that paths in the scene (script modules, materials) start from: the project
+    /// folder, or the scene's own folder when it belongs to no project.
     pub fn script_dir(&self) -> PathBuf {
+        if let Some(dir) = &self.project_dir {
+            return dir.clone();
+        }
         self.scene_path.as_deref().and_then(Path::parent).map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    }
+
+    /// The project folder the open scene belongs to: the nearest folder above it with a `.bproject` file.
+    pub fn project_dir(&self) -> Option<&Path> {
+        self.project_dir.as_deref()
+    }
+
+    fn set_scene_path(&mut self, path: Option<PathBuf>) {
+        self.project_dir = path.as_deref().and_then(project_cmds::project_dir_of);
+        self.scene_path = path;
     }
     pub fn scene(&self) -> &Scene {
         &self.scene
@@ -204,7 +222,7 @@ impl Session {
 
     fn replace_scene(&mut self, scene: Scene, path: Option<PathBuf>) {
         self.scene = scene;
-        self.scene_path = path;
+        self.set_scene_path(path);
         self.dirty = false;
         self.forget(|s| matches!(s, Snapshot::Scene(_)));
     }
@@ -248,6 +266,10 @@ pub enum Prompt {
     SaveScene,
     /// `{"id"}` of the selected object.
     SelectedObject,
+    /// `{"path"}` of a new, empty project folder.
+    NewProject,
+    /// `{"path"}` of a `.bproject` file.
+    OpenProject,
 }
 
 /// One registered command.
@@ -296,6 +318,7 @@ impl CommandRegistry {
         commands.extend(scene_cmds::commands());
         commands.extend(play::commands());
         commands.extend(graph_cmds::commands());
+        commands.extend(project_cmds::commands());
         Self { commands }
     }
 

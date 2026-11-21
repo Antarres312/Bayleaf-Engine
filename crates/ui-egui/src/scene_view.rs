@@ -6,7 +6,7 @@
 use bayleaf_core::math::{Vec2, Vec3};
 use bayleaf_render::{CameraView, FrameOptions, RenderTarget, Renderer};
 
-use crate::Editor;
+use crate::{Editor, gizmo};
 
 /// Camera that circles a target point. The editor's own view, not saved in the scene.
 #[derive(Clone, Copy, Debug)]
@@ -79,6 +79,10 @@ pub(crate) struct SceneView {
     pub materials: bayleaf_render::MaterialLibrary,
     /// When the view first drew, for the Time node of animated materials.
     started: Option<std::time::Instant>,
+    /// What dragging a handle on the selected object does.
+    pub tool: gizmo::Tool,
+    /// A handle being dragged.
+    gizmo_drag: Option<gizmo::Drag>,
 }
 
 impl SceneView {
@@ -151,6 +155,16 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
         }
         ui.checkbox(&mut view.show_grid, "Grid");
         ui.separator();
+        for tool in gizmo::Tool::ALL {
+            let key = tool.key().name();
+            let button = ui
+                .add(egui::Button::selectable(view.tool == tool, tool.label()))
+                .on_hover_text(format!("Drag the handles on the selected object to {} it ({key})", tool.label().to_lowercase()));
+            if button.clicked() {
+                view.tool = tool;
+            }
+        }
+        ui.separator();
         ui.weak("Drag: orbit · Shift+drag: pan · Scroll: zoom · Click: select");
     });
     command
@@ -190,7 +204,8 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let base = editor.session.script_dir();
     let materials = &mut view.materials;
     let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time };
-    let frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut |path| materials.get(&base.join(path)).ok());
+    let mut frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut |path| materials.get(&base.join(path)).ok());
+    frame.highlighted = editor.also_selected.clone();
     if frame.items.iter().any(|i| i.material.as_ref().is_some_and(|m| m.animated)) {
         ui.ctx().request_repaint();
     }
@@ -205,10 +220,64 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     }
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Scene view"));
 
+    // Handles on the selected object. Not during play: play-mode changes are thrown away on stop.
+    let projector = gizmo::Projector { view_proj: frame.camera.view_proj(), rect: response.rect, eye: frame.camera.position };
+    let target = editor.selected.filter(|_| !editor.session.is_playing()).and_then(|id| {
+        let scene = editor.session.scene();
+        let world = scene.world_matrix(id)?;
+        let parent = scene.parent(id).and_then(|p| scene.world_matrix(p)).unwrap_or(bayleaf_core::math::Mat4::IDENTITY);
+        let local = scene.get::<bayleaf_engine::scene::components::Transform>(id)?.clone();
+        Some((id, world, parent, local))
+    });
+    let hovered = target.as_ref().and_then(|(_, world, _, _)| {
+        // A drag starts once the pointer has moved, maybe off the handle: test where it was pressed.
+        let pointer = if response.drag_started() { ui.input(|i| i.pointer.press_origin()) } else { response.hover_pos() }?;
+        gizmo::hit(&projector, *world, view.tool, pointer, 7.0)
+    });
+    if response.drag_started_by(egui::PointerButton::Primary)
+        && let (Some(handle), Some((id, world, parent, local))) = (hovered, target.clone())
+        && let Some(start) = ui.input(|i| i.pointer.press_origin())
+    {
+        // The other selected objects follow the primary one (objects inside a selected object move with it).
+        let mut objects = vec![gizmo::Start { object: id, local, world, parent }];
+        let scene = editor.session.scene();
+        for other in editor.selection_roots().into_iter().filter(|o| *o != id) {
+            if let (Some(world), Some(local)) = (scene.world_matrix(other), scene.get::<bayleaf_engine::scene::components::Transform>(other)) {
+                let parent = scene.parent(other).and_then(|p| scene.world_matrix(p)).unwrap_or(bayleaf_core::math::Mat4::IDENTITY);
+                objects.push(gizmo::Start { object: other, local: local.clone(), world, parent });
+            }
+        }
+        view.gizmo_drag = Some(gizmo::Drag { handle, objects, start });
+    }
+    if let Some(drag) = view.gizmo_drag.clone() {
+        if let Some(pointer) = response.interact_pointer_pos().or_else(|| response.hover_pos()) {
+            // Every changed object, under one merge key: the whole drag is one undo step.
+            let key = format!("gizmo {}", editor.gesture);
+            for (object, moved) in gizmo::drag_to(&projector, &drag, pointer) {
+                let current = editor.session.scene().get::<bayleaf_engine::scene::components::Transform>(object).cloned();
+                if current.as_ref() != Some(&moved) {
+                    editor.dispatch("scene.component.set", &serde_json::json!({ "id": object, "component": "transform", "value": moved }), Some(&key));
+                }
+            }
+        }
+        if !response.dragged() {
+            view.gizmo_drag = None;
+            editor.gesture += 1;
+        }
+    }
+    let icons = scene_icons(editor, &projector);
+    paint_icons(ui, &icons, editor.selected, response.rect);
+    if let Some((_, world, _, _)) = &target {
+        let active = view.gizmo_drag.as_ref().map(|d| d.handle).or(hovered);
+        paint_handles(ui, &projector, *world, view.tool, active, response.rect);
+    }
+
     // Mouse.
     let shift = ui.input(|i| i.modifiers.shift);
     let delta = response.drag_delta() / size.y;
-    if response.dragged_by(egui::PointerButton::Middle) || (response.dragged_by(egui::PointerButton::Primary) && shift) {
+    if view.gizmo_drag.is_some() {
+        // A handle is being dragged; the view stays put.
+    } else if response.dragged_by(egui::PointerButton::Middle) || (response.dragged_by(egui::PointerButton::Primary) && shift) {
         view.orbit.pan(Vec2::new(delta.x, delta.y));
     } else if response.dragged_by(egui::PointerButton::Primary) || response.dragged_by(egui::PointerButton::Secondary) {
         view.orbit.rotate(-delta.x * 3.0, delta.y * 3.0);
@@ -227,7 +296,15 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         if let Some(pos) = response.interact_pointer_pos() {
             let local = (pos - response.rect.min) / response.rect.size();
             let ndc = Vec2::new(local.x * 2.0 - 1.0, 1.0 - local.y * 2.0);
-            editor.selected = bayleaf_render::pick(&frame, ndc);
+            // Camera and light icons sit in front of the shapes.
+            let icon = icons.iter().filter(|i| i.center.distance(pos) <= ICON_REACH).min_by(|a, b| a.center.distance(pos).total_cmp(&b.center.distance(pos)));
+            let picked = icon.map(|i| i.id).or_else(|| bayleaf_render::pick(&frame, ndc));
+            // Ctrl + click adds to the selection or takes out of it.
+            match (picked, ui.input(|i| i.modifiers.command)) {
+                (Some(id), true) => editor.toggle_selected(id),
+                (_, true) => {}
+                (picked, false) => editor.select_only(picked),
+            }
         }
     }
 
@@ -253,6 +330,11 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         if ui.input(|i| i.key_pressed(egui::Key::F)) {
             view.frame_selection(editor);
         }
+        for tool in gizmo::Tool::ALL {
+            if ui.input(|i| i.modifiers.is_none() && i.key_pressed(tool.key())) {
+                view.tool = tool;
+            }
+        }
         if ui.input(|i| [egui::Key::ArrowLeft, egui::Key::ArrowRight, egui::Key::ArrowUp, egui::Key::ArrowDown].iter().any(|k| i.key_down(*k))) {
             ui.ctx().request_repaint();
         }
@@ -260,6 +342,129 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         ui.memory_mut(|m| {
             m.set_focus_lock_filter(response.id, egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, tab: false, escape: false })
         });
+    }
+}
+
+/// How close a click must be to a camera or light icon to pick it, in points.
+const ICON_REACH: f32 = 12.0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IconKind {
+    Camera,
+    Light,
+}
+
+/// An object without a shape, drawn as an icon so it can be seen and clicked.
+struct Icon {
+    id: bayleaf_core::StableId,
+    kind: IconKind,
+    center: egui::Pos2,
+    /// Where the object looks or shines, on screen, when that point is in front of the camera.
+    facing: Option<egui::Pos2>,
+}
+
+fn scene_icons(editor: &Editor, projector: &gizmo::Projector) -> Vec<Icon> {
+    use bayleaf_engine::scene::components::{Camera, DirectionalLight};
+    let scene = editor.session.scene();
+    scene
+        .world_matrices()
+        .into_iter()
+        .filter_map(|(id, world)| {
+            let kind = if scene.get::<Camera>(id).is_some() {
+                IconKind::Camera
+            } else if scene.get::<DirectionalLight>(id).is_some() {
+                IconKind::Light
+            } else {
+                return None;
+            };
+            let origin = world.w_axis.truncate();
+            let center = projector.project(origin)?;
+            let forward = world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Z);
+            let facing = projector.project(origin + forward * gizmo::handle_length(projector, origin) * 1.2);
+            Some(Icon { id, kind, center, facing })
+        })
+        .collect()
+}
+
+/// Cameras as a body with a lens, lights as a sun; the selected one in the accent colour with a
+/// line toward where it looks or shines.
+fn paint_icons(ui: &egui::Ui, icons: &[Icon], selected: Option<bayleaf_core::StableId>, clip: egui::Rect) {
+    let t = crate::theme::tokens(ui);
+    let painter = ui.painter_at(clip);
+    let edge = egui::Stroke::new(1.5, t.backdrop);
+    for icon in icons {
+        let is_selected = selected == Some(icon.id);
+        let color = if is_selected { t.accent } else { t.text };
+        let c = icon.center;
+        if is_selected && let Some(facing) = icon.facing {
+            painter.line_segment([c, facing], egui::Stroke::new(3.0, t.backdrop));
+            painter.line_segment([c, facing], egui::Stroke::new(1.5, color));
+        }
+        match icon.kind {
+            IconKind::Camera => {
+                let body = egui::Rect::from_center_size(c - egui::vec2(3.0, 0.0), egui::vec2(16.0, 11.0));
+                painter.rect(body, 2.0, color, edge, egui::StrokeKind::Outside);
+                let lens = vec![body.right_center(), body.right_center() + egui::vec2(7.0, -6.0), body.right_center() + egui::vec2(7.0, 6.0)];
+                painter.add(egui::Shape::convex_polygon(lens, color, edge));
+            }
+            IconKind::Light => {
+                for i in 0..8 {
+                    let a = i as f32 / 8.0 * std::f32::consts::TAU;
+                    let d = egui::vec2(a.cos(), a.sin());
+                    painter.line_segment([c + d * 8.0, c + d * 12.0], egui::Stroke::new(3.5, t.backdrop));
+                    painter.line_segment([c + d * 8.0, c + d * 12.0], egui::Stroke::new(2.0, color));
+                }
+                painter.circle(c, 5.5, color, edge);
+            }
+        }
+    }
+}
+
+/// Draws the handles of `tool` for an object at `world`; `active` is drawn thicker.
+fn paint_handles(
+    ui: &egui::Ui,
+    projector: &gizmo::Projector,
+    world: bayleaf_core::math::Mat4,
+    tool: gizmo::Tool,
+    active: Option<gizmo::Handle>,
+    clip: egui::Rect,
+) {
+    let t = crate::theme::tokens(ui);
+    let painter = ui.painter_at(clip);
+    for (axis, color) in [t.axis_x, t.axis_y, t.axis_z].into_iter().enumerate() {
+        let handle = gizmo::Handle { tool, axis };
+        let points = gizmo::handle_points(projector, world, handle);
+        if points.len() < 2 {
+            continue;
+        }
+        let hot = active == Some(handle);
+        let stroke = egui::Stroke::new(if hot { 4.5 } else { 2.5 }, color);
+        // A dark edge under each handle keeps it visible on light and dark surfaces alike.
+        painter.add(egui::Shape::line(points.clone(), egui::Stroke::new(stroke.width + 2.0, t.backdrop.gamma_multiply(0.7))));
+        painter.add(egui::Shape::line(points.clone(), stroke));
+        let (Some(&end), Some(&before)) = (points.last(), points.get(points.len().saturating_sub(2))) else { continue };
+        let dir = (end - before).normalized();
+        let side = egui::vec2(-dir.y, dir.x);
+        let size = if hot { 9.0 } else { 7.0 };
+        match tool {
+            gizmo::Tool::Move => {
+                let tip = end + dir * size * 1.6;
+                painter.add(egui::Shape::convex_polygon(vec![tip, end + side * size, end - side * size], color, egui::Stroke::new(1.0, t.backdrop)));
+            }
+            gizmo::Tool::Scale => {
+                painter.rect(
+                    egui::Rect::from_center_size(end, egui::vec2(size, size) * 1.4),
+                    1.0,
+                    color,
+                    egui::Stroke::new(1.0, t.backdrop),
+                    egui::StrokeKind::Outside,
+                );
+            }
+            gizmo::Tool::Rotate => {}
+        }
+    }
+    if let Some(center) = projector.project(world.w_axis.truncate()) {
+        painter.circle(center, 3.5, t.text, egui::Stroke::new(1.0, t.backdrop));
     }
 }
 

@@ -9,6 +9,7 @@
 pub mod brand;
 mod console;
 mod dock;
+mod gizmo;
 mod graph_view;
 mod hierarchy;
 mod inspector;
@@ -34,7 +35,10 @@ pub struct Editor {
     registry: CommandRegistry,
     session: Session,
     status: String,
+    /// The primary selection: the object the Inspector shows and the handles act from.
     selected: Option<StableId>,
+    /// The other selected objects (Ctrl or Shift + click), in the order they were added.
+    also_selected: Vec<StableId>,
     /// Bumped when an edit gesture (a drag, a text field) ends, so the next edit gets its own undo step.
     gesture: u64,
     title: String,
@@ -53,6 +57,14 @@ pub struct Editor {
     graph_view: graph_view::GraphView,
     /// A panel to bring to the front after this frame's panels are drawn.
     raise_panel: Option<Panel>,
+    /// The objects last copied, as clipboard text, for Paste from a menu.
+    clipboard: Option<String>,
+    /// Text to put on the system clipboard at the end of the frame.
+    copy_out: Option<String>,
+    /// The window was asked to close while there are unsaved changes.
+    close_asked: bool,
+    /// Closing was confirmed; the next close request is let through.
+    close_confirmed: bool,
 }
 
 impl Default for Editor {
@@ -62,6 +74,7 @@ impl Default for Editor {
             session: Session::default(),
             status: String::new(),
             selected: None,
+            also_selected: Vec::new(),
             gesture: 0,
             title: String::new(),
             scene_view: scene_view::SceneView::new(),
@@ -75,6 +88,10 @@ impl Default for Editor {
             script_info: script_info::ScriptInfo::default(),
             graph_view: graph_view::GraphView::default(),
             raise_panel: None,
+            clipboard: None,
+            copy_out: None,
+            close_asked: false,
+            close_confirmed: false,
         }
     }
 }
@@ -115,9 +132,65 @@ impl Editor {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(t.backdrop)).show(ui, |ui| dock::show(self, ui, gpu));
         self.apply_raise();
         self.update_title(ui.ctx());
-        if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
-            self.selected = None;
+        if let Some(text) = self.copy_out.take() {
+            ui.ctx().copy_text(text);
         }
+        self.guard_close(ui.ctx());
+        if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
+            self.selected = self.also_selected.pop();
+        }
+        let scene = self.session.scene();
+        let primary = self.selected;
+        self.also_selected.retain(|id| scene.contains(*id) && Some(*id) != primary);
+        if self.selected.is_none() {
+            self.also_selected.clear();
+        }
+    }
+
+    /// Every selected object, the primary one first.
+    pub(crate) fn selection(&self) -> Vec<StableId> {
+        self.selected.into_iter().chain(self.also_selected.iter().copied()).collect()
+    }
+
+    pub(crate) fn is_selected(&self, id: StableId) -> bool {
+        self.selected == Some(id) || self.also_selected.contains(&id)
+    }
+
+    /// Selects only `id` (or nothing).
+    pub(crate) fn select_only(&mut self, id: Option<StableId>) {
+        self.selected = id;
+        self.also_selected.clear();
+    }
+
+    /// Adds `id` to the selection as the primary object, or takes it out if it is already in.
+    pub(crate) fn toggle_selected(&mut self, id: StableId) {
+        if self.is_selected(id) {
+            if self.selected == Some(id) {
+                self.selected = self.also_selected.pop();
+            } else {
+                self.also_selected.retain(|o| *o != id);
+            }
+        } else {
+            if let Some(previous) = self.selected {
+                self.also_selected.push(previous);
+            }
+            self.selected = Some(id);
+        }
+    }
+
+    /// The selected objects that are not inside another selected object, the primary one first.
+    pub(crate) fn selection_roots(&self) -> Vec<StableId> {
+        let all = self.selection();
+        let scene = self.session.scene();
+        all.iter().copied().filter(|id| !all.iter().any(|other| other != id && scene.is_inside(*id, *other))).collect()
+    }
+
+    /// Runs `command` with `{"id"}` for every selected object, as one undo step.
+    pub(crate) fn for_each_selected(&mut self, command: &str) -> Vec<Value> {
+        let key = format!("selection {command} {}", self.gesture);
+        let results: Vec<Value> = self.selection_roots().into_iter().filter_map(|id| self.dispatch(command, &json!({ "id": id }), Some(&key))).collect();
+        self.gesture += 1;
+        results
     }
 
     /// Shows (or hides, with `None`) the agent-control badge in the status bar.
@@ -154,7 +227,9 @@ impl Editor {
         if self.session.is_dirty() && !confirm_discard() {
             return;
         }
-        self.dispatch("scene.open", &json!({ "path": path }), None);
+        // A project file opens the project's main scene.
+        let command = if path.extension().is_some_and(|e| e == bayleaf_engine::project_cmds::PROJECT_EXTENSION) { "project.open" } else { "scene.open" };
+        self.dispatch(command, &json!({ "path": path }), None);
     }
 
     /// Opens a material graph or visual script in the graph editor, asking first if the open graph has unsaved changes.
@@ -260,6 +335,7 @@ impl Editor {
             }
         }
         let mut clicked = None;
+        let mut clipboard_action = None;
         for top in top_menus {
             let items: Vec<&CommandInfo> = entries.iter().filter(|c| c.menu.split('/').next() == Some(top)).collect();
             if top == "Help" {
@@ -283,11 +359,182 @@ impl Editor {
                         ui.close();
                     }
                 }
+                if top == "Edit" {
+                    // Clipboard entries belong to the editor: they use the system clipboard.
+                    ui.separator();
+                    let has_selection = self.selected.is_some();
+                    if ui.add_enabled(has_selection, egui::Button::new("Cut").shortcut_text("Ctrl+X")).clicked() {
+                        clipboard_action = Some("cut");
+                        ui.close();
+                    }
+                    if ui.add_enabled(has_selection, egui::Button::new("Copy").shortcut_text("Ctrl+C")).clicked() {
+                        clipboard_action = Some("copy");
+                        ui.close();
+                    }
+                    let paste = ui.add_enabled(self.clipboard.is_some(), egui::Button::new("Paste").shortcut_text("Ctrl+V"));
+                    if paste.on_disabled_hover_text("Copy an object first").clicked() {
+                        clipboard_action = Some("paste");
+                        ui.close();
+                    }
+                }
             });
         }
         if let Some(id) = clicked {
             self.run_with_prompt(id);
         }
+        match clipboard_action {
+            Some("cut") => self.copy_selection(true),
+            Some("copy") => self.copy_selection(false),
+            Some("paste") => self.paste(None),
+            _ => {}
+        }
+    }
+
+    /// True when the scene or the open graph has changes that are not saved.
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.session.is_dirty() || self.session.graph().is_some_and(|g| g.dirty)
+    }
+
+    /// Copies the selected objects and their children to the clipboard; `cut` then deletes them.
+    pub(crate) fn copy_selection(&mut self, cut: bool) {
+        let roots = self.selection_roots();
+        if roots.is_empty() {
+            self.status = "Copy: select an object first.".to_owned();
+            return;
+        }
+        let Some(data) = self.dispatch("scene.object.copy", &json!({ "ids": roots }), None) else { return };
+        let text = serde_json::to_string_pretty(&data).unwrap_or_default();
+        self.clipboard = Some(text.clone());
+        self.copy_out = Some(text);
+        let what = if roots.len() == 1 { "the object is".to_owned() } else { format!("{} objects are", roots.len()) };
+        if cut {
+            self.for_each_selected("scene.object.delete");
+            self.status = format!("Cut: {what} on the clipboard");
+        } else {
+            self.status = format!("Copy: {what} on the clipboard");
+        }
+    }
+
+    /// Pastes copied objects after the selected object (or at the end), and selects the first.
+    /// `text` is the system clipboard; `None` uses the objects this editor copied last.
+    pub(crate) fn paste(&mut self, text: Option<String>) {
+        let Some(text) = text.or_else(|| self.clipboard.clone()) else {
+            self.status = "Paste: copy an object first.".to_owned();
+            return;
+        };
+        let Ok(objects) = serde_json::from_str::<Value>(&text) else {
+            self.status = "Paste: the clipboard holds no objects.".to_owned();
+            return;
+        };
+        if objects.get("format").and_then(Value::as_str) != Some(bayleaf_engine::CLIPBOARD_FORMAT) {
+            self.status = "Paste: the clipboard holds no objects.".to_owned();
+            return;
+        }
+        let scene = self.session.scene();
+        let (parent, index) = match self.selected {
+            Some(id) => {
+                let parent = scene.parent(id);
+                (parent, scene.children(parent).iter().position(|c| *c == id).map(|i| i + 1))
+            }
+            None => (None, None),
+        };
+        if let Some(result) = self.dispatch("scene.object.paste", &json!({ "objects": objects, "parent": parent, "index": index }), None) {
+            // Everything pasted is selected, the first one as the primary object.
+            let ids: Vec<StableId> =
+                result["ids"].as_array().into_iter().flatten().filter_map(|v| v.as_str().and_then(|s| StableId::parse_hex(s).ok())).collect();
+            self.select_only(ids.first().copied());
+            self.also_selected = ids.into_iter().skip(1).collect();
+        }
+    }
+
+    /// Stops the window from closing while there are unsaved changes, and asks what to do.
+    fn guard_close(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.close_confirmed && self.has_unsaved_changes() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_asked = true;
+        }
+        if !self.close_asked {
+            return;
+        }
+        let t = theme::tokens_for(ctx);
+        let mut choice = None;
+        let modal = egui::Modal::new(egui::Id::unique("unsaved changes")).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.heading("Save changes before closing?");
+            ui.add_space(theme::GAP);
+            if self.session.is_dirty() {
+                let name =
+                    self.session.scene_path().and_then(|p| p.file_name()).map_or_else(|| "Untitled scene".to_owned(), |n| n.to_string_lossy().into_owned());
+                ui.label(egui::RichText::new(format!("Scene: {name}")).color(t.text));
+            }
+            if let Some(graph) = self.session.graph().filter(|g| g.dirty) {
+                let name = graph.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| "Untitled graph".to_owned(), |n| n.to_string_lossy().into_owned());
+                ui.label(egui::RichText::new(format!("Graph: {name}")).color(t.text));
+            }
+            ui.add_space(theme::GAP * 2.0);
+            ui.horizontal(|ui| {
+                let save = ui.add(egui::Button::new(egui::RichText::new("Save and Close").color(t.on_accent)).fill(t.accent));
+                if save.clicked() {
+                    choice = Some(true);
+                }
+                if ui.button("Close Without Saving").clicked() {
+                    choice = Some(false);
+                }
+                if ui.button("Cancel").clicked() {
+                    self.close_asked = false;
+                }
+            });
+        });
+        if modal.should_close() {
+            self.close_asked = false;
+        }
+        match choice {
+            Some(true) if self.save_everything() => self.close_now(ctx),
+            Some(true) => self.close_asked = false,
+            Some(false) => self.close_now(ctx),
+            None => {}
+        }
+    }
+
+    fn close_now(&mut self, ctx: &egui::Context) {
+        self.close_asked = false;
+        self.close_confirmed = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// Saves the scene and the open graph, asking for a file where one has none. False when a
+    /// save failed or was cancelled; the status bar says which.
+    fn save_everything(&mut self) -> bool {
+        if self.session.is_playing() {
+            self.dispatch("play.stop", &Value::Null, None);
+        }
+        if self.session.is_dirty() {
+            let saved = if self.session.scene_path().is_some() {
+                self.dispatch("scene.save", &Value::Null, None)
+            } else {
+                match rfd::FileDialog::new().add_filter("Bayleaf scene", &[EXTENSION]).set_file_name(format!("scene.{EXTENSION}")).save_file() {
+                    Some(path) => self.dispatch("scene.saveAs", &json!({ "path": path }), None),
+                    None => None,
+                }
+            };
+            if saved.is_none() {
+                return false;
+            }
+        }
+        if let Some(graph) = self.session.graph().filter(|g| g.dirty).cloned() {
+            let saved = match (&graph.path, graph.catalog()) {
+                (Some(_), _) => self.dispatch("graph.save", &Value::Null, None),
+                (None, Some(catalog)) => match rfd::FileDialog::new().add_filter(catalog.label, &[catalog.extension]).save_file() {
+                    Some(path) => self.dispatch("graph.save", &json!({ "path": path.with_extension(catalog.extension) }), None),
+                    None => None,
+                },
+                (None, None) => None,
+            };
+            if saved.is_none() {
+                return false;
+            }
+        }
+        true
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -303,6 +550,27 @@ impl Editor {
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2))
         {
             self.renaming = Some(hierarchy::Rename { id, text: String::new(), focused: false });
+        }
+        // Ctrl+C, Ctrl+X and Ctrl+V arrive as clipboard events, not as keys.
+        if !graph_keys {
+            let (copy, cut, paste) = ctx.input(|i| {
+                let mut found = (false, false, None);
+                for event in &i.events {
+                    match event {
+                        egui::Event::Copy => found.0 = true,
+                        egui::Event::Cut => found.1 = true,
+                        egui::Event::Paste(text) => found.2 = Some(text.clone()),
+                        _ => {}
+                    }
+                }
+                found
+            });
+            if copy || cut {
+                self.copy_selection(cut);
+            }
+            if let Some(text) = paste {
+                self.paste(Some(text));
+            }
         }
         // Only enabled commands: Play and Stop share Ctrl+P, and only one of them is enabled at a time.
         let shortcuts: Vec<(&'static str, egui::KeyboardShortcut)> = self
@@ -325,7 +593,7 @@ impl Editor {
         let Some(info) = self.registry.list(&self.session).into_iter().find(|c| c.id == id) else {
             return;
         };
-        if matches!(id, "scene.new" | "scene.open") && self.session.is_dirty() && !confirm_discard() {
+        if matches!(id, "scene.new" | "scene.open" | "project.new" | "project.open") && self.session.is_dirty() && !confirm_discard() {
             return;
         }
         let params = match info.prompt {
@@ -339,6 +607,24 @@ impl Editor {
                 Some(path) => json!({ "path": path }),
                 None => return,
             },
+            Prompt::NewProject => match rfd::FileDialog::new().set_title("Name and place the new project folder").set_file_name("My Game").save_file() {
+                Some(path) => json!({ "path": path }),
+                None => return,
+            },
+            Prompt::OpenProject => match rfd::FileDialog::new().add_filter("Bayleaf project", &[bayleaf_engine::project_cmds::PROJECT_EXTENSION]).pick_file() {
+                Some(path) => json!({ "path": path }),
+                None => return,
+            },
+            // Deleting and duplicating act on every selected object, as one undo step.
+            Prompt::SelectedObject if !self.also_selected.is_empty() && matches!(id, "scene.object.delete" | "scene.object.duplicate") => {
+                let results = self.for_each_selected(id);
+                if id == "scene.object.duplicate" {
+                    let copies: Vec<StableId> = results.iter().filter_map(|r| r["id"].as_str().and_then(|s| StableId::parse_hex(s).ok())).collect();
+                    self.select_only(copies.first().copied());
+                    self.also_selected = copies.into_iter().skip(1).collect();
+                }
+                return;
+            }
             Prompt::SelectedObject => match self.selected {
                 Some(selected) => json!({ "id": selected }),
                 None => {
@@ -352,10 +638,15 @@ impl Editor {
 
     /// Runs a command and reports the outcome in the status bar. Returns the result on success.
     pub(crate) fn dispatch(&mut self, id: &str, params: &Value, merge_key: Option<&str>) -> Option<Value> {
-        let label = self.registry.get(id).map_or(id, |c| c.label);
+        let label = self.registry.get(id).map_or(id, |c| c.label).trim_end_matches(['…', '.']);
         match self.registry.execute_merging(&mut self.session, id, params, merge_key) {
             Ok(result) => {
                 self.status = format!("{label}: done");
+                if matches!(id, "scene.object.duplicate")
+                    && let Some(copy) = result.get("id").and_then(Value::as_str).and_then(|s| StableId::parse_hex(s).ok())
+                {
+                    self.selected = Some(copy);
+                }
                 if id == "scene.object.create"
                     && let Some(created) = result.get("id").and_then(Value::as_str).and_then(|s| StableId::parse_hex(s).ok())
                 {

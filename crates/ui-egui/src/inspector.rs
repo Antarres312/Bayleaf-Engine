@@ -34,6 +34,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         empty_state(ui, "Object not found", "The selected object no longer exists.");
         return;
     };
+    let selected_count = editor.selection().len();
     let kinds = editor.session.scene().registry().kinds().to_vec();
     let script_dir = editor.session.script_dir();
     let scripts: Vec<ScriptRef> = editor.session.scene().get::<Scripts>(id).map(|s| s.0.clone()).unwrap_or_default();
@@ -67,6 +68,10 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 pending = Some(Pending::Set { component: "name", value: Value::String(edited) });
             }
             ui.label(egui::RichText::new(format!("ID {}", &id.to_hex()[..8])).small().color(t.text_muted)).on_hover_text(id.to_hex());
+            if selected_count > 1 {
+                // Say plainly what applies to all and what only to the object shown.
+                ui.add(egui::Label::new(egui::RichText::new(format!("{selected_count} objects selected. Delete, Duplicate, Copy and the handles in the scene view act on all of them; the fields below change only this one.")).small().color(t.text)).wrap());
+            }
             ui.add_space(8.0);
         }
 
@@ -181,8 +186,11 @@ fn card(
     body: impl FnOnce(&mut egui::Ui),
 ) -> bool {
     let mut removed = false;
-    theme::card(t).show(ui, |ui| {
+    theme::section(t).show(ui, |ui| {
         ui.set_width(ui.available_width());
+        // A compact title row, and rows packed a little closer than elsewhere.
+        ui.spacing_mut().interact_size.y = theme::SECTION_TITLE;
+        ui.spacing_mut().item_spacing.y = 4.0;
         let state_id = ui.make_persistent_id(salt);
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true)
             .show_header(ui, |ui| {
@@ -201,9 +209,13 @@ fn card(
                     });
                 }
             })
-            .body(body);
+            .body(|ui| {
+                ui.spacing_mut().interact_size.y = ROW_HEIGHT;
+                body(ui);
+                ui.add_space(2.0);
+            });
     });
-    ui.add_space(6.0);
+    ui.add_space(theme::SECTION_GAP);
     removed
 }
 
@@ -287,34 +299,35 @@ fn material_row(
     let mut chosen = None;
     ui.horizontal(|ui| {
         let label = ui.add_sized([theme::LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(egui::RichText::new("Material").color(t.text_muted)).truncate());
-        let edit_width = if current.is_empty() { 0.0 } else { 44.0 + ui.spacing().item_spacing.x };
-        let width = (ui.available_width() - edit_width).max(60.0);
-        let shown = if current.is_empty() { "None (colour above)".to_owned() } else { current.to_owned() };
-        egui::ComboBox::from_id_salt("mesh material")
-            .width(width)
-            .selected_text(egui::RichText::new(shown).color(t.text))
-            .show_ui(ui, |ui| {
-                if ui.selectable_label(current.is_empty(), "None (colour above)").clicked() {
-                    chosen = Some(String::new());
+        // Edit sits at the right edge and the list takes what is left.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if !current.is_empty() {
+                let edit = ui.add(egui::Button::new("Edit").min_size(egui::vec2(0.0, ROW_HEIGHT)));
+                ui.ctx().accesskit_node_builder(edit.id, |node| node.set_label("Edit material"));
+                if edit.on_hover_text("Open this material in the graph editor").clicked() {
+                    *open = Some(base.join(current));
                 }
-                for file in files {
-                    if ui.selectable_label(current == file, file).clicked() {
-                        chosen = Some(file.clone());
-                    }
-                }
-                if files.is_empty() {
-                    ui.label(egui::RichText::new("No .bmaterial files in the project folder").color(t.text_muted));
-                }
-            })
-            .response
-            .labelled_by(label.id);
-        if !current.is_empty() {
-            let edit = ui.add_sized([44.0, ROW_HEIGHT], egui::Button::new("Edit"));
-            ui.ctx().accesskit_node_builder(edit.id, |node| node.set_label("Edit material"));
-            if edit.on_hover_text("Open this material in the graph editor").clicked() {
-                *open = Some(base.join(current));
             }
-        }
+            let shown = if current.is_empty() { "None (colour above)".to_owned() } else { current.to_owned() };
+            egui::ComboBox::from_id_salt("mesh material")
+                .width((ui.available_width() - 1.0).max(60.0))
+                .selected_text(egui::RichText::new(shown).color(t.text))
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(current.is_empty(), "None (colour above)").clicked() {
+                        chosen = Some(String::new());
+                    }
+                    for file in files {
+                        if ui.selectable_label(current == file, file).clicked() {
+                            chosen = Some(file.clone());
+                        }
+                    }
+                    if files.is_empty() {
+                        ui.label(egui::RichText::new("No .bmaterial files in the project folder").color(t.text_muted));
+                    }
+                })
+                .response
+                .labelled_by(label.id);
+        });
     });
     if let Some(problem) = problem {
         ui.add(egui::Label::new(egui::RichText::new(format!("Warning: {problem}")).color(t.warning)).wrap());

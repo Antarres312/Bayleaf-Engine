@@ -123,6 +123,12 @@ pub(crate) const LIGHT: Tokens = Tokens {
 pub(crate) const RADIUS: u8 = 6;
 /// Corner radius of cards and popups.
 pub(crate) const CARD_RADIUS: u8 = 8;
+/// Corner radius of inspector sections: small, so stacked sections stay compact.
+pub(crate) const SECTION_RADIUS: u8 = 3;
+/// Height of an inspector section's title row: the 24-point minimum target size.
+pub(crate) const SECTION_TITLE: f32 = 24.0;
+/// Space between inspector sections.
+pub(crate) const SECTION_GAP: f32 = 3.0;
 /// Height of rows and controls; at least the 24-point minimum target size.
 pub(crate) const ROW_HEIGHT: f32 = 26.0;
 /// Row height in long lists (hierarchy, project files): denser than controls, so more rows fit.
@@ -135,6 +141,11 @@ pub(crate) const GAP: f32 = 6.0;
 /// The tokens for the theme `ui` is drawn with.
 pub(crate) fn tokens(ui: &egui::Ui) -> &'static Tokens {
     if ui.visuals().dark_mode { &DARK } else { &LIGHT }
+}
+
+/// The tokens for the context's current theme, outside any `Ui`.
+pub(crate) fn tokens_for(ctx: &egui::Context) -> &'static Tokens {
+    if ctx.theme() == Theme::Dark { &DARK } else { &LIGHT }
 }
 
 /// Installs both themes and follows the system's light or dark setting.
@@ -168,9 +179,10 @@ pub(crate) fn stripes(ui: &egui::Ui, slot: egui::layers::ShapeIdx, rows: impl It
     ui.painter().set(slot, egui::Shape::Vec(shapes));
 }
 
-/// A rounded card for a group of fields.
-pub(crate) fn card(t: &Tokens) -> egui::Frame {
-    egui::Frame::new().fill(t.surface).corner_radius(CARD_RADIUS).inner_margin(Margin::same(10))
+/// An inspector section: one component's fields under a title row. Tight margins and a small radius,
+/// so a collapsed section is little more than its title.
+pub(crate) fn section(t: &Tokens) -> egui::Frame {
+    egui::Frame::new().fill(t.surface).corner_radius(SECTION_RADIUS).inner_margin(Margin { left: 6, right: 6, top: 0, bottom: 0 })
 }
 
 fn style(t: &Tokens, dark: bool) -> egui::Style {

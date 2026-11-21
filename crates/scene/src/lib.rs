@@ -22,6 +22,9 @@ use components::{Name, Transform};
 use doc::{ObjectDoc, SceneDoc};
 use registry::ComponentRegistry;
 
+/// Most objects one paste may add.
+pub const MAX_IMPORT: usize = 100_000;
+
 /// Errors from scene operations. Messages are shown to the user.
 #[derive(Debug, thiserror::Error)]
 pub enum SceneError {
@@ -307,6 +310,84 @@ impl Scene {
             }
         }
         Ok(scene)
+    }
+
+    /// `roots` and all their descendants as plain data, parents first, for copying. The roots are
+    /// listed without a parent; a root inside another root is copied once, with that root.
+    pub fn export(&self, roots: &[StableId]) -> Result<Vec<ObjectDoc>, SceneError> {
+        let mut objects = Vec::new();
+        for &root in roots {
+            if !self.contains(root) {
+                return Err(SceneError::UnknownObject(root));
+            }
+            if roots.iter().any(|&other| other != root && self.is_inside(root, other)) || objects.iter().any(|o: &ObjectDoc| o.id == root) {
+                continue;
+            }
+            let mut stack = vec![root];
+            while let Some(id) = stack.pop() {
+                let components: BTreeMap<String, Value> = self.components(id)?.into_iter().map(|(k, v)| (k.to_owned(), v)).collect();
+                objects.push(ObjectDoc { id, parent: if id == root { None } else { self.parent(id) }, components });
+                stack.extend(self.children(Some(id)).iter().rev());
+            }
+        }
+        Ok(objects)
+    }
+
+    /// Adds copies of `objects` (as [`Scene::export`] gives them) with new ids. Objects without a
+    /// parent go under `parent`, starting at `index` among its children (appended when `None`).
+    /// Returns the new ids of those top objects. Components are checked as when loading a file.
+    pub fn import(&mut self, objects: &[ObjectDoc], parent: Option<StableId>, index: Option<usize>) -> Result<Vec<StableId>, SceneError> {
+        if let Some(parent) = parent
+            && !self.contains(parent)
+        {
+            return Err(SceneError::UnknownObject(parent));
+        }
+        if objects.len() > MAX_IMPORT {
+            return Err(SceneError::Format(format!("at most {MAX_IMPORT} objects can be pasted at once")));
+        }
+        let mut new_ids: HashMap<StableId, StableId> = HashMap::new();
+        let mut tops = Vec::new();
+        for object in objects {
+            if new_ids.contains_key(&object.id) {
+                return Err(SceneError::Format(format!("object {} appears twice", object.id)));
+            }
+            let new_parent = match object.parent {
+                None => parent,
+                Some(old) => Some(*new_ids.get(&old).ok_or_else(|| SceneError::Format(format!("object {} is listed before its parent {old}", object.id)))?),
+            };
+            let id = StableId::random().map_err(|e| SceneError::Internal(e.to_string()))?;
+            let entity = self.insert_object(id, new_parent)?;
+            for (name, value) in &object.components {
+                self.write_component(id, name, value.clone())?;
+            }
+            for kind in self.registry.kinds().iter().filter(|k| !k.removable) {
+                if kind.get(&self.world, entity).is_none() {
+                    kind.add_default(&mut self.world, entity).map_err(SceneError::Internal)?;
+                }
+            }
+            new_ids.insert(object.id, id);
+            if object.parent.is_none() {
+                tops.push(id);
+            }
+        }
+        if let Some(index) = index {
+            for (offset, id) in tops.iter().enumerate() {
+                self.reparent(*id, parent, Some(index + offset))?;
+            }
+        }
+        Ok(tops)
+    }
+
+    /// True when `id` lies somewhere below `ancestor`.
+    pub fn is_inside(&self, id: StableId, ancestor: StableId) -> bool {
+        let mut current = self.parent(id);
+        while let Some(parent) = current {
+            if parent == ancestor {
+                return true;
+            }
+            current = self.parent(parent);
+        }
+        false
     }
 
     pub fn load(path: &Path) -> Result<Self, SceneError> {

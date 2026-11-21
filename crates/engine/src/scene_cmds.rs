@@ -116,6 +116,39 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             run: object_delete,
         },
         CommandSpec {
+            id: "scene.object.duplicate",
+            label: "Duplicate",
+            menu: "Edit/Duplicate",
+            shortcut: "Ctrl+D",
+            params: "{id}; the copy, with its children, goes right after the original. Returns {id}",
+            prompt: Prompt::SelectedObject,
+            mutates: Mutates::Scene,
+            enabled: always,
+            run: object_duplicate,
+        },
+        CommandSpec {
+            id: "scene.object.copy",
+            label: "Copy",
+            menu: "",
+            shortcut: "",
+            params: "{ids: [id, ...]}; returns the objects and their children as clipboard data for scene.object.paste",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: object_copy,
+        },
+        CommandSpec {
+            id: "scene.object.paste",
+            label: "Paste",
+            menu: "",
+            shortcut: "",
+            params: "{objects: <data from scene.object.copy>, parent?: id, index?: n}; returns the new {ids}",
+            prompt: Prompt::None,
+            mutates: Mutates::Scene,
+            enabled: always,
+            run: object_paste,
+        },
+        CommandSpec {
             id: "scene.object.moveUp",
             label: "Move Up",
             menu: "Object/Move Up",
@@ -164,7 +197,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Add Script",
             menu: "",
             shortcut: "",
-            params: "{id, module}; module: .wasm path relative to the scene file's folder; returns {index}",
+            params: "{id, module}; module: .wasm or .bscript path relative to the project folder (or the scene file's folder outside a project); returns {index}",
             prompt: Prompt::SelectedObject,
             mutates: Mutates::Scene,
             enabled: always,
@@ -331,7 +364,7 @@ fn scene_save_as(session: &mut Session, params: &Value) -> Result<Value, Command
     let p: PathParams = parse(params)?;
     let path = session.allowed(&p.path, crate::confine::Access::Write)?;
     session.scene.save(&path)?;
-    session.scene_path = Some(path.clone());
+    session.set_scene_path(Some(path.clone()));
     session.dirty = false;
     Ok(json!({ "path": path }))
 }
@@ -433,6 +466,66 @@ fn object_delete(session: &mut Session, params: &Value) -> Result<Value, Command
     Ok(json!({ "deleted": deleted }))
 }
 
+/// `format` of copied objects (clipboard data).
+pub const CLIPBOARD_FORMAT: &str = "bayleaf.objects";
+
+fn object_duplicate(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: IdParams = parse(params)?;
+    let scene = &mut session.scene;
+    let objects = scene.export(&[p.id])?;
+    let parent = scene.parent(p.id);
+    let index = scene.children(parent).iter().position(|c| *c == p.id).map(|i| i + 1);
+    let copy = *scene.import(&objects, parent, index)?.first().ok_or_else(|| CommandError::Failed("nothing was copied".to_owned()))?;
+    let name = next_name(scene, parent, scene.name(p.id).unwrap_or("Object"));
+    scene.set_component(copy, "name", Value::String(name))?;
+    Ok(json!({ "id": copy }))
+}
+
+/// `name` with the lowest number after it that no sibling uses: "Crate" becomes "Crate 2".
+fn next_name(scene: &Scene, parent: Option<StableId>, name: &str) -> String {
+    let base = match name.rsplit_once(' ') {
+        Some((base, number)) if !base.is_empty() && number.parse::<u32>().is_ok() => base,
+        _ => name,
+    };
+    let taken: Vec<&str> = scene.children(parent).iter().filter_map(|c| scene.name(*c)).collect();
+    (2..).map(|n| format!("{base} {n}")).find(|candidate| !taken.contains(&candidate.as_str())).unwrap_or_else(|| base.to_owned())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CopyParams {
+    ids: Vec<StableId>,
+}
+
+fn object_copy(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: CopyParams = parse(params)?;
+    let objects = session.scene.export(&p.ids)?;
+    Ok(json!({ "format": CLIPBOARD_FORMAT, "version": bayleaf_scene::doc::VERSION, "objects": objects }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasteParams {
+    objects: Value,
+    #[serde(default)]
+    parent: Option<StableId>,
+    #[serde(default)]
+    index: Option<usize>,
+}
+
+fn object_paste(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: PasteParams = parse(params)?;
+    // Either the whole clipboard data or just its object list.
+    let list = match &p.objects {
+        Value::Object(data) if data.get("format").and_then(Value::as_str) == Some(CLIPBOARD_FORMAT) => data.get("objects").cloned().unwrap_or(Value::Null),
+        Value::Object(_) => return Err(CommandError::BadParams(format!("objects must be a list or data with format \"{CLIPBOARD_FORMAT}\""))),
+        other => other.clone(),
+    };
+    let objects: Vec<bayleaf_scene::doc::ObjectDoc> = serde_json::from_value(list).map_err(|e| CommandError::BadParams(format!("objects: {e}")))?;
+    let ids = session.scene.import(&objects, p.parent, p.index)?;
+    Ok(json!({ "ids": ids }))
+}
+
 fn object_inspect(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: IdParams = parse(params)?;
     let scene = &session.scene;
@@ -485,7 +578,7 @@ fn object_step(session: &mut Session, params: &Value, step: Step) -> Result<Valu
 #[serde(deny_unknown_fields)]
 struct ScriptAddParams {
     id: StableId,
-    /// Module path relative to the scene file's folder.
+    /// Module path relative to the project folder, or the scene file's folder outside a project.
     module: String,
 }
 

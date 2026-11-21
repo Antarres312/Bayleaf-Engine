@@ -63,12 +63,16 @@ No crate below L6 may use egui, eframe, winit or rfd.
 1. **M0 Skeleton (done):** workspace, layer check, command registry, CLI that lists commands.
 2. **M1 Scene core (done, 2026-11-21):** archetype ECS with schedule, object hierarchy, `.bscene` files,
    snapshot undo/redo with merged edit gestures, editor hierarchy and inspector, `bayleaf-cli batch`.
-   Still open from M1: prefabs, craft-ui theme tokens, the translation system.
+   Added later: projects (a folder with a `.bproject` file; `project.new` makes a starting project;
+   scene paths start at the project folder), duplicate, copy and paste of objects with their children
+   (`scene.object.duplicate/copy/paste`), selecting several objects, and a question before the window
+   closes with unsaved work. Still open from M1: prefabs, craft-ui theme tokens, the translation system.
 3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
    a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with
-   click selection. Still open: shadows, textures and sprite images (wait for the asset pipeline),
-   environment lighting, gizmos for moving objects, and drawing camera and light icons in the view.
+   click selection. Added later: move, rotate and scale handles in the view (for every selected object,
+   one undo step per drag) and clickable camera and light icons. Still open: shadows, textures and
+   sprite images (wait for the asset pipeline), environment lighting, point and spot lights.
 4. **M3 Scripts (done, 2026-11-21):** WASM host on wasmi (fuel and memory limits, faults isolated per
    script), ABI v1 (`docs/script-abi.md`), Rust SDK (`crates/script-sdk`), example scripts (`scripts/`,
    built by `cargo xtask scripts`), hot reload, play mode (`play.start/stop/pause/step/input/status`)

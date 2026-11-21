@@ -242,7 +242,8 @@ impl Renderer {
         let eye = frame.camera.position;
         transparent.sort_by(|a, b| distance(b.model, eye).total_cmp(&distance(a.model, eye)));
         let ordered: Vec<&DrawItem> = opaque.iter().chain(transparent.iter()).copied().collect();
-        let raw: Vec<InstanceRaw> = ordered.iter().map(|i| InstanceRaw::new(i, frame.selected == Some(i.object))).collect();
+        let raw: Vec<InstanceRaw> =
+            ordered.iter().map(|i| InstanceRaw::new(i, frame.selected == Some(i.object) || frame.highlighted.contains(&i.object))).collect();
         if raw.len() > self.instance_capacity {
             self.instance_capacity = raw.len().next_power_of_two();
             self.instances = instance_buffer(device, self.instance_capacity);

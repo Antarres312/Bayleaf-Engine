@@ -24,8 +24,15 @@ const ROW_MENU: &[(&str, &str)] = &[
     ("Move Down", "scene.object.moveDown"),
     ("Make Child of Previous", "scene.object.indent"),
     ("Move Out of Parent", "scene.object.outdent"),
+    ("Duplicate", "scene.object.duplicate"),
+    ("Copy", COPY),
+    ("Paste After", PASTE),
     ("Delete", "scene.object.delete"),
 ];
+
+/// Context-menu entries handled by the editor (they use its clipboard), not engine commands.
+const COPY: &str = "editor.copy";
+const PASTE: &str = "editor.paste";
 
 /// Drag-and-drop payload: the object being dragged.
 #[derive(Clone, Copy)]
@@ -44,6 +51,10 @@ enum Drop {
 #[derive(Default)]
 struct RowState {
     selected: Option<StableId>,
+    /// The other selected objects.
+    also: Vec<StableId>,
+    /// A click with Ctrl or Shift held, resolved once every row is drawn.
+    modified_click: Option<(StableId, egui::Modifiers)>,
     rows: Vec<(StableId, egui::Rect)>,
     /// A context-menu command and the object it applies to.
     command: Option<(&'static str, StableId)>,
@@ -68,7 +79,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     toolbar(editor, ui);
     ui.add_space(2.0);
     ui.separator();
-    let mut state = RowState { selected: editor.selected, renaming: editor.renaming.take(), ..RowState::default() };
+    let mut state = RowState { selected: editor.selected, also: editor.also_selected.clone(), renaming: editor.renaming.take(), ..RowState::default() };
     let mut moved: Option<Value> = None;
     let filter = editor.hierarchy_filter.trim().to_lowercase();
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -98,11 +109,32 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         }
     });
     editor.selected = state.selected;
+    editor.also_selected = std::mem::take(&mut state.also);
+    if let Some((id, modifiers)) = state.modified_click {
+        if modifiers.shift
+            && let Some(anchor) = editor.selected
+        {
+            // Shift: everything between the primary object and this row, in the order shown.
+            let order: Vec<StableId> = state.rows.iter().map(|(row, _)| *row).collect();
+            if let (Some(a), Some(b)) = (order.iter().position(|r| *r == anchor), order.iter().position(|r| *r == id)) {
+                let (from, to) = (a.min(b), a.max(b));
+                editor.select_only(Some(id));
+                editor.also_selected = order[from..=to].iter().copied().filter(|r| *r != id).collect();
+            }
+        } else {
+            editor.toggle_selected(id);
+        }
+    }
     if let Some(params) = moved {
         editor.dispatch("scene.object.reparent", &params, None);
     }
-    if let Some((command, id)) = state.command {
-        editor.dispatch(command, &json!({ "id": id }), None);
+    match state.command {
+        Some((COPY, _)) => editor.copy_selection(false),
+        Some((PASTE, _)) => editor.paste(None),
+        Some((command, id)) => {
+            editor.dispatch(command, &json!({ "id": id }), None);
+        }
+        None => {}
     }
     editor.renaming = state.renaming;
     if let Some((id, name)) = state.commit {
@@ -167,23 +199,33 @@ fn draggable_row(ui: &mut egui::Ui, id: StableId, name: &str, state: &mut RowSta
         rename_field(ui, id, name, width, state);
         return;
     }
-    let button = egui::Button::selectable(state.selected == Some(id), (name, egui::Atom::grow()))
-        .truncate()
-        .min_size(egui::vec2(width, LIST_ROW))
-        .sense(egui::Sense::click_and_drag());
+    let is_selected = state.selected == Some(id) || state.also.contains(&id);
+    let button =
+        egui::Button::selectable(is_selected, (name, egui::Atom::grow())).truncate().min_size(egui::vec2(width, LIST_ROW)).sense(egui::Sense::click_and_drag());
     let response = ui.add(button);
+    let modifiers = ui.input(|i| i.modifiers);
+    let adds = modifiers.command || modifiers.shift;
     if response.clicked() {
-        state.selected = Some(id);
+        if adds {
+            state.modified_click = Some((id, modifiers));
+        } else {
+            state.selected = Some(id);
+            state.also.clear();
+        }
     }
     if response.double_clicked() {
         state.selected = Some(id);
         state.renaming = Some(Rename { id, text: String::new(), focused: false });
     }
     // Select on press, like a click, so a click with a little hand movement still selects.
-    if response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_pressed()) {
+    if !adds && response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_pressed()) && !is_selected {
         state.selected = Some(id);
+        state.also.clear();
     }
     if response.drag_started_by(egui::PointerButton::Primary) {
+        if !is_selected {
+            state.also.clear();
+        }
         state.selected = Some(id);
         egui::DragAndDrop::set_payload(ui.ctx(), Dragged(id));
     }

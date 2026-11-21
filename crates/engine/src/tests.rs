@@ -429,3 +429,75 @@ fn a_visual_script_from_the_graph_editor_runs_in_play_mode() {
     registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn duplicate_copy_and_paste_make_new_objects_as_one_undo_step_each() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let crate_id = create(&registry, &mut session, json!({"name": "Crate"}));
+    let other = create(&registry, &mut session, json!({"name": "Other"}));
+    create(&registry, &mut session, json!({"name": "Lid", "parent": crate_id}));
+
+    let copy = registry.execute(&mut session, "scene.object.duplicate", &json!({"id": crate_id})).unwrap()["id"].as_str().unwrap().to_owned();
+    let names: Vec<_> = session.scene().children(None).iter().map(|id| session.scene().name(*id).unwrap().to_owned()).collect();
+    assert_eq!(names, ["Crate", "Crate 2", "Other"], "the copy follows the original and gets the next free number");
+    let copy_id = bayleaf_core::StableId::parse_hex(&copy).unwrap();
+    assert_eq!(session.scene().children(Some(copy_id)).len(), 1, "children come along");
+    registry.execute(&mut session, "scene.object.duplicate", &json!({"id": copy})).unwrap();
+    assert!(session.scene().children(None).iter().any(|id| session.scene().name(*id) == Some("Crate 3")));
+
+    let clipboard = registry.execute(&mut session, "scene.object.copy", &json!({"ids": [crate_id]})).unwrap();
+    let text = serde_json::to_string(&clipboard).unwrap();
+    let pasted =
+        registry.execute(&mut session, "scene.object.paste", &json!({"objects": serde_json::from_str::<Value>(&text).unwrap(), "parent": other})).unwrap();
+    assert_eq!(pasted["ids"].as_array().map(Vec::len), Some(1));
+    let other_id = bayleaf_core::StableId::parse_hex(&other).unwrap();
+    assert_eq!(session.scene().children(Some(other_id)).len(), 1, "pasted under the given parent");
+
+    let before = session.history().len();
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert!(session.scene().children(Some(other_id)).is_empty());
+    assert_eq!(session.history().len(), before - 1);
+    assert!(registry.execute(&mut session, "scene.object.paste", &json!({"objects": {"format": "something else"}})).is_err());
+}
+
+#[test]
+fn a_new_project_has_a_working_starting_scene_and_paths_start_at_its_folder() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let base = std::env::temp_dir().join(format!("bayleaf-new-project-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let dir = base.join("My Game");
+    let made = registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    assert_eq!(made["name"], "My Game");
+    for file in ["My_Game.bproject", "scenes/main.bscene", "materials/ground.bmaterial", "scripts/spin.bscript", "assets/README.md", ".gitignore", "README.md"]
+    {
+        assert!(dir.join(file).is_file(), "{file} is missing");
+    }
+    // The scene sits in scenes/, but its paths start at the project folder.
+    assert_eq!(session.project_dir(), Some(dir.as_path()));
+    assert_eq!(session.script_dir(), dir);
+    assert!(
+        registry.execute(&mut session, "graph.open", &json!({"path": dir.join("materials/ground.bmaterial")})).unwrap()["problems"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        registry.execute(&mut session, "graph.open", &json!({"path": dir.join("scripts/spin.bscript")})).unwrap()["problems"].as_array().unwrap().is_empty()
+    );
+
+    let cube = session.scene().children(None).iter().copied().find(|id| session.scene().name(*id) == Some("Cube")).unwrap().to_hex();
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 1.0})).unwrap();
+    assert!((rotation_y(&session, &cube) - 45.0).abs() < 1e-3, "the starter script turns the cube");
+    assert!(!session.console().iter().any(|l| l.level == crate::Level::Error), "{:?}", session.console());
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+
+    assert!(registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap_err().to_string().contains("not empty"));
+    registry.execute(&mut session, "scene.new", &Value::Null).unwrap();
+    assert!(session.project_dir().is_none());
+    registry.execute(&mut session, "project.open", &json!({"path": dir})).unwrap();
+    assert_eq!(registry.execute(&mut session, "project.info", &Value::Null).unwrap()["mainScene"], "scenes/main.bscene");
+    std::fs::remove_dir_all(&base).ok();
+}

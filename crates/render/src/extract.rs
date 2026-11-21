@@ -112,6 +112,8 @@ pub struct Frame {
     pub clear_color: Vec4,
     pub show_grid: bool,
     pub selected: Option<StableId>,
+    /// More selected objects, highlighted like `selected`.
+    pub highlighted: Vec<StableId>,
     /// Seconds, for animated materials.
     pub time: f32,
 }
@@ -182,6 +184,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, ma
         clear_color: Vec4::new(0.035, 0.04, 0.05, 1.0),
         show_grid: options.show_grid,
         selected: options.selected,
+        highlighted: Vec::new(),
         time: options.time,
     }
 }

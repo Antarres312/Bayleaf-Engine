@@ -1,4 +1,4 @@
-use serde_json::json;
+﻿use serde_json::json;
 
 use crate::doc::{self, SceneDoc};
 use crate::{Scene, SceneError};
@@ -172,4 +172,37 @@ fn script_names_come_from_the_module_file() {
     let name = |module: &str| crate::components::ScriptRef { module: module.into(), properties: Default::default() }.display_name();
     assert_eq!(name("scripts/player_controller.wasm"), "Player Controller");
     assert_eq!(name(r"a\b\mover.wasm"), "Mover");
+    assert_eq!(name("scripts/door_opener.bscript"), "Door Opener", "visual scripts lose their extension too");
+}
+
+#[test]
+fn exported_subtrees_import_as_copies_with_new_ids_in_place() {
+    let mut scene = Scene::new();
+    let a = scene.create_object(None, "A").unwrap();
+    let b = scene.create_object(None, "B").unwrap();
+    let child = scene.create_object(Some(a), "Child").unwrap();
+    scene.create_object(Some(child), "Grandchild").unwrap();
+    scene.set_component(a, "transform", serde_json::json!({"position": [1, 2, 3], "rotation": [0, 0, 0], "scale": [1, 1, 1]})).unwrap();
+
+    // A root inside another root is copied once.
+    let copied = scene.export(&[a, child]).unwrap();
+    assert_eq!(copied.len(), 3);
+    let tops = scene.import(&copied, None, Some(1)).unwrap();
+    assert_eq!(tops.len(), 1);
+    let copy = tops[0];
+    assert_ne!(copy, a, "copies get new ids");
+    assert_eq!(scene.children(None), [a, copy, b], "placed at the index");
+    assert_eq!(scene.component(copy, "transform").unwrap(), scene.component(a, "transform").unwrap());
+    let copy_child = scene.children(Some(copy))[0];
+    assert_eq!(scene.name(copy_child), Some("Child"));
+    assert_eq!(scene.children(Some(copy_child)).len(), 1, "the whole subtree is copied");
+    assert!(scene.is_inside(scene.children(Some(copy_child))[0], copy));
+
+    // Broken data is refused.
+    let mut orphan = copied.clone();
+    orphan.remove(0);
+    assert!(scene.import(&orphan, None, None).is_err(), "a child listed without its parent");
+    let mut bad = copied;
+    bad[0].components.insert("transform".into(), serde_json::json!({"position": "up"}));
+    assert!(scene.import(&bad, None, None).is_err());
 }
