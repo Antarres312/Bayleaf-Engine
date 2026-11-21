@@ -756,3 +756,81 @@ fn play_raises_the_game_view_which_shows_the_state_and_stop_returns_to_the_scene
     harness.run();
     assert!(harness.query_by_label("State").is_none() && harness.query_by_label("Grid").is_some(), "stop brings the Scene tab back");
 }
+
+/// The editor drawn offscreen with its real renderer, or `None` without a GPU (a failure instead
+/// with `BAYLEAF_GPU_REQUIRED=1`).
+fn gpu_harness() -> Option<Harness<'static, Editor>> {
+    let setup = egui_kittest::wgpu::default_wgpu_setup();
+    let instance = pollster::block_on(setup.new_instance());
+    let config = egui_wgpu::WgpuConfiguration { wgpu_setup: setup, ..Default::default() };
+    let state = match pollster::block_on(egui_wgpu::RenderState::create(&config, &instance, None, egui_wgpu::RendererOptions::default())) {
+        Ok(state) => state,
+        Err(error) if std::env::var_os("BAYLEAF_GPU_REQUIRED").is_none() => {
+            eprintln!("no GPU, skipped: {error}");
+            return None;
+        }
+        Err(error) => panic!("BAYLEAF_GPU_REQUIRED is set but there is no GPU: {error}"),
+    };
+    let renderer = egui_kittest::wgpu::WgpuTestRenderer::from_render_state(state.clone());
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1440.0, 900.0))
+        .renderer(renderer)
+        .build_ui_state(move |ui, editor: &mut Editor| editor.ui(ui, Some(&state)), Editor::default());
+    harness.run_steps(2);
+    Some(harness)
+}
+
+/// The editor as drawn: width, height and RGBA bytes.
+struct Picture {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+fn picture(harness: &mut Harness<'static, Editor>) -> Picture {
+    let image = harness.render().unwrap();
+    Picture { width: image.width(), height: image.height(), rgba: image.into_raw() }
+}
+
+/// How many different colours the picture has inside `rect` (points at one pixel per point).
+fn colours_in(picture: &Picture, rect: egui::Rect) -> usize {
+    let mut seen = std::collections::HashSet::new();
+    for y in (rect.top().max(0.0) as u32..rect.bottom().min(picture.height as f32) as u32).step_by(3) {
+        for x in (rect.left().max(0.0) as u32..rect.right().min(picture.width as f32) as u32).step_by(3) {
+            let at = ((y * picture.width + x) * 4) as usize;
+            seen.insert([picture.rgba[at], picture.rgba[at + 1], picture.rgba[at + 2]]);
+        }
+    }
+    seen.len()
+}
+
+/// With `BAYLEAF_REVIEW_DIR` set, keeps a picture of the editor there for a look by eye.
+fn keep_for_review(picture: &Picture, name: &str) {
+    let Some(dir) = std::env::var_os("BAYLEAF_REVIEW_DIR") else { return };
+    let path = std::path::Path::new(&dir).join(format!("{name}.png"));
+    let file = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+    let mut encoder = png::Encoder::new(file, picture.width, picture.height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.write_header().unwrap().write_image_data(&picture.rgba).unwrap();
+}
+
+#[test]
+fn with_a_gpu_the_game_tab_draws_the_game_through_the_scene_camera() {
+    let Some(mut harness) = gpu_harness() else { return };
+    let dir = std::env::temp_dir().join(format!("bayleaf-game-tab-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.run_steps(3);
+    let scene = picture(&mut harness);
+    keep_for_review(&scene, "editor-scene");
+
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(4);
+    let view = harness.get_by_label("Game view, playing").rect();
+    let playing = picture(&mut harness);
+    keep_for_review(&playing, "editor-game");
+    // The starter scene's sky, ground and light: a drawn game, not an empty canvas.
+    assert!(colours_in(&playing, view) > 12, "the Game view shows the scene through its camera");
+    std::fs::remove_dir_all(&dir).ok();
+}

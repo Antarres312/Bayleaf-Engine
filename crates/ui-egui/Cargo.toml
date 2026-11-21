@@ -25,6 +25,9 @@ serde_json = { workspace = true }
 workspace = true
 
 [dev-dependencies]
-egui_kittest = { workspace = true }
+# wgpu: the editor drawn offscreen with its real renderer (GPU tests and review pictures).
+egui_kittest = { workspace = true, features = ["wgpu"] }
+pollster = { workspace = true }
+png = { workspace = true }
 # The app gets fonts through eframe; headless UI tests need them too.
 egui = { workspace = true, features = ["default_fonts"] }

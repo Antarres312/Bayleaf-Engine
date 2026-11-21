@@ -155,7 +155,8 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
             }
         }
         ui.separator();
-        ui.weak("Drag: orbit · Shift+drag: pan · Scroll: zoom · Click: select");
+        // Shortened with an ellipsis when the view is narrow; hovering shows all of it.
+        ui.add(egui::Label::new(egui::RichText::new("Drag: orbit · Shift+drag: pan · Scroll: zoom · Click: select").weak()).truncate());
     });
     command
 }
