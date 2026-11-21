@@ -1215,3 +1215,33 @@ fn rust_scripts_in_a_project_share_one_workspace_and_build() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn asset_delete_removes_files_and_scripts_from_the_workspace_but_never_the_project() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-asset-delete-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    for name in ["Keep Me", "Drop Me"] {
+        registry.execute(&mut session, "script.new", &json!({"folder": "scripts", "name": name})).unwrap();
+    }
+    let delete = |session: &mut Session, path: &str| registry.execute(session, "asset.delete", &json!({"path": path, "permanent": true}));
+
+    delete(&mut session, "materials/ground.bmaterial").unwrap();
+    assert!(!dir.join("materials/ground.bmaterial").exists());
+    delete(&mut session, "scripts/drop_me").unwrap();
+    assert!(!dir.join("scripts/drop_me").exists());
+    let workspace: toml_edit::DocumentMut = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap().parse().unwrap();
+    let members: Vec<&str> = workspace["workspace"]["members"].as_array().unwrap().iter().filter_map(|m| m.as_str()).collect();
+    assert_eq!(members, ["scripts/keep_me"], "a deleted script leaves the workspace, the others stay");
+
+    assert!(delete(&mut session, ".").is_err(), "never the project folder");
+    assert!(delete(&mut session, "missing.txt").is_err());
+    // Agents delete only inside their write folders.
+    let scenes = dir.join("scenes");
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), std::slice::from_ref(&scenes)).unwrap()));
+    assert!(delete(&mut session, "scripts/spin.bscript").is_err());
+    assert!(dir.join("scripts/spin.bscript").exists());
+    std::fs::remove_dir_all(&dir).ok();
+}

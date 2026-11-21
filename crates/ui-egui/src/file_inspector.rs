@@ -21,11 +21,15 @@ pub(crate) struct Inspected {
     modified: Option<SystemTime>,
     /// An image's picture, made the first time it is shown.
     texture: Option<egui::TextureHandle>,
+    /// A Markdown file's contents, read and parsed, and its text.
+    markdown: Option<(craft_flow::Flow, String)>,
+    /// Shows a Markdown file's text as written instead of formatted.
+    show_source: bool,
 }
 
 impl Inspected {
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path, info: Info::default(), modified: None, texture: None }
+        Self { path, info: Info::default(), modified: None, texture: None, markdown: None, show_source: false }
     }
 
     /// Reads the file again when it changed since it was last read.
@@ -35,6 +39,7 @@ impl Inspected {
             self.info = asset_info::describe(editor_session, &self.path);
             self.modified = modified;
             self.texture = None;
+            self.markdown = if crate::markdown_view::is_markdown(&self.path) { crate::markdown_view::read(&self.path) } else { None };
         }
     }
 }
@@ -107,7 +112,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             action = Some(chosen);
         }
 
-        if let Some(text) = &file.info.text {
+        if file.markdown.is_some() {
+            markdown_contents(ui, &mut file);
+        } else if let Some(text) = &file.info.text {
             ui.add_space(6.0);
             let label = ui.label(egui::RichText::new("Contents").small().color(t.text_muted));
             theme::section(t).show(ui, |ui| {
@@ -180,4 +187,31 @@ fn file_size(bytes: u64) -> String {
         unit += 1;
     }
     format!("{value:.1} {}", UNITS[unit])
+}
+
+/// A Markdown file's contents, formatted, or as written with Source.
+fn markdown_contents(ui: &mut egui::Ui, file: &mut Inspected) {
+    let t = theme::tokens(ui);
+    let Some((flow, text)) = &file.markdown else { return };
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Contents").small().color(t.text_muted));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let source = ui.add(egui::Button::selectable(file.show_source, "Source").small()).on_hover_text("Show the Markdown as written");
+            if source.clicked() {
+                file.show_source = !file.show_source;
+            }
+        });
+    });
+    theme::section(t).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        if file.show_source {
+            ui.add(egui::Label::new(egui::RichText::new(text).monospace()).wrap().selectable(true));
+        } else {
+            crate::markdown_view::show(ui, flow);
+        }
+        if file.info.bytes > crate::markdown_view::MAX_BYTES {
+            ui.label(egui::RichText::new(format!("Only the first {} KB are shown.", crate::markdown_view::MAX_BYTES / 1024)).small().color(t.text_muted));
+        }
+    });
 }

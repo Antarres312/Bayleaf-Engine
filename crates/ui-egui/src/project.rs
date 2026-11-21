@@ -37,6 +37,18 @@ pub(crate) struct DraggedAsset {
     pub relative: String,
 }
 
+impl DraggedAsset {
+    /// Whether it is a script an object can run: a built module or a visual script.
+    pub(crate) fn is_script(&self) -> bool {
+        self.relative.ends_with(".wasm") || self.relative.ends_with(".bscript")
+    }
+}
+
+/// The script being dragged from the Project panel, if one is.
+pub(crate) fn dragged_script(ctx: &egui::Context) -> Option<String> {
+    egui::DragAndDrop::payload::<DraggedAsset>(ctx).filter(|a| a.is_script()).map(|a| a.relative.clone())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Folder,
@@ -75,7 +87,7 @@ impl Kind {
     fn label(self) -> &'static str {
         match self {
             Kind::Folder => "Folder",
-            Kind::ScriptSource => "Script Source",
+            Kind::ScriptSource => "Rust Script",
             Kind::Scene => "Scene",
             Kind::Project => "Project",
             Kind::Prefab => "Prefab",
@@ -124,6 +136,13 @@ pub(crate) struct ProjectView {
     icon_size: f32,
     /// A new file being named; nothing is written until the name is confirmed.
     naming: Option<Naming>,
+    /// A file or folder had keyboard focus last frame: plain keys such as Delete are the panel's.
+    pub(crate) focused: bool,
+    /// A file or folder waiting for the delete to be confirmed.
+    deleting: Option<PathBuf>,
+    /// Tests delete for good instead of filling the Recycle Bin.
+    #[cfg(test)]
+    pub(crate) delete_permanently: bool,
 }
 
 impl ProjectView {
@@ -186,6 +205,11 @@ impl ProjectView {
         self.root.as_deref().is_some_and(|r| !self.current.as_os_str().is_empty() && self.current.starts_with(r))
     }
 
+    /// A `.wasm` module built from a Rust script folder beside it: listed as part of that script.
+    fn is_built_module(&self, entry: &Entry) -> bool {
+        entry.kind == Kind::Script && entry.path.with_extension("").join("Cargo.toml").is_file()
+    }
+
     /// Whether `path` is inside the project folder (new assets go only there).
     fn is_in_project(&self, path: &Path) -> bool {
         self.root.as_deref().is_some_and(|r| !path.as_os_str().is_empty() && path.starts_with(r))
@@ -201,7 +225,7 @@ const CREATABLE: [(AssetKind, &str, &str, &str); 5] = [
     (AssetKind::Script, "Rust Script", "Behaviour in Rust, built to WebAssembly", "New Script"),
 ];
 
-/// The lowercase name of a kind, for "New …" prompts.
+/// The lowercase name of a kind, for "New â¦" prompts.
 fn kind_name(kind: AssetKind) -> &'static str {
     match kind {
         AssetKind::Folder => "folder",
@@ -251,6 +275,8 @@ enum Action {
     Reveal(PathBuf),
     /// Read the folders again now.
     Refresh,
+    /// Ask before deleting this file or folder.
+    AskDelete(PathBuf),
 }
 
 /// What the panel's parts ask for after drawing.
@@ -261,6 +287,8 @@ struct Outcome {
     select: Option<PathBuf>,
     /// A file clicked (not only pressed to drag): the Inspector shows it.
     inspect: Option<PathBuf>,
+    /// A file or folder has keyboard focus, so plain keys (Delete) are the panel's.
+    focused: bool,
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
@@ -308,6 +336,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         view.current = folder;
         view.filter.clear();
     }
+    view.focused = outcome.focused;
     if let Some(file) = outcome.select {
         view.selected = Some(file);
     }
@@ -357,6 +386,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             }
         }
         Some(Action::Refresh) => editor.project.scanned = None,
+        Some(Action::AskDelete(path)) => editor.project.deleting = Some(path),
         Some(Action::BuildScript(dir)) => editor.build_script(&dir),
         Some(Action::AddScript(module)) => {
             if let Some(id) = editor.selected {
@@ -364,6 +394,60 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             }
         }
         None => {}
+    }
+    delete_dialog(editor, ui.ctx());
+}
+
+/// Asks before a file or folder goes to the Recycle Bin. The confirm button has focus, so Enter
+/// deletes and Escape cancels.
+fn delete_dialog(editor: &mut Editor, ctx: &egui::Context) {
+    let Some(path) = editor.project.deleting.clone() else { return };
+    let t = theme::tokens_for(ctx);
+    let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let folder = path.is_dir();
+    let mut confirmed = false;
+    let mut cancelled = false;
+    let modal = egui::Modal::new(egui::Id::unique("delete asset")).show(ctx, |ui| {
+        ui.set_max_width(420.0);
+        ui.heading("Move to the Recycle Bin?");
+        ui.add_space(theme::GAP);
+        let what = if folder { format!("The folder {name} and everything in it") } else { name.clone() };
+        ui.add(egui::Label::new(egui::RichText::new(what).color(t.text)).wrap());
+        ui.label(egui::RichText::new("You can restore it from the Recycle Bin.").color(t.text_muted));
+        ui.add_space(theme::GAP * 2.0);
+        ui.horizontal(|ui| {
+            let delete = ui.add(egui::Button::new(egui::RichText::new("Move to Recycle Bin").color(t.on_accent)).fill(t.accent));
+            // Focus starts on the confirm button once; Tab still reaches Cancel.
+            let opened = egui::Id::unique("delete asset focused");
+            if !ui.ctx().data(|d| d.get_temp::<bool>(opened).unwrap_or(false)) {
+                delete.request_focus();
+                ui.ctx().data_mut(|d| d.insert_temp(opened, true));
+            }
+            confirmed = delete.clicked();
+            cancelled = ui.button("Cancel").clicked();
+        });
+    });
+    if !(modal.should_close() || cancelled || confirmed) {
+        return;
+    }
+    editor.project.deleting = None;
+    ctx.data_mut(|d| d.remove::<bool>(egui::Id::unique("delete asset focused")));
+    if !confirmed {
+        return;
+    }
+    #[cfg(test)]
+    let permanent = editor.project.delete_permanently;
+    #[cfg(not(test))]
+    let permanent = false;
+    if editor.dispatch("asset.delete", &json!({ "path": path, "permanent": permanent }), None).is_some() {
+        editor.project.scanned = None;
+        if editor.project.selected.as_ref().is_some_and(|s| s.starts_with(&path)) {
+            editor.project.selected = None;
+        }
+        if editor.inspected_file.as_ref().is_some_and(|f| f.path.starts_with(&path)) {
+            editor.inspected_file = None;
+        }
+        editor.status = format!("Moved {name} to the Recycle Bin.");
     }
 }
 
@@ -615,7 +699,8 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, ou
     }
     let filter = view.filter.trim().to_lowercase();
     // The engine's folder is never a tile: it is chosen from the folder list only.
-    let shown = |e: &&Entry| Some(&e.path) != view.engine.as_ref();
+    // A Rust script is one entry: its built module beside its folder is not listed again.
+    let shown = |e: &&Entry| Some(&e.path) != view.engine.as_ref() && !view.is_built_module(e);
     let entries: Vec<&Entry> = if filter.is_empty() {
         view.tree.get(&view.current).map(|v| v.iter().filter(shown).collect()).unwrap_or_default()
     } else {
@@ -729,6 +814,12 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
     }
     if response.clicked() {
         outcome.inspect = Some(entry.path.clone());
+        // Keyboard keys (Delete) then act on it.
+        response.request_focus();
+    }
+    outcome.focused |= response.has_focus();
+    if response.has_focus() && view.is_in_project(&entry.path) && ui.input(|i| i.key_pressed(egui::Key::Delete)) {
+        outcome.action = Some(Action::AskDelete(entry.path.clone()));
     }
     if response.double_clicked() {
         outcome.action = default_action(entry);
@@ -736,9 +827,14 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
             outcome.enter = Some(entry.path.clone());
         }
     }
+    // A Rust script is dragged as its module, and built first when it has none yet.
+    let module = (entry.kind == Kind::ScriptSource).then(|| format!("{relative}.wasm"));
     if entry.kind != Kind::Folder {
         if response.drag_started_by(egui::PointerButton::Primary) {
-            egui::DragAndDrop::set_payload(ui.ctx(), DraggedAsset { relative: relative.clone() });
+            egui::DragAndDrop::set_payload(ui.ctx(), DraggedAsset { relative: module.clone().unwrap_or_else(|| relative.clone()) });
+            if module.is_some() && !entry.path.with_extension("wasm").is_file() {
+                outcome.action = Some(Action::BuildScript(entry.path.clone()));
+            }
         }
         if response.dragged_by(egui::PointerButton::Primary)
             && let Some(pointer) = ui.ctx().pointer_interact_pos()
@@ -771,10 +867,10 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
             outcome.action = Some(Action::OpenGraph(entry.path.clone()));
             ui.close();
         }
-        if matches!(entry.kind, Kind::Script | Kind::VisualScript) {
+        if matches!(entry.kind, Kind::Script | Kind::VisualScript | Kind::ScriptSource) {
             let button = ui.add_enabled(selected_object, egui::Button::new("Add to Selected Object"));
             if button.on_disabled_hover_text("Select an object first").clicked() {
-                outcome.action = Some(Action::AddScript(relative.clone()));
+                outcome.action = Some(Action::AddScript(module.clone().unwrap_or_else(|| relative.clone())));
                 ui.close();
             }
         }
@@ -793,6 +889,13 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
         if entry.kind == Kind::Folder && view.is_in_project(&entry.path) {
             ui.separator();
             ui.menu_button("Create", |ui| create_panel(ui, Some(&entry.path), outcome));
+        }
+        if view.is_in_project(&entry.path) {
+            ui.separator();
+            if ui.button("Delete…").on_hover_text("Move it to the Recycle Bin (Delete)").clicked() {
+                outcome.action = Some(Action::AskDelete(entry.path.clone()));
+                ui.close();
+            }
         }
     });
 }

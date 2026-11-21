@@ -923,3 +923,135 @@ fn inspector_lists_sit_beside_their_labels_not_over_them() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn delete_asks_first_escape_keeps_the_file_and_confirming_removes_it() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-delete-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().project.current = dir.join("materials");
+    harness.state_mut().project.delete_permanently = true;
+    harness.run_steps(2);
+    let file = dir.join("materials").join("ground.bmaterial");
+    let tile = "ground.bmaterial, Material";
+
+    harness.get_by_label(tile).click();
+    harness.run();
+    harness.key_press(egui::Key::Delete);
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Move to Recycle Bin").is_some(), "Delete asks first");
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Move to Recycle Bin").is_none() && file.exists(), "Escape keeps the file");
+
+    harness.get_by_label(tile).click_secondary();
+    harness.run();
+    harness.get_by_label("Delete…").click();
+    harness.run_steps(2);
+    assert!(harness.get_by_label("Move to Recycle Bin").is_focused(), "the confirm button has focus, so Enter deletes");
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+    assert!(!file.exists(), "confirming deletes it");
+    assert!(harness.query_by_label(tile).is_none(), "and it leaves the panel");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_markdown_file_shows_formatted_in_the_inspector_and_as_written_with_source() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-markdown-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.run_steps(2);
+    harness.get_by_label("README.md, File").click();
+    harness.run_steps(2);
+    assert!(harness.query_all_by_value("•").next().is_some(), "list items get bullets");
+    assert!(harness.query_all_by_label_contains("- `scenes/`").next().is_none(), "no Markdown marks show");
+    harness.get_by_label("Source").click();
+    harness.run_steps(2);
+    assert!(harness.query_all_by_label_contains("- `scenes/`").next().is_some(), "Source shows the text as written");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_mouse_wheel_zooms_the_graph_around_the_pointer() {
+    let mut harness = graph_harness("material");
+    harness.state_mut().show_panel(crate::Panel::Graph);
+    harness.run_steps(2);
+    let canvas = harness.get_by_label("Graph canvas").rect();
+    let before = harness.state().graph_view.scene_rect;
+    harness.hover_at(canvas.center());
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, 3.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+        source: egui::MouseWheelSource::Wheel,
+    });
+    harness.run_steps(8);
+    let after = harness.state().graph_view.scene_rect;
+    assert!(after.width() < before.width() - 1.0, "scrolling up zooms in: {before:?} -> {after:?}");
+}
+
+#[test]
+fn a_rust_script_is_one_entry_that_drags_onto_an_object_as_its_module() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-one-script-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().dispatch("script.new", &json!({ "folder": "scripts", "name": "Mover" }), None);
+    // As if it was built: the module beside its folder.
+    std::fs::write(dir.join("scripts").join("mover.wasm"), b"\0asm\x01\0\0\0").unwrap();
+    harness.state_mut().project.current = dir.join("scripts");
+    harness.state_mut().project.rescan_soon();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("mover, Rust Script").is_some(), "the script shows once");
+    assert!(harness.query_by_label("mover.wasm, Script").is_none(), "its module is not listed again");
+
+    let from = harness.get_by_label("mover, Rust Script").rect().center();
+    let to = harness.get_by_label("Cube").rect().center();
+    harness.hover_at(from);
+    harness.drag_at(from);
+    harness.run();
+    for step in 1..=6 {
+        harness.hover_at(from + (to - from) * (step as f32 / 6.0));
+        harness.run();
+    }
+    harness.drop_at(to);
+    harness.run_steps(2);
+    let scene = harness.state().session.scene();
+    let cube = scene.world_matrices().into_iter().map(|(id, _)| id).find(|id| scene.name(*id) == Some("Cube")).unwrap();
+    let scripts = scene.component(cube, "scripts").unwrap();
+    assert!(scripts.to_string().contains("scripts/mover.wasm"), "the object runs the built module: {scripts}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn open_recent_lists_projects_newest_first_and_opens_one_again() {
+    let mut harness = harness();
+    let base = std::env::temp_dir().join(format!("bayleaf-ui-recent-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    for name in ["Forest", "Castle"] {
+        harness.state_mut().dispatch("project.new", &json!({ "path": base.join(name) }), None);
+        harness.run();
+    }
+    harness.get_by_label("File").click();
+    harness.run();
+    harness.get_by_label("Open Recent").click();
+    harness.run();
+    let forest = harness.get_by_label("Forest").rect();
+    let castle = harness.get_by_label("Castle").rect();
+    assert!(castle.top() < forest.top(), "the newest project comes first");
+    harness.get_by_label("Forest").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().session.project_dir(), Some(base.join("Forest").as_path()), "choosing it opens it again");
+
+    // The list is kept between runs, including a project whose folder is gone since.
+    let saved = harness.state().recent_projects_text();
+    std::fs::remove_dir_all(base.join("Castle")).ok();
+    let mut next = Editor::default();
+    next.restore_recent_projects(&saved);
+    assert_eq!(next.recent_projects_text(), saved);
+    std::fs::remove_dir_all(&base).ok();
+}

@@ -206,7 +206,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     // A script dragged from the Project panel and dropped anywhere on the inspector is added.
     let area = panel.inner_rect;
     if let Some(asset) = egui::DragAndDrop::payload::<project::DraggedAsset>(ui.ctx())
-        && asset.relative.ends_with(".wasm")
+        && asset.is_script()
         && ui.ctx().pointer_interact_pos().is_some_and(|p| area.contains(p))
     {
         ui.painter().rect_stroke(area, theme::RADIUS, egui::Stroke::new(2.0, t.focus), egui::StrokeKind::Inside);

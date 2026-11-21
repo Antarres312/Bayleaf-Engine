@@ -155,7 +155,7 @@ steps. Automation file access to graphs is confined like any other file (`docs/a
 | Move a comment and its nodes | Drag its title | Tab to its title, then the arrow keys |
 | Resize a comment | Drag its bottom-right corner | Tab to its title, then Ctrl + arrow keys |
 | Edit or delete a comment | Double-click its title; right-click it | Enter; Delete |
-| Pan and zoom | Drag the background; Ctrl + wheel | Ctrl + Plus, Minus; Ctrl + 0 or Fit All shows every node |
+| Pan and zoom | Drag the background; the mouse wheel | Ctrl + Plus, Minus; Ctrl + 0 or Fit All shows every node |
 
 Every node, pin and field has a name for screen readers that includes its links ("Input Base Color
 (Color) of Material Output 1, linked from Color 2"). Pins differ by shape as well as colour: flow

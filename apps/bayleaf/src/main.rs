@@ -12,6 +12,8 @@ use clap::Parser;
 
 /// Storage key of the panel layout. The value carries its own format version.
 const LAYOUT_KEY: &str = "bayleaf.layout";
+/// Projects opened lately, for File > Open Recent.
+const RECENT_KEY: &str = "bayleaf.recentProjects";
 
 #[derive(Parser)]
 #[command(name = "bayleaf", version, about = "Bayleaf Engine editor")]
@@ -59,6 +61,9 @@ impl App {
         if let Some(text) = cc.storage.and_then(|s| s.get_string(LAYOUT_KEY)) {
             // A layout from another version is ignored; the editor keeps its default layout.
             let _restored = editor.restore_layout(&text);
+        }
+        if let Some(text) = cc.storage.and_then(|s| s.get_string(RECENT_KEY)) {
+            editor.restore_recent_projects(&text);
         }
         if let Some(scene) = &scene {
             editor.open_scene(scene);
@@ -109,6 +114,7 @@ impl eframe::App for App {
         if let Some(text) = self.editor.saved_layout() {
             storage.set_string(LAYOUT_KEY, text);
         }
+        storage.set_string(RECENT_KEY, self.editor.recent_projects_text());
     }
 }
 

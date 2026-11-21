@@ -122,6 +122,23 @@ pub const WORKSPACE_MANIFEST: &str = "Cargo.toml";
 /// Small, fast WebAssembly modules for scripts.
 const RELEASE_PROFILE: &str = "[profile.release]\nopt-level = \"s\"\nlto = true\ncodegen-units = 1\npanic = \"abort\"\nstrip = true\n";
 
+/// Takes every member at or inside `removed` out of the workspace `manifest`, keeping the rest of
+/// the file as it is. Nothing changes when none is there.
+pub fn leave_workspace(manifest: &Path, removed: &Path) -> Result<(), String> {
+    let root = manifest.parent().ok_or("the workspace manifest has no folder")?;
+    let Ok(relative) = removed.strip_prefix(root) else { return Ok(()) };
+    let relative = relative.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+    let text = std::fs::read_to_string(manifest).map_err(|e| format!("cannot read {}: {e}", manifest.display()))?;
+    let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else { return Ok(()) };
+    let Some(members) = doc.get_mut("workspace").and_then(|w| w.get_mut("members")).and_then(toml_edit::Item::as_array_mut) else { return Ok(()) };
+    let before = members.len();
+    members.retain(|m| m.as_str().is_none_or(|m| !(m == relative || m.starts_with(&format!("{relative}/")) || relative.is_empty())));
+    if members.len() == before {
+        return Ok(());
+    }
+    std::fs::write(manifest, doc.to_string()).map_err(|e| format!("cannot write {}: {e}", manifest.display()))
+}
+
 /// Adds the crate at `member` to the workspace `manifest`, making the workspace when the project
 /// has none. An existing manifest keeps its own entries, formatting and comments; one that is not
 /// a workspace is refused rather than changed.

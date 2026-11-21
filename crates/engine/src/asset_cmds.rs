@@ -1,7 +1,8 @@
 //! `asset.create`: new folders, scenes, material graphs, visual scripts and Rust scripts in the
 //! project, for the Project panel's create menu and for agents. Never writes over a file.
+//! `asset.delete`: a file or folder to the Recycle Bin (or gone for good, when asked).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bayleaf_scene::Scene;
 use bayleaf_scene::components::{Camera, DirectionalLight, Transform};
@@ -12,17 +13,65 @@ use crate::confine::Access;
 use crate::{CommandError, CommandSpec, Mutates, Prompt, Session, always, parse};
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
-    vec![CommandSpec {
-        id: "asset.create",
-        label: "Create Asset",
-        menu: "",
-        shortcut: "",
-        params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
-        prompt: Prompt::None,
-        mutates: Mutates::No,
-        enabled: always,
-        run: asset_create,
-    }]
+    vec![
+        CommandSpec {
+            id: "asset.create",
+            label: "Create Asset",
+            menu: "",
+            shortcut: "",
+            params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: asset_create,
+        },
+        CommandSpec {
+            id: "asset.delete",
+            label: "Delete Asset",
+            menu: "",
+            shortcut: "",
+            params: "{path, permanent?}: moves a file or folder of the project (relative to the project folder or absolute) to the Recycle Bin; permanent: true deletes it for good, for where there is no Recycle Bin. Never the project folder itself. A Rust script leaves the project's workspace with it",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: asset_delete,
+        },
+    ]
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteParams {
+    path: PathBuf,
+    #[serde(default)]
+    permanent: bool,
+}
+
+fn asset_delete(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: DeleteParams = parse(params)?;
+    let path = session.allowed(&session.script_dir().join(&p.path), Access::Write)?;
+    if !path.exists() {
+        return Err(CommandError::BadParams(format!("{} does not exist", path.display())));
+    }
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if let Some(project) = session.project_dir()
+        && canonical(project).starts_with(canonical(&path))
+    {
+        return Err(CommandError::BadParams("the project folder itself, or a folder holding it, is never deleted".to_owned()));
+    }
+    // Scripts in the deleted path leave the workspace first, so the others still build.
+    let workspace = session.project_dir().map(|p| p.join(crate::code_scripts::WORKSPACE_MANIFEST)).filter(|m| m.is_file());
+    if let Some(manifest) = &workspace {
+        session.allowed(manifest, Access::Write)?;
+        crate::code_scripts::leave_workspace(manifest, &path).map_err(CommandError::Failed)?;
+    }
+    let removed = if p.permanent {
+        if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) }.map_err(|e| e.to_string())
+    } else {
+        trash::delete(&path).map_err(|e| format!("{e}; with no Recycle Bin, delete with permanent: true"))
+    };
+    removed.map_err(|e| CommandError::Failed(format!("cannot delete {}: {e}", path.display())))?;
+    Ok(json!({ "path": path, "recycled": !p.permanent }))
 }
 
 /// What `asset.create` makes.

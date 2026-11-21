@@ -38,6 +38,8 @@ egui_dock = { version = "0.22", features = ["serde"] }
 # rev merged on its main branch; moving the rev is a change of its own.
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
 craft-fonts-build = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
+craft-markdown = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
+craft-flow = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
 # Same version eframe uses for its saved state; it keeps non-finite floats that JSON cannot.
 ron = "0.12"
 egui = { version = "0.37", default-features = false }
@@ -45,6 +47,8 @@ egui_kittest = "0.37"
 toml = "0.9"
 # Edits a project's script workspace manifest, keeping its formatting and comments.
 toml_edit = "0.25"
+# Moves deleted project files to the system's Recycle Bin, so they can be restored.
+trash = "5"
 getrandom = "0.3"
 # Pure-Rust WebAssembly interpreter: runs inside the web build too, with fuel metering.
 wasmi = "2"

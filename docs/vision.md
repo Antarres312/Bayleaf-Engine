@@ -78,7 +78,13 @@ No crate below L6 may use egui, eframe, winit or rfd.
    context menus (on files, folders and the space between them) create folders, scenes, materials,
    visual scripts and Rust scripts (`asset.create`), open files with the system's program and show
    them in the file manager; double-click opens a file with its own tool (the editor's, or the
-   system's for images, models and text); selected objects are outlined instead of tinted.
+   system's for images, models and text); selected objects are outlined instead of tinted. Then:
+   Delete (the key on a focused file, or the context menu) moves a file or folder to the Recycle Bin
+   after asking (`asset.delete`; a deleted Rust script leaves the project's workspace); Markdown files
+   show formatted in the Inspector (read by craft-markdown), with Source for the text as written; the
+   mouse wheel zooms the graph editor; a Rust script is one entry in the Project panel, dragged as its
+   module onto an object in the hierarchy, the scene view or the Inspector (built first when it has no
+   module yet); File > Open Recent lists the last 10 projects.
 3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
    a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with

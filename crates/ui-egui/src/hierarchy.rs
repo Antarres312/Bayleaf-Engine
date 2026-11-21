@@ -83,6 +83,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     ui.separator();
     let mut state = RowState { selected: editor.selected, also: editor.also_selected.clone(), renaming: editor.renaming.take(), ..RowState::default() };
     let mut moved: Option<Value> = None;
+    let mut script_dropped: Option<(StableId, String)> = None;
     let filter = editor.hierarchy_filter.trim().to_lowercase();
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         theme::dense(ui);
@@ -109,6 +110,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             }
             theme::stripes(ui, stripe_slot, state.rows.iter().map(|(_, r)| *r), full_width);
         }
+        script_dropped = script_drop(ui, t, &state.rows);
     });
     editor.selected = state.selected;
     editor.also_selected = std::mem::take(&mut state.also);
@@ -129,6 +131,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     }
     if let Some(params) = moved {
         editor.dispatch("scene.object.reparent", &params, None);
+    }
+    if let Some((id, module)) = script_dropped {
+        editor.dispatch("scene.script.add", &json!({ "id": id, "module": module }), None);
     }
     match state.command {
         Some((COPY, _)) => editor.copy_selection(false),
@@ -274,6 +279,21 @@ fn tree(ui: &mut egui::Ui, scene: &Scene, parent: Option<StableId>, state: &mut 
                 .body(|ui| tree(ui, scene, Some(id), state));
         }
     }
+}
+
+/// While a script is dragged from the Project panel: outlines the object row under the pointer,
+/// and on release returns that object and the script to add to it.
+fn script_drop(ui: &egui::Ui, t: &Tokens, rows: &[(StableId, egui::Rect)]) -> Option<(StableId, String)> {
+    let module = crate::project::dragged_script(ui.ctx())?;
+    let pointer = ui.ctx().pointer_interact_pos()?;
+    let full_width = |rect: egui::Rect| egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
+    let (id, rect) = rows.iter().find(|(_, rect)| full_width(*rect).contains(pointer))?;
+    ui.painter().rect_stroke(full_width(*rect), theme::RADIUS, egui::Stroke::new(2.0, t.focus), egui::StrokeKind::Inside);
+    if !ui.input(|i| i.pointer.any_released()) {
+        return None;
+    }
+    egui::DragAndDrop::clear_payload(ui.ctx());
+    Some((*id, module))
 }
 
 /// While an object is dragged: shows where it would land, and on release returns the

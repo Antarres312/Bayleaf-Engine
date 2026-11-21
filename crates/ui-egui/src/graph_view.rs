@@ -2,7 +2,7 @@
 //!
 //! Every change goes through the `graph.*` commands. Mouse: drag a node's title to move it, drag
 //! from a pin to another pin to link them (or into empty space to add a linked node), right-click
-//! the canvas to add a node, drag the background to pan, Ctrl + wheel to zoom, Ctrl + click to select
+//! the canvas to add a node, drag the background to pan, the mouse wheel to zoom, Ctrl + click to select
 //! several. Keyboard: Ctrl + Plus, Minus and 0 zoom in, out and to every node; Ctrl+C, Ctrl+V and
 //! Ctrl+D copy, paste and duplicate the selected nodes; Tab moves
 //! between nodes, pins and fields; arrows move the focused node; Delete removes it; Enter on a pin
@@ -50,7 +50,7 @@ struct AddMenu {
 /// The graph editor's own state, kept between frames.
 pub(crate) struct GraphView {
     /// The part of the canvas in view.
-    scene_rect: Rect,
+    pub(crate) scene_rect: Rect,
     /// The selected nodes; Ctrl + click adds or takes one out.
     selected: Vec<u32>,
     /// A link being dragged with the mouse.
@@ -451,7 +451,8 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
     view.focused = false;
     let mut hovered_pin: Option<PinPick> = None;
     let mut scene_rect = view.scene_rect;
-    let response = egui::Scene::new().zoom_range(ZOOM_RANGE).show(ui, &mut scene_rect, |ui| {
+    // The mouse wheel zooms around the pointer; dragging the background pans.
+    let response = egui::Scene::new().zoom_range(ZOOM_RANGE).scroll_zooms(true).show(ui, &mut scene_rect, |ui| {
         let to_scene = ui.ctx().layer_transform_from_global(ui.layer_id()).unwrap_or_default();
         let zoom = 1.0 / to_scene.scaling.max(1e-3);
         paint_dots(ui, t, zoom);

@@ -12,7 +12,10 @@ bayleaf-core = { workspace = true }
 bayleaf-engine = { workspace = true }
 gilrs = { workspace = true }
 bayleaf-render = { workspace = true }
+craft-flow = { workspace = true }
 craft-fonts-build = { workspace = true }
+# Markdown files in the Inspector, read by the Craft apps' shared parser.
+craft-markdown = { workspace = true }
 # system_fonts: installed fonts fill in scripts the embedded faces lack (desktop only).
 craft-ui = { workspace = true, features = ["system_fonts"] }
 egui = { workspace = true }

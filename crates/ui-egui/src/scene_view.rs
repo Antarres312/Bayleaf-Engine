@@ -95,6 +95,8 @@ pub(crate) struct SceneView {
     pub tool: gizmo::Tool,
     /// A handle being dragged.
     gizmo_drag: Option<gizmo::Drag>,
+    /// The object under a script dragged from the Project panel, outlined as where it would go.
+    script_target: Option<bayleaf_core::StableId>,
 }
 
 impl SceneView {
@@ -227,6 +229,8 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time };
     let mut frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut assets);
     frame.highlighted = editor.also_selected.clone();
+    // The object a dragged script would go to is outlined too.
+    frame.highlighted.extend(view.script_target);
     if frame.items.iter().any(|i| i.material.as_ref().is_some_and(|m| m.animated)) {
         ui.ctx().request_repaint();
     }
@@ -267,12 +271,24 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         ui.painter().rect_stroke(response.rect, 0.0, egui::Stroke::new(3.0, t.accent), egui::StrokeKind::Inside);
     }
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Scene view"));
-    // A prefab dragged from the Project panel is placed in the scene.
-    if let Some(asset) = response.dnd_release_payload::<crate::project::DraggedAsset>()
-        && asset.relative.ends_with(".bprefab")
-    {
-        let path = editor.session.script_dir().join(&asset.relative);
-        editor.place_prefab(&path);
+    // From the Project panel: a prefab is placed in the scene; a script goes to the object under
+    // the pointer, which is outlined while the script is over it.
+    let ndc_at = |pos: egui::Pos2| {
+        let local = (pos - response.rect.min) / response.rect.size();
+        Vec2::new(local.x * 2.0 - 1.0, 1.0 - local.y * 2.0)
+    };
+    view.script_target =
+        crate::project::dragged_script(ui.ctx()).is_some().then(|| response.hover_pos()).flatten().and_then(|pos| bayleaf_render::pick(&frame, ndc_at(pos)));
+    if let Some(asset) = response.dnd_release_payload::<crate::project::DraggedAsset>() {
+        if asset.relative.ends_with(".bprefab") {
+            let path = editor.session.script_dir().join(&asset.relative);
+            editor.place_prefab(&path);
+        } else if asset.is_script()
+            && let Some(pos) = response.interact_pointer_pos().or_else(|| response.hover_pos())
+            && let Some(id) = bayleaf_render::pick(&frame, ndc_at(pos))
+        {
+            editor.dispatch("scene.script.add", &serde_json::json!({ "id": id, "module": asset.relative }), None);
+        }
     }
     if let Some(texture) = preview {
         paint_preview(ui, texture, response.rect, preview_size);

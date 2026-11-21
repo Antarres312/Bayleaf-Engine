@@ -17,6 +17,7 @@ mod gizmo;
 mod graph_view;
 mod hierarchy;
 mod inspector;
+mod markdown_view;
 mod project;
 mod project_settings;
 mod scene_view;
@@ -52,6 +53,10 @@ pub struct Editor {
     game_view: game_view::GameView,
     /// Play mode as last frame saw it: starting raises the Game view, stopping the scene view.
     was_playing: bool,
+    /// Projects opened lately, newest first, for File > Open Recent.
+    recent_projects: Vec<std::path::PathBuf>,
+    /// The project folder as last frame saw it, to notice when another one opens.
+    last_project: Option<std::path::PathBuf>,
     dock: egui_dock::DockState<Panel>,
     hierarchy_filter: String,
     /// The object being renamed in the hierarchy, if any.
@@ -97,6 +102,8 @@ impl Default for Editor {
             scene_view: scene_view::SceneView::new(),
             game_view: game_view::GameView::default(),
             was_playing: false,
+            recent_projects: Vec::new(),
+            last_project: None,
             dock: Layout::Standard.build(),
             hierarchy_filter: String::new(),
             renaming: None,
@@ -131,6 +138,7 @@ impl Editor {
         self.handle_shortcuts(ui.ctx());
         self.poll_builds(ui.ctx());
         self.run_play_frame(ui.ctx());
+        self.note_recent_project();
         if self.session.is_playing() != self.was_playing {
             self.was_playing = self.session.is_playing();
             self.show_panel(if self.was_playing { Panel::Game } else { Panel::Scene });
@@ -306,6 +314,61 @@ impl Editor {
         }
     }
 
+    /// Most projects File > Open Recent lists.
+    const MAX_RECENT: usize = 10;
+
+    /// Puts a project that just opened first in the recent list.
+    fn note_recent_project(&mut self) {
+        let current = self.session.project_dir().map(std::path::Path::to_path_buf);
+        if current == self.last_project {
+            return;
+        }
+        self.last_project = current.clone();
+        if let Some(dir) = current {
+            self.recent_projects.retain(|p| *p != dir);
+            self.recent_projects.insert(0, dir);
+            self.recent_projects.truncate(Self::MAX_RECENT);
+        }
+    }
+
+    /// File > Open Recent: the projects opened lately. One whose folder is gone shows, greyed out.
+    fn recent_menu(&mut self, ui: &mut egui::Ui, open: &mut Option<std::path::PathBuf>) {
+        ui.menu_button("Open Recent", |ui| {
+            if self.recent_projects.is_empty() {
+                ui.add_enabled(false, egui::Button::new("No recent projects"));
+                return;
+            }
+            for dir in &self.recent_projects {
+                let name = dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned());
+                let here = self.session.project_dir() == Some(dir.as_path());
+                let button = ui.add_enabled(dir.is_dir() && !here, egui::Button::new(name)).on_hover_text(dir.display().to_string());
+                let button =
+                    if here { button.on_disabled_hover_text("Open now") } else { button.on_disabled_hover_text(format!("Not found: {}", dir.display())) };
+                if button.clicked() {
+                    *open = Some(dir.clone());
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui.button("Clear Recent").clicked() {
+                self.recent_projects.retain(|p| Some(p.as_path()) == self.session.project_dir());
+                ui.close();
+            }
+        });
+    }
+
+    /// The recent projects as text, for saving between runs.
+    pub fn recent_projects_text(&self) -> String {
+        serde_json::to_string(&self.recent_projects).unwrap_or_default()
+    }
+
+    /// Restores the recent projects saved by [`Self::recent_projects_text`]; broken text is ignored.
+    pub fn restore_recent_projects(&mut self, text: &str) {
+        if let Ok(list) = serde_json::from_str::<Vec<std::path::PathBuf>>(text) {
+            self.recent_projects = list.into_iter().take(Self::MAX_RECENT).collect();
+        }
+    }
+
     /// The panel layout as text, for saving between runs.
     pub fn saved_layout(&self) -> Option<String> {
         dock::to_text(&self.dock)
@@ -368,6 +431,7 @@ impl Editor {
         }
         let mut clicked = None;
         let mut clipboard_action = None;
+        let mut open_recent = None;
         for top in top_menus {
             let items: Vec<&CommandInfo> = entries.iter().filter(|c| c.menu.split('/').next() == Some(top)).collect();
             if top == "Help" {
@@ -391,6 +455,10 @@ impl Editor {
                         ui.close();
                     }
                 }
+                if top == "File" {
+                    ui.separator();
+                    self.recent_menu(ui, &mut open_recent);
+                }
                 if top == "Edit" {
                     // Clipboard entries belong to the editor: they use the system clipboard.
                     ui.separator();
@@ -413,6 +481,11 @@ impl Editor {
         }
         if let Some(id) = clicked {
             self.run_with_prompt(id);
+        }
+        if let Some(path) = open_recent
+            && !(self.session.is_dirty() && !confirm_discard())
+        {
+            self.dispatch("project.open", &json!({ "path": path }), None);
         }
         match clipboard_action {
             Some("cut") => self.copy_selection(true),
@@ -656,9 +729,11 @@ impl Editor {
         }
         // While a graph node or pin has focus, plain keys such as Delete and the arrows belong to the graph.
         let graph_keys = self.graph_view.focused;
+        // Likewise a file in the Project panel: Delete moves the file, not the selected object.
+        let panel_keys = graph_keys || self.project.focused;
         // F2 renames the selected object in place, in the hierarchy.
         if let Some(id) = self.selected
-            && !graph_keys
+            && !panel_keys
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2))
         {
             self.renaming = Some(hierarchy::Rename { id, text: String::new(), focused: false });
@@ -695,7 +770,7 @@ impl Editor {
             .into_iter()
             .filter(|c| c.enabled)
             .filter_map(|c| parse_shortcut(c.shortcut).map(|s| (c.id, s)))
-            .filter(|(_, s)| !(graph_keys && s.modifiers.is_none()))
+            .filter(|(_, s)| !(panel_keys && s.modifiers.is_none()))
             .collect();
         for (id, shortcut) in shortcuts {
             if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
