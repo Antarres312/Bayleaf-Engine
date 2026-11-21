@@ -124,3 +124,104 @@ fn clicking_a_row_selects_it_even_if_the_mouse_moves_a_little() {
     assert_eq!(harness.state().selected, Some(first));
     assert_eq!(harness.state().session.scene().children(None).len(), 2, "a click must not move anything");
 }
+
+#[test]
+fn play_and_stop_buttons_run_play_mode_and_restore_the_scene() {
+    let mut harness = harness();
+    create_named(&mut harness, "Actor");
+    let before = harness.state().session.scene().to_doc();
+    harness.get_by_label("Play scene").click();
+    // Play mode repaints every frame, so step instead of waiting for the UI to settle.
+    harness.run_steps(3);
+    assert!(harness.state().session.is_playing());
+    assert!(harness.query_by_label("Stop playing").is_some(), "the toolbar offers Stop while playing");
+    // Edits during play are thrown away on stop.
+    harness.state_mut().dispatch("scene.object.create", &json!({ "name": "Temporary" }), None);
+    harness.run_steps(2);
+    harness.get_by_label("Stop playing").click();
+    harness.run();
+    assert!(!harness.state().session.is_playing());
+    assert_eq!(harness.state().session.scene().to_doc(), before);
+    assert!(!harness.state().session.console().is_empty(), "start and stop are reported in the console");
+}
+
+#[test]
+fn shortcuts_and_game_keys_work_while_a_non_text_widget_has_focus() {
+    let mut harness = harness();
+    create_named(&mut harness, "Actor");
+    // Focus a button (keyboard navigation), not a text field.
+    harness.get_by_label("Play scene").focus();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(2);
+    assert!(harness.state().session.is_playing(), "Ctrl+P starts play mode with a button focused");
+    harness.key_down(egui::Key::D);
+    harness.run_steps(2);
+    assert!(harness.state().session.held_keys().contains("D"), "held keys reach the scripts");
+}
+
+fn name_of_first(harness: &Harness<'static, Editor>) -> String {
+    let scene = harness.state().session.scene();
+    scene.name(scene.children(None)[0]).unwrap_or_default().to_owned()
+}
+
+#[test]
+fn rename_from_the_context_menu_edits_in_place_and_enter_keeps_the_new_name() {
+    // Double-click opens the same field; kittest cannot simulate a double-click, so that path was
+    // checked by hand in the editor.
+    let mut harness = harness();
+    create_named(&mut harness, "Old");
+    harness.get_by_label("Old").click_secondary();
+    harness.run();
+    harness.get_by_label("Rename").click();
+    harness.run();
+    let field = harness.get_by_label("Object name");
+    assert!(field.is_focused(), "the name field takes focus");
+    // The whole name is selected, so typing replaces it.
+    field.type_text("Hero");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(name_of_first(&harness), "Hero");
+    assert!(harness.query_by_label("Object name").is_none(), "the field closes after Enter");
+}
+
+#[test]
+fn f2_renames_the_selection_and_escape_keeps_the_old_name() {
+    let mut harness = harness();
+    create_named(&mut harness, "Keep");
+    harness.key_press(egui::Key::F2);
+    harness.run();
+    harness.get_by_label("Object name").type_text("Discarded");
+    harness.run();
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert_eq!(name_of_first(&harness), "Keep");
+    harness.key_press(egui::Key::F2);
+    harness.run();
+    harness.get_by_label("Object name").type_text("Renamed");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(name_of_first(&harness), "Renamed");
+}
+
+#[test]
+fn ctrl_and_mouse_wheel_over_the_files_resize_the_icons() {
+    let mut harness = harness();
+    let before = harness.state().project.icon();
+    // A point in the file area: below the Project panel's toolbar, left of its search field.
+    let search = harness.get_by_label("Search project files").rect();
+    let over_files = egui::pos2(search.left() - 200.0, search.bottom() + 40.0);
+    harness.hover_at(over_files);
+    harness.run();
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, 3.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    harness.run_steps(20);
+    assert!(harness.state().project.icon() > before, "Ctrl + wheel up makes the icons bigger");
+}

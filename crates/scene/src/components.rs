@@ -246,6 +246,30 @@ impl SceneComponent for Sprite {
     }
 }
 
+/// A WebAssembly script attached to the object; see `docs/script-abi.md`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Script {
+    /// Path to the `.wasm` module, relative to the scene file's folder.
+    pub module: String,
+    /// Numbers the script reads with `property(name)`.
+    #[serde(default)]
+    pub properties: std::collections::BTreeMap<String, f32>,
+}
+
+impl SceneComponent for Script {
+    const NAME: &'static str = "script";
+    const LABEL: &'static str = "Script";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        if self.module.contains('\0') {
+            return Err("module path contains a NUL character".to_owned());
+        }
+        finite("script property", self.properties.values())
+    }
+}
+
 fn finite<'a>(what: &str, mut values: impl Iterator<Item = &'a f32>) -> Result<(), String> {
     if values.all(|v| v.is_finite()) { Ok(()) } else { Err(format!("{what} values must be finite numbers")) }
 }

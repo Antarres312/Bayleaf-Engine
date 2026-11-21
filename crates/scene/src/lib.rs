@@ -105,6 +105,13 @@ impl Scene {
         self.world.get::<T>(entity)
     }
 
+    /// Typed write of one component, checked like a value from a file or command.
+    pub fn set<T: components::SceneComponent>(&mut self, id: StableId, value: T) -> Result<(), SceneError> {
+        value.validate().map_err(|message| SceneError::InvalidValue { component: T::NAME.to_owned(), message })?;
+        let entity = self.entity(id)?;
+        self.world.insert(entity, value).map_err(|e| SceneError::Internal(e.to_string()))
+    }
+
     /// Local-to-world matrix of every object, parents before children in hierarchy order.
     pub fn world_matrices(&self) -> Vec<(StableId, Mat4)> {
         let mut out = Vec::with_capacity(self.entities.len());

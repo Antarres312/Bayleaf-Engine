@@ -69,7 +69,11 @@ No crate below L6 may use egui, eframe, winit or rfd.
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with
    click selection. Still open: shadows, textures and sprite images (wait for the asset pipeline),
    environment lighting, gizmos for moving objects, and drawing camera and light icons in the view.
-4. **M3 Scripts:** WASM host, guest SDK, hot reload, play mode.
+4. **M3 Scripts (done, 2026-11-21):** WASM host on wasmi (fuel and memory limits, faults isolated per
+   script), ABI v1 (`docs/script-abi.md`), Rust SDK (`crates/script-sdk`), example scripts (`scripts/`,
+   built by `cargo xtask scripts`), hot reload, play mode (`play.start/stop/pause/step/input/status`)
+   that restores the edited scene, a Console panel, and a Project panel (asset browser).
+   Still open: script-declared properties with defaults, more input (mouse, gamepad), physics queries.
 5. **M4 Automation:** control channel and MCP with confined read/write roots (AA 18).
 6. **M5 Graphs:** shared graph editor, material graph, visual scripting.
 7. **M6 Gameplay framework** as opt-in modules.

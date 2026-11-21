@@ -7,9 +7,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod brand;
+mod console;
 mod dock;
 mod hierarchy;
 mod inspector;
+mod project;
 mod scene_view;
 mod theme;
 mod value_editor;
@@ -23,7 +25,7 @@ use serde_json::{Value, json};
 
 /// Menus in the order they appear; menus not listed here follow in registry order. The Window
 /// menu is the editor's own and sits before Help.
-const MENU_ORDER: &[&str] = &["File", "Edit", "Object", "Help"];
+const MENU_ORDER: &[&str] = &["File", "Edit", "Object", "Play", "Help"];
 
 /// Editor state shared by every panel.
 pub struct Editor {
@@ -37,9 +39,12 @@ pub struct Editor {
     scene_view: scene_view::SceneView,
     dock: egui_dock::DockState<Panel>,
     hierarchy_filter: String,
+    /// The object being renamed in the hierarchy, if any.
+    renaming: Option<hierarchy::Rename>,
     theme_installed: bool,
     /// Logo texture and whether it was made for the dark theme.
     logo: Option<(egui::TextureHandle, bool)>,
+    project: project::ProjectView,
 }
 
 impl Default for Editor {
@@ -54,8 +59,10 @@ impl Default for Editor {
             scene_view: scene_view::SceneView::new(),
             dock: Layout::Standard.build(),
             hierarchy_filter: String::new(),
+            renaming: None,
             theme_installed: false,
             logo: None,
+            project: project::ProjectView::default(),
         }
     }
 }
@@ -70,6 +77,7 @@ impl Editor {
         }
         let t = theme::tokens(ui);
         self.handle_shortcuts(ui.ctx());
+        self.run_play_frame(ui.ctx());
         egui::Panel::top("menu_bar").frame(egui::Frame::new().fill(t.backdrop).inner_margin(egui::Margin::symmetric(8, 4))).show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.logo_mark(ui);
@@ -90,6 +98,29 @@ impl Editor {
         self.update_title(ui.ctx());
         if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
             self.selected = None;
+        }
+    }
+
+    /// Opens a scene file, asking first if the open scene has unsaved changes.
+    pub fn open_scene(&mut self, path: &std::path::Path) {
+        if self.session.is_dirty() && !confirm_discard() {
+            return;
+        }
+        self.dispatch("scene.open", &json!({ "path": path }), None);
+    }
+
+    /// In play mode: passes the held keys to the scripts and advances the simulation by one frame.
+    fn run_play_frame(&mut self, ctx: &egui::Context) {
+        if !self.session.is_playing() {
+            return;
+        }
+        // Keys typed into a text field are not game input.
+        let keys = if ctx.text_edit_focused() { Default::default() } else { ctx.input(|i| i.keys_down.iter().map(|k| k.name().to_owned()).collect()) };
+        self.session.set_keys(keys);
+        let dt = ctx.input(|i| i.stable_dt).min(0.1);
+        self.session.tick(dt);
+        if !self.session.is_paused() {
+            ctx.request_repaint();
         }
     }
 
@@ -185,11 +216,19 @@ impl Editor {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.egui_wants_keyboard_input() {
+        // Only typing blocks shortcuts; a focused button or the scene view does not.
+        if ctx.text_edit_focused() {
             return;
         }
+        // F2 renames the selected object in place, in the hierarchy.
+        if let Some(id) = self.selected
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2))
+        {
+            self.renaming = Some(hierarchy::Rename { id, text: String::new(), focused: false });
+        }
+        // Only enabled commands: Play and Stop share Ctrl+P, and only one of them is enabled at a time.
         let shortcuts: Vec<(&'static str, egui::KeyboardShortcut)> =
-            self.registry.list(&self.session).into_iter().filter_map(|c| parse_shortcut(c.shortcut).map(|s| (c.id, s))).collect();
+            self.registry.list(&self.session).into_iter().filter(|c| c.enabled).filter_map(|c| parse_shortcut(c.shortcut).map(|s| (c.id, s))).collect();
         for (id, shortcut) in shortcuts {
             if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
                 self.run_with_prompt(id);

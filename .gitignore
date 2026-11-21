@@ -3,3 +3,5 @@
 /plan
 .claude/
 .cursor/
+/scripts/target
+/examples/**/scripts/*.wasm

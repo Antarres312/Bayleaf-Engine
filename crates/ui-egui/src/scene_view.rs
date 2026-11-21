@@ -96,7 +96,9 @@ impl SceneView {
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgpu::RenderState>) {
     let mut view = std::mem::take(&mut editor.scene_view);
-    toolbar(&mut view, editor, ui);
+    if let Some(command) = toolbar(&mut view, editor, ui) {
+        editor.dispatch(command, &serde_json::Value::Null, None);
+    }
     if !view.framed_once && editor.session.scene().object_count() > 0 {
         view.frame_selection(editor);
         view.framed_once = true;
@@ -110,8 +112,35 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
     editor.scene_view = view;
 }
 
-fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) {
+/// View controls and the play controls. Returns a play command to run.
+fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&'static str> {
+    let mut command = None;
+    let session = &editor.session;
     ui.horizontal(|ui| {
+        let t = crate::theme::tokens(ui);
+        // Accessible names start with the visible label but say more, as the Play menu shares the word.
+        let named = |response: egui::Response, name: &str| {
+            response.ctx.accesskit_node_builder(response.id, |node| node.set_label(name));
+            response
+        };
+        if session.is_playing() {
+            let (label, name) = if session.is_paused() { ("Resume", "Resume playing") } else { ("Pause", "Pause playing") };
+            if named(ui.button(label), name).on_hover_text("Ctrl+Shift+P").clicked() {
+                command = Some("play.pause");
+            }
+            let stop = ui.add(egui::Button::new(egui::RichText::new("Stop").color(t.on_accent)).fill(t.accent));
+            if named(stop, "Stop playing").on_hover_text("Stop and restore the scene (Ctrl+P)").clicked() {
+                command = Some("play.stop");
+            }
+            let state = if session.is_paused() { "Paused" } else { "Playing" };
+            ui.label(egui::RichText::new(format!("{state} · {:.1} s", session.play_time())).strong());
+        } else {
+            let play = ui.add(egui::Button::new(egui::RichText::new("Play").color(t.on_accent)).fill(t.accent));
+            if named(play, "Play scene").on_hover_text("Run the scene's scripts (Ctrl+P)").clicked() {
+                command = Some("play.start");
+            }
+        }
+        ui.separator();
         let frame_label = if editor.selected.is_some() { "Frame Selection" } else { "Frame All" };
         if ui.button(frame_label).on_hover_text("Move the view to show it (F)").clicked() {
             view.frame_selection(editor);
@@ -120,6 +149,7 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) {
         ui.separator();
         ui.weak("Drag: orbit · Shift+drag: pan · Scroll: zoom · Click: select");
     });
+    command
 }
 
 fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &egui_wgpu::RenderState) {
@@ -148,6 +178,11 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
 
     let image = egui::Image::new(egui::load::SizedTexture::new(gpu_view.texture, size)).sense(egui::Sense::click_and_drag());
     let response = ui.add(image);
+    if editor.session.is_playing() {
+        // A frame in the accent colour, plus the toolbar text, shows play mode is on.
+        let t = crate::theme::tokens(ui);
+        ui.painter().rect_stroke(response.rect, 0.0, egui::Stroke::new(3.0, t.accent), egui::StrokeKind::Inside);
+    }
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Scene view"));
 
     // Mouse.
@@ -176,8 +211,8 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         }
     }
 
-    // Keyboard, while the view has focus.
-    if response.has_focus() {
+    // Keyboard, while the view has focus. During play the keys belong to the scripts.
+    if response.has_focus() && !editor.session.is_playing() {
         let step = 0.08;
         ui.input(|i| {
             let held = |key| i.key_down(key);

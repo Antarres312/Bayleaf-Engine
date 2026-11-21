@@ -26,7 +26,10 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             params: "none",
             prompt: Prompt::None,
             mutates: false,
-            enabled: |s| if s.can_undo() { Ok(()) } else { Err("nothing to undo".to_owned()) },
+            enabled: |s| {
+                crate::not_playing(s)?;
+                if s.can_undo() { Ok(()) } else { Err("nothing to undo".to_owned()) }
+            },
             run: undo,
         },
         CommandSpec {
@@ -37,7 +40,10 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             params: "none",
             prompt: Prompt::None,
             mutates: false,
-            enabled: |s| if s.can_redo() { Ok(()) } else { Err("nothing to redo".to_owned()) },
+            enabled: |s| {
+                crate::not_playing(s)?;
+                if s.can_redo() { Ok(()) } else { Err("nothing to redo".to_owned()) }
+            },
             run: redo,
         },
     ]

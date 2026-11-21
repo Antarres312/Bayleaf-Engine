@@ -1,4 +1,8 @@
-//! Repository checks. Run `cargo xtask layers`.
+//! Repository tasks.
+//!
+//! - `cargo xtask layers`: checks the crate layering.
+//! - `cargo xtask scripts`: builds the example game scripts for WebAssembly and copies them into
+//!   `examples/demo/scripts/`.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -8,11 +12,46 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 
+/// WebAssembly target the example scripts build for.
+const SCRIPT_TARGET: &str = "wasm32-unknown-unknown";
+
 fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("layers") => check_layers(&workspace_root()?),
-        _ => bail!("usage: cargo xtask layers"),
+        Some("scripts") => build_scripts(&workspace_root()?),
+        _ => bail!("usage: cargo xtask layers | scripts"),
     }
+}
+
+fn build_scripts(root: &Path) -> anyhow::Result<()> {
+    let manifest = root.join("scripts").join("Cargo.toml");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let status = std::process::Command::new(cargo)
+        .args(["build", "--release", "--target", SCRIPT_TARGET, "--manifest-path"])
+        .arg(&manifest)
+        .status()
+        .context("could not run cargo")?;
+    if !status.success() {
+        bail!("building the scripts failed; if the target is missing, run: rustup target add {SCRIPT_TARGET}");
+    }
+    let built = root.join("scripts").join("target").join(SCRIPT_TARGET).join("release");
+    let out = root.join("examples").join("demo").join("scripts");
+    std::fs::create_dir_all(&out).with_context(|| format!("creating {}", out.display()))?;
+    let mut copied = 0;
+    for entry in std::fs::read_dir(&built).with_context(|| format!("reading {}", built.display()))? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "wasm")
+            && let Some(name) = path.file_name()
+        {
+            std::fs::copy(&path, out.join(name)).with_context(|| format!("copying {}", path.display()))?;
+            println!("scripts: {}", out.join(name).display());
+            copied += 1;
+        }
+    }
+    if copied == 0 {
+        bail!("no .wasm files were built in {}", built.display());
+    }
+    Ok(())
 }
 
 fn workspace_root() -> anyhow::Result<PathBuf> {

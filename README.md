@@ -14,6 +14,8 @@ Status: pre-alpha skeleton. See [docs/vision.md](docs/vision.md).
 ## Build
 
 ```
+cargo xtask scripts                                 # build the example scripts (once)
+cargo run -p bayleaf -- examples/demo/demo.bscene   # editor with the demo; Play, then WASD/Space
 cargo run -p bayleaf          # editor
 cargo run -p bayleaf-cli -- commands
 cargo xtask layers

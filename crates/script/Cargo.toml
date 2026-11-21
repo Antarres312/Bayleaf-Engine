@@ -8,6 +8,13 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+bayleaf-core = { workspace = true }
+bayleaf-scene = { workspace = true }
+thiserror = { workspace = true }
+wasmi = { workspace = true }
+
+[dev-dependencies]
+wat = { workspace = true }
 
 [lints]
 workspace = true

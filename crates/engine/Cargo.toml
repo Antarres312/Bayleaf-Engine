@@ -16,6 +16,7 @@ streaming = ["dep:bayleaf-streaming"]
 bayleaf-core = { workspace = true }
 bayleaf-scene = { workspace = true }
 bayleaf-render = { workspace = true }
+bayleaf-script = { workspace = true }
 bayleaf-streaming = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -23,3 +24,6 @@ thiserror = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+wat = { workspace = true }

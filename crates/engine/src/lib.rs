@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod builtin;
+mod play;
 mod scene_cmds;
 
 /// Optional world streaming, present only with the `streaming` feature.
@@ -49,7 +50,7 @@ struct HistoryStep {
     merge_key: Option<String>,
 }
 
-/// State that commands read and change: the open scene, its file and the undo history.
+/// State that commands read and change: the open scene, its file, the undo history and play mode.
 #[derive(Default)]
 pub struct Session {
     scene: Scene,
@@ -57,9 +58,83 @@ pub struct Session {
     dirty: bool,
     undo: Vec<HistoryStep>,
     redo: Vec<HistoryStep>,
+    play: Option<play::Play>,
+    input: std::sync::Arc<bayleaf_script::Input>,
+    console: Vec<ConsoleLine>,
 }
 
+/// How important a console line is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Level {
+    Info,
+    Error,
+}
+
+/// One line in the editor console: script output and play-mode messages.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ConsoleLine {
+    pub level: Level,
+    pub text: String,
+}
+
+/// Console lines kept; older ones are dropped.
+const CONSOLE_LIMIT: usize = 2000;
+
 impl Session {
+    /// True while play mode runs (also when paused).
+    pub fn is_playing(&self) -> bool {
+        self.play.is_some()
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.play.as_ref().is_some_and(|p| p.paused)
+    }
+
+    /// Seconds of simulated time since play mode started.
+    pub fn play_time(&self) -> f64 {
+        self.play.as_ref().map_or(0.0, |p| p.time)
+    }
+
+    /// Keys held down this frame, by name (see `docs/script-abi.md`).
+    pub fn set_keys(&mut self, keys: std::collections::HashSet<String>) {
+        if self.input.keys != keys {
+            self.input = std::sync::Arc::new(bayleaf_script::Input { keys });
+        }
+    }
+
+    /// Keys the scripts currently see as held.
+    pub fn held_keys(&self) -> &std::collections::HashSet<String> {
+        &self.input.keys
+    }
+
+    /// Advances play mode by `dt` seconds unless it is paused. Does nothing outside play mode.
+    pub fn tick(&mut self, dt: f32) {
+        if self.play.as_ref().is_some_and(|p| !p.paused) {
+            play::step(self, dt);
+        }
+    }
+
+    pub fn console(&self) -> &[ConsoleLine] {
+        &self.console
+    }
+
+    pub fn clear_console(&mut self) {
+        self.console.clear();
+    }
+
+    fn log(&mut self, level: Level, text: String) {
+        self.console.push(ConsoleLine { level, text });
+        if self.console.len() > CONSOLE_LIMIT {
+            let excess = self.console.len() - CONSOLE_LIMIT;
+            self.console.drain(..excess);
+        }
+    }
+
+    /// Folder module paths in `script` components are relative to.
+    fn script_dir(&self) -> PathBuf {
+        self.scene_path.as_deref().and_then(Path::parent).map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    }
     pub fn scene(&self) -> &Scene {
         &self.scene
     }
@@ -157,6 +232,7 @@ impl CommandRegistry {
     pub fn with_builtins() -> Self {
         let mut commands = builtin::commands();
         commands.extend(scene_cmds::commands());
+        commands.extend(play::commands());
         Self { commands }
     }
 
@@ -201,6 +277,8 @@ impl CommandRegistry {
         }
         let before = session.scene.to_doc();
         match (spec.run)(session, params) {
+            // Play-mode changes are thrown away on stop, so they are not undo steps and do not dirty the file.
+            Ok(result) if session.is_playing() => Ok(result),
             Ok(result) => {
                 let merges = merge_key.is_some() && session.undo.last().is_some_and(|s| s.merge_key.as_deref() == merge_key);
                 if !merges {
@@ -229,6 +307,11 @@ fn parse<T: DeserializeOwned>(params: &Value) -> Result<T, CommandError> {
 
 fn always(_: &Session) -> Result<(), String> {
     Ok(())
+}
+
+/// For commands that would lose or save play-mode state: scene files, undo and redo.
+fn not_playing(session: &Session) -> Result<(), String> {
+    if session.is_playing() { Err("stop play mode first".to_owned()) } else { Ok(()) }
 }
 
 #[cfg(test)]

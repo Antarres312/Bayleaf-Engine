@@ -178,3 +178,98 @@ fn saving_clears_dirty_and_reopening_restores_the_scene() {
     assert_eq!(session.scene().to_doc(), saved);
     assert!(!session.can_undo());
 }
+
+/// A spinner module: turns its object `speed` degrees per second around Y.
+fn spinner_wasm() -> Vec<u8> {
+    wat::parse_str(
+        r#"(module
+            (import "bayleaf" "transform_get" (func $get (param i32)))
+            (import "bayleaf" "transform_set" (func $set (param i32)))
+            (import "bayleaf" "property" (func $prop (param i32 i32) (result f32)))
+            (import "bayleaf" "log" (func $log (param i32 i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "speed")
+            (data (i32.const 120) "spinning")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_start") (call $log (i32.const 120) (i32.const 8)))
+            (func (export "bayleaf_update") (param $dt f32)
+              (call $get (i32.const 0))
+              (f32.store (i32.const 16)
+                (f32.add (f32.load (i32.const 16)) (f32.mul (call $prop (i32.const 100) (i32.const 5)) (local.get $dt))))
+              (call $set (i32.const 0))))"#,
+    )
+    .unwrap()
+}
+
+/// A saved scene in a temp folder with one object running `module` (written as `spin.wasm`).
+fn scripted_scene(name: &str, module: &[u8]) -> (CommandRegistry, Session, String, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("bayleaf-play-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("spin.wasm"), module).unwrap();
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let id = create(&registry, &mut session, json!({"name": "Spinner", "components": {"script": {"module": "spin.wasm", "properties": {"speed": 90}}}}));
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("play.bscene")})).unwrap();
+    (registry, session, id, dir)
+}
+
+fn rotation_y(session: &Session, id: &str) -> f64 {
+    let id = bayleaf_core::StableId::parse_hex(id).unwrap();
+    session.scene().component(id, "transform").unwrap()["rotation"][1].as_f64().unwrap()
+}
+
+#[test]
+fn play_runs_scripts_and_stop_restores_the_edited_scene() {
+    let (registry, mut session, id, dir) = scripted_scene("restore", &spinner_wasm());
+    let edited = session.scene().to_doc();
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    assert!(session.is_playing());
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.1, "steps": 10})).unwrap();
+    assert!((rotation_y(&session, &id) - 90.0).abs() < 1e-3, "one second at 90°/s");
+    assert!(session.console().iter().any(|l| l.text.contains("spinning")), "the script's log reached the console");
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert!(!session.is_playing());
+    assert_eq!(session.scene().to_doc(), edited);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn pause_stops_ticks_but_step_still_advances() {
+    let (registry, mut session, id, dir) = scripted_scene("pause", &spinner_wasm());
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.pause", &Value::Null).unwrap();
+    session.tick(1.0);
+    assert_eq!(rotation_y(&session, &id), 0.0);
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.5})).unwrap();
+    assert!(rotation_y(&session, &id) > 0.0);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn files_and_history_are_locked_during_play_and_edits_are_not_recorded() {
+    let (registry, mut session, id, dir) = scripted_scene("lock", &spinner_wasm());
+    let steps = session.history().len();
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    for cmd in ["scene.save", "scene.new", "edit.undo"] {
+        assert!(matches!(registry.execute(&mut session, cmd, &Value::Null), Err(CommandError::Disabled { .. })), "{cmd} ran during play");
+    }
+    assert!(registry.execute(&mut session, "play.start", &Value::Null).is_err(), "play cannot start twice");
+    registry.execute(&mut session, "scene.component.add", &json!({"id": id, "component": "tags"})).unwrap();
+    assert_eq!(session.history().len(), steps, "play-mode edits are not undo steps");
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    let id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    assert!(session.scene().component(id, "tags").is_err(), "play-mode edits are thrown away");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_missing_or_broken_script_is_reported_and_play_still_runs() {
+    let (registry, mut session, _, dir) = scripted_scene("broken", b"not wasm");
+    let result = registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    assert_eq!(result["running"], 0);
+    assert!(session.console().iter().any(|l| l.level == crate::Level::Error && l.text.contains("spin.wasm")));
+    registry.execute(&mut session, "play.step", &Value::Null).unwrap();
+    assert!(registry.execute(&mut session, "play.step", &json!({"steps": 0})).is_err());
+    assert!(registry.execute(&mut session, "play.step", &json!({"seconds": -1})).is_err());
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -3,6 +3,8 @@
 
 pub const LAYERS: &[(&str, u8)] = &[
     ("bayleaf-core", 0),
+    // Guest-side SDK for game scripts; the engine never depends on it.
+    ("bayleaf-script-sdk", 0),
     ("bayleaf-ecs", 1),
     ("bayleaf-scene", 2),
     ("bayleaf-assets", 2),

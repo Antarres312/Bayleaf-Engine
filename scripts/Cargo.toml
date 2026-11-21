@@ -1,0 +1,20 @@
+# Example game scripts, built for wasm32-unknown-unknown by `cargo xtask scripts`.
+# A workspace of their own, so the engine workspace never compiles them for the host.
+[workspace]
+resolver = "3"
+members = ["spinner", "mover"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+bayleaf-script-sdk = { path = "../crates/script-sdk" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

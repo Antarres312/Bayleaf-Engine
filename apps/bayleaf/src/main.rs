@@ -18,6 +18,10 @@ impl App {
             // A layout from another version is ignored; the editor keeps its default layout.
             let _restored = editor.restore_layout(&text);
         }
+        // `bayleaf path/to/scene.bscene` opens that scene.
+        if let Some(path) = std::env::args_os().nth(1) {
+            editor.open_scene(std::path::Path::new(&path));
+        }
         Self { editor }
     }
 }

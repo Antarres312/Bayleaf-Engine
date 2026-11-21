@@ -41,6 +41,7 @@ pub(crate) fn edit_fields(ui: &mut egui::Ui, value: &mut Value, salt: &str, opti
                     match field {
                         Value::String(current) if !choices.is_empty() => choose(ui, current, choices, key, label, width),
                         _ if is_color(key, field) => edit_color(ui, field, label, width),
+                        Value::Object(map) if key == "properties" => edit_named_numbers(ui, map, width),
                         _ => edit(ui, field, key.as_str(), label, width),
                     }
                 }));
@@ -75,6 +76,15 @@ pub(crate) fn edit(ui: &mut egui::Ui, value: &mut Value, salt: impl std::hash::H
         Value::Number(n) => edit_number(ui, n, label, width),
         Value::String(s) => {
             let response = ui.add_sized([width, ROW_HEIGHT], egui::TextEdit::singleline(s).align(egui::Align2::LEFT_CENTER)).labelled_by(label);
+            // Text fields also take a file dragged from the Project panel: its path.
+            if response.dnd_hover_payload::<crate::project::DraggedAsset>().is_some() {
+                let t = theme::tokens(ui);
+                ui.painter().rect_stroke(response.rect, theme::RADIUS, egui::Stroke::new(2.0, t.focus), egui::StrokeKind::Inside);
+            }
+            if let Some(asset) = response.dnd_release_payload::<crate::project::DraggedAsset>() {
+                *s = asset.relative.clone();
+                return Outcome { changed: true, ended: true };
+            }
             Outcome::from_response(&response)
         }
         Value::Array(items) if (1..=AXES.len()).contains(&items.len()) && items.iter().all(Value::is_number) => edit_vector(ui, items, width),
@@ -203,7 +213,6 @@ fn edit_color(ui: &mut egui::Ui, value: &mut Value, label: egui::Id, width: f32)
     let has_alpha = channels.len() == 4;
     let get = |i: usize| channels.get(i).copied().unwrap_or(1.0);
     let mut rgba = egui::Rgba::from_rgba_unmultiplied(get(0), get(1), get(2), if has_alpha { get(3) } else { 1.0 });
-    let before = rgba;
     let saved = ui.spacing().interact_size;
     ui.spacing_mut().interact_size = egui::vec2(width, ROW_HEIGHT);
     let alpha = if has_alpha { egui::color_picker::Alpha::OnlyBlend } else { egui::color_picker::Alpha::Opaque };
@@ -216,7 +225,8 @@ fn edit_color(ui: &mut egui::Ui, value: &mut Value, label: egui::Id, width: f32)
         rgba.b(),
         if has_alpha { format!("  A {:.2}", rgba.a()) } else { String::new() }
     ));
-    if rgba == before {
+    // egui round-trips the colour through HSV every frame, so compare nothing: only a real edit counts.
+    if !response.changed() {
         return Outcome { changed: false, ended: response.clicked_elsewhere() };
     }
     let alpha_value = rgba.a();
@@ -248,6 +258,52 @@ pub(crate) fn title_case(key: &str) -> String {
         }
     }
     out
+}
+
+/// A map of named numbers (script properties): edit, remove, and add by name.
+fn edit_named_numbers(ui: &mut egui::Ui, map: &mut serde_json::Map<String, Value>, width: f32) -> Outcome {
+    let t = theme::tokens(ui);
+    let mut outcome = Outcome::default();
+    let mut remove = None;
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        for (name, value) in map.iter_mut() {
+            ui.horizontal(|ui| {
+                let label = ui.add_sized([width * 0.4, ROW_HEIGHT], egui::Label::new(egui::RichText::new(name.as_str()).color(t.text_muted)).truncate());
+                let field_width = (ui.available_width() - 70.0).max(40.0);
+                if let Value::Number(n) = value {
+                    outcome.merge(ui.push_id(name.as_str(), |ui| edit_number(ui, n, label.id, field_width)).inner);
+                }
+                if ui.add_sized([62.0, ROW_HEIGHT], egui::Button::new("Remove")).on_hover_text(format!("Remove {name}")).clicked() {
+                    remove = Some(name.clone());
+                }
+            });
+        }
+        // The name being typed for a new property lives in egui's memory until it is added.
+        let draft_id = ui.scope_id().with("new property");
+        let mut draft = ui.data_mut(|d| d.get_temp::<String>(draft_id)).unwrap_or_default();
+        ui.horizontal(|ui| {
+            let field = ui.add_sized(
+                [(ui.available_width() - 70.0).max(40.0), ROW_HEIGHT],
+                egui::TextEdit::singleline(&mut draft).hint_text("New property").align(egui::Align2::LEFT_CENTER),
+            );
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label("New property name"));
+            let name = draft.trim().to_owned();
+            let can_add = !name.is_empty() && !map.contains_key(&name);
+            let submitted = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if (ui.add_enabled_ui(can_add, |ui| ui.add_sized([62.0, ROW_HEIGHT], egui::Button::new("Add"))).inner.clicked() || submitted) && can_add {
+                map.insert(name, Value::from(0.0));
+                draft.clear();
+                outcome = Outcome { changed: true, ended: true };
+            }
+        });
+        ui.data_mut(|d| d.insert_temp(draft_id, draft));
+    });
+    if let Some(name) = remove {
+        map.remove(&name);
+        outcome = Outcome { changed: true, ended: true };
+    }
+    outcome
 }
 
 #[cfg(test)]

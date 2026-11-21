@@ -17,6 +17,8 @@ pub(crate) struct Tokens {
     pub surface: Color32,
     pub surface_hover: Color32,
     pub surface_active: Color32,
+    /// Background of every other row in long lists (zebra stripes).
+    pub stripe: Color32,
     /// Hairlines between areas; decorative only.
     pub divider: Color32,
     /// Recessed fill of text and number fields.
@@ -48,6 +50,7 @@ pub(crate) const DARK: Tokens = Tokens {
     surface: Color32::from_rgb(0x23, 0x27, 0x31),
     surface_hover: Color32::from_rgb(0x2B, 0x30, 0x3B),
     surface_active: Color32::from_rgb(0x35, 0x3B, 0x48),
+    stripe: Color32::from_rgb(0x21, 0x25, 0x2D),
     divider: Color32::from_rgb(0x2C, 0x31, 0x3B),
     field: Color32::from_rgb(0x14, 0x17, 0x1C),
     field_hover: Color32::from_rgb(0x1C, 0x20, 0x27),
@@ -73,6 +76,7 @@ pub(crate) const LIGHT: Tokens = Tokens {
     surface: Color32::WHITE,
     surface_hover: Color32::from_rgb(0xEE, 0xF0, 0xF4),
     surface_active: Color32::from_rgb(0xE1, 0xE5, 0xEB),
+    stripe: Color32::from_rgb(0xEC, 0xEE, 0xF2),
     divider: Color32::from_rgb(0xD9, 0xDD, 0xE3),
     field: Color32::from_rgb(0xED, 0xEF, 0xF3),
     field_hover: Color32::from_rgb(0xE4, 0xE8, 0xEE),
@@ -98,6 +102,8 @@ pub(crate) const RADIUS: u8 = 6;
 pub(crate) const CARD_RADIUS: u8 = 8;
 /// Height of rows and controls; at least the 24-point minimum target size.
 pub(crate) const ROW_HEIGHT: f32 = 26.0;
+/// Row height in long lists (hierarchy, project files): denser than controls, so more rows fit.
+pub(crate) const LIST_ROW: f32 = 20.0;
 /// Width of the label column in the inspector.
 pub(crate) const LABEL_WIDTH: f32 = 88.0;
 /// Space between related controls.
@@ -113,6 +119,30 @@ pub(crate) fn install(ctx: &egui::Context) {
     ctx.set_style_of(Theme::Dark, style(&DARK, true));
     ctx.set_style_of(Theme::Light, style(&LIGHT, false));
     ctx.set_theme(ThemePreference::System);
+}
+
+/// Spacing for dense lists: rows touch (so stripes join) and buttons have little padding.
+pub(crate) fn dense(ui: &mut egui::Ui) {
+    let s = ui.spacing_mut();
+    s.item_spacing.y = 0.0;
+    s.button_padding = Vec2::new(6.0, 1.0);
+    s.interact_size.y = LIST_ROW;
+    // Small corners suit thin rows.
+    let w = &mut ui.visuals_mut().widgets;
+    for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+        state.corner_radius = CornerRadius::same(3);
+    }
+}
+
+/// Paints zebra stripes behind `rows` into a shape slot reserved before the rows were drawn.
+pub(crate) fn stripes(ui: &egui::Ui, slot: egui::layers::ShapeIdx, rows: impl Iterator<Item = egui::Rect>, x: egui::Rangef) {
+    let t = tokens(ui);
+    let shapes: Vec<egui::Shape> = rows
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 1)
+        .map(|(_, r)| egui::Shape::rect_filled(egui::Rect::from_x_y_ranges(x, r.y_range()), 0.0, t.stripe))
+        .collect();
+    ui.painter().set(slot, egui::Shape::Vec(shapes));
 }
 
 /// A rounded card for a group of fields.
@@ -207,6 +237,8 @@ mod tests {
             ("text on panel", t.text, t.panel),
             ("text on surface", t.text, t.surface),
             ("text on hover", t.text, t.surface_hover),
+            ("text on stripe", t.text, t.stripe),
+            ("muted on stripe", t.text_muted, t.stripe),
             ("text on active", t.text, t.surface_active),
             ("text on field", t.text, t.field),
             ("text on control", t.text, t.control),

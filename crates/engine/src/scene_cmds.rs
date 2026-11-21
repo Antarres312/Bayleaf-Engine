@@ -19,7 +19,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             params: "none",
             prompt: Prompt::None,
             mutates: false,
-            enabled: always,
+            enabled: crate::not_playing,
             run: scene_new,
         },
         CommandSpec {
@@ -30,7 +30,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             params: "{path}",
             prompt: Prompt::OpenScene,
             mutates: false,
-            enabled: always,
+            enabled: crate::not_playing,
             run: scene_open,
         },
         CommandSpec {
@@ -41,7 +41,10 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             params: "none",
             prompt: Prompt::None,
             mutates: false,
-            enabled: |s| if s.scene_path.is_some() { Ok(()) } else { Err("the scene has no file yet; use Save Scene As".to_owned()) },
+            enabled: |s| {
+                crate::not_playing(s)?;
+                if s.scene_path.is_some() { Ok(()) } else { Err("the scene has no file yet; use Save Scene As".to_owned()) }
+            },
             run: scene_save,
         },
         CommandSpec {
@@ -52,7 +55,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             params: "{path}",
             prompt: Prompt::SaveScene,
             mutates: false,
-            enabled: always,
+            enabled: crate::not_playing,
             run: scene_save_as,
         },
         CommandSpec {

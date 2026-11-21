@@ -87,8 +87,10 @@ for checking a scene's look without a window.
 **Opt-in modules.** Each gameplay role is a cargo feature of `bayleaf-gameplay`. World streaming is the
 `streaming` feature of `bayleaf-engine`. The core must build and run without any of them.
 
-**Game scripts** are WebAssembly modules. Visual scripts compile to the same guest ABI. Engine and editor code
-stay Rust only.
+**Game scripts** are WebAssembly modules (ABI in `docs/script-abi.md`, host in `crates/script`). Visual scripts
+compile to the same ABI. Example scripts live in `scripts/`, a separate workspace: build them with
+`cargo xtask scripts` (needs `rustup target add wasm32-unknown-unknown`); the `.wasm` output is not committed.
+Play mode never records undo steps or dirties the file, and restores the scene on stop.
 
 **Clean room.** Other engines are a source of behaviour only, learned from public docs, papers and tutorials.
 Do not copy their code, file layouts, class names, shaders, icons or wording. User-visible feature names are
@@ -104,5 +106,6 @@ checked and recorded in `docs/feature-names.md`. Product copy never names or com
 **Known departures.** This SHOULD rule is not met yet: the translation system (AA 16; labels are plain English).
 Theme tokens live in `crates/ui-egui/src/theme.rs` (not craft-ui yet); their contrast is tested there.
 
-**Conventions.** No `unsafe` anywhere; no module is exempt yet. Every crate root carries the deny attributes
+**Conventions.** `unsafe` is allowed only in `crates/script-sdk/src/abi.rs` (the guest FFI to the host), each block
+with a `// SAFETY:` comment. Every crate root carries the deny attributes
 from `crates/core/src/lib.rs`. Every asset is recorded in `ATTRIBUTION.md`. Fonts come from storytold/craft-fonts.

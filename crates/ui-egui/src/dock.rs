@@ -4,7 +4,7 @@
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 
-use crate::{Editor, hierarchy, inspector, scene_view, theme};
+use crate::{Editor, console, hierarchy, inspector, project, scene_view, theme};
 
 /// The panels of the editor window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -12,16 +12,20 @@ pub enum Panel {
     Hierarchy,
     Scene,
     Inspector,
+    Console,
+    Project,
 }
 
 impl Panel {
-    pub const ALL: [Panel; 3] = [Panel::Hierarchy, Panel::Scene, Panel::Inspector];
+    pub const ALL: [Panel; 5] = [Panel::Hierarchy, Panel::Scene, Panel::Inspector, Panel::Project, Panel::Console];
 
     pub fn title(self) -> &'static str {
         match self {
             Panel::Hierarchy => "Hierarchy",
             Panel::Scene => "Scene",
             Panel::Inspector => "Inspector",
+            Panel::Console => "Console",
+            Panel::Project => "Project",
         }
     }
 
@@ -58,15 +62,18 @@ impl Layout {
         let surface = state.main_surface_mut();
         match self {
             Layout::Standard => {
-                let [scene, _] = surface.split_right(NodeIndex::root(), 0.76, vec![Panel::Inspector]);
+                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console]);
+                let [scene, _] = surface.split_right(top, 0.76, vec![Panel::Inspector]);
                 surface.split_left(scene, 0.24, vec![Panel::Hierarchy]);
             }
             Layout::WideScene => {
-                let [_, side] = surface.split_right(NodeIndex::root(), 0.74, vec![Panel::Hierarchy]);
+                let [top, _] = surface.split_below(NodeIndex::root(), 0.8, vec![Panel::Project, Panel::Console]);
+                let [_, side] = surface.split_right(top, 0.74, vec![Panel::Hierarchy]);
                 surface.split_below(side, 0.42, vec![Panel::Inspector]);
             }
             Layout::Mirrored => {
-                let [scene, _] = surface.split_left(NodeIndex::root(), 0.26, vec![Panel::Inspector]);
+                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console]);
+                let [scene, _] = surface.split_left(top, 0.26, vec![Panel::Inspector]);
                 surface.split_right(scene, 0.76, vec![Panel::Hierarchy]);
             }
         }
@@ -81,7 +88,8 @@ struct SavedLayout {
     dock: DockState<Panel>,
 }
 
-const LAYOUT_VERSION: u32 = 1;
+/// Version 2 added the Project and Console panels; older saved layouts fall back to the default.
+const LAYOUT_VERSION: u32 = 2;
 
 pub(crate) fn to_text(dock: &DockState<Panel>) -> Option<String> {
     ron::to_string(&SavedLayout { version: LAYOUT_VERSION, dock: dock.clone() }).ok()
@@ -114,12 +122,17 @@ pub(crate) fn set_open(dock: &mut DockState<Panel>, panel: Panel, open: bool) {
         (None, true) => match dock.find_tab(&Panel::Scene) {
             Some(scene) => {
                 let surface = dock.main_surface_mut();
-                let side = if panel == Panel::Hierarchy { 0.24 } else { 0.76 };
                 let node = scene.node_path().node;
-                if panel == Panel::Hierarchy {
-                    surface.split_left(node, side, vec![panel]);
-                } else {
-                    surface.split_right(node, side, vec![panel]);
+                match panel {
+                    Panel::Hierarchy => {
+                        surface.split_left(node, 0.24, vec![panel]);
+                    }
+                    Panel::Console | Panel::Project => {
+                        surface.split_below(node, 0.76, vec![panel]);
+                    }
+                    _ => {
+                        surface.split_right(node, 0.76, vec![panel]);
+                    }
                 }
             }
             None => dock.push_to_first_leaf(panel),
@@ -149,6 +162,8 @@ impl TabViewer for Panels<'_> {
             Panel::Hierarchy => hierarchy::show(self.editor, ui),
             Panel::Scene => scene_view::show(self.editor, ui, self.gpu),
             Panel::Inspector => inspector::show(self.editor, ui),
+            Panel::Console => console::show(self.editor, ui),
+            Panel::Project => project::show(self.editor, ui),
         }
     }
 

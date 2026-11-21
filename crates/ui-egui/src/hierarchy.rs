@@ -10,11 +10,11 @@ use bayleaf_core::StableId;
 use bayleaf_engine::scene::Scene;
 use serde_json::{Value, json};
 
-use crate::theme::{self, ROW_HEIGHT, Tokens};
+use crate::theme::{self, LIST_ROW, ROW_HEIGHT, Tokens};
 use crate::{Editor, inspector};
 
 /// Width of the open/close arrow, so leaves line up with branches.
-const ARROW_WIDTH: f32 = 20.0;
+const ARROW_WIDTH: f32 = 18.0;
 /// Share of a row's height at the top and bottom that means "before" and "after" instead of "into".
 const EDGE_ZONE: f32 = 0.28;
 
@@ -47,6 +47,19 @@ struct RowState {
     rows: Vec<(StableId, egui::Rect)>,
     /// A context-menu command and the object it applies to.
     command: Option<(&'static str, StableId)>,
+    /// The object being renamed in place, if any.
+    renaming: Option<Rename>,
+    /// A finished rename to apply: object and new name.
+    commit: Option<(StableId, String)>,
+}
+
+/// An in-place rename: started by a double-click, F2, or the context menu.
+#[derive(Clone, Debug)]
+pub(crate) struct Rename {
+    pub id: StableId,
+    pub text: String,
+    /// False until the field has taken keyboard focus once.
+    pub focused: bool,
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
@@ -55,15 +68,20 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     toolbar(editor, ui);
     ui.add_space(2.0);
     ui.separator();
-    let mut state = RowState { selected: editor.selected, ..RowState::default() };
+    let mut state = RowState { selected: editor.selected, renaming: editor.renaming.take(), ..RowState::default() };
     let mut moved: Option<Value> = None;
     let filter = editor.hierarchy_filter.trim().to_lowercase();
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        theme::dense(ui);
+        // Reserved first, so the stripes are painted under the rows drawn after it.
+        let stripe_slot = ui.painter().add(egui::Shape::Noop);
+        let full_width = ui.max_rect().x_range();
         let scene = editor.session.scene();
         if scene.object_count() == 0 {
             inspector::empty_state(ui, "Empty scene", "Use + to add an object.");
         } else if filter.is_empty() {
             tree(ui, scene, None, &mut state);
+            theme::stripes(ui, stripe_slot, state.rows.iter().map(|(_, r)| *r), full_width);
             // The space below the tree takes drops to the root.
             let root_zone = ui.allocate_space(egui::vec2(ui.available_width(), ui.available_height().max(ROW_HEIGHT * 2.0))).1;
             moved = handle_drop(ui, t, scene, &state.rows, root_zone);
@@ -74,12 +92,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 inspector::empty_state(ui, "No matches", "No object name contains the filter text.");
             }
             for id in matches {
-                let response = row(ui, scene.name(id).unwrap_or("Object"), state.selected == Some(id));
-                if response.clicked() {
-                    state.selected = Some(id);
-                }
-                row_menu(&response, id, &mut state);
+                draggable_row(ui, id, scene.name(id).unwrap_or("Object"), &mut state);
             }
+            theme::stripes(ui, stripe_slot, state.rows.iter().map(|(_, r)| *r), full_width);
         }
     });
     editor.selected = state.selected;
@@ -89,19 +104,23 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     if let Some((command, id)) = state.command {
         editor.dispatch(command, &json!({ "id": id }), None);
     }
-}
-
-/// A full-width, left-aligned selectable row.
-fn row(ui: &mut egui::Ui, name: &str, is_selected: bool) -> egui::Response {
-    let width = ui.available_width();
-    // A trailing grow atom left-aligns the name without adding text to its accessible label.
-    ui.add(egui::Button::selectable(is_selected, (name, egui::Atom::grow())).truncate().min_size(egui::vec2(width, ROW_HEIGHT - 2.0)))
+    editor.renaming = state.renaming;
+    if let Some((id, name)) = state.commit {
+        let unchanged = editor.session.scene().name(id) == Some(name.as_str());
+        if !name.is_empty() && !unchanged {
+            editor.dispatch("scene.component.set", &json!({ "id": id, "component": "name", "value": name }), None);
+        }
+    }
 }
 
 /// Right-click menu of a row. Opening it also selects the row's object.
 fn row_menu(response: &egui::Response, id: StableId, state: &mut RowState) {
     response.context_menu(|ui| {
         state.selected = Some(id);
+        if ui.button("Rename").on_hover_text("F2 or double-click").clicked() {
+            state.renaming = Some(Rename { id, text: String::new(), focused: false });
+            ui.close();
+        }
         for (label, command) in ROW_MENU {
             if ui.button(*label).clicked() {
                 state.command = Some((command, id));
@@ -111,17 +130,54 @@ fn row_menu(response: &egui::Response, id: StableId, state: &mut RowState) {
     });
 }
 
+/// The in-place name field of the object being renamed. Enter or leaving the field keeps the new
+/// name; Escape keeps the old one.
+fn rename_field(ui: &mut egui::Ui, id: StableId, current: &str, width: f32, state: &mut RowState) {
+    let Some(rename) = state.renaming.as_mut() else { return };
+    if !rename.focused {
+        rename.text = current.to_owned();
+    }
+    let response = ui.add_sized([width, LIST_ROW], egui::TextEdit::singleline(&mut rename.text).margin(egui::vec2(6.0, 1.0)).align(egui::Align2::LEFT_CENTER));
+    ui.ctx().accesskit_node_builder(response.id, |node| node.set_label("Object name"));
+    if !rename.focused {
+        response.request_focus();
+        // Select the whole name, so typing replaces it.
+        if let Some(mut text_state) = egui::text_edit::TextEditState::load(ui.ctx(), response.id) {
+            let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(rename.text.chars().count()));
+            text_state.cursor.set_char_range(Some(all));
+            text_state.store(ui.ctx(), response.id);
+        }
+        rename.focused = true;
+    } else if response.lost_focus() {
+        let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let text = rename.text.trim().to_owned();
+        state.renaming = None;
+        if !cancelled {
+            state.commit = Some((id, text));
+        }
+    }
+    state.rows.push((id, response.rect));
+}
+
 /// A row that can also be dragged with the primary button. Records its rectangle for drop targeting.
 /// The secondary button stays free for the context menu.
 fn draggable_row(ui: &mut egui::Ui, id: StableId, name: &str, state: &mut RowState) {
     let width = ui.available_width();
+    if state.renaming.as_ref().is_some_and(|r| r.id == id) {
+        rename_field(ui, id, name, width, state);
+        return;
+    }
     let button = egui::Button::selectable(state.selected == Some(id), (name, egui::Atom::grow()))
         .truncate()
-        .min_size(egui::vec2(width, ROW_HEIGHT - 2.0))
+        .min_size(egui::vec2(width, LIST_ROW))
         .sense(egui::Sense::click_and_drag());
     let response = ui.add(button);
     if response.clicked() {
         state.selected = Some(id);
+    }
+    if response.double_clicked() {
+        state.selected = Some(id);
+        state.renaming = Some(Rename { id, text: String::new(), focused: false });
     }
     // Select on press, like a click, so a click with a little hand movement still selects.
     if response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_pressed()) {

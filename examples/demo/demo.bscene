@@ -1,0 +1,187 @@
+{
+  "format": "bayleaf.scene",
+  "version": 1,
+  "objects": [
+    {
+      "id": "943fe1457f5309fddb13504f8c2d2aac",
+      "parent": null,
+      "components": {
+        "mesh": {
+          "color": [
+            0.30000001192092896,
+            0.36000001430511475,
+            0.3199999928474426,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.949999988079071,
+          "shape": "plane"
+        },
+        "name": "Ground",
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            14.0,
+            1.0,
+            14.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "4f544dde8791ff643cc046a552719cc2",
+      "parent": null,
+      "components": {
+        "mesh": {
+          "color": [
+            0.8199999928474426,
+            0.3499999940395355,
+            0.2199999988079071,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.4000000059604645,
+          "shape": "cube"
+        },
+        "name": "Spinning Cube",
+        "script": {
+          "module": "scripts/spinner.wasm",
+          "properties": {
+            "speed": 60.0
+          }
+        },
+        "transform": {
+          "position": [
+            -2.0,
+            0.75,
+            -1.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.5,
+            1.5,
+            1.5
+          ]
+        }
+      }
+    },
+    {
+      "id": "8d44ad70291083c999018f96ce7ffb4d",
+      "parent": null,
+      "components": {
+        "mesh": {
+          "color": [
+            0.949999988079071,
+            0.7799999713897705,
+            0.3499999940395355,
+            1.0
+          ],
+          "metallic": 1.0,
+          "roughness": 0.30000001192092896,
+          "shape": "sphere"
+        },
+        "name": "Player",
+        "script": {
+          "module": "scripts/mover.wasm",
+          "properties": {
+            "jump": 1.5,
+            "speed": 4.0
+          }
+        },
+        "transform": {
+          "position": [
+            1.5,
+            0.5,
+            1.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "cc205bb898281449ca923adfa8d955ee",
+      "parent": null,
+      "components": {
+        "directionalLight": {
+          "color": [
+            1.0,
+            0.9599999785423279,
+            0.8999999761581421
+          ],
+          "intensity": 3.200000047683716
+        },
+        "name": "Sun",
+        "transform": {
+          "position": [
+            0.0,
+            6.0,
+            0.0
+          ],
+          "rotation": [
+            -55.0,
+            35.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "5dad89fc3480a9bf030ae6559529b563",
+      "parent": null,
+      "components": {
+        "camera": {
+          "far": 1000.0,
+          "fov": 60.0,
+          "near": 0.10000000149011612,
+          "projection": "perspective",
+          "size": 5.0
+        },
+        "name": "Camera",
+        "transform": {
+          "position": [
+            0.0,
+            5.0,
+            9.0
+          ],
+          "rotation": [
+            -28.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    }
+  ]
+}
