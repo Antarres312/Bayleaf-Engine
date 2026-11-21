@@ -273,6 +273,27 @@ pub const CATALOG: Catalog = Catalog {
         },
         action("destroySelf", "Destroy This Object", "Deletes this object and its children after this step.", &[RUN]),
         NodeDef {
+            kind: "walk",
+            label: "Walk",
+            category: "Physics",
+            description: "Sets a character's walking velocity (this object, or the first object with this name), in world units per second, until changed.",
+            inputs: &[RUN, vector("velocity", "Velocity", [0.0; 3])],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "jump",
+            label: "Jump",
+            category: "Physics",
+            description: "Makes a character on the ground jump with an upward speed (this object, or the first object with this name).",
+            inputs: &[RUN, number("speed", "Speed", Float, 5.0)],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        node("onGround", "On Ground", "Physics", "True while this object's character stands on something.", &[], &[pin("grounded", "On Ground", Bool)]),
+        NodeDef {
             kind: "addImpulse",
             label: "Add Impulse",
             category: "Physics",
@@ -612,6 +633,22 @@ impl Compiler<'_> {
             "destroySelf" => {
                 let _ = writeln!(code, "{indent}(drop (call $destroy (call $self_handle)))");
             }
+            "walk" | "jump" => {
+                let object = self.setting_text(next, "object", "");
+                let handle = if object.trim().is_empty() {
+                    "(call $self_handle)".to_owned()
+                } else {
+                    let (o_at, o_len) = self.text(object.as_bytes());
+                    format!("(call $find (i32.const {o_at}) (i32.const {o_len}))")
+                };
+                if n.kind == "walk" {
+                    let [x, y, z] = vec3(self, "velocity")?;
+                    let _ = writeln!(code, "{indent}(drop (call $character_walk {handle} {x} {y} {z}))");
+                } else {
+                    let speed = self.input(next, "speed").and_then(|v| as_float(next, v))?;
+                    let _ = writeln!(code, "{indent}(drop (call $character_jump {handle} {speed}))");
+                }
+            }
             "addImpulse" | "setVelocity" => {
                 let (input, call) = if n.kind == "addImpulse" { ("impulse", "$apply_impulse") } else { ("velocity", "$set_velocity") };
                 let object = self.setting_text(next, "object", "");
@@ -749,6 +786,7 @@ impl Compiler<'_> {
                 let (at, len) = self.named(node, "object", "name the object to read")?;
                 Val::V([0, 1, 2].map(|i| format!("(call $t_of (call $find (i32.const {at}) (i32.const {len})) (i32.const {i}))")))
             }
+            "onGround" => Val::B("(call $character_grounded (call $self_handle))".to_owned()),
             "velocity" => Val::V([0, 4, 8].map(|offset| format!("(call $velocity_value (i32.const {offset}))"))),
             "raycast" => {
                 let [ox, oy, oz] = self.input(node, "origin").and_then(|v| as_vec(node, v))?;
@@ -884,6 +922,9 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "destroy" (func $destroy (param i32) (result i32)))
   (import "bayleaf" "send" (func $send (param i32 i32 i32 f32) (result i32)))
   (import "bayleaf" "message_is" (func $message_is (param i32 i32) (result i32)))
+  (import "bayleaf" "character_walk" (func $character_walk (param i32 f32 f32 f32) (result i32)))
+  (import "bayleaf" "character_jump" (func $character_jump (param i32 f32) (result i32)))
+  (import "bayleaf" "character_grounded" (func $character_grounded (param i32) (result i32)))
   (import "bayleaf" "apply_impulse" (func $apply_impulse (param i32 f32 f32 f32) (result i32)))
   (import "bayleaf" "set_velocity" (func $set_velocity (param i32 f32 f32 f32) (result i32)))
   (import "bayleaf" "velocity_of" (func $velocity_of (param i32 i32) (result i32)))

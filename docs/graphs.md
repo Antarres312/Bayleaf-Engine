@@ -85,6 +85,8 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   start at 0, true/false at false.
 - **On Key Pressed** runs once when its key goes down; **On Timer** runs every given number of
   seconds of play.
+- **Walk**, **Jump** and **On Ground** steer an object with a Character: it walks at the given velocity
+  until changed, climbs steps and gentle slopes, slides along walls, and jumps from the ground.
 - **Add Impulse**, **Set Velocity** and **Velocity** move physics bodies. **On Message** with `collision`,
   `collisionEnd`, `triggerEnter` or `triggerExit` runs when the object touches another collider.
 - **Raycast** sends a ray and gives whether it hit another object's shape or sprite, how far, and where.

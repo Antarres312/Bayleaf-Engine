@@ -135,6 +135,10 @@ pub enum Request {
     Push { by: StableId, object: StableId, impulse: [f32; 3] },
     /// Set a physics body's velocity (world units per second).
     SetVelocity { by: StableId, object: StableId, velocity: [f32; 3] },
+    /// Set a character's walking velocity (world units per second).
+    Walk { by: StableId, object: StableId, velocity: [f32; 3] },
+    /// Make a character on the ground jump with an upward speed.
+    Jump { by: StableId, object: StableId, speed: f32 },
 }
 
 /// Physics bodies' velocities, as scripts see them during a step.
@@ -165,7 +169,7 @@ struct WorldView {
     objects: Vec<(StableId, String, [f32; 9])>,
     /// What rays can hit, by the same index: the world matrix and the box of the object's shape or
     /// sprite, in its own space.
-    shapes: Vec<Option<(DMat4, DVec3, DVec3)>>,
+    shapes: Vec<Option<(DMat4, RayShape)>>,
     /// Each object's position in double precision, by the same index.
     positions: Vec<[f64; 3]>,
 }
@@ -174,7 +178,7 @@ impl WorldView {
     fn of(scene: &Scene) -> Arc<Self> {
         let all = scene.world_matrices();
         let objects = all.iter().map(|(id, _)| (*id, scene.name(*id).unwrap_or_default().to_owned(), read_transform(scene, *id))).collect();
-        let shapes = all.iter().map(|(id, world)| shape_box(scene, *id).map(|(lo, hi)| (*world, lo.as_dvec3(), hi.as_dvec3()))).collect();
+        let shapes = all.iter().map(|(id, world)| ray_shape(scene, *id, *world)).collect();
         let positions = all.iter().map(|(id, _)| read_position(scene, *id)).collect();
         Arc::new(Self { objects, shapes, positions })
     }
@@ -183,31 +187,21 @@ impl WorldView {
     fn raycast(&self, origin: DVec3, direction: DVec3, max: f64, skip: StableId) -> Option<(usize, f64)> {
         let mut best: Option<(usize, f64)> = None;
         for (index, shape) in self.shapes.iter().enumerate() {
-            let Some((world, lo, hi)) = shape else { continue };
-            if self.objects[index].0 == skip || world.determinant().abs() < 1e-12 {
+            let Some((pose, shape)) = shape else { continue };
+            if self.objects[index].0 == skip || pose.determinant().abs() < 1e-12 {
                 continue;
             }
-            // In the shape's own space the box is axis-aligned; the ray's parameter stays the world distance.
-            let inverse = world.inverse();
+            // In the shape's own space; the ray's parameter stays the world distance.
+            let inverse = pose.inverse();
             let (o, d) = (inverse.transform_point3(origin), inverse.transform_vector3(direction));
-            let (mut near, mut far) = (0.0f64, max);
-            let mut missed = false;
-            for axis in 0..3 {
-                if d[axis].abs() < 1e-9 {
-                    missed |= o[axis] < lo[axis] || o[axis] > hi[axis];
-                } else {
-                    let (a, b) = ((lo[axis] - o[axis]) / d[axis], (hi[axis] - o[axis]) / d[axis]);
-                    near = near.max(a.min(b));
-                    far = far.min(a.max(b));
-                }
-            }
-            if !missed && near <= far && best.is_none_or(|(_, t)| near < t) {
-                best = Some((index, near));
+            if let Some(t) = shape.hit(o, d).filter(|t| *t <= max)
+                && best.is_none_or(|(_, b)| t < b)
+            {
+                best = Some((index, t));
             }
         }
         best
     }
-
     fn handle_of(&self, id: StableId) -> i32 {
         self.objects.iter().position(|(o, _, _)| *o == id).map_or(0, |i| i as i32 + 1)
     }
@@ -238,6 +232,7 @@ struct HostState {
     /// The name of the message being delivered, during `bayleaf_message`.
     message: Option<String>,
     velocities: Arc<Velocities>,
+    grounded: Arc<HashSet<StableId>>,
     transform: [f32; 9],
     transform_changed: bool,
     properties: BTreeMap<String, f32>,
@@ -260,6 +255,7 @@ impl HostState {
             outbox: Vec::new(),
             message: None,
             velocities: Arc::new(Velocities::new()),
+            grounded: Arc::new(HashSet::new()),
             transform,
             transform_changed: false,
             properties,
@@ -358,6 +354,7 @@ pub struct ScriptHost {
     /// Messages sent and not yet delivered.
     messages: Vec<Message>,
     velocities: Arc<Velocities>,
+    grounded: Arc<HashSet<StableId>>,
 }
 
 impl Default for ScriptHost {
@@ -375,6 +372,7 @@ impl Default for ScriptHost {
             requests: Vec::new(),
             messages: Vec::new(),
             velocities: Arc::new(Velocities::new()),
+            grounded: Arc::new(HashSet::new()),
         }
     }
 }
@@ -510,6 +508,7 @@ impl ScriptHost {
                 state.input = Arc::clone(input);
                 state.world = Arc::clone(&world);
                 state.velocities = Arc::clone(&self.velocities);
+                state.grounded = Arc::clone(&self.grounded);
             }
             let result = call(entry, |store| update.call(store, dt));
             let script = entry.script_name.clone();
@@ -553,6 +552,7 @@ impl ScriptHost {
                     state.input = Arc::clone(input);
                     state.world = Arc::clone(&world);
                     state.velocities = Arc::clone(&self.velocities);
+                    state.grounded = Arc::clone(&self.grounded);
                     state.message = Some(message.name.clone());
                 }
                 let result = call(entry, |store| on_message.call(store, message.value));
@@ -606,6 +606,11 @@ impl ScriptHost {
     /// The physics bodies' velocities scripts read in the next calls.
     pub fn set_velocities(&mut self, velocities: Velocities) {
         self.velocities = Arc::new(velocities);
+    }
+
+    /// The characters standing on something, as scripts see them in the next calls.
+    pub fn set_grounded(&mut self, grounded: impl IntoIterator<Item = StableId>) {
+        self.grounded = Arc::new(grounded.into_iter().collect());
     }
 
     /// Tells scripts about physics contacts: each `(object, name, other)` becomes a message called
@@ -681,23 +686,112 @@ fn call(entry: &mut Instance, run: impl FnOnce(&mut Store<HostState>) -> Result<
     }
 }
 
-/// The box of an object's mesh shape or sprite in its own space, if it has one. A mesh with a model
-/// counts as its shape's unit box; models do not keep their exact size here.
-fn shape_box(scene: &Scene, id: StableId) -> Option<(Vec3, Vec3)> {
-    use bayleaf_scene::components::{Mesh, Shape, Sprite};
-    if let Some(mesh) = scene.get::<Mesh>(id) {
-        let half = match mesh.shape {
-            Shape::Plane => Vec3::new(0.5, 0.001, 0.5),
-            Shape::Quad => Vec3::new(0.5, 0.5, 0.001),
-            Shape::Cube | Shape::Sphere => Vec3::splat(0.5),
-        };
-        return Some((-half, half));
-    }
-    let sprite = scene.get::<Sprite>(id)?;
-    let half = Vec3::new(sprite.size[0] * 0.5, sprite.size[1] * 0.5, 0.001);
-    Some((-half, half))
+/// What a ray can hit on one object, in the space of its pose.
+#[derive(Clone, Copy, Debug)]
+enum RayShape {
+    Box(DVec3, DVec3),
+    Sphere(f64),
+    /// Upright: half the straight part's height, and the radius.
+    Capsule(f64, f64),
 }
 
+impl RayShape {
+    /// The smallest parameter `t >= 0` where the ray `o + t d` meets the shape.
+    fn hit(self, o: DVec3, d: DVec3) -> Option<f64> {
+        match self {
+            RayShape::Box(lo, hi) => {
+                let (mut near, mut far) = (0.0f64, f64::INFINITY);
+                for axis in 0..3 {
+                    if d[axis].abs() < 1e-12 {
+                        if o[axis] < lo[axis] || o[axis] > hi[axis] {
+                            return None;
+                        }
+                    } else {
+                        let (a, b) = ((lo[axis] - o[axis]) / d[axis], (hi[axis] - o[axis]) / d[axis]);
+                        near = near.max(a.min(b));
+                        far = far.min(a.max(b));
+                    }
+                }
+                (near <= far).then_some(near)
+            }
+            RayShape::Sphere(r) => sphere_hit(o, d, DVec3::ZERO, r),
+            RayShape::Capsule(half, r) => {
+                // The side (an upright cylinder between the ends), then the two end spheres.
+                let mut best = [sphere_hit(o, d, DVec3::Y * half, r), sphere_hit(o, d, -DVec3::Y * half, r)]
+                    .into_iter()
+                    .flatten()
+                    .fold(None, |a: Option<f64>, t| Some(a.map_or(t, |a| a.min(t))));
+                let (a, b, c) = (d.x * d.x + d.z * d.z, o.x * d.x + o.z * d.z, o.x * o.x + o.z * o.z - r * r);
+                if a > 1e-12 && b * b - a * c >= 0.0 {
+                    let s = (b * b - a * c).sqrt();
+                    for t in [(-b - s) / a, (-b + s) / a] {
+                        if t >= 0.0 && (o.y + t * d.y).abs() <= half {
+                            best = Some(best.map_or(t, |x| x.min(t)));
+                            break;
+                        }
+                    }
+                } else if c <= 0.0 && o.y.abs() <= half {
+                    best = Some(0.0);
+                }
+                best
+            }
+        }
+    }
+}
+
+fn sphere_hit(o: DVec3, d: DVec3, center: DVec3, r: f64) -> Option<f64> {
+    let oc = o - center;
+    let (a, b, c) = (d.length_squared(), oc.dot(d), oc.length_squared() - r * r);
+    if c <= 0.0 {
+        return Some(0.0);
+    }
+    let disc = b * b - a * c;
+    if disc < 0.0 || a < 1e-12 {
+        return None;
+    }
+    let t = (-b - disc.sqrt()) / a;
+    (t >= 0.0).then_some(t)
+}
+
+/// What a ray hits on an object, and the pose it is in: a character's capsule or a collider's
+/// shape (triggers are left out, as physics leaves them out), else its mesh shape or sprite.
+/// Colliders are sized as physics sizes them: by the object's world scale, without skewing.
+fn ray_shape(scene: &Scene, id: StableId, world: DMat4) -> Option<(DMat4, RayShape)> {
+    use bayleaf_scene::components::{CharacterBody, Collider, ColliderShape, Mesh, Shape, Sprite};
+    let (scale, rotation, translation) = world.to_scale_rotation_translation();
+    let unscaled = DMat4::from_rotation_translation(rotation, translation);
+    let scale = scale.abs();
+    if let Some(c) = scene.get::<CharacterBody>(id) {
+        let r = f64::from(c.radius);
+        return Some((unscaled, RayShape::Capsule((f64::from(c.height) * 0.5 - r).max(0.0), r)));
+    }
+    if let Some(c) = scene.get::<Collider>(id) {
+        if c.trigger {
+            return None;
+        }
+        let size = DVec3::from(c.size.map(f64::from)) * scale;
+        return Some(match c.shape {
+            ColliderShape::Box => (unscaled, RayShape::Box(-size * 0.5, size * 0.5)),
+            ColliderShape::Sphere => (unscaled, RayShape::Sphere(size.max_element() * 0.5)),
+            ColliderShape::Capsule => {
+                let r = size.x.max(size.z) * 0.5;
+                (unscaled, RayShape::Capsule((size.y * 0.5 - r).max(0.0), r))
+            }
+        });
+    }
+    let half = if let Some(mesh) = scene.get::<Mesh>(id) {
+        // A mesh with a model counts as its shape's unit box; models do not keep their exact size here.
+        match mesh.shape {
+            Shape::Plane => DVec3::new(0.5, 0.001, 0.5),
+            Shape::Quad => DVec3::new(0.5, 0.5, 0.001),
+            Shape::Cube | Shape::Sphere => DVec3::splat(0.5),
+        }
+    } else {
+        let sprite = scene.get::<Sprite>(id)?;
+        DVec3::new(f64::from(sprite.size[0]) * 0.5, f64::from(sprite.size[1]) * 0.5, 0.001)
+    };
+    Some((world, RayShape::Box(-half, half)))
+}
 /// The transform as the 9 numbers of the ABI (the position narrowed to single precision).
 fn read_transform(scene: &Scene, object: StableId) -> [f32; 9] {
     let t = scene.get::<Transform>(object).cloned().unwrap_or_default();
@@ -888,6 +982,22 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         )?;
         linker.func_wrap("bayleaf", "set_velocity", |mut caller: Caller<'_, HostState>, handle: i32, x: f32, y: f32, z: f32| -> Result<i32, wasmi::Error> {
             physics_request(&mut caller, "set_velocity", handle, [x, y, z], |by, object, velocity| Request::SetVelocity { by, object, velocity })
+        })?;
+        linker.func_wrap(
+            "bayleaf",
+            "character_walk",
+            |mut caller: Caller<'_, HostState>, handle: i32, x: f32, y: f32, z: f32| -> Result<i32, wasmi::Error> {
+                physics_request(&mut caller, "character_walk", handle, [x, y, z], |by, object, velocity| Request::Walk { by, object, velocity })
+            },
+        )?;
+        linker.func_wrap("bayleaf", "character_jump", |mut caller: Caller<'_, HostState>, handle: i32, speed: f32| -> Result<i32, wasmi::Error> {
+            physics_request(&mut caller, "character_jump", handle, [speed, 0.0, 0.0], |by, object, v| Request::Jump { by, object, speed: v[0] })
+        })?;
+        linker.func_wrap("bayleaf", "character_grounded", |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, wasmi::Error> {
+            let Some((object, _)) = caller.data().world.object(handle) else {
+                return Err(fault(&mut caller, format!("character_grounded: there is no object with handle {handle}")));
+            };
+            Ok(i32::from(caller.data().grounded.contains(&object)))
         })?;
         linker.func_wrap("bayleaf", "velocity_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32| -> Result<i32, wasmi::Error> {
             let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {

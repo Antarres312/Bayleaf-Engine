@@ -140,8 +140,10 @@ No crate below L6 may use egui, eframe, winit or rfd.
    collisions and triggers, and lets them push bodies and set or read their velocity (scene format
    version 8). Project settings (`settings` in the `.bproject` file, project format version 2;
    `project.settings`, `project.settings.set`, the Project Settings panel) turn physics off or change
-   gravity, and choose single or double precision physics. Still open: joints, a character controller, collider outlines in the scene view,
-   raycasts against colliders, physics commands for agents.
+   gravity, and choose single or double precision physics. Then: a Character component (a walking capsule that scripts steer, with steps, slopes,
+   sliding and jumps), collider and character outlines in the scene view (a Colliders switch shows
+   all), script raycasts against colliders' exact shapes, and `physics.raycast` for agents (scene
+   format version 9). Still open: joints.
 
 ## Open questions
 

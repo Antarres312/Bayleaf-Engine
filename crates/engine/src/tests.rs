@@ -910,3 +910,52 @@ fn play_mode_follows_the_physics_settings() {
     assert!(height_after(&mut session, json!({"enabled": true, "gravity": [0, 9.81, 0]})) > 20.5, "gravity up: it rises");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A character with a visual script walks across the floor in play mode, and an agent's
+/// physics.raycast finds the floor and the character.
+#[cfg(feature = "physics")]
+#[test]
+fn a_scripted_character_walks_and_rays_find_it() {
+    use bayleaf_graph::{Graph, Link, PinRef};
+    use bayleaf_script::visual::CATALOG;
+    let dir = std::env::temp_dir().join(format!("bayleaf-character-play-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut graph = Graph::empty(&CATALOG);
+    let update = graph.add_node(&CATALOG, "update", [0.0, 0.0]).unwrap();
+    let walk = graph.add_node(&CATALOG, "walk", [0.0, 0.0]).unwrap();
+    graph.set_value(&CATALOG, walk, "velocity", json!([2.0, 0.0, 0.0])).unwrap();
+    graph.connect(&CATALOG, Link { from: PinRef::new(update, "then"), to: PinRef::new(walk, "run") }).unwrap();
+    std::fs::write(dir.join("walk.bscript"), graph.to_json()).unwrap();
+
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("walk.bscene")})).unwrap();
+    let collider = json!({"shape": "box", "size": [1, 1, 1], "friction": 0.5, "restitution": 0, "trigger": false});
+    create(
+        &registry,
+        &mut session,
+        json!({"name": "Floor", "components": {"collider": collider, "transform": {"position": [0, -0.5, 0], "rotation": [0, 0, 0], "scale": [40, 1, 40]}}}),
+    );
+    let character = json!({"height": 1.8, "radius": 0.4, "maxSlope": 45, "stepHeight": 0.3});
+    let id = create(
+        &registry,
+        &mut session,
+        json!({"name": "Hero", "components": {"characterBody": character, "transform": {"position": [0, 1, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}}}),
+    );
+    registry.execute(&mut session, "scene.script.add", &json!({"id": id, "module": "walk.bscript"})).unwrap();
+
+    let down = registry.execute(&mut session, "physics.raycast", &json!({"origin": [5, 10, 0], "direction": [0, -1, 0]})).unwrap();
+    assert_eq!(down["name"], "Floor", "outside play mode the ray uses the scene as it is: {down}");
+    assert!((down["distance"].as_f64().unwrap() - 10.0).abs() < 1e-3);
+
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.05, "steps": 40})).unwrap();
+    let hero = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    let p = session.scene().get::<bayleaf_scene::components::Transform>(hero).unwrap().position;
+    assert!(p[0] > 2.5 && p[0] < 4.5, "2 m/s for about 2 s: x = {}", p[0]);
+    assert!((p[1] - 0.9).abs() < 0.15, "on its feet on the floor: y = {}", p[1]);
+    let at_hero = registry.execute(&mut session, "physics.raycast", &json!({"origin": [p[0], 10.0, p[2]], "direction": [0, -1, 0]})).unwrap();
+    assert_eq!(at_hero["name"], "Hero", "in play mode the ray meets the character where it walked to");
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}

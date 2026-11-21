@@ -6,6 +6,19 @@ struct Body {
     kind: BodyKind,
     /// The object's world scale when the body was made; physics moves and turns, it does not scale.
     scale: DVec3,
+    /// A walking character, moved by its controller rather than by forces.
+    character: Option<Walker>,
+}
+
+/// A character's controller and what scripts asked of it.
+struct Walker {
+    controller: ctl::KinematicCharacterController,
+    shape: rp::SharedShape,
+    /// Walking velocity scripts set, world units per second.
+    walk: DVec3,
+    /// Upward speed from jumping and falling.
+    vertical: f64,
+    grounded: bool,
 }
 
 pub(crate) struct World {
@@ -50,6 +63,10 @@ impl World {
             pending: 0.0,
         };
         physics.sync_objects(scene);
+        // Scene queries (raycasts) work before the first step: a step of no time fills them in.
+        physics.world.integration_parameters.dt = real(0.0);
+        physics.world.step_with_events(&(), &physics.collector);
+        physics.world.integration_parameters.dt = real(f64::from(STEP));
         physics
     }
 
@@ -67,13 +84,17 @@ impl World {
             if self.bodies.contains_key(&id) {
                 continue;
             }
+            let (pose, scale) = pose_of(world);
+            if let Some(character) = scene.get::<CharacterBody>(id) {
+                self.add_character(id, character, pose, scale);
+                continue;
+            }
             let body = scene.get::<RigidBody>(id);
             let collider = scene.get::<Collider>(id);
             if body.is_none() && collider.is_none() {
                 continue;
             }
             let settings = body.cloned().unwrap_or(RigidBody { kind: BodyKind::Static, ..RigidBody::default() });
-            let (pose, scale) = pose_of(world);
             let builder = match settings.kind {
                 BodyKind::Dynamic => rp::RigidBodyBuilder::dynamic(),
                 BodyKind::Kinematic => rp::RigidBodyBuilder::kinematic_position_based(),
@@ -88,7 +109,7 @@ impl World {
             let made = collider_for(&shape, scale.abs()).mass(real(f64::from(settings.mass)));
             let collider_handle = self.world.insert_collider(made, Some(handle));
             self.owners.insert(collider_handle, id);
-            self.bodies.insert(id, Body { handle, kind: settings.kind, scale });
+            self.bodies.insert(id, Body { handle, kind: settings.kind, scale, character: None });
         }
     }
 
@@ -96,6 +117,7 @@ impl World {
         self.sync_objects(scene);
         for (id, body) in &self.bodies {
             if body.kind == BodyKind::Kinematic
+                && body.character.is_none()
                 && let Some(world) = scene.world_matrix(*id)
                 && let Some(rb) = self.world.bodies.get_mut(body.handle)
             {
@@ -104,11 +126,12 @@ impl World {
         }
         self.pending = (self.pending + dt.max(0.0)).min(STEP * MAX_STEPS_PER_FRAME as f32);
         while self.pending >= STEP {
+            self.walk_characters();
             self.world.step_with_events(&(), &self.collector);
             self.pending -= STEP;
         }
         for (id, body) in &self.bodies {
-            if body.kind != BodyKind::Dynamic {
+            if body.kind != BodyKind::Dynamic && body.character.is_none() {
                 continue;
             }
             let Some(rb) = self.world.bodies.get(body.handle) else { continue };
@@ -171,6 +194,99 @@ impl World {
             .filter_map(|b| self.world.bodies.get(b.handle))
             .map(|rb| from_vector(rb.translation()).length())
             .fold(0.0, f64::max)
+    }
+
+    fn add_character(&mut self, id: StableId, character: &CharacterBody, pose: rp::Pose, scale: DVec3) {
+        let radius = f64::from(character.radius);
+        let half = (f64::from(character.height) * 0.5 - radius).max(0.0);
+        let shape = rp::SharedShape::capsule_y(real(half), real(radius));
+        let handle = self.world.bodies.insert(rp::RigidBodyBuilder::kinematic_position_based().pose(pose));
+        let collider = rp::ColliderBuilder::new(shape.clone()).active_events(rp::ActiveEvents::COLLISION_EVENTS);
+        let collider_handle = self.world.insert_collider(collider, Some(handle));
+        self.owners.insert(collider_handle, id);
+        let slope = real(f64::from(character.max_slope).to_radians());
+        let controller = ctl::KinematicCharacterController {
+            up: rp::Vector::new(real(0.0), real(1.0), real(0.0)),
+            max_slope_climb_angle: slope,
+            min_slope_slide_angle: slope,
+            autostep: Some(ctl::CharacterAutostep {
+                max_height: ctl::CharacterLength::Absolute(real(f64::from(character.step_height))),
+                min_width: ctl::CharacterLength::Absolute(real(radius * 0.5)),
+                include_dynamic_bodies: false,
+            }),
+            snap_to_ground: Some(ctl::CharacterLength::Absolute(real(0.1))),
+            ..ctl::KinematicCharacterController::default()
+        };
+        let walker = Walker { controller, shape, walk: DVec3::ZERO, vertical: 0.0, grounded: false };
+        self.bodies.insert(id, Body { handle, kind: BodyKind::Kinematic, scale, character: Some(walker) });
+    }
+
+    /// Moves every character by one step: its walking velocity, its jump and gravity, stopped and
+    /// slid by what it meets.
+    fn walk_characters(&mut self) {
+        let dt = f64::from(STEP);
+        let gravity = from_vector(self.world.gravity);
+        let mut moves = Vec::new();
+        for body in self.bodies.values_mut() {
+            let Some(walker) = body.character.as_mut() else { continue };
+            let Some(rb) = self.world.bodies.get(body.handle) else { continue };
+            walker.vertical += gravity.y * dt;
+            let desired = DVec3::new(walker.walk.x, walker.walk.y + walker.vertical, walker.walk.z) * dt;
+            let filter = rp::QueryFilter::default().exclude_rigid_body(body.handle).exclude_sensors();
+            let queries = self.world.query_pipeline_with_filter(filter);
+            let pose = *rb.position();
+            let moved = walker.controller.move_shape(real(dt), &queries, &*walker.shape, &pose, vector(desired), |_| {});
+            walker.grounded = moved.grounded;
+            if moved.grounded && walker.vertical < 0.0 {
+                walker.vertical = 0.0;
+            }
+            moves.push((body.handle, rb.translation() + moved.translation));
+        }
+        for (handle, target) in moves {
+            if let Some(rb) = self.world.bodies.get_mut(handle) {
+                rb.set_next_kinematic_translation(target);
+            }
+        }
+    }
+
+    /// Sets the walking velocity of a character. False when the object is not one.
+    pub(crate) fn walk(&mut self, id: StableId, velocity: [f32; 3]) -> bool {
+        let Some(walker) = self.bodies.get_mut(&id).and_then(|b| b.character.as_mut()) else { return false };
+        walker.walk = DVec3::from(velocity.map(f64::from));
+        true
+    }
+
+    /// Makes a character on the ground jump with an upward speed. False when it is not a character
+    /// or is in the air.
+    pub(crate) fn jump(&mut self, id: StableId, speed: f32) -> bool {
+        let Some(walker) = self.bodies.get_mut(&id).and_then(|b| b.character.as_mut()) else { return false };
+        if !walker.grounded {
+            return false;
+        }
+        walker.vertical = f64::from(speed);
+        walker.grounded = false;
+        true
+    }
+
+    pub(crate) fn is_character(&self, id: StableId) -> bool {
+        self.bodies.get(&id).is_some_and(|b| b.character.is_some())
+    }
+
+    /// Characters standing on something.
+    pub(crate) fn grounded(&self) -> Vec<StableId> {
+        self.bodies.iter().filter(|(_, b)| b.character.as_ref().is_some_and(|w| w.grounded)).map(|(id, _)| *id).collect()
+    }
+
+    /// The first collider a ray from `origin` along `direction` (unit length) hits within `max`,
+    /// leaving out `skip`'s own body and triggers: the object, the distance and the surface normal.
+    pub(crate) fn raycast(&self, origin: DVec3, direction: DVec3, max: f64, skip: Option<StableId>) -> Option<(StableId, f64, DVec3)> {
+        let mut filter = rp::QueryFilter::default().exclude_sensors();
+        if let Some(body) = skip.and_then(|id| self.bodies.get(&id)) {
+            filter = filter.exclude_rigid_body(body.handle);
+        }
+        let ray = rp::Ray::new(vector(origin), vector(direction));
+        let (collider, hit) = self.world.cast_ray_and_get_normal(&ray, real(max), true, filter)?;
+        Some((*self.owners.get(&collider)?, wide(hit.time_of_impact), from_vector(hit.normal)))
     }
 
     fn dynamic_body(&mut self, id: StableId) -> Option<&mut rp::RigidBody> {

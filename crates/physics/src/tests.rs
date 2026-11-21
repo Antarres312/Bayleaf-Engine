@@ -139,3 +139,70 @@ fn double_precision_keeps_a_box_exact_far_from_the_centre() {
     let single = Physics::build(&scene, GRAVITY, Precision::Single);
     assert!(single.out_of_range(), "single precision warns this far out");
 }
+
+fn character(scene: &mut Scene, x: f64) -> StableId {
+    let body = json!({"characterBody": {"height": 1.8, "radius": 0.4, "maxSlope": 45, "stepHeight": 0.3}});
+    let id = object(scene, "Walker", body, [0.0, 1.5, 0.0], [1.0; 3]);
+    scene.set(id, Transform { position: [x, 1.5, 0.0], rotation: [0.0; 3], scale: [1.0; 3] }).unwrap();
+    id
+}
+
+fn x(scene: &Scene, id: StableId) -> f64 {
+    scene.get::<Transform>(id).unwrap().position[0]
+}
+
+#[test]
+fn a_character_stands_walks_stops_at_a_wall_and_jumps() {
+    for precision in [Precision::Single, Precision::Double] {
+        let mut scene = Scene::new();
+        floor(&mut scene);
+        let wall = json!({"collider": {"shape": "box", "size": [1, 4, 6], "friction": 0.5, "restitution": 0, "trigger": false}});
+        object(&mut scene, "Wall", wall, [3.0, 2.0, 0.0], [1.0; 3]);
+        let walker = character(&mut scene, 0.0);
+        let mut physics = Physics::build(&scene, GRAVITY, precision);
+        for _ in 0..60 {
+            physics.step(&mut scene, STEP);
+        }
+        assert!((y(&scene, walker) - 0.9).abs() < 0.1, "it stands on the floor: y = {}", y(&scene, walker));
+        assert!(physics.grounded().contains(&walker));
+
+        assert!(physics.walk(walker, [2.0, 0.0, 0.0]));
+        for _ in 0..120 {
+            physics.step(&mut scene, STEP);
+        }
+        let stopped = x(&scene, walker);
+        assert!(stopped > 1.5 && stopped < 2.2, "it walked up to the wall and stopped there: x = {stopped}");
+
+        assert!(physics.walk(walker, [0.0; 3]));
+        assert!(physics.jump(walker, 5.0));
+        for _ in 0..10 {
+            physics.step(&mut scene, STEP);
+        }
+        assert!(y(&scene, walker) > 1.3, "the jump lifted it: y = {}", y(&scene, walker));
+        assert!(!physics.jump(walker, 5.0), "no second jump in the air");
+        assert!(!physics.walk(floor_id(&scene), [1.0, 0.0, 0.0]), "only characters walk");
+    }
+}
+
+fn floor_id(scene: &Scene) -> StableId {
+    scene.world_matrices().into_iter().map(|(id, _)| id).find(|id| scene.name(*id) == Some("Floor")).unwrap()
+}
+
+#[test]
+fn rays_hit_colliders_but_not_triggers_or_the_caster() {
+    for precision in [Precision::Single, Precision::Double] {
+        let mut scene = Scene::new();
+        let floor = floor(&mut scene);
+        let zone = json!({"collider": {"shape": "box", "size": [4, 1, 4], "friction": 0.5, "restitution": 0, "trigger": true}});
+        object(&mut scene, "Zone", zone, [0.0, 2.0, 0.0], [1.0; 3]);
+        let ball = crate_box(&mut scene, "Ball", 4.0);
+        let physics = Physics::build(&scene, GRAVITY, precision);
+        let down = bayleaf_core::math::DVec3::NEG_Y;
+        let hit = physics.raycast(bayleaf_core::math::DVec3::new(0.0, 10.0, 0.0), down, 100.0, Some(ball)).unwrap();
+        assert_eq!(hit.object, floor, "the trigger and the caster's own box are left out");
+        assert!((hit.distance - 10.0).abs() < 1e-3 && hit.normal.y > 0.99, "{hit:?}");
+        let blocked = physics.raycast(bayleaf_core::math::DVec3::new(0.0, 10.0, 0.0), down, 100.0, None).unwrap();
+        assert_eq!(blocked.object, ball, "without leaving it out, the box is hit first");
+        assert!(physics.raycast(bayleaf_core::math::DVec3::new(0.0, 10.0, 0.0), down, 3.0, None).is_none(), "nothing within 3 units");
+    }
+}

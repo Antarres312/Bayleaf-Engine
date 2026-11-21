@@ -19,6 +19,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Bayleaf Player, File Info, Fit All, Copy Nodes, Paste Nodes, Duplicate Nodes | not yet | Not checked yet | Generic terms; the player is named after the engine; same |
 | Comment, Add Comment, Edit Comment, Preview, On Message, Send Message, Variable, Set Variable | not yet | Not checked yet | Graph editor and node names; same |
 | Fog Distance, Shadows (spot light), Own changes (prefab overrides) | not yet | Not checked yet | Generic terms; same |
-| On Key Pressed, On Timer, Vector Variable, True/False Variable, Gamepad Stick, Gamepad Trigger, Gamepad Button Held, Raycast, Hit Point, Hit Distance, Parts, Rigid Body, Collider, Trigger, Add Impulse, Set Velocity, Velocity, Project Settings, Physics in play mode, Gravity, Earth Gravity, Precision, Single, Double | not yet | Not checked yet | Visual script node names and Inspector rows; same |
+| On Key Pressed, On Timer, Vector Variable, True/False Variable, Gamepad Stick, Gamepad Trigger, Gamepad Button Held, Raycast, Hit Point, Hit Distance, Parts, Rigid Body, Collider, Trigger, Add Impulse, Set Velocity, Velocity, Project Settings, Physics in play mode, Gravity, Earth Gravity, Precision, Single, Double, Character, Walk, Jump, On Ground, Colliders (scene view switch) | not yet | Not checked yet | Visual script node names and Inspector rows; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

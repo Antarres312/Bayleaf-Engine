@@ -14,7 +14,7 @@ use std::sync::mpsc::{Receiver, channel};
 use bayleaf_core::StableId;
 use bayleaf_core::math::{DMat4, DQuat, DVec3};
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{BodyKind, Collider, ColliderShape, RigidBody, Transform};
+use bayleaf_scene::components::{BodyKind, CharacterBody, Collider, ColliderShape, RigidBody, Transform};
 
 /// Length of one physics step, in seconds.
 pub const STEP: f32 = 1.0 / 60.0;
@@ -40,6 +40,15 @@ pub struct Contact {
     pub kind: ContactKind,
 }
 
+/// What a ray hit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RayHit {
+    pub object: StableId,
+    pub distance: f64,
+    pub point: DVec3,
+    pub normal: DVec3,
+}
+
 /// How precisely physics counts positions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Precision {
@@ -55,9 +64,10 @@ pub const SINGLE_PRECISION_RANGE: f64 = 10_000.0;
 
 mod single {
     use super::{
-        BodyKind, Collider, ColliderShape, Contact, ContactKind, DMat4, DQuat, DVec3, HashMap, MAX_STEPS_PER_FRAME, Receiver, RigidBody, STEP, Scene, StableId,
-        Transform, channel,
+        BodyKind, CharacterBody, Collider, ColliderShape, Contact, ContactKind, DMat4, DQuat, DVec3, HashMap, MAX_STEPS_PER_FRAME, Receiver, RigidBody, STEP,
+        Scene, StableId, Transform, channel,
     };
+    use rapier3d::control as ctl;
     use rapier3d::prelude as rp;
 
     type Real = f32;
@@ -75,9 +85,10 @@ mod single {
 
 mod double {
     use super::{
-        BodyKind, Collider, ColliderShape, Contact, ContactKind, DMat4, DQuat, DVec3, HashMap, MAX_STEPS_PER_FRAME, Receiver, RigidBody, STEP, Scene, StableId,
-        Transform, channel,
+        BodyKind, CharacterBody, Collider, ColliderShape, Contact, ContactKind, DMat4, DQuat, DVec3, HashMap, MAX_STEPS_PER_FRAME, Receiver, RigidBody, STEP,
+        Scene, StableId, Transform, channel,
     };
+    use rapier3d_f64::control as ctl;
     use rapier3d_f64::prelude as rp;
 
     type Real = f64;
@@ -155,6 +166,34 @@ impl Physics {
     /// A body's velocity, if the object has one.
     pub fn velocity(&self, id: StableId) -> Option<[f32; 3]> {
         both!(self, w => w.velocity(id))
+    }
+
+    /// Sets the walking velocity of a character (world units per second). False when the object is not one.
+    pub fn walk(&mut self, id: StableId, velocity: [f32; 3]) -> bool {
+        both!(mut self, w => w.walk(id, velocity))
+    }
+
+    /// Makes a character on the ground jump with an upward speed. False when it is not a character or is in the air.
+    pub fn jump(&mut self, id: StableId, speed: f32) -> bool {
+        both!(mut self, w => w.jump(id, speed))
+    }
+
+    /// True when the object is a character.
+    pub fn is_character(&self, id: StableId) -> bool {
+        both!(self, w => w.is_character(id))
+    }
+
+    /// Characters standing on something.
+    pub fn grounded(&self) -> Vec<StableId> {
+        both!(self, w => w.grounded())
+    }
+
+    /// The first collider a ray hits within `max` (`direction` need not be unit length), leaving out
+    /// `skip`'s body and triggers: the object, the distance, the hit point and the surface normal.
+    pub fn raycast(&self, origin: DVec3, direction: DVec3, max: f64, skip: Option<StableId>) -> Option<RayHit> {
+        let direction = direction.try_normalize()?;
+        let (object, distance, normal) = both!(self, w => w.raycast(origin, direction, max, skip))?;
+        Some(RayHit { object, distance, point: origin + direction * distance, normal })
     }
 
     /// Every body's velocity, for scripts to read during a step.

@@ -81,6 +81,8 @@ struct GpuView {
 pub(crate) struct SceneView {
     pub orbit: Orbit,
     pub show_grid: bool,
+    /// Outlines every collider and character, not only the selected objects'.
+    pub show_colliders: bool,
     gpu: Option<GpuView>,
     framed_once: bool,
     /// Compiled material graphs; the one open in the graph editor shows unsaved changes live.
@@ -164,6 +166,7 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
             view.frame_selection(editor);
         }
         ui.checkbox(&mut view.show_grid, "Grid");
+        ui.checkbox(&mut view.show_colliders, "Colliders").on_hover_text("Outline every physics shape; selected objects always show theirs");
         ui.separator();
         for tool in gizmo::Tool::ALL {
             let key = tool.key().name();
@@ -313,6 +316,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
             editor.gesture += 1;
         }
     }
+    paint_colliders(ui, editor, &projector, view.show_colliders, response.rect);
     let icons = scene_icons(editor, &projector);
     paint_icons(ui, &icons, editor.selected, response.rect);
     if let Some((_, world, _, _)) = &target {
@@ -477,6 +481,76 @@ fn scene_icons(editor: &Editor, projector: &gizmo::Projector) -> Vec<Icon> {
 
 /// Cameras as a body with a lens, lights as a sun; the selected one in the accent colour with a
 /// line toward where it looks or shines.
+/// Physics shapes drawn as lines: boxes as their edges, spheres and capsules as rings. Triggers
+/// are drawn in the warning colour and dashed, so colour is not the only difference.
+fn paint_colliders(ui: &egui::Ui, editor: &Editor, projector: &gizmo::Projector, all: bool, clip: egui::Rect) {
+    use bayleaf_engine::scene::components::{CharacterBody, Collider, ColliderShape};
+    let t = crate::theme::tokens(ui);
+    let scene = editor.session.scene();
+    let painter = ui.painter().with_clip_rect(clip);
+    for (id, world) in scene.world_matrices() {
+        if !all && editor.selected != Some(id) && !editor.also_selected.contains(&id) {
+            continue;
+        }
+        let (shape, size, trigger) = match (scene.get::<Collider>(id), scene.get::<CharacterBody>(id)) {
+            (_, Some(c)) => (ColliderShape::Capsule, [c.radius * 2.0, c.height, c.radius * 2.0], false),
+            (Some(c), None) => (c.shape, c.size, c.trigger),
+            (None, None) => continue,
+        };
+        let m = projector.relative(world);
+        let size = Vec3::from(size);
+        let mut lines: Vec<(Vec3, Vec3)> = Vec::new();
+        let ring = |center: Vec3, a: Vec3, b: Vec3, from: f32, to: f32, lines: &mut Vec<(Vec3, Vec3)>| {
+            const SEGMENTS: usize = 24;
+            for i in 0..SEGMENTS {
+                let (s, e) = (from + (to - from) * i as f32 / SEGMENTS as f32, from + (to - from) * (i + 1) as f32 / SEGMENTS as f32);
+                lines.push((center + a * s.cos() + b * s.sin(), center + a * e.cos() + b * e.sin()));
+            }
+        };
+        let tau = std::f32::consts::TAU;
+        match shape {
+            ColliderShape::Box => {
+                let h = size * 0.5;
+                let corner =
+                    |i: usize| Vec3::new(if i & 1 == 0 { -h.x } else { h.x }, if i & 2 == 0 { -h.y } else { h.y }, if i & 4 == 0 { -h.z } else { h.z });
+                for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)] {
+                    lines.push((corner(a), corner(b)));
+                }
+            }
+            ColliderShape::Sphere => {
+                let r = size.max_element() * 0.5;
+                ring(Vec3::ZERO, Vec3::X * r, Vec3::Y * r, 0.0, tau, &mut lines);
+                ring(Vec3::ZERO, Vec3::X * r, Vec3::Z * r, 0.0, tau, &mut lines);
+                ring(Vec3::ZERO, Vec3::Y * r, Vec3::Z * r, 0.0, tau, &mut lines);
+            }
+            ColliderShape::Capsule => {
+                let r = size.x.max(size.z) * 0.5;
+                let half = (size.y * 0.5 - r).max(0.0);
+                let (top, bottom) = (Vec3::Y * half, -Vec3::Y * half);
+                ring(top, Vec3::X * r, Vec3::Z * r, 0.0, tau, &mut lines);
+                ring(bottom, Vec3::X * r, Vec3::Z * r, 0.0, tau, &mut lines);
+                for side in [Vec3::X, Vec3::Z] {
+                    ring(top, side * r, Vec3::Y * r, 0.0, std::f32::consts::PI, &mut lines);
+                    ring(bottom, side * r, -Vec3::Y * r, 0.0, std::f32::consts::PI, &mut lines);
+                    for s in [-1.0, 1.0] {
+                        lines.push((top + side * r * s, bottom + side * r * s));
+                    }
+                }
+            }
+        }
+        let color = if trigger { t.warning } else { t.axis_y };
+        for (index, (a, b)) in lines.into_iter().enumerate() {
+            // Triggers are dashed: every other segment of their rings and edges is left out.
+            if trigger && index % 2 == 1 {
+                continue;
+            }
+            if let (Some(a), Some(b)) = (projector.project(m.transform_point3(a)), projector.project(m.transform_point3(b))) {
+                painter.line_segment([a, b], egui::Stroke::new(1.5, color));
+            }
+        }
+    }
+}
+
 fn paint_icons(ui: &egui::Ui, icons: &[Icon], selected: Option<bayleaf_core::StableId>, clip: egui::Rect) {
     let t = crate::theme::tokens(ui);
     let painter = ui.painter_at(clip);

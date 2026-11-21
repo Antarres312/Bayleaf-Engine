@@ -258,6 +258,14 @@ fn every_node_kind_compiles_and_runs() {
     b.link(speed, "velocity", push, "impulse");
     let set_speed = b.node("setVelocity", json!({ "object": "Scripted" }));
     b.link(push, "then", set_speed, "run");
+    let walk = b.node("walk", json!({}));
+    b.link(set_speed, "then", walk, "run");
+    let jump = b.node("jump", json!({ "object": "Scripted" }));
+    let standing = b.node("onGround", json!({}));
+    let jump_gate = b.node("branch", json!({}));
+    b.link(walk, "then", jump_gate, "run");
+    b.link(standing, "grounded", jump_gate, "condition");
+    b.link(jump_gate, "true", jump, "run");
     let move_to = b.node("setPositionOf", json!({ "object": "Scripted" }));
     b.link(gate_on_flag, "false", move_to, "run");
     b.link(read_vector, "value", move_to, "position");

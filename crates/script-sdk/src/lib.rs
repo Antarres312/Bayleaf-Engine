@@ -133,6 +133,22 @@ impl Object {
         abi::position_set_of(self.0, &position);
     }
 
+    /// Sets its character's walking velocity (world units per second) after this step; it keeps
+    /// walking until changed.
+    pub fn walk(self, velocity: [f32; 3]) -> bool {
+        abi::character_walk(self.0, velocity)
+    }
+
+    /// Makes its character jump with an upward speed after this step, if it stands on something.
+    pub fn jump(self, speed: f32) -> bool {
+        abi::character_jump(self.0, speed)
+    }
+
+    /// True while its character stands on something (as the step began).
+    pub fn on_ground(self) -> bool {
+        abi::character_grounded(self.0)
+    }
+
     /// Pushes its physics body by an impulse (world space, mass times change of velocity) after
     /// this step. False when this call already asked too much.
     pub fn push(self, impulse: [f32; 3]) -> bool {

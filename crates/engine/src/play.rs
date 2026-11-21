@@ -6,7 +6,7 @@ use bayleaf_script::{Request, ScriptFault, ScriptHost};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{CommandError, CommandSpec, Level, Mutates, Prompt, Session, parse};
+use crate::{CommandError, CommandSpec, Level, Mutates, Prompt, Session, always, parse};
 
 /// How often play mode looks for changed script modules, in simulated seconds.
 const RELOAD_CHECK_INTERVAL: f32 = 0.5;
@@ -103,6 +103,17 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
                 s.clear_console();
                 Ok(json!({}))
             },
+        },
+        CommandSpec {
+            id: "physics.raycast",
+            label: "Physics Raycast",
+            menu: "",
+            shortcut: "",
+            params: "{origin: [x, y, z], direction: [x, y, z], distance? = 1000}; the first collider or character hit (triggers left out), in play mode or in the scene as it is: {hit, object?, name?, distance?, point?, normal?}",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: physics_raycast,
         },
         CommandSpec {
             id: "play.status",
@@ -294,6 +305,7 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
         #[cfg(feature = "physics")]
         if let Some(physics) = &play.physics {
             play.host.set_velocities(physics.velocities());
+            play.host.set_grounded(physics.grounded());
         }
         play.host.update(&mut session.scene, dt, play.time, &input);
         apply_requests(session);
@@ -356,7 +368,7 @@ fn apply_requests(session: &mut Session) {
                     let _ = session.scene.delete_object(object);
                 }
             }
-            Request::Push { by, object, impulse } => physics_request(session, by, object, |_p| {
+            Request::Push { by, object, impulse } => physics_request(session, by, object, "has no dynamic Rigid Body to push", |_p| {
                 #[cfg(feature = "physics")]
                 return _p.physics.as_mut().map(|p| p.apply_impulse(object, impulse));
                 #[cfg(not(feature = "physics"))]
@@ -365,12 +377,34 @@ fn apply_requests(session: &mut Session) {
                     None
                 };
             }),
-            Request::SetVelocity { by, object, velocity } => physics_request(session, by, object, |_p| {
+            Request::SetVelocity { by, object, velocity } => physics_request(session, by, object, "has no dynamic Rigid Body to push", |_p| {
                 #[cfg(feature = "physics")]
                 return _p.physics.as_mut().map(|p| p.set_velocity(object, velocity));
                 #[cfg(not(feature = "physics"))]
                 return {
                     let _ = velocity;
+                    None
+                };
+            }),
+            Request::Walk { by, object, velocity } => physics_request(session, by, object, "has no Character to walk", |_p| {
+                #[cfg(feature = "physics")]
+                return _p.physics.as_mut().map(|p| p.walk(object, velocity));
+                #[cfg(not(feature = "physics"))]
+                return {
+                    let _ = velocity;
+                    None
+                };
+            }),
+            Request::Jump { by, object, speed } => physics_request(session, by, object, "has no Character to jump", |_p| {
+                // A character in the air does not jump; that is not a mistake.
+                #[cfg(feature = "physics")]
+                return _p.physics.as_mut().map(|p| {
+                    p.jump(object, speed);
+                    p.is_character(object)
+                });
+                #[cfg(not(feature = "physics"))]
+                return {
+                    let _ = speed;
                     None
                 };
             }),
@@ -386,15 +420,21 @@ fn apply_requests(session: &mut Session) {
 
 /// Applies a script's push or velocity change: `apply` gives `None` without physics (a build
 /// without it, or a project that turns it off; said once per play session) and `Some(false)` when
-/// the object has no dynamic body.
-fn physics_request(session: &mut Session, by: bayleaf_core::StableId, object: bayleaf_core::StableId, apply: impl FnOnce(&mut Play) -> Option<bool>) {
+/// the object cannot take it (`missing` says why).
+fn physics_request(
+    session: &mut Session,
+    by: bayleaf_core::StableId,
+    object: bayleaf_core::StableId,
+    missing: &str,
+    apply: impl FnOnce(&mut Play) -> Option<bool>,
+) {
     let Some(play) = session.play.as_mut() else { return };
     let who = session.scene.name(by).unwrap_or("Object").to_owned();
     match apply(play) {
         Some(true) => {}
         Some(false) => {
             let target = session.scene.name(object).unwrap_or("Object").to_owned();
-            session.log(Level::Error, format!("[{who}] {target} has no dynamic Rigid Body to push"));
+            session.log(Level::Error, format!("[{who}] {target} {missing}"));
         }
         None => {
             if std::mem::replace(&mut play.told_no_physics, true) {
@@ -405,6 +445,65 @@ fn physics_request(session: &mut Session, by: bayleaf_core::StableId, object: ba
         }
     }
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RaycastParams {
+    origin: [f64; 3],
+    direction: [f64; 3],
+    #[serde(default = "default_ray_distance")]
+    distance: f64,
+}
+
+fn default_ray_distance() -> f64 {
+    1000.0
+}
+
+fn physics_raycast(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: RaycastParams = parse(params)?;
+    let finite = p.origin.iter().chain(&p.direction).all(|v| v.is_finite()) && p.distance.is_finite() && p.distance >= 0.0;
+    if !finite || p.direction.iter().all(|v| *v == 0.0) {
+        return Err(CommandError::BadParams("give a finite origin, a direction that is not zero, and a distance of 0 or more".to_owned()));
+    }
+    cast(session, p)
+}
+
+#[cfg(feature = "physics")]
+fn cast(session: &mut Session, p: RaycastParams) -> Result<Value, CommandError> {
+    use bayleaf_core::math::DVec3;
+    let (origin, direction) = (DVec3::from(p.origin), DVec3::from(p.direction));
+    let hit = match session.play.as_ref().and_then(|play| play.physics.as_ref()) {
+        Some(physics) => physics.raycast(origin, direction, p.distance, None),
+        None => {
+            let settings = crate::project_cmds::settings_of(session).physics;
+            if !settings.enabled {
+                return Err(CommandError::Failed("physics is off in the project settings".to_owned()));
+            }
+            let precision = match settings.precision {
+                crate::project_cmds::PhysicsPrecision::Single => bayleaf_physics::Precision::Single,
+                crate::project_cmds::PhysicsPrecision::Double => bayleaf_physics::Precision::Double,
+            };
+            bayleaf_physics::Physics::build(&session.scene, settings.gravity.map(f64::from), precision).raycast(origin, direction, p.distance, None)
+        }
+    };
+    Ok(match hit {
+        Some(hit) => json!({
+            "hit": true,
+            "object": hit.object,
+            "name": session.scene.name(hit.object),
+            "distance": hit.distance,
+            "point": hit.point.to_array(),
+            "normal": hit.normal.to_array(),
+        }),
+        None => json!({ "hit": false }),
+    })
+}
+
+#[cfg(not(feature = "physics"))]
+fn cast(_: &mut Session, p: RaycastParams) -> Result<Value, CommandError> {
+    let _ = p.distance;
+    Err(CommandError::Failed("this build has no physics".to_owned()))
+}
+
 /// The message name scripts get for a physics contact.
 #[cfg(feature = "physics")]
 fn contact_name(kind: bayleaf_physics::ContactKind) -> &'static str {

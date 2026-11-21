@@ -651,3 +651,44 @@ impl SceneComponent for Collider {
         if field == "shape" { &["box", "sphere", "capsule"] } else { &[] }
     }
 }
+
+/// A walking character for play mode: an upright capsule that scripts steer and jump, which
+/// climbs steps and gentle slopes, slides along walls and falls under gravity. It needs no Rigid
+/// Body or Collider.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CharacterBody {
+    /// Whole height of the capsule, feet to head.
+    pub height: f32,
+    pub radius: f32,
+    /// Steepest slope it walks up, in degrees.
+    pub max_slope: f32,
+    /// Highest step it climbs without jumping.
+    pub step_height: f32,
+}
+
+impl Default for CharacterBody {
+    fn default() -> Self {
+        Self { height: 1.8, radius: 0.4, max_slope: 45.0, step_height: 0.3 }
+    }
+}
+
+impl SceneComponent for CharacterBody {
+    const NAME: &'static str = "characterBody";
+    const LABEL: &'static str = "Character";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        let ok = |v: f32| v.is_finite();
+        if !(ok(self.radius) && self.radius > 0.0 && self.radius <= 100.0 && ok(self.height) && self.height >= self.radius * 2.0 && self.height <= 1000.0) {
+            return Err("radius must be more than 0 (at most 100) and height at least twice the radius (at most 1000)".to_owned());
+        }
+        if !(ok(self.max_slope) && (0.0..=89.0).contains(&self.max_slope)) {
+            return Err("maxSlope must be between 0 and 89 degrees".to_owned());
+        }
+        if !(ok(self.step_height) && self.step_height >= 0.0 && self.step_height <= self.height) {
+            return Err("stepHeight must be between 0 and the height".to_owned());
+        }
+        Ok(())
+    }
+}

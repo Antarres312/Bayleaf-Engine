@@ -27,6 +27,9 @@ mod raw {
         pub fn message_name(out: *mut u8, cap: usize) -> i32;
         pub fn pad_connected() -> i32;
         pub fn apply_impulse(handle: i32, x: f32, y: f32, z: f32) -> i32;
+        pub fn character_walk(handle: i32, x: f32, y: f32, z: f32) -> i32;
+        pub fn character_jump(handle: i32, speed: f32) -> i32;
+        pub fn character_grounded(handle: i32) -> i32;
         pub fn set_velocity(handle: i32, x: f32, y: f32, z: f32) -> i32;
         pub fn velocity_of(handle: i32, out: *mut f32) -> i32;
         pub fn raycast(ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max: f32, out: *mut f32) -> i32;
@@ -91,6 +94,15 @@ mod raw {
         0
     }
     pub unsafe fn apply_impulse(_: i32, _: f32, _: f32, _: f32) -> i32 {
+        0
+    }
+    pub unsafe fn character_walk(_: i32, _: f32, _: f32, _: f32) -> i32 {
+        0
+    }
+    pub unsafe fn character_jump(_: i32, _: f32) -> i32 {
+        0
+    }
+    pub unsafe fn character_grounded(_: i32) -> i32 {
         0
     }
     pub unsafe fn set_velocity(_: i32, _: f32, _: f32, _: f32) -> i32 {
@@ -253,4 +265,19 @@ pub(crate) fn position_get_of(handle: i32) -> [f64; 3] {
 pub(crate) fn position_set_of(handle: i32, values: &[f64; 3]) {
     // SAFETY: `values` is 3 readable f64, exactly what the host reads.
     unsafe { raw::position_set_of(handle, values.as_ptr()) }
+}
+
+pub(crate) fn character_walk(handle: i32, v: [f32; 3]) -> bool {
+    // SAFETY: plain numbers in and out.
+    unsafe { raw::character_walk(handle, v[0], v[1], v[2]) != 0 }
+}
+
+pub(crate) fn character_jump(handle: i32, speed: f32) -> bool {
+    // SAFETY: plain numbers in and out.
+    unsafe { raw::character_jump(handle, speed) != 0 }
+}
+
+pub(crate) fn character_grounded(handle: i32) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::character_grounded(handle) != 0 }
 }
