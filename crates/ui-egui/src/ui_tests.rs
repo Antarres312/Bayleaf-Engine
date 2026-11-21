@@ -599,7 +599,7 @@ fn clicking_a_file_shows_it_in_the_inspector_until_an_object_is_selected() {
     create_named(&mut harness, "Keeper");
     assert!(harness.query_by_label("Transform").is_some(), "the object's components show first");
 
-    harness.get_by_label("notes.md, File").click();
+    harness.get_by_label("notes, File").click();
     harness.run();
     assert!(harness.state().selected.is_none(), "a clicked file takes the Inspector from the objects");
     assert!(harness.query_by_label_contains("Remember the lighthouse").is_some(), "the start of a text file is shown");
@@ -976,7 +976,7 @@ fn delete_asks_first_escape_keeps_the_file_and_confirming_removes_it() {
     harness.state_mut().project.delete_permanently = true;
     harness.run_steps(2);
     let file = dir.join("materials").join("ground.bmaterial");
-    let tile = "ground.bmaterial, Material";
+    let tile = "ground, Material";
 
     harness.get_by_label(tile).click();
     harness.run();
@@ -1006,7 +1006,7 @@ fn a_markdown_file_shows_formatted_in_the_inspector_and_as_written_with_source()
     std::fs::remove_dir_all(&dir).ok();
     harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
     harness.run_steps(2);
-    harness.get_by_label("README.md, File").click();
+    harness.get_by_label("README, File").click();
     harness.run_steps(2);
     assert!(harness.query_all_by_value("•").next().is_some(), "list items get bullets");
     assert!(harness.query_all_by_label_contains("- `scenes/`").next().is_none(), "no Markdown marks show");
@@ -1049,7 +1049,7 @@ fn a_rust_script_is_one_entry_that_drags_onto_an_object_as_its_module() {
     harness.state_mut().project.rescan_soon();
     harness.run_steps(2);
     assert!(harness.query_by_label("mover, Rust Script").is_some(), "the script shows once");
-    assert!(harness.query_by_label("mover.wasm, Script").is_none(), "its module is not listed again");
+    assert!(harness.query_by_label("mover, Script").is_none(), "its module is not listed again");
 
     let from = harness.get_by_label("mover, Rust Script").rect().center();
     let to = harness.get_by_label("Cube").rect().center();
@@ -1131,8 +1131,8 @@ fn f2_renames_a_file_in_its_own_tile_and_a_click_on_empty_space_clears_the_selec
     harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
     harness.state_mut().project.current = dir.join("materials");
     harness.run_steps(2);
-    let tile = harness.get_by_label("ground.bmaterial, Material").rect();
-    harness.get_by_label("ground.bmaterial, Material").click();
+    let tile = harness.get_by_label("ground, Material").rect();
+    harness.get_by_label("ground, Material").click();
     harness.run();
     harness.key_press(egui::Key::F2);
     harness.run_steps(2);
@@ -1142,7 +1142,7 @@ fn f2_renames_a_file_in_its_own_tile_and_a_click_on_empty_space_clears_the_selec
     harness.run_steps(2);
     assert!(dir.join("materials/ground.bmaterial").is_file(), "Escape keeps the old name");
 
-    harness.get_by_label("ground.bmaterial, Material").click_secondary();
+    harness.get_by_label("ground, Material").click_secondary();
     harness.run();
     harness.query_all_by_label_contains("Rename").next().unwrap().click();
     harness.run_steps(2);
@@ -1153,7 +1153,7 @@ fn f2_renames_a_file_in_its_own_tile_and_a_click_on_empty_space_clears_the_selec
     harness.run_steps(3);
     assert!(dir.join("materials/Grass.bmaterial").is_file() && !dir.join("materials/ground.bmaterial").exists());
 
-    harness.get_by_label("Grass.bmaterial, Material").click();
+    harness.get_by_label("Grass, Material").click();
     harness.run();
     assert!(harness.state().project.selected.is_some());
     // The middle of the files area is empty: the few tiles sit at its top left.
@@ -1254,9 +1254,9 @@ fn a_file_field_takes_a_dragged_file_of_its_kind_and_refuses_others() {
         let id = harness.state().selected.unwrap();
         scene.get::<bayleaf_engine::scene::components::Mesh>(id).unwrap().material.clone()
     };
-    drag_entry(&mut harness, "notes.md, File", "Material");
+    drag_entry(&mut harness, "notes, File", "Material");
     assert_eq!(material(&harness), "", "a file of another kind is refused");
-    drag_entry(&mut harness, "Rock.bmaterial, Material", "Material");
+    drag_entry(&mut harness, "Rock, Material", "Material");
     assert_eq!(material(&harness), "Rock.bmaterial", "a material dropped on the field is chosen");
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -1315,4 +1315,26 @@ fn the_add_node_menu_opens_categories_on_a_click_and_keeps_its_size_while_search
     assert!(harness.query_by_label("Find Object With").is_none(), "and only matches");
     let after = harness.get_by_label("Search nodes").rect();
     assert_eq!(before.width(), after.width(), "the popup keeps its width while the list narrows");
+}
+
+#[test]
+fn the_project_panel_hides_file_extensions_until_the_preference_is_turned_off() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-extensions-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    std::fs::write(dir.join("notes.md"), "A note.\n").unwrap();
+    harness.state_mut().project.rescan_soon();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("notes, File").is_some(), "extensions are hidden by default");
+    harness.state_mut().show_panel(crate::Panel::ProjectSettings);
+    harness.run();
+    harness.get_by_label("Preferences").click();
+    harness.run();
+    harness.get_by_label("Hide file extensions").click();
+    harness.run_steps(2);
+    let settings = harness.state_mut().dispatch("project.settings", &json!({}), None).unwrap();
+    assert_eq!(settings["settings"]["editor"]["hideExtensions"], false, "the preference is kept in the project file");
+    assert!(harness.query_by_label("notes.md, File").is_some(), "names show their extensions again");
+    std::fs::remove_dir_all(&dir).ok();
 }

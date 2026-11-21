@@ -112,6 +112,17 @@ struct Entry {
     kind: Kind,
 }
 
+impl Entry {
+    /// The name the panel shows: without its extension when `hide` is set (folders and Rust
+    /// scripts keep their names; so does a name that is only an extension).
+    fn shown(&self, hide: bool) -> &str {
+        match self.name.rfind('.') {
+            Some(dot) if hide && dot > 0 && !matches!(self.kind, Kind::Folder | Kind::ScriptSource) => &self.name[..dot],
+            _ => &self.name,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum ViewMode {
     #[default]
@@ -144,6 +155,8 @@ pub(crate) struct ProjectView {
     pub(crate) focused: bool,
     /// A file or folder waiting for the delete to be confirmed.
     deleting: Option<PathBuf>,
+    /// Names show without their extensions (the project's preference).
+    pub(crate) hide_extensions: bool,
     /// Tests delete for good instead of filling the Recycle Bin.
     #[cfg(test)]
     pub(crate) delete_permanently: bool,
@@ -269,8 +282,9 @@ fn kind_icon(kind: AssetKind) -> Kind {
 enum NameTarget {
     /// A new asset of this kind in this folder; nothing is written before the name.
     New { kind: AssetKind, folder: PathBuf },
-    /// A file or folder getting a new name.
-    Rename { path: PathBuf },
+    /// A file or folder getting a new name. `hidden` is the extension (with its dot) the panel
+    /// hides, added back to the typed name.
+    Rename { path: PathBuf, hidden: Option<String> },
 }
 
 /// A name typed in place, in the file's own tile or row: a new asset's, or a renamed one's.
@@ -323,7 +337,9 @@ struct Outcome {
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
+    let hide_extensions = crate::project_settings::current(editor).editor.hide_extensions;
     let mut view = std::mem::take(&mut editor.project);
+    view.hide_extensions = hide_extensions;
     if view.scanned.is_none() {
         view.engine = engine_root();
     }
@@ -420,15 +436,21 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 editor.project.current = parent.to_path_buf();
             }
             editor.project.filter.clear();
-            let text = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let full = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            // With extensions hidden, only the name before the extension is typed; the extension stays.
+            let (text, hidden) = match full.rfind('.').filter(|&dot| dot > 0 && editor.project.hide_extensions && path.is_file()) {
+                Some(dot) => (full[..dot].to_owned(), Some(full[dot..].to_owned())),
+                None => (full, None),
+            };
             editor.project.selected = Some(path.clone());
-            editor.project.naming = Some(Naming { target: NameTarget::Rename { path }, text, focused: false, error: None });
+            editor.project.naming = Some(Naming { target: NameTarget::Rename { path, hidden }, text, focused: false, error: None });
         }
         Some(Action::RenameTo(name)) => {
             if let Some(naming) = editor.project.naming.take()
-                && let NameTarget::Rename { path } = &naming.target
+                && let NameTarget::Rename { path, hidden } = &naming.target
             {
-                match editor.dispatch("asset.rename", &json!({ "path": path, "name": name }), None) {
+                let full = format!("{name}{}", hidden.as_deref().unwrap_or_default());
+                match editor.dispatch("asset.rename", &json!({ "path": path, "name": full }), None) {
                     Some(renamed) => {
                         let renamed = PathBuf::from(renamed["path"].as_str().unwrap_or_default());
                         editor.project.scanned = None;
@@ -529,7 +551,7 @@ fn name_field(ui: &mut egui::Ui, naming: &mut Option<Naming>, width: f32, outcom
     let t = theme::tokens(ui);
     let label = match &name.target {
         NameTarget::New { kind, .. } => format!("Name of the new {}", kind_name(*kind)),
-        NameTarget::Rename { path } => format!("New name of {}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+        NameTarget::Rename { path, .. } => format!("New name of {}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
     };
     let field =
         ui.add_sized([width, LIST_ROW + 2.0], egui::TextEdit::singleline(&mut name.text).margin(egui::vec2(4.0, 1.0)).align(egui::Align2::CENTER_CENTER));
@@ -550,7 +572,7 @@ fn name_field(ui: &mut egui::Ui, naming: &mut Option<Naming>, width: f32, outcom
         field.request_focus();
         // A file's name is selected without its extension; a folder's or a new asset's whole.
         let selected = match &name.target {
-            NameTarget::Rename { path } if path.is_file() => {
+            NameTarget::Rename { path, hidden: None } if path.is_file() => {
                 name.text.rfind('.').filter(|&dot| dot > 0).map_or(name.text.chars().count(), |dot| name.text[..dot].chars().count())
             }
             _ => name.text.chars().count(),
@@ -806,7 +828,7 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Namin
         _ => None,
     };
     let renamed: Option<PathBuf> = match naming.as_ref().map(|n| &n.target) {
-        Some(NameTarget::Rename { path }) => Some(path.clone()),
+        Some(NameTarget::Rename { path, .. }) => Some(path.clone()),
         _ => None,
     };
     let renaming = |entry: &Entry| renamed.as_ref() == Some(&entry.path);
@@ -832,7 +854,7 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Namin
                         naming_tile(ui, entry.kind, view.icon(), naming, outcome);
                         continue;
                     }
-                    let response = tile(ui, entry, view.selected.as_deref() == Some(entry.path.as_path()), view.icon());
+                    let response = tile(ui, entry, view.selected.as_deref() == Some(entry.path.as_path()), view.icon(), view.hide_extensions);
                     interact(ui, &response, view, entry, selected_object, outcome);
                 }
             });
@@ -850,7 +872,7 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Namin
                     rows.push(naming_row(ui, entry.kind, naming, outcome));
                     continue;
                 }
-                let response = list_row(ui, entry, view.selected.as_deref() == Some(entry.path.as_path()));
+                let response = list_row(ui, entry, view.selected.as_deref() == Some(entry.path.as_path()), view.hide_extensions);
                 rows.push(response.rect);
                 interact(ui, &response, view, entry, selected_object, outcome);
             }
@@ -886,12 +908,13 @@ fn naming_row(ui: &mut egui::Ui, kind: Kind, naming: &mut Option<Naming>, outcom
 }
 
 /// One file or folder in the icon view: drawn icon, name below.
-fn tile(ui: &mut egui::Ui, entry: &Entry, selected: bool, icon_size: f32) -> egui::Response {
+fn tile(ui: &mut egui::Ui, entry: &Entry, selected: bool, icon_size: f32, hide: bool) -> egui::Response {
+    let name = entry.shown(hide);
     let t = theme::tokens(ui);
     // Room for the icon, a little padding, and two lines of name below.
     let tile_size = egui::vec2((icon_size + 36.0).max(72.0), icon_size + 38.0);
     let (rect, response) = ui.allocate_exact_size(tile_size, egui::Sense::click_and_drag());
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, format!("{}, {}", entry.name, entry.kind.label())));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, format!("{name}, {}", entry.kind.label())));
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let fill = if selected {
@@ -910,7 +933,7 @@ fn tile(ui: &mut egui::Ui, entry: &Entry, selected: bool, icon_size: f32) -> egu
         let icon = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 6.0 + icon_size / 2.0), egui::vec2(icon_size, icon_size));
         paint_icon(painter, icon, entry.kind, t);
         let color = if selected { t.on_accent } else { t.text };
-        let mut job = egui::text::LayoutJob::simple(entry.name.clone(), egui::TextStyle::Small.resolve(ui.style()), color, tile_size.x - 6.0);
+        let mut job = egui::text::LayoutJob::simple(name.to_owned(), egui::TextStyle::Small.resolve(ui.style()), color, tile_size.x - 6.0);
         job.wrap.max_rows = 2;
         job.wrap.break_anywhere = true;
         job.halign = egui::Align::Center;
@@ -921,7 +944,8 @@ fn tile(ui: &mut egui::Ui, entry: &Entry, selected: bool, icon_size: f32) -> egu
 }
 
 /// One file or folder in the list view: small icon, name, kind.
-fn list_row(ui: &mut egui::Ui, entry: &Entry, selected: bool) -> egui::Response {
+fn list_row(ui: &mut egui::Ui, entry: &Entry, selected: bool, hide: bool) -> egui::Response {
+    let name = entry.shown(hide);
     let t = theme::tokens(ui);
     let width = ui.available_width();
     let kind = entry.kind;
@@ -929,14 +953,14 @@ fn list_row(ui: &mut egui::Ui, entry: &Entry, selected: bool) -> egui::Response 
     let icon = egui::Atom::paint(egui::vec2(14.0, 14.0), move |ui, args| paint_icon(ui.painter(), args.rect, kind, t));
     let button = egui::Button::selectable(
         selected,
-        (icon, entry.name.as_str(), egui::Atom::grow(), egui::RichText::new(entry.kind.label()).small().color(t.text_muted)),
+        (icon, name, egui::Atom::grow(), egui::RichText::new(entry.kind.label()).small().color(t.text_muted)),
     )
     .truncate()
     .min_size(egui::vec2(width, LIST_ROW))
     .sense(egui::Sense::click_and_drag());
     let response = ui.add(button);
-    ui.ctx().accesskit_node_builder(response.id, |node| node.set_label(format!("{}, {}", entry.name, entry.kind.label())));
-    response
+    ui.ctx().accesskit_node_builder(response.id, |node| node.set_label(format!("{name}, {}", entry.kind.label())));
+    response.on_hover_text(&entry.name)
 }
 
 /// Clicks, double-clicks, dragging and the context menu, shared by tiles and list rows.
@@ -979,7 +1003,7 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
         if response.dragged_by(egui::PointerButton::Primary)
             && let Some(pointer) = ui.ctx().pointer_interact_pos()
         {
-            drag_ghost(ui, &entry.name, pointer);
+            drag_ghost(ui, entry.shown(view.hide_extensions), pointer);
         }
     }
     response.context_menu(|ui| {

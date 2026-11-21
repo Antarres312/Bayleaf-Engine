@@ -1,5 +1,5 @@
-//! Project Settings: what applies to the whole project, such as physics and the project's Input
-//! Map. Reads the settings once per project and changes them only through `project.settings.set`.
+//! Project Settings: what applies to the whole project, such as physics, the project's Input
+//! Map and the editor's preferences for it. Reads the settings once per project and changes them only through `project.settings.set`.
 
 use bayleaf_engine::project_cmds::{PhysicsPrecision, PhysicsSettings, ProjectSettings, settings_of};
 use serde_json::json;
@@ -22,15 +22,17 @@ enum Category {
     #[default]
     Physics,
     Input,
+    Preferences,
 }
 
 impl Category {
-    const ALL: [Category; 2] = [Category::Physics, Category::Input];
+    const ALL: [Category; 3] = [Category::Physics, Category::Input, Category::Preferences];
 
     fn label(self) -> &'static str {
         match self {
             Category::Physics => "Physics",
             Category::Input => "Input",
+            Category::Preferences => "Preferences",
         }
     }
 
@@ -38,19 +40,25 @@ impl Category {
         match self {
             Category::Physics => "Physics in play mode, gravity and precision",
             Category::Input => "The project's Input Map",
+            Category::Preferences => "How the editor shows this project",
         }
     }
 }
 
-pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
-    let t = theme::tokens(ui);
+/// The open project's settings: read once per project, then kept as this panel changes them.
+pub(crate) fn current(editor: &mut Editor) -> ProjectSettings {
     let project = editor.session.project_dir().map(std::path::Path::to_path_buf);
     if editor.project_settings.settings.is_none() || editor.project_settings.project != project {
-        let settings = settings_of(&editor.session);
         let category = editor.project_settings.category;
-        editor.project_settings = Shown { settings: Some(settings), project: project.clone(), category };
+        editor.project_settings = Shown { settings: Some(settings_of(&editor.session)), project, category };
     }
-    let Some(mut settings) = editor.project_settings.settings.clone() else { return };
+    editor.project_settings.settings.clone().unwrap_or_default()
+}
+
+pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
+    let t = theme::tokens(ui);
+    let mut settings = current(editor);
+    let project = editor.project_settings.project.clone();
     let before = settings.clone();
     let input_files = editor.project.input_map_files();
     let mut edit = None;
@@ -81,9 +89,12 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 match category {
                     Category::Physics => physics_section(ui, t, &mut settings),
                     Category::Input => edit = input_section(ui, t, &input_files, &mut settings),
+                    Category::Preferences => preferences_section(ui, t, &mut settings),
                 }
-                ui.add_space(theme::GAP);
-                ui.label(egui::RichText::new("Play mode uses these settings from its next start.").small().color(t.text_muted));
+                if category != Category::Preferences {
+                    ui.add_space(theme::GAP);
+                    ui.label(egui::RichText::new("Play mode uses these settings from its next start.").small().color(t.text_muted));
+                }
             });
         });
     });
@@ -134,6 +145,17 @@ fn physics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectS
                 }
             });
         });
+    });
+}
+
+/// How the editor shows this project.
+fn preferences_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectSettings) {
+    theme::headed(t, "Project Panel").show(ui, |ui| {
+        ui.checkbox(&mut settings.editor.hide_extensions, "Hide file extensions");
+        ui.add(
+            egui::Label::new(egui::RichText::new("Show names without .bmaterial, .png and the like; the kind of each file still shows, and renaming keeps the extension.").small().color(t.text_muted))
+                .wrap(),
+        );
     });
 }
 

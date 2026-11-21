@@ -861,12 +861,13 @@ fn project_settings_are_kept_in_the_project_file_and_checked() {
     let outside = registry.execute(&mut session, "project.settings", &Value::Null).unwrap();
     assert_eq!(outside["project"], false);
     assert_eq!(outside["settings"]["physics"]["enabled"], true, "defaults outside a project");
+    assert_eq!(outside["settings"]["editor"]["hideExtensions"], true, "file extensions are hidden unless the project says otherwise");
     assert!(registry.execute(&mut session, "project.settings.set", &json!({"settings": {"physics": {"enabled": false, "gravity": [0, 0, 0]}}})).is_err());
 
     let dir = std::env::temp_dir().join(format!("bayleaf-settings-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
-    let set = json!({"settings": {"physics": {"enabled": false, "gravity": [0, -3.7, 0]}}});
+    let set = json!({"settings": {"physics": {"enabled": false, "gravity": [0, -3.7, 0]}, "editor": {"hideExtensions": false}}});
     registry.execute(&mut session, "project.settings.set", &set).unwrap();
     let bad = json!({"settings": {"physics": {"enabled": true, "gravity": [0, -1e9, 0]}}});
     assert!(registry.execute(&mut session, "project.settings.set", &bad).is_err(), "gravity has a limit");
@@ -877,6 +878,7 @@ fn project_settings_are_kept_in_the_project_file_and_checked() {
     let read = registry.execute(&mut other, "project.settings", &Value::Null).unwrap();
     assert_eq!(read["settings"]["physics"]["enabled"], false);
     assert!((read["settings"]["physics"]["gravity"][1].as_f64().unwrap() + 3.7).abs() < 1e-5);
+    assert_eq!(read["settings"]["editor"]["hideExtensions"], false);
     std::fs::remove_dir_all(&dir).ok();
 }
 

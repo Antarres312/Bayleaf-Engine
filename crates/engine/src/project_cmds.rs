@@ -15,8 +15,9 @@ pub const PROJECT_FORMAT: &str = "bayleaf.project";
 /// File extension of project files.
 pub const PROJECT_EXTENSION: &str = "bproject";
 /// Version 2 added `settings`; version 3 moved the input actions into an Input Map asset
-/// (`settings.input.map`). Older files still open; opening one moves its actions.
-const PROJECT_VERSION: u32 = 3;
+/// (`settings.input.map`); version 4 added the editor preferences (`settings.editor`). Older files
+/// still open; opening one moves its actions.
+const PROJECT_VERSION: u32 = 4;
 
 /// A project file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -39,6 +40,27 @@ pub struct ProjectSettings {
     pub physics: PhysicsSettings,
     #[serde(default)]
     pub input: InputSettings,
+    #[serde(default)]
+    pub editor: EditorSettings,
+}
+
+/// How the editor shows this project. Play mode does not read these.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditorSettings {
+    /// The Project panel shows file names without their extensions (the kind shows anyway).
+    #[serde(default = "yes")]
+    pub hide_extensions: bool,
+}
+
+impl Default for EditorSettings {
+    fn default() -> Self {
+        Self { hide_extensions: true }
+    }
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// The project's input: an Input Map asset, the one map set every script and Player Control read
