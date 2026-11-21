@@ -164,7 +164,10 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
             view.orbit.zoom((-scroll * 0.0025).exp());
         }
     }
-    if response.clicked() {
+    // A press and release that barely moved is a click, even if egui already counted it as a drag.
+    let tiny_drag = response.drag_stopped_by(egui::PointerButton::Primary)
+        && ui.input(|i| i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| a.distance(b) < 5.0));
+    if response.clicked() || tiny_drag {
         response.request_focus();
         if let Some(pos) = response.interact_pointer_pos() {
             let local = (pos - response.rect.min) / response.rect.size();

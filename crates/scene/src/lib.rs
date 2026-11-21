@@ -187,6 +187,34 @@ impl Scene {
         Ok(())
     }
 
+    /// Like [`Self::reparent`], but rewrites the object's transform so it stays where it is in
+    /// the world. Under a parent with rotation and uneven scale the result is the closest
+    /// position, rotation and scale; a shear cannot be represented. Under a parent with zero
+    /// scale the transform is left as it was.
+    pub fn reparent_keeping_world(&mut self, id: StableId, new_parent: Option<StableId>, index: Option<usize>) -> Result<(), SceneError> {
+        let world = self.world_matrix(id).ok_or(SceneError::UnknownObject(id))?;
+        self.reparent(id, new_parent, index)?;
+        let parent_world = new_parent.and_then(|p| self.world_matrix(p)).unwrap_or(Mat4::IDENTITY);
+        if parent_world.determinant().abs() < 1e-12 {
+            return Ok(());
+        }
+        let local = parent_world.inverse() * world;
+        let (scale, rotation, position) = local.to_scale_rotation_translation();
+        let (rx, ry, rz) = rotation.to_euler(bayleaf_core::math::EulerRot::XYZ);
+        // Round away float noise such as 0.49999997 or -0.0 left by the matrix maths.
+        let tidy = |v: f32| {
+            let r = (v * 1e4).round() / 1e4;
+            if r == 0.0 { 0.0 } else { r }
+        };
+        let transform =
+            Transform { position: position.to_array().map(tidy), rotation: [rx, ry, rz].map(|a| tidy(a.to_degrees())), scale: scale.to_array().map(tidy) };
+        let entity = self.entity(id)?;
+        if transform.position.iter().chain(&transform.rotation).chain(&transform.scale).all(|v| v.is_finite()) {
+            self.world.insert(entity, transform).map_err(|e| SceneError::Internal(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     /// Components of `id` as `(name, value)` in inspector order.
     pub fn components(&self, id: StableId) -> Result<Vec<(&'static str, Value)>, SceneError> {
         let entity = self.entity(id)?;

@@ -101,8 +101,8 @@ checked and recorded in `docs/feature-names.md`. Product copy never names or com
 - `cargo xtask layers`
 - UI changes: the egui_kittest tests in `crates/ui-egui/src/ui_tests.rs`, with the accessibility check left on.
 
-**Known departures.** These SHOULD rules are not met yet: theme tokens (AA 14; craft-ui is not wired in yet) and
-the translation system (AA 16; labels are plain English).
+**Known departures.** This SHOULD rule is not met yet: the translation system (AA 16; labels are plain English).
+Theme tokens live in `crates/ui-egui/src/theme.rs` (not craft-ui yet); their contrast is tested there.
 
 **Conventions.** No `unsafe` anywhere; no module is exempt yet. Every crate root carries the deny attributes
 from `crates/core/src/lib.rs`. Every asset is recorded in `ATTRIBUTION.md`. Fonts come from storytold/craft-fonts.

@@ -1,22 +1,28 @@
 //! L6: the egui editor shell. Panels change engine state only through registered commands.
 //!
 //! The menu bar and keyboard shortcuts are built from the command registry, so every menu entry
-//! is also reachable from the CLI, the control channel and MCP. Theme tokens from craft-ui are
-//! not wired in yet; panels use egui's default style until then.
+//! is also reachable from the CLI, the control channel and MCP. Panels are docked (see [`dock`])
+//! and every colour and size comes from the theme tokens in [`theme`].
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod brand;
+mod dock;
 mod hierarchy;
 mod inspector;
 mod scene_view;
+mod theme;
 mod value_editor;
+
+pub use dock::{Layout, Panel};
 
 use bayleaf_core::StableId;
 use bayleaf_engine::scene::doc::EXTENSION;
 use bayleaf_engine::{CommandInfo, CommandRegistry, Prompt, Session};
 use serde_json::{Value, json};
 
-/// Menus in the order they appear; menus not listed here follow in registry order.
+/// Menus in the order they appear; menus not listed here follow in registry order. The Window
+/// menu is the editor's own and sits before Help.
 const MENU_ORDER: &[&str] = &["File", "Edit", "Object", "Help"];
 
 /// Editor state shared by every panel.
@@ -29,6 +35,11 @@ pub struct Editor {
     gesture: u64,
     title: String,
     scene_view: scene_view::SceneView,
+    dock: egui_dock::DockState<Panel>,
+    hierarchy_filter: String,
+    theme_installed: bool,
+    /// Logo texture and whether it was made for the dark theme.
+    logo: Option<(egui::TextureHandle, bool)>,
 }
 
 impl Default for Editor {
@@ -41,6 +52,10 @@ impl Default for Editor {
             gesture: 0,
             title: String::new(),
             scene_view: scene_view::SceneView::new(),
+            dock: Layout::Standard.build(),
+            hierarchy_filter: String::new(),
+            theme_installed: false,
+            logo: None,
         }
     }
 }
@@ -49,26 +64,85 @@ impl Editor {
     /// Draws the editor for one frame. `gpu` is the window's wgpu state; without it the scene view
     /// shows a notice instead of the scene.
     pub fn ui(&mut self, ui: &mut egui::Ui, gpu: Option<&egui_wgpu::RenderState>) {
+        if !self.theme_installed {
+            theme::install(ui.ctx());
+            self.theme_installed = true;
+        }
+        let t = theme::tokens(ui);
         self.handle_shortcuts(ui.ctx());
-        egui::Panel::top("menu_bar").show(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| self.menus(ui));
-        });
-        egui::Panel::bottom("status_bar").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if self.session.is_dirty() {
-                    ui.label("Modified");
-                    ui.separator();
-                }
-                ui.label(&self.status);
+        egui::Panel::top("menu_bar").frame(egui::Frame::new().fill(t.backdrop).inner_margin(egui::Margin::symmetric(8, 4))).show(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                self.logo_mark(ui);
+                self.menus(ui);
             });
         });
-        egui::Panel::left("hierarchy").resizable(true).default_size(240.0).show(ui, |ui| hierarchy::show(self, ui));
-        egui::Panel::right("inspector").resizable(true).default_size(300.0).show(ui, |ui| inspector::show(self, ui));
-        egui::CentralPanel::default().show(ui, |ui| scene_view::show(self, ui, gpu));
+        egui::Panel::bottom("status_bar").frame(egui::Frame::new().fill(t.backdrop).inner_margin(egui::Margin::symmetric(10, 4))).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if self.session.is_dirty() {
+                    egui::Frame::new().fill(t.surface_active).corner_radius(theme::RADIUS).inner_margin(egui::Margin::symmetric(8, 1)).show(ui, |ui| {
+                        ui.label(egui::RichText::new("Modified").small().color(t.text));
+                    });
+                }
+                ui.label(egui::RichText::new(&self.status).color(t.text_muted));
+            });
+        });
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(t.backdrop)).show(ui, |ui| dock::show(self, ui, gpu));
         self.update_title(ui.ctx());
         if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
             self.selected = None;
         }
+    }
+
+    /// The panel layout as text, for saving between runs.
+    pub fn saved_layout(&self) -> Option<String> {
+        dock::to_text(&self.dock)
+    }
+
+    /// Restores a layout saved by [`Self::saved_layout`]. Returns false and keeps the current
+    /// layout when the data is from another version or broken.
+    pub fn restore_layout(&mut self, text: &str) -> bool {
+        match dock::from_text(text) {
+            Some(dock) => {
+                self.dock = dock;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The logo at the start of the menu bar, in the theme's brand colour.
+    fn logo_mark(&mut self, ui: &mut egui::Ui) {
+        let dark = ui.visuals().dark_mode;
+        if self.logo.as_ref().is_none_or(|(_, made_dark)| *made_dark != dark)
+            && let Some(image) = brand::logo(64, theme::tokens(ui).brand)
+        {
+            let color = egui::ColorImage::from_rgba_unmultiplied([image.size as usize, image.size as usize], &image.rgba);
+            self.logo = Some((ui.ctx().load_texture("bayleaf logo", color, egui::TextureOptions::LINEAR), dark));
+        }
+        if let Some((texture, _)) = &self.logo {
+            ui.add(egui::Image::new(egui::load::SizedTexture::new(texture.id(), egui::vec2(18.0, 18.0))).alt_text("Bayleaf Engine"));
+            ui.add_space(4.0);
+        }
+    }
+
+    fn window_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Window", |ui| {
+            for panel in Panel::ALL {
+                let mut open = dock::is_open(&self.dock, panel);
+                let response = ui.add_enabled(panel != Panel::Scene, egui::Checkbox::new(&mut open, panel.title()));
+                if response.changed() {
+                    dock::set_open(&mut self.dock, panel, open);
+                }
+            }
+            ui.separator();
+            for layout in Layout::ALL {
+                if ui.button(layout.label()).clicked() {
+                    self.dock = layout.build();
+                    self.status = format!("{}: applied", layout.label());
+                    ui.close();
+                }
+            }
+        });
     }
 
     fn menus(&mut self, ui: &mut egui::Ui) {
@@ -82,6 +156,9 @@ impl Editor {
         let mut clicked = None;
         for top in top_menus {
             let items: Vec<&CommandInfo> = entries.iter().filter(|c| c.menu.split('/').next() == Some(top)).collect();
+            if top == "Help" {
+                self.window_menu(ui);
+            }
             if items.is_empty() {
                 continue;
             }

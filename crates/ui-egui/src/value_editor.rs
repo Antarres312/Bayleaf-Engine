@@ -1,6 +1,9 @@
-//! Generic editor for a component's JSON value: numbers, text, switches, lists and records.
+//! Editor for a component's JSON value. Every control takes the width it is given, so editing a
+//! value never changes the width of the panel around it.
 
 use serde_json::{Number, Value};
+
+use crate::theme::{self, GAP, LABEL_WIDTH, ROW_HEIGHT, Tokens};
 
 /// What happened to a value this frame.
 #[derive(Default, Clone, Copy)]
@@ -23,41 +26,160 @@ impl Outcome {
 }
 
 const AXES: [&str; 4] = ["X", "Y", "Z", "W"];
+const AXIS_LABEL_WIDTH: f32 = 14.0;
 
-/// Edits a component value. Text fields with a fixed set of allowed values (`options`) get a choice list.
-pub(crate) fn edit_component(
-    ui: &mut egui::Ui,
-    value: &mut Value,
-    salt: impl std::hash::Hash + std::fmt::Debug,
-    label: Option<egui::Id>,
-    options: &dyn Fn(&str) -> &'static [&'static str],
-) -> Outcome {
-    let Value::Object(fields) = value else {
-        return edit(ui, value, salt, label);
-    };
-    ui.push_id(salt, |ui| {
-        let mut outcome = Outcome::default();
-        egui::Grid::new("fields").num_columns(2).striped(true).show(ui, |ui| {
+/// Edits the fields of a component: one row per field, label column on the left.
+/// Text fields with a fixed set of allowed values (`options`) get a choice list.
+pub(crate) fn edit_fields(ui: &mut egui::Ui, value: &mut Value, salt: &str, options: &dyn Fn(&str) -> &'static [&'static str]) -> Outcome {
+    let t = theme::tokens(ui);
+    let mut outcome = Outcome::default();
+    ui.push_id(salt, |ui| match value {
+        Value::Object(fields) => {
             for (key, field) in fields.iter_mut() {
-                let key_label = ui.label(title_case(key));
-                let choices = options(key);
-                match field {
-                    Value::String(current) if !choices.is_empty() => {
-                        outcome.merge(choose(ui, current, choices, key, key_label.id));
+                outcome.merge(row(ui, t, &title_case(key), |ui, label, width| {
+                    let choices = options(key);
+                    match field {
+                        Value::String(current) if !choices.is_empty() => choose(ui, current, choices, key, label, width),
+                        _ if is_color(key, field) => edit_color(ui, field, label, width),
+                        _ => edit(ui, field, key.as_str(), label, width),
                     }
-                    _ => outcome.merge(edit(ui, field, key.as_str(), Some(key_label.id))),
-                }
-                ui.end_row();
+                }));
             }
-        });
-        outcome
+        }
+        other => {
+            outcome.merge(row(ui, t, "Value", |ui, label, width| edit(ui, other, "value", label, width)));
+        }
+    });
+    outcome
+}
+
+/// One labelled row. The closure gets the label's id and the width left for the value.
+fn row(ui: &mut egui::Ui, t: &Tokens, label: &str, body: impl FnOnce(&mut egui::Ui, egui::Id, f32) -> Outcome) -> Outcome {
+    ui.horizontal(|ui| {
+        ui.set_min_height(ROW_HEIGHT);
+        let label = ui.add_sized([LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(egui::RichText::new(label).color(t.text_muted)).truncate());
+        // Whatever is left after the label; the floor only applies to extremely narrow panels.
+        let width = (ui.available_width() - 1.0).max(40.0);
+        body(ui, label.id, width)
     })
     .inner
 }
 
-fn choose(ui: &mut egui::Ui, current: &mut String, choices: &[&str], salt: &str, label: egui::Id) -> Outcome {
+/// Edits `value` in place within `width`. `label` names the value for assistive technology.
+pub(crate) fn edit(ui: &mut egui::Ui, value: &mut Value, salt: impl std::hash::Hash + std::fmt::Debug, label: egui::Id, width: f32) -> Outcome {
+    ui.push_id(salt, |ui| match value {
+        Value::Bool(b) => {
+            let response = ui.checkbox(b, "").labelled_by(label);
+            Outcome { changed: response.changed(), ended: response.changed() }
+        }
+        Value::Number(n) => edit_number(ui, n, label, width),
+        Value::String(s) => {
+            let response = ui.add_sized([width, ROW_HEIGHT], egui::TextEdit::singleline(s).align(egui::Align2::LEFT_CENTER)).labelled_by(label);
+            Outcome::from_response(&response)
+        }
+        Value::Array(items) if (1..=AXES.len()).contains(&items.len()) && items.iter().all(Value::is_number) => edit_vector(ui, items, width),
+        Value::Array(items) => edit_list(ui, items, label, width),
+        Value::Object(fields) => {
+            let t = theme::tokens(ui);
+            let mut outcome = Outcome::default();
+            ui.vertical(|ui| {
+                ui.set_width(width);
+                for (key, field) in fields.iter_mut() {
+                    outcome.merge(row(ui, t, &title_case(key), |ui, label, width| edit(ui, field, key.as_str(), label, width)));
+                }
+            });
+            outcome
+        }
+        Value::Null => {
+            ui.weak("none");
+            Outcome::default()
+        }
+    })
+    .inner
+}
+
+fn edit_number(ui: &mut egui::Ui, n: &mut Number, label: egui::Id, width: f32) -> Outcome {
+    let was_integer = n.is_i64() || n.is_u64();
+    let mut x = n.as_f64().unwrap_or(0.0);
+    let drag = if was_integer { egui::DragValue::new(&mut x).speed(1.0) } else { egui::DragValue::new(&mut x).speed(0.02).max_decimals(3) };
+    // Number fields use the field shade, like text fields, not the button shade.
+    let t = theme::tokens(ui);
+    let response = ui
+        .scope(|ui| {
+            let w = &mut ui.visuals_mut().widgets;
+            w.inactive.weak_bg_fill = t.field;
+            w.hovered.weak_bg_fill = t.field_hover;
+            w.active.weak_bg_fill = t.field;
+            ui.add_sized([width, ROW_HEIGHT], drag)
+        })
+        .inner
+        .labelled_by(label);
+    let outcome = Outcome::from_response(&response);
+    if outcome.changed {
+        let replacement = if was_integer && x.fract() == 0.0 && x.abs() < 9.0e15 { Some(Number::from(x as i64)) } else { Number::from_f64(x) };
+        if let Some(replacement) = replacement {
+            *n = replacement;
+        }
+    }
+    outcome
+}
+
+/// Short number lists (positions, rotations, scales) on one row with coloured axis letters.
+fn edit_vector(ui: &mut egui::Ui, items: &mut [Value], width: f32) -> Outcome {
+    let t = theme::tokens(ui);
+    let colors = [t.axis_x, t.axis_y, t.axis_z, t.text_muted];
+    let count = items.len() as f32;
+    // Row: [label s field] s [label s field] ... — exactly `width` wide, never wider.
+    ui.spacing_mut().item_spacing.x = GAP / 2.0;
+    let spacing = GAP / 2.0;
+    let field_width = ((width - count * AXIS_LABEL_WIDTH - (2.0 * count - 1.0) * spacing - 1.0) / count).max(24.0);
+    let mut outcome = Outcome::default();
+    for ((item, axis), color) in items.iter_mut().zip(AXES).zip(colors) {
+        let axis_label = ui.add_sized([AXIS_LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(egui::RichText::new(axis).color(color).strong()));
+        if let Value::Number(n) = item {
+            outcome.merge(ui.push_id(axis, |ui| edit_number(ui, n, axis_label.id, field_width)).inner);
+        }
+    }
+    outcome
+}
+
+/// Lists: every item editable. Lists of text can grow and shrink.
+fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: f32) -> Outcome {
+    let mut outcome = Outcome::default();
+    let text_list = items.iter().all(Value::is_string);
+    let mut remove = None;
+    ui.vertical(|ui| {
+        ui.set_width(width);
+        for (index, item) in items.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                let button_width = if text_list { 70.0 } else { 0.0 };
+                let field_width = (ui.available_width() - button_width).max(40.0);
+                outcome.merge(edit(ui, item, index, label, field_width));
+                if text_list
+                    && ui.add_sized([button_width - 8.0, ROW_HEIGHT], egui::Button::new("Remove")).on_hover_text(format!("Remove item {}", index + 1)).clicked()
+                {
+                    remove = Some(index);
+                }
+            });
+        }
+        if items.is_empty() {
+            ui.weak("No items");
+        }
+        if text_list && ui.add_sized([width, ROW_HEIGHT], egui::Button::new("Add Item")).clicked() {
+            items.push(Value::String(String::new()));
+            outcome = Outcome { changed: true, ended: true };
+        }
+    });
+    if let Some(index) = remove {
+        items.remove(index);
+        outcome = Outcome { changed: true, ended: true };
+    }
+    outcome
+}
+
+fn choose(ui: &mut egui::Ui, current: &mut String, choices: &[&str], salt: &str, label: egui::Id, width: f32) -> Outcome {
     let mut changed = false;
-    let response = egui::ComboBox::from_id_salt(("choice", salt)).selected_text(title_case(current)).show_ui(ui, |ui| {
+    let response = egui::ComboBox::from_id_salt(("choice", salt)).width(width).selected_text(title_case(current)).show_ui(ui, |ui| {
         for choice in choices {
             if ui.selectable_label(current == choice, title_case(choice)).clicked() && current != choice {
                 *current = (*choice).to_owned();
@@ -69,107 +191,80 @@ fn choose(ui: &mut egui::Ui, current: &mut String, choices: &[&str], salt: &str,
     Outcome { changed, ended: changed }
 }
 
-/// Edits `value` in place. `label` names the value for assistive technology.
-pub(crate) fn edit(ui: &mut egui::Ui, value: &mut Value, salt: impl std::hash::Hash + std::fmt::Debug, label: Option<egui::Id>) -> Outcome {
-    ui.push_id(salt, |ui| edit_inner(ui, value, label)).inner
+/// A field named `color` with 3 or 4 numbers between 0 and 1 (linear RGB or RGBA).
+fn is_color(key: &str, value: &Value) -> bool {
+    key == "color"
+        && matches!(value, Value::Array(items) if (3..=4).contains(&items.len()) && items.iter().all(|v| v.as_f64().is_some_and(|x| (0.0..=1.0).contains(&x))))
 }
 
-fn edit_inner(ui: &mut egui::Ui, value: &mut Value, label: Option<egui::Id>) -> Outcome {
-    match value {
-        Value::Bool(b) => {
-            let response = labelled(ui.checkbox(b, ""), label);
-            Outcome { changed: response.changed(), ended: response.changed() }
-        }
-        Value::Number(n) => edit_number(ui, n, label),
-        Value::String(s) => {
-            let response = labelled(ui.add(egui::TextEdit::singleline(s).desired_width(f32::INFINITY)), label);
-            Outcome::from_response(&response)
-        }
-        Value::Array(items) if items.len() <= AXES.len() && !items.is_empty() && items.iter().all(Value::is_number) => edit_vector(ui, items),
-        Value::Array(items) => edit_list(ui, items),
-        Value::Object(fields) => {
-            let mut outcome = Outcome::default();
-            egui::Grid::new("fields").num_columns(2).striped(true).show(ui, |ui| {
-                for (key, field) in fields.iter_mut() {
-                    let key_label = ui.label(title_case(key));
-                    outcome.merge(edit(ui, field, key.as_str(), Some(key_label.id)));
-                    ui.end_row();
-                }
-            });
-            outcome
-        }
-        Value::Null => {
-            ui.label("none");
-            Outcome::default()
-        }
+fn edit_color(ui: &mut egui::Ui, value: &mut Value, label: egui::Id, width: f32) -> Outcome {
+    let Value::Array(items) = value else { return Outcome::default() };
+    let channels: Vec<f32> = items.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect();
+    let has_alpha = channels.len() == 4;
+    let get = |i: usize| channels.get(i).copied().unwrap_or(1.0);
+    let mut rgba = egui::Rgba::from_rgba_unmultiplied(get(0), get(1), get(2), if has_alpha { get(3) } else { 1.0 });
+    let before = rgba;
+    let saved = ui.spacing().interact_size;
+    ui.spacing_mut().interact_size = egui::vec2(width, ROW_HEIGHT);
+    let alpha = if has_alpha { egui::color_picker::Alpha::OnlyBlend } else { egui::color_picker::Alpha::Opaque };
+    let response = egui::color_picker::color_edit_button_rgba(ui, &mut rgba, alpha).labelled_by(label);
+    ui.spacing_mut().interact_size = saved;
+    let response = response.on_hover_text(format!(
+        "R {:.2}  G {:.2}  B {:.2}{}",
+        rgba.r(),
+        rgba.g(),
+        rgba.b(),
+        if has_alpha { format!("  A {:.2}", rgba.a()) } else { String::new() }
+    ));
+    if rgba == before {
+        return Outcome { changed: false, ended: response.clicked_elsewhere() };
     }
+    let alpha_value = rgba.a();
+    let unmultiplied = if alpha_value > 0.0 { [rgba.r() / alpha_value, rgba.g() / alpha_value, rgba.b() / alpha_value] } else { [0.0; 3] };
+    let mut out: Vec<Value> = unmultiplied.iter().map(|c| number(*c)).collect();
+    if has_alpha {
+        out.push(number(alpha_value));
+    }
+    *items = out;
+    Outcome { changed: true, ended: false }
 }
 
-fn edit_number(ui: &mut egui::Ui, n: &mut Number, label: Option<egui::Id>) -> Outcome {
-    let was_integer = n.is_i64() || n.is_u64();
-    let mut x = n.as_f64().unwrap_or(0.0);
-    let speed = if was_integer { 1.0 } else { 0.05 };
-    let response = labelled(ui.add(egui::DragValue::new(&mut x).speed(speed)), label);
-    let outcome = Outcome::from_response(&response);
-    if outcome.changed {
-        let replacement = if was_integer && x.fract() == 0.0 && x.abs() < 9.0e15 { Some(Number::from(x as i64)) } else { Number::from_f64(x) };
-        if let Some(replacement) = replacement {
-            *n = replacement;
+fn number(x: f32) -> Value {
+    let rounded = (f64::from(x.clamp(0.0, 1.0)) * 1000.0).round() / 1000.0;
+    Number::from_f64(rounded).map_or(Value::Null, Value::Number)
+}
+
+pub(crate) fn title_case(key: &str) -> String {
+    // camelCase keys become words: "directionalLight" -> "Directional Light".
+    let mut out = String::with_capacity(key.len() + 4);
+    for (i, c) in key.chars().enumerate() {
+        if i == 0 {
+            out.extend(c.to_uppercase());
+        } else if c.is_uppercase() {
+            out.push(' ');
+            out.push(c);
+        } else {
+            out.push(c);
         }
     }
-    outcome
+    out
 }
 
-/// Short number lists (positions, rotations, scales) on one row with axis labels.
-fn edit_vector(ui: &mut egui::Ui, items: &mut [Value]) -> Outcome {
-    let mut outcome = Outcome::default();
-    ui.horizontal(|ui| {
-        for (item, axis) in items.iter_mut().zip(AXES) {
-            let axis_label = ui.label(axis);
-            if let Value::Number(n) = item {
-                outcome.merge(ui.push_id(axis, |ui| edit_number(ui, n, Some(axis_label.id))).inner);
-            }
-        }
-    });
-    outcome
-}
+#[cfg(test)]
+mod tests {
+    use super::{is_color, title_case};
+    use serde_json::json;
 
-/// Lists: every item editable. Lists of text can grow and shrink.
-fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>) -> Outcome {
-    let mut outcome = Outcome::default();
-    let text_list = items.iter().all(Value::is_string);
-    let mut remove = None;
-    for (index, item) in items.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            let item_label = ui.label(format!("Item {}", index + 1));
-            outcome.merge(edit(ui, item, index, Some(item_label.id)));
-            if text_list && ui.small_button("Remove").on_hover_text(format!("Remove item {}", index + 1)).clicked() {
-                remove = Some(index);
-            }
-        });
+    #[test]
+    fn camel_case_keys_become_words() {
+        assert_eq!(title_case("directionalLight"), "Directional Light");
+        assert_eq!(title_case("fov"), "Fov");
     }
-    if let Some(index) = remove {
-        items.remove(index);
-        outcome = Outcome { changed: true, ended: true };
-    }
-    if text_list && ui.small_button("Add Item").clicked() {
-        items.push(Value::String(String::new()));
-        outcome = Outcome { changed: true, ended: true };
-    }
-    if items.is_empty() && !text_list {
-        ui.label("empty");
-    }
-    outcome
-}
 
-fn labelled(response: egui::Response, label: Option<egui::Id>) -> egui::Response {
-    match label {
-        Some(id) => response.labelled_by(id),
-        None => response,
+    #[test]
+    fn only_unit_range_color_fields_get_a_picker() {
+        assert!(is_color("color", &json!([0.1, 0.2, 0.3, 1.0])));
+        assert!(!is_color("color", &json!([0.1, 2.0, 0.3])));
+        assert!(!is_color("position", &json!([0.1, 0.2, 0.3])));
     }
-}
-
-fn title_case(key: &str) -> String {
-    let mut chars = key.chars();
-    chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }

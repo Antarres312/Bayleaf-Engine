@@ -131,6 +131,23 @@ fn create_with_components_is_one_undo_step_and_fails_atomically() {
 }
 
 #[test]
+fn step_moves_reorder_and_nest_and_refuse_at_the_edges() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let a = create(&registry, &mut session, json!({"name": "A"}));
+    let b = create(&registry, &mut session, json!({"name": "B"}));
+    let roots = |s: &Session| s.scene().children(None).iter().map(|id| id.to_hex()).collect::<Vec<_>>();
+    assert!(registry.execute(&mut session, "scene.object.moveUp", &json!({"id": a})).is_err(), "first object cannot move up");
+    registry.execute(&mut session, "scene.object.moveUp", &json!({"id": b})).unwrap();
+    assert_eq!(roots(&session), [b.clone(), a.clone()]);
+    registry.execute(&mut session, "scene.object.indent", &json!({"id": a})).unwrap();
+    assert_eq!(roots(&session), std::slice::from_ref(&b));
+    registry.execute(&mut session, "scene.object.outdent", &json!({"id": a})).unwrap();
+    assert_eq!(roots(&session), [b, a.clone()]);
+    assert!(registry.execute(&mut session, "scene.object.outdent", &json!({"id": a})).is_err(), "a root cannot move out");
+}
+
+#[test]
 fn render_refuses_bad_sizes_and_non_camera_objects_before_writing() {
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();

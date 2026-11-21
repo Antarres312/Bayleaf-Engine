@@ -102,6 +102,18 @@ fn world_matrices_compose_parent_transforms() {
 }
 
 #[test]
+fn reparenting_can_keep_the_world_placement() {
+    let (mut scene, [a, _, _, b]) = tree();
+    scene.set_component(a, "transform", json!({"position": [3, 1, 0], "rotation": [0, 90, 0], "scale": [2, 2, 2]})).unwrap();
+    scene.set_component(b, "transform", json!({"position": [5, 0.5, -2], "rotation": [10, 0, 0], "scale": [1, 1, 1]})).unwrap();
+    let before = scene.world_matrix(b).unwrap();
+    scene.reparent_keeping_world(b, Some(a), None).unwrap();
+    assert!(scene.world_matrix(b).unwrap().abs_diff_eq(before, 1e-3));
+    scene.reparent_keeping_world(b, None, None).unwrap();
+    assert!(scene.world_matrix(b).unwrap().abs_diff_eq(before, 1e-3));
+}
+
+#[test]
 fn render_components_validate_their_ranges() {
     let (mut scene, [a, ..]) = tree();
     for (component, bad) in [

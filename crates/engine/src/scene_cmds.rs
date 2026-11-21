@@ -112,6 +112,50 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             run: object_delete,
         },
         CommandSpec {
+            id: "scene.object.moveUp",
+            label: "Move Up",
+            menu: "Object/Move Up",
+            shortcut: "Alt+ArrowUp",
+            params: "{id}; moves before the previous sibling",
+            prompt: Prompt::SelectedObject,
+            mutates: true,
+            enabled: always,
+            run: |s, p| object_step(s, p, Step::Up),
+        },
+        CommandSpec {
+            id: "scene.object.moveDown",
+            label: "Move Down",
+            menu: "Object/Move Down",
+            shortcut: "Alt+ArrowDown",
+            params: "{id}; moves after the next sibling",
+            prompt: Prompt::SelectedObject,
+            mutates: true,
+            enabled: always,
+            run: |s, p| object_step(s, p, Step::Down),
+        },
+        CommandSpec {
+            id: "scene.object.indent",
+            label: "Make Child of Previous",
+            menu: "Object/Make Child of Previous",
+            shortcut: "Alt+ArrowRight",
+            params: "{id}; becomes the last child of the previous sibling",
+            prompt: Prompt::SelectedObject,
+            mutates: true,
+            enabled: always,
+            run: |s, p| object_step(s, p, Step::Indent),
+        },
+        CommandSpec {
+            id: "scene.object.outdent",
+            label: "Move Out of Parent",
+            menu: "Object/Move Out of Parent",
+            shortcut: "Alt+ArrowLeft",
+            params: "{id}; moves right after its parent",
+            prompt: Prompt::SelectedObject,
+            mutates: true,
+            enabled: always,
+            run: |s, p| object_step(s, p, Step::Outdent),
+        },
+        CommandSpec {
             id: "scene.object.inspect",
             label: "Inspect Object",
             menu: "",
@@ -127,7 +171,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Move Object",
             menu: "",
             shortcut: "",
-            params: "{id, parent?, index?}; parent null moves to the root",
+            params: "{id, parent?, index?, keepWorld? = true}; parent null moves to the root",
             prompt: Prompt::SelectedObject,
             mutates: true,
             enabled: always,
@@ -203,6 +247,9 @@ struct ReparentParams {
     parent: Option<StableId>,
     #[serde(default)]
     index: Option<usize>,
+    /// Keep the object where it is in the world (default) instead of keeping its local transform.
+    #[serde(default = "yes", rename = "keepWorld")]
+    keep_world: bool,
 }
 
 #[derive(Deserialize)]
@@ -343,9 +390,54 @@ fn object_inspect(session: &mut Session, params: &Value) -> Result<Value, Comman
     Ok(json!({ "id": p.id, "parent": scene.parent(p.id), "children": scene.children(Some(p.id)), "components": components }))
 }
 
+#[derive(Clone, Copy)]
+enum Step {
+    Up,
+    Down,
+    Indent,
+    Outdent,
+}
+
+/// One-step moves in the hierarchy, for keyboards and menus. The object keeps its world placement.
+fn object_step(session: &mut Session, params: &Value, step: Step) -> Result<Value, CommandError> {
+    let p: IdParams = parse(params)?;
+    let scene = &session.scene;
+    if !scene.contains(p.id) {
+        return Err(CommandError::Failed(format!("no object with id {}", p.id)));
+    }
+    let parent = scene.parent(p.id);
+    let siblings = scene.children(parent);
+    let index = siblings.iter().position(|s| *s == p.id).unwrap_or(0);
+    let (new_parent, new_index) = match step {
+        Step::Up => (parent, Some(index.checked_sub(1).ok_or_else(|| CommandError::Failed("the object is already first".to_owned()))?)),
+        Step::Down => {
+            if index + 1 >= siblings.len() {
+                return Err(CommandError::Failed("the object is already last".to_owned()));
+            }
+            (parent, Some(index + 1))
+        }
+        Step::Indent => {
+            let previous = index.checked_sub(1).and_then(|i| siblings.get(i)).copied();
+            (Some(previous.ok_or_else(|| CommandError::Failed("there is no previous object to move into".to_owned()))?), None)
+        }
+        Step::Outdent => {
+            let old_parent = parent.ok_or_else(|| CommandError::Failed("the object is already at the root".to_owned()))?;
+            let grandparent = scene.parent(old_parent);
+            let at = scene.children(grandparent).iter().position(|s| *s == old_parent).map_or(0, |i| i + 1);
+            (grandparent, Some(at))
+        }
+    };
+    session.scene.reparent_keeping_world(p.id, new_parent, new_index)?;
+    Ok(json!({ "parent": new_parent }))
+}
+
 fn object_reparent(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: ReparentParams = parse(params)?;
-    session.scene.reparent(p.id, p.parent, p.index)?;
+    if p.keep_world {
+        session.scene.reparent_keeping_world(p.id, p.parent, p.index)?;
+    } else {
+        session.scene.reparent(p.id, p.parent, p.index)?;
+    }
     Ok(json!({}))
 }
 
@@ -365,4 +457,8 @@ fn component_remove(session: &mut Session, params: &Value) -> Result<Value, Comm
     let p: ComponentParams = parse(params)?;
     session.scene.remove_component(p.id, &p.component)?;
     Ok(json!({}))
+}
+
+fn yes() -> bool {
+    true
 }

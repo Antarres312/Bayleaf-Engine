@@ -1,73 +1,269 @@
-//! Hierarchy panel: the object tree, with buttons to create, delete and move objects.
-//! Every move also works without dragging (accessibility standard).
+//! Hierarchy panel: the object tree.
+//!
+//! Drag an object onto another to make it a child; drop it on the top or bottom edge of a row to
+//! place it before or after that object; drop it on the empty space below the tree to move it to
+//! the root. Without dragging, the same moves are in each row's context menu and in the Object
+//! menu with keyboard shortcuts (accessibility standard: anything done by dragging also works
+//! without dragging).
 
 use bayleaf_core::StableId;
 use bayleaf_engine::scene::Scene;
 use serde_json::{Value, json};
 
-use crate::Editor;
+use crate::theme::{self, ROW_HEIGHT, Tokens};
+use crate::{Editor, inspector};
 
 /// Width of the open/close arrow, so leaves line up with branches.
-const ARROW_WIDTH: f32 = 18.0;
+const ARROW_WIDTH: f32 = 20.0;
+/// Share of a row's height at the top and bottom that means "before" and "after" instead of "into".
+const EDGE_ZONE: f32 = 0.28;
+
+/// Row context menu: label and the command it runs on the row's object.
+const ROW_MENU: &[(&str, &str)] = &[
+    ("Move Up", "scene.object.moveUp"),
+    ("Move Down", "scene.object.moveDown"),
+    ("Make Child of Previous", "scene.object.indent"),
+    ("Move Out of Parent", "scene.object.outdent"),
+    ("Delete", "scene.object.delete"),
+];
+
+/// Drag-and-drop payload: the object being dragged.
+#[derive(Clone, Copy)]
+struct Dragged(StableId);
+
+/// Where an object would land if dropped now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Drop {
+    Before(StableId),
+    After(StableId),
+    Into(StableId),
+    Root,
+}
+
+/// What the rows report back while the tree is drawn.
+#[derive(Default)]
+struct RowState {
+    selected: Option<StableId>,
+    rows: Vec<(StableId, egui::Rect)>,
+    /// A context-menu command and the object it applies to.
+    command: Option<(&'static str, StableId)>,
+}
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
-    ui.heading("Hierarchy");
+    let t = theme::tokens(ui);
+    ui.add_space(4.0);
     toolbar(editor, ui);
+    ui.add_space(2.0);
     ui.separator();
-    let mut selected = editor.selected;
+    let mut state = RowState { selected: editor.selected, ..RowState::default() };
+    let mut moved: Option<Value> = None;
+    let filter = editor.hierarchy_filter.trim().to_lowercase();
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let scene = editor.session.scene();
         if scene.object_count() == 0 {
-            ui.label("The scene is empty. Use Create to add an object.");
+            inspector::empty_state(ui, "Empty scene", "Use + to add an object.");
+        } else if filter.is_empty() {
+            tree(ui, scene, None, &mut state);
+            // The space below the tree takes drops to the root.
+            let root_zone = ui.allocate_space(egui::vec2(ui.available_width(), ui.available_height().max(ROW_HEIGHT * 2.0))).1;
+            moved = handle_drop(ui, t, scene, &state.rows, root_zone);
+        } else {
+            let matches: Vec<StableId> =
+                scene.world_matrices().into_iter().map(|(id, _)| id).filter(|id| scene.name(*id).is_some_and(|n| n.to_lowercase().contains(&filter))).collect();
+            if matches.is_empty() {
+                inspector::empty_state(ui, "No matches", "No object name contains the filter text.");
+            }
+            for id in matches {
+                let response = row(ui, scene.name(id).unwrap_or("Object"), state.selected == Some(id));
+                if response.clicked() {
+                    state.selected = Some(id);
+                }
+                row_menu(&response, id, &mut state);
+            }
         }
-        tree(ui, scene, None, &mut selected);
     });
-    editor.selected = selected;
+    editor.selected = state.selected;
+    if let Some(params) = moved {
+        editor.dispatch("scene.object.reparent", &params, None);
+    }
+    if let Some((command, id)) = state.command {
+        editor.dispatch(command, &json!({ "id": id }), None);
+    }
 }
 
-fn tree(ui: &mut egui::Ui, scene: &Scene, parent: Option<StableId>, selected: &mut Option<StableId>) {
+/// A full-width, left-aligned selectable row.
+fn row(ui: &mut egui::Ui, name: &str, is_selected: bool) -> egui::Response {
+    let width = ui.available_width();
+    // A trailing grow atom left-aligns the name without adding text to its accessible label.
+    ui.add(egui::Button::selectable(is_selected, (name, egui::Atom::grow())).truncate().min_size(egui::vec2(width, ROW_HEIGHT - 2.0)))
+}
+
+/// Right-click menu of a row. Opening it also selects the row's object.
+fn row_menu(response: &egui::Response, id: StableId, state: &mut RowState) {
+    response.context_menu(|ui| {
+        state.selected = Some(id);
+        for (label, command) in ROW_MENU {
+            if ui.button(*label).clicked() {
+                state.command = Some((command, id));
+                ui.close();
+            }
+        }
+    });
+}
+
+/// A row that can also be dragged with the primary button. Records its rectangle for drop targeting.
+/// The secondary button stays free for the context menu.
+fn draggable_row(ui: &mut egui::Ui, id: StableId, name: &str, state: &mut RowState) {
+    let width = ui.available_width();
+    let button = egui::Button::selectable(state.selected == Some(id), (name, egui::Atom::grow()))
+        .truncate()
+        .min_size(egui::vec2(width, ROW_HEIGHT - 2.0))
+        .sense(egui::Sense::click_and_drag());
+    let response = ui.add(button);
+    if response.clicked() {
+        state.selected = Some(id);
+    }
+    // Select on press, like a click, so a click with a little hand movement still selects.
+    if response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_pressed()) {
+        state.selected = Some(id);
+    }
+    if response.drag_started_by(egui::PointerButton::Primary) {
+        state.selected = Some(id);
+        egui::DragAndDrop::set_payload(ui.ctx(), Dragged(id));
+    }
+    if response.dragged_by(egui::PointerButton::Primary)
+        && let Some(pointer) = ui.ctx().pointer_interact_pos()
+    {
+        // A ghost of the name follows the pointer.
+        let t = theme::tokens(ui);
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("hierarchy drag ghost")));
+        let galley = painter.layout_no_wrap(name.to_owned(), egui::TextStyle::Body.resolve(ui.style()), t.on_accent);
+        let rect = egui::Rect::from_min_size(pointer + egui::vec2(12.0, 4.0), galley.size() + egui::vec2(16.0, 8.0));
+        painter.rect_filled(rect, theme::RADIUS, t.accent);
+        painter.galley(rect.min + egui::vec2(8.0, 4.0), galley, t.on_accent);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    row_menu(&response, id, state);
+    state.rows.push((id, response.rect));
+}
+
+fn tree(ui: &mut egui::Ui, scene: &Scene, parent: Option<StableId>, state: &mut RowState) {
     for &id in scene.children(parent) {
         let name = scene.name(id).unwrap_or("Object").to_owned();
-        let is_selected = *selected == Some(id);
         if scene.children(Some(id)).is_empty() {
             ui.horizontal(|ui| {
                 ui.add_space(ARROW_WIDTH);
-                if ui.selectable_label(is_selected, name).clicked() {
-                    *selected = Some(id);
-                }
+                draggable_row(ui, id, &name, state);
             });
         } else {
             let state_id = ui.make_persistent_id(("hierarchy", id.as_u128()));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true)
-                .show_header(ui, |ui| {
-                    if ui.selectable_label(is_selected, name).clicked() {
-                        *selected = Some(id);
-                    }
-                })
-                .body(|ui| tree(ui, scene, Some(id), selected));
+                .show_header(ui, |ui| draggable_row(ui, id, &name, state))
+                .body(|ui| tree(ui, scene, Some(id), state));
         }
     }
 }
 
-/// A planned move of the selected object: `scene.object.reparent` params.
-fn planned_move(scene: &Scene, id: StableId, action: Move) -> Option<Value> {
-    let parent = scene.parent(id);
-    let siblings = scene.children(parent);
-    let index = siblings.iter().position(|s| *s == id)?;
-    match action {
-        Move::Up => (index > 0).then(|| json!({ "id": id, "parent": parent, "index": index - 1 })),
-        Move::Down => (index + 1 < siblings.len()).then(|| json!({ "id": id, "parent": parent, "index": index + 1 })),
-        Move::Indent => {
-            let new_parent = *siblings.get(index.checked_sub(1)?)?;
-            Some(json!({ "id": id, "parent": new_parent }))
+/// While an object is dragged: shows where it would land, and on release returns the
+/// `scene.object.reparent` params.
+fn handle_drop(ui: &mut egui::Ui, t: &Tokens, scene: &Scene, rows: &[(StableId, egui::Rect)], root_zone: egui::Rect) -> Option<Value> {
+    let dragged = egui::DragAndDrop::payload::<Dragged>(ui.ctx())?.0;
+    let pointer = ui.ctx().pointer_interact_pos()?;
+    let full_width = |rect: egui::Rect| egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
+    let target = rows
+        .iter()
+        .find(|(_, rect)| full_width(*rect).contains(pointer))
+        .map(|(id, rect)| {
+            let fraction = (pointer.y - rect.top()) / rect.height().max(1.0);
+            let drop = if fraction < EDGE_ZONE {
+                Drop::Before(*id)
+            } else if fraction > 1.0 - EDGE_ZONE {
+                Drop::After(*id)
+            } else {
+                Drop::Into(*id)
+            };
+            (drop, *rect)
+        })
+        .or_else(|| root_zone.contains(pointer).then_some((Drop::Root, root_zone)));
+    let (drop, rect) = target?;
+    let params = drop_params(scene, dragged, drop);
+
+    // Text colour: it contrasts with both plain rows and the accent-filled selected row.
+    let stroke = egui::Stroke::new(2.0, if params.is_some() { t.text } else { t.error });
+    let painter = ui.painter();
+    match drop {
+        Drop::Before(_) => {
+            painter.hline(rect.x_range(), rect.top(), stroke);
         }
-        Move::Outdent => {
-            let old_parent = parent?;
-            let grandparent = scene.parent(old_parent);
-            let at = scene.children(grandparent).iter().position(|s| *s == old_parent)? + 1;
-            Some(json!({ "id": id, "parent": grandparent, "index": at }))
+        Drop::After(_) => {
+            painter.hline(rect.x_range(), rect.bottom(), stroke);
+        }
+        Drop::Into(_) => {
+            painter.rect_stroke(rect, theme::RADIUS, stroke, egui::StrokeKind::Inside);
+        }
+        Drop::Root => {
+            painter.hline(rect.x_range(), rect.top() + 2.0, stroke);
         }
     }
+    if params.is_none() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::NoDrop);
+    }
+
+    if ui.input(|i| i.pointer.any_released()) {
+        egui::DragAndDrop::clear_payload(ui.ctx());
+        return params;
+    }
+    None
+}
+
+/// `scene.object.reparent` params for dropping `dragged` at `drop`, or `None` when the drop would
+/// change nothing or would put an object inside itself.
+fn drop_params(scene: &Scene, dragged: StableId, drop: Drop) -> Option<Value> {
+    let (parent, index) = match drop {
+        Drop::Root => (None, None),
+        Drop::Into(target) => (Some(target), None),
+        Drop::Before(target) | Drop::After(target) => {
+            let parent = scene.parent(target);
+            let siblings = scene.children(parent);
+            let mut index = siblings.iter().position(|s| *s == target)?;
+            if matches!(drop, Drop::After(_)) {
+                index += 1;
+            }
+            // The index is taken after `dragged` leaves its old place.
+            if let Some(old) = siblings.iter().position(|s| *s == dragged)
+                && old < index
+            {
+                index -= 1;
+            }
+            (parent, Some(index))
+        }
+    };
+    if let Some(parent) = parent
+        && (parent == dragged || is_descendant(scene, parent, dragged))
+    {
+        return None;
+    }
+    let same_place = scene.parent(dragged) == parent
+        && match index {
+            Some(index) => scene.children(parent).get(index) == Some(&dragged),
+            None => scene.children(parent).last() == Some(&dragged),
+        };
+    if same_place {
+        return None;
+    }
+    Some(json!({ "id": dragged, "parent": parent, "index": index }))
+}
+
+/// True when `candidate` is somewhere below `ancestor`.
+fn is_descendant(scene: &Scene, candidate: StableId, ancestor: StableId) -> bool {
+    let mut current = scene.parent(candidate);
+    while let Some(parent) = current {
+        if parent == ancestor {
+            return true;
+        }
+        current = scene.parent(parent);
+    }
+    false
 }
 
 /// Ready-made objects: `scene.object.create` params with their components.
@@ -100,53 +296,67 @@ fn presets() -> Vec<(&'static str, Value)> {
     ]
 }
 
-#[derive(Clone, Copy)]
-enum Move {
-    Up,
-    Down,
-    Indent,
-    Outdent,
-}
-
+/// A small Add button (empty object and ready-made objects) followed by the search field.
 fn toolbar(editor: &mut Editor, ui: &mut egui::Ui) {
-    let selected = editor.selected;
-    let mut action: Option<(&'static str, Value)> = None;
-    ui.horizontal_wrapped(|ui| {
-        let create_label = if selected.is_some() { "Create Child" } else { "Create" };
-        if ui.button(create_label).on_hover_text("Create an empty object").clicked() {
-            action = Some(("scene.object.create", json!({ "parent": selected })));
-        }
-        ui.menu_button("Add", |ui| {
+    let mut action: Option<Value> = None;
+    ui.horizontal(|ui| {
+        let add_size = egui::vec2(ROW_HEIGHT, ROW_HEIGHT);
+        let (add, _) = egui::containers::menu::MenuButton::from_button(egui::Button::new(egui::RichText::new("+").strong()).min_size(add_size)).ui(ui, |ui| {
+            ui.set_min_width(180.0);
+            if ui.button("Empty Object").clicked() {
+                action = Some(json!({ "name": "Object" }));
+                ui.close();
+            }
+            ui.separator();
             for (label, params) in presets() {
                 if ui.button(label).clicked() {
-                    action = Some(("scene.object.create", params));
+                    action = Some(params);
                     ui.close();
                 }
             }
-        })
-        .response
-        .on_hover_text("Add a ready-made object at the root of the scene");
-        if ui.add_enabled(selected.is_some(), egui::Button::new("Delete")).clicked()
-            && let Some(id) = selected
-        {
-            action = Some(("scene.object.delete", json!({ "id": id })));
-        }
-        let scene = editor.session.scene();
-        for (label, hint, kind) in [
-            ("Up", "Move before the previous sibling", Move::Up),
-            ("Down", "Move after the next sibling", Move::Down),
-            ("Indent", "Make a child of the previous sibling", Move::Indent),
-            ("Outdent", "Move out of the parent", Move::Outdent),
-        ] {
-            let params = selected.and_then(|id| planned_move(scene, id, kind));
-            if ui.add_enabled(params.is_some(), egui::Button::new(label)).on_hover_text(hint).clicked()
-                && let Some(params) = params
-            {
-                action = Some(("scene.object.reparent", params));
-            }
-        }
+        });
+        ui.ctx().accesskit_node_builder(add.id, |node| node.set_label("Add Object"));
+        add.on_hover_text("Add an object");
+        let search = ui.add_sized(
+            [ui.available_width(), ROW_HEIGHT],
+            egui::TextEdit::singleline(&mut editor.hierarchy_filter).hint_text("Search").align(egui::Align2::LEFT_CENTER),
+        );
+        // The hint is not an accessible name; give the field one.
+        ui.ctx().accesskit_node_builder(search.id, |node| node.set_label("Search objects"));
     });
-    if let Some((id, params)) = action {
-        editor.dispatch(id, &params, None);
+    if let Some(params) = action {
+        editor.dispatch("scene.object.create", &params, None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Drop, drop_params};
+    use bayleaf_engine::scene::Scene;
+
+    #[test]
+    fn drops_are_planned_like_the_tree_shows_them() {
+        let mut scene = Scene::new();
+        let a = scene.create_object(None, "A").unwrap();
+        let b = scene.create_object(None, "B").unwrap();
+        let c = scene.create_object(None, "C").unwrap();
+        // Into: b becomes a child of a.
+        assert_eq!(drop_params(&scene, b, Drop::Into(a)).unwrap()["parent"], a.to_hex());
+        // After c, moving a forward: a leaves index 0, so it lands at the end (index 2).
+        assert_eq!(drop_params(&scene, a, Drop::After(c)).unwrap()["index"], 2);
+        // Before a, moving c backward: index 0.
+        assert_eq!(drop_params(&scene, c, Drop::Before(a)).unwrap()["index"], 0);
+        // Dropping where it already is changes nothing.
+        assert!(drop_params(&scene, b, Drop::After(a)).is_none());
+    }
+
+    #[test]
+    fn an_object_cannot_be_dropped_into_itself_or_its_descendants() {
+        let mut scene = Scene::new();
+        let a = scene.create_object(None, "A").unwrap();
+        let child = scene.create_object(Some(a), "Child").unwrap();
+        assert!(drop_params(&scene, a, Drop::Into(a)).is_none());
+        assert!(drop_params(&scene, a, Drop::Into(child)).is_none());
+        assert!(drop_params(&scene, child, Drop::Root).is_some());
     }
 }

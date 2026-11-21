@@ -24,7 +24,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive", "env"] }
 glam = { version = "0.30", features = ["serde"] }
-eframe = { version = "0.37", default-features = false, features = ["wgpu", "accesskit", "default_fonts"] }
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "accesskit", "default_fonts", "persistence"] }
+egui_dock = { version = "0.22", features = ["serde"] }
+# Same version eframe uses for its saved state; it keeps non-finite floats that JSON cannot.
+ron = "0.12"
 egui = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
 toml = "0.9"

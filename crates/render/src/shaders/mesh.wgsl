@@ -6,6 +6,8 @@
 
 const MAX_LIGHTS: u32 = 4u;
 const PI: f32 = 3.14159265;
+// Highlight colour of selected objects (linear).
+const SELECTION: vec3<f32> = vec3<f32>(1.0, 0.45, 0.08);
 
 struct Light {
     direction: vec4<f32>,
@@ -83,7 +85,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     if (in.params.w > 0.5) {
         var unlit = in.color.rgb;
         if (selected) {
-            unlit = mix(unlit, vec3<f32>(1.0, 0.55, 0.1), 0.35);
+            unlit = mix(unlit, SELECTION, 0.25);
         }
         return vec4<f32>(unlit, in.color.a);
     }
@@ -120,7 +122,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     }
 
     if (selected) {
-        color = mix(color, vec3<f32>(1.0, 0.55, 0.1), 0.35);
+        // A light tint plus a glow toward grazing angles, so the surface keeps its own colour.
+        let rim = pow(1.0 - n_dot_v, 4.0);
+        color = mix(color, SELECTION, 0.06) + SELECTION * rim * 0.9;
     }
     return vec4<f32>(color, in.color.a);
 }

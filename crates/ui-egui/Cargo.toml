@@ -13,6 +13,10 @@ bayleaf-engine = { workspace = true }
 bayleaf-render = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
+egui_dock = { workspace = true }
+ron = { workspace = true }
+png = { workspace = true }
+serde = { workspace = true }
 rfd = { workspace = true }
 serde_json = { workspace = true }
 
