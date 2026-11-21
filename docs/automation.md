@@ -1,0 +1,97 @@
+# Automation
+
+Every action in Bayleaf Engine is a registered command (`scene.object.create`, `scene.saveAs`,
+`play.start`, …). The editor's panels, `bayleaf-cli` and AI agents all run the same commands, so an
+agent can do everything a person can do in the editor. `bayleaf-cli commands` prints the full list
+with each command's parameters.
+
+There are two ways for an agent to work:
+
+| Mode | What the agent drives | Start it with |
+|---|---|---|
+| Headless | a session of its own, no window | `bayleaf-cli mcp …` |
+| Editor | a running editor, which you watch | `bayleaf --control <PORT> …`, then `bayleaf-cli mcp --bridge …` |
+
+## Allowed folders
+
+An agent may only read and write files inside the folders you name. Both kinds of folder are
+required; without them the agent entry point refuses to start.
+
+- `--automation-read-root <DIR>`: a folder the agent may read. Repeat for more.
+- `--automation-write-root <DIR>`: a folder the agent may write and read. Repeat for more.
+
+Relative paths in commands start at the first write root. Paths are resolved before the check, so
+`..` and symbolic links cannot reach outside. A refused command fails with a message that names the
+path and the allowed folders, and nothing is written. Scripts that `play.start` would load must also
+be inside a readable folder.
+
+The limits apply only to the agent's requests: in the editor, your own commands are not limited.
+
+## Headless MCP server
+
+```
+bayleaf-cli mcp --automation-read-root examples/demo --automation-write-root out [--scene examples/demo/demo.bscene]
+```
+
+The server speaks the Model Context Protocol over stdio (JSON-RPC 2.0, one message per line). Each
+command is one tool, named with `_` for `.` (`scene_object_create`). Commands that change nothing
+are marked read-only. A failed command returns a tool result with `isError: true` and the reason.
+
+To add it to Claude Code, put this in the project's `.mcp.json` (paths are examples):
+
+```json
+{
+  "mcpServers": {
+    "bayleaf": {
+      "command": "target/debug/bayleaf-cli",
+      "args": ["mcp", "--automation-read-root", "examples", "--automation-write-root", "out"]
+    }
+  }
+}
+```
+
+or run `claude mcp add bayleaf -- target/debug/bayleaf-cli mcp --automation-read-root examples --automation-write-root out`.
+On Windows, write the program as `target/debug/bayleaf-cli.exe`. Build it first with
+`cargo build -p bayleaf-cli`.
+
+## Driving the editor
+
+Start the editor with a control channel:
+
+```
+bayleaf examples/demo/demo.bscene --control 7878 --automation-read-root examples --automation-write-root out
+```
+
+It listens on `127.0.0.1` only and prints the address and the token file. The status bar shows
+**Agent control** with the address while the channel is open, and each agent request shows its result
+there. The token file is `bayleaf-control.token` in the system temp folder unless
+`--control-token-file` names another; it is created with a new random token when missing.
+
+Then point the MCP server at it:
+
+```
+bayleaf-cli mcp --bridge 127.0.0.1:7878 --control-token-file <token file> --automation-read-root examples --automation-write-root out
+```
+
+In bridge mode the editor enforces its own allowed folders; the server's roots are still required.
+Agent requests run on the editor's UI thread between frames, exactly like a menu command, so they
+appear in the undo history.
+
+### Control channel protocol
+
+Newline-delimited JSON over TCP. Every request has an `id`, a `method` and `params`; every reply has
+the same `id`, `ok`, and either `result` or `error`.
+
+```
+→ {"id":1,"method":"auth","params":{"token":"<64 hex digits>"}}
+← {"id":1,"ok":true,"result":{}}
+→ {"id":2,"method":"engine.execute","params":{"command":"scene.object.create","params":{"name":"Box"}}}
+← {"id":2,"ok":true,"result":{"id":"…"}}
+```
+
+- `auth` must come first; any other first request, or a wrong token, closes the connection.
+- `engine.commands` returns the command list; `engine.execute` runs one command.
+- Limits: 1 MiB per line, 16 connections, 5 minutes idle, 60 seconds per reply. After a timeout the
+  command may still run; check the scene before sending it again.
+
+On Windows the token file gets the access rules of its folder. Keep it in a folder only you can read.

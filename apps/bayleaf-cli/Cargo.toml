@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+bayleaf-automation = { workspace = true }
 bayleaf-engine = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }

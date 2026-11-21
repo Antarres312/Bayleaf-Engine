@@ -5,6 +5,9 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, bail};
+use bayleaf_automation::control::ControlClient;
+use bayleaf_automation::mcp::{self, Backend, BridgeBackend, LocalBackend};
+use bayleaf_engine::confine::Confinement;
 use bayleaf_engine::{CommandRegistry, Session};
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
@@ -42,12 +45,25 @@ enum Cmd {
         #[arg(long)]
         scene: Option<PathBuf>,
     },
-    /// Start the MCP server on stdio. It requires both automation roots (AA 18).
+    /// Run an MCP server on stdio for AI agents. It refuses to start without both automation roots,
+    /// and refuses file access outside them (AA 18).
     Mcp {
+        /// A folder the agent may read. Repeat for more.
         #[arg(long = "automation-read-root", required = true)]
         read_roots: Vec<PathBuf>,
+        /// A folder the agent may write (and read). Repeat for more. Relative paths start here.
         #[arg(long = "automation-write-root", required = true)]
         write_roots: Vec<PathBuf>,
+        /// Drive a running editor instead of a session of its own: its control channel address,
+        /// e.g. 127.0.0.1:7878. The editor applies its own automation roots.
+        #[arg(long)]
+        bridge: Option<std::net::SocketAddr>,
+        /// Token file of the editor's control channel (with --bridge).
+        #[arg(long = "control-token-file", requires = "bridge")]
+        token_file: Option<PathBuf>,
+        /// Scene file to open first (local session only).
+        #[arg(long, conflicts_with = "bridge")]
+        scene: Option<PathBuf>,
     },
 }
 
@@ -90,8 +106,28 @@ fn main() -> anyhow::Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&json!({ "results": results }))?);
         }
-        Cmd::Mcp { .. } => {
-            bail!("the MCP server is not implemented yet (milestone M4)");
+        Cmd::Mcp { read_roots, write_roots, bridge, token_file, scene } => {
+            // Checked in both modes, so the roots are always real folders (AA 18).
+            let confinement = Confinement::new(&read_roots, &write_roots).map_err(anyhow::Error::msg)?;
+            let stdin = std::io::stdin();
+            let stdout = std::io::stdout();
+            match bridge {
+                Some(addr) => {
+                    let path = token_file.context("--bridge needs --control-token-file, the token file the editor printed")?;
+                    let token = std::fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
+                    let client = ControlClient::connect(addr, token.trim()).map_err(anyhow::Error::msg)?;
+                    eprintln!("bayleaf mcp: bridged to the editor at {addr}");
+                    mcp::serve(&mut BridgeBackend::new(client), stdin.lock(), stdout.lock())?;
+                }
+                None => {
+                    let mut backend = LocalBackend::new(confinement);
+                    if let Some(scene) = scene {
+                        backend.execute("scene.open", &json!({ "path": scene })).map_err(anyhow::Error::msg)?;
+                    }
+                    eprintln!("bayleaf mcp: ready on stdio");
+                    mcp::serve(&mut backend, stdin.lock(), stdout.lock())?;
+                }
+            }
         }
     }
     Ok(())

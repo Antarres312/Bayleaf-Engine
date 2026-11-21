@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod builtin;
+pub mod confine;
 mod play;
 mod scene_cmds;
 
@@ -14,6 +15,7 @@ mod scene_cmds;
 pub use bayleaf_streaming as streaming;
 
 pub use bayleaf_scene as scene;
+pub use bayleaf_script as script;
 
 use std::path::{Path, PathBuf};
 
@@ -61,6 +63,8 @@ pub struct Session {
     play: Option<play::Play>,
     input: std::sync::Arc<bayleaf_script::Input>,
     console: Vec<ConsoleLine>,
+    /// Set while an automation request runs: the folders it may read and write.
+    confinement: Option<confine::Confinement>,
 }
 
 /// How important a console line is.
@@ -131,8 +135,21 @@ impl Session {
         }
     }
 
+    /// Limits file access to the given folders (automation), or lifts the limit with `None`.
+    pub fn set_confinement(&mut self, confinement: Option<confine::Confinement>) {
+        self.confinement = confinement;
+    }
+
+    /// The path a command may use for `access`: unchanged without confinement, resolved and checked with it.
+    fn allowed(&self, path: &Path, access: confine::Access) -> Result<PathBuf, CommandError> {
+        match &self.confinement {
+            Some(confinement) => confinement.check(path, access).map_err(CommandError::Failed),
+            None => Ok(path.to_path_buf()),
+        }
+    }
+
     /// Folder module paths in `script` components are relative to.
-    fn script_dir(&self) -> PathBuf {
+    pub fn script_dir(&self) -> PathBuf {
         self.scene_path.as_deref().and_then(Path::parent).map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     }
     pub fn scene(&self) -> &Scene {

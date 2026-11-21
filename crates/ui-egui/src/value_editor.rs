@@ -306,6 +306,41 @@ fn edit_named_numbers(ui: &mut egui::Ui, map: &mut serde_json::Map<String, Value
     outcome
 }
 
+/// A labelled number row for a named value. Shows Reset when the value differs from its default.
+/// Returns the edit outcome and whether Reset was clicked.
+pub(crate) fn named_number(
+    ui: &mut egui::Ui,
+    name: &str,
+    value: &mut Value,
+    overridden: bool,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+) -> (Outcome, bool) {
+    let t = theme::tokens(ui);
+    let mut reset = false;
+    let outcome = ui
+        .push_id(salt, |ui| {
+            row(ui, t, &title_case(name), |ui, label, width| {
+                let reset_width = if overridden { 52.0 } else { 0.0 };
+                let field_width = (width - reset_width).max(40.0);
+                let outcome = match value {
+                    Value::Number(n) => edit_number(ui, n, label, field_width),
+                    _ => Outcome::default(),
+                };
+                if overridden
+                    && ui
+                        .add_sized([reset_width - 6.0, ROW_HEIGHT], egui::Button::new("Reset").small())
+                        .on_hover_text("Go back to the script's default")
+                        .clicked()
+                {
+                    reset = true;
+                }
+                outcome
+            })
+        })
+        .inner;
+    (outcome, reset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{is_color, title_case};

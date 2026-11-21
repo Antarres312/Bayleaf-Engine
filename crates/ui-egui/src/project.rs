@@ -96,6 +96,15 @@ pub(crate) struct ProjectView {
 }
 
 impl ProjectView {
+    /// Every `.wasm` file in the project, as paths relative to the project folder.
+    pub(crate) fn script_files(&self) -> Vec<String> {
+        let mut files: Vec<String> = self.tree.values().flatten().filter(|e| e.kind == Kind::Script).map(|e| relative_path(&self.root, &e.path)).collect();
+        files.sort();
+        files
+    }
+}
+
+impl ProjectView {
     pub(crate) fn icon(&self) -> f32 {
         if self.icon_size > 0.0 { self.icon_size } else { ICON_DEFAULT }
     }
@@ -103,7 +112,7 @@ impl ProjectView {
 
 enum Action {
     OpenScene(PathBuf),
-    UseAsScript(String),
+    AddScript(String),
 }
 
 /// What the panel's parts ask for after drawing.
@@ -162,9 +171,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     editor.project = view;
     match outcome.action {
         Some(Action::OpenScene(path)) => editor.open_scene(&path),
-        Some(Action::UseAsScript(module)) => {
+        Some(Action::AddScript(module)) => {
             if let Some(id) = editor.selected {
-                attach_script(editor, id, &module);
+                editor.dispatch("scene.script.add", &json!({ "id": id, "module": module }), None);
             }
         }
         None => {}
@@ -399,9 +408,9 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
             ui.close();
         }
         if entry.kind == Kind::Script {
-            let button = ui.add_enabled(selected_object, egui::Button::new("Use as Script on Selected Object"));
+            let button = ui.add_enabled(selected_object, egui::Button::new("Add to Selected Object"));
             if button.on_disabled_hover_text("Select an object first").clicked() {
-                outcome.action = Some(Action::UseAsScript(relative.clone()));
+                outcome.action = Some(Action::AddScript(relative.clone()));
                 ui.close();
             }
         }
@@ -478,18 +487,6 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             }
         }
     }
-}
-
-/// Adds or updates the object's script component so it runs `module`; one undo step.
-fn attach_script(editor: &mut Editor, id: bayleaf_core::StableId, module: &str) {
-    let key = format!("attach script:{id}:{}", editor.gesture);
-    let existing = editor.session.scene().component(id, "script").ok();
-    if existing.is_none() {
-        editor.dispatch("scene.component.add", &json!({ "id": id, "component": "script" }), Some(&key));
-    }
-    let properties = existing.and_then(|v| v.get("properties").cloned()).unwrap_or_else(|| json!({}));
-    editor.dispatch("scene.component.set", &json!({ "id": id, "component": "script", "value": { "module": module, "properties": properties } }), Some(&key));
-    editor.gesture += 1;
 }
 
 /// The open scene's folder, or the folder the editor runs in.

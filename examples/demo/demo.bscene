@@ -1,6 +1,6 @@
 {
   "format": "bayleaf.scene",
-  "version": 1,
+  "version": 2,
   "objects": [
     {
       "id": "943fe1457f5309fddb13504f8c2d2aac",
@@ -53,12 +53,14 @@
           "shape": "cube"
         },
         "name": "Spinning Cube",
-        "script": {
-          "module": "scripts/spinner.wasm",
-          "properties": {
-            "speed": 60.0
+        "scripts": [
+          {
+            "module": "scripts/spinner.wasm",
+            "properties": {
+              "speed": 60.0
+            }
           }
-        },
+        ],
         "transform": {
           "position": [
             -2.0,
@@ -94,13 +96,15 @@
           "shape": "sphere"
         },
         "name": "Player",
-        "script": {
-          "module": "scripts/mover.wasm",
-          "properties": {
-            "jump": 1.5,
-            "speed": 4.0
+        "scripts": [
+          {
+            "module": "scripts/mover.wasm",
+            "properties": {
+              "jump": 1.5,
+              "speed": 4.0
+            }
           }
-        },
+        ],
         "transform": {
           "position": [
             1.5,

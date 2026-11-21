@@ -434,8 +434,12 @@ name = "bayleaf"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bayleaf-automation",
+ "bayleaf-engine",
  "bayleaf-ui-egui",
+ "clap",
  "eframe",
+ "serde_json",
 ]
 
 [[package]]
@@ -445,12 +449,18 @@ version = "0.1.0"
 [[package]]
 name = "bayleaf-automation"
 version = "0.1.0"
+dependencies = [
+ "bayleaf-engine",
+ "getrandom 0.3.4",
+ "serde_json",
+]
 
 [[package]]
 name = "bayleaf-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bayleaf-automation",
  "bayleaf-engine",
  "clap",
  "serde",
@@ -528,6 +538,7 @@ version = "0.1.0"
 dependencies = [
  "bayleaf-core",
  "bayleaf-scene",
+ "serde_json",
  "thiserror 2.0.21",
  "wasmi",
  "wat",

@@ -276,9 +276,16 @@ impl Scene {
         if scene_doc.format != doc::FORMAT {
             return Err(SceneError::Format(format!("not a Bayleaf scene (format \"{}\")", scene_doc.format)));
         }
-        if scene_doc.version != doc::VERSION {
+        if !(1..=doc::VERSION).contains(&scene_doc.version) {
             return Err(SceneError::Format(format!("unsupported version {}", scene_doc.version)));
         }
+        let migrated;
+        let scene_doc = if scene_doc.version == 1 {
+            migrated = migrate_v1(scene_doc);
+            &migrated
+        } else {
+            scene_doc
+        };
         let mut scene = Self::new();
         for object in &scene_doc.objects {
             if scene.contains(object.id) {
@@ -352,6 +359,18 @@ impl Scene {
         }
         found
     }
+}
+
+/// Version 1 had one `script` component per object; version 2 has a `scripts` list.
+fn migrate_v1(old: &SceneDoc) -> SceneDoc {
+    let mut new = old.clone();
+    new.version = doc::VERSION;
+    for object in &mut new.objects {
+        if let Some(script) = object.components.remove("script") {
+            object.components.insert("scripts".to_owned(), Value::Array(vec![script]));
+        }
+    }
+    new
 }
 
 #[cfg(test)]

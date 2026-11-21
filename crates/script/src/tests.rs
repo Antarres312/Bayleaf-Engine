@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bayleaf_core::StableId;
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{Script, Transform};
+use bayleaf_scene::components::{ScriptRef, Scripts, Transform};
 
 use crate::{Input, ScriptError, ScriptHost};
 
@@ -38,15 +38,19 @@ const ROTATE: &str = r#"
       (f32.add (f32.load (i32.const 16)) (f32.mul (call $prop (i32.const 100) (i32.const 5)) (local.get $dt))))
     (call $set (i32.const 0)))"#;
 
-fn setup(properties: &[(&str, f32)]) -> (Scene, StableId, Script) {
+fn setup(properties: &[(&str, f32)]) -> (Scene, StableId, ScriptRef) {
     let mut scene = Scene::new();
     let id = scene.create_object(None, "Scripted").unwrap();
-    let script = Script { module: "test.wasm".into(), properties: properties.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect::<BTreeMap<_, _>>() };
+    let script = ScriptRef { module: "test.wasm".into(), properties: properties.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect::<BTreeMap<_, _>>() };
     (scene, id, script)
 }
 
-fn load(host: &mut ScriptHost, scene: &mut Scene, id: StableId, script: &Script, bytes: &[u8]) -> Result<(), ScriptError> {
-    host.load_bytes(id, Path::new("test.wasm"), None, bytes, script, scene, 0.0, &Arc::new(Input::default()))
+fn load(host: &mut ScriptHost, scene: &mut Scene, id: StableId, script: &ScriptRef, bytes: &[u8]) -> Result<(), ScriptError> {
+    load_at(host, scene, id, 0, script, bytes)
+}
+
+fn load_at(host: &mut ScriptHost, scene: &mut Scene, id: StableId, index: usize, script: &ScriptRef, bytes: &[u8]) -> Result<(), ScriptError> {
+    host.load_bytes(id, index, Path::new("test.wasm"), None, bytes, script, scene, 0.0, &Arc::new(Input::default()))
 }
 
 fn rotation_y(scene: &Scene, id: StableId) -> f32 {
@@ -158,8 +162,7 @@ fn a_changed_module_file_is_reloaded_and_restarted() {
     std::fs::write(&path, module(1, "")).unwrap();
     let (mut scene, id, mut script) = setup(&[]);
     script.module = "hot.wasm".into();
-    scene.add_component(id, "script").ok();
-    scene.set(id, script.clone()).unwrap();
+    scene.set(id, Scripts(vec![script.clone()])).unwrap();
 
     let mut host = ScriptHost::new();
     let input = Arc::new(Input::default());
@@ -175,4 +178,48 @@ fn a_changed_module_file_is_reloaded_and_restarted() {
     assert_eq!(host.take_logs().len(), 1, "the new module's start ran");
     assert_eq!(host.len(), 1, "the old instance was replaced");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A module declaring `speed` = 45 through `bayleaf_describe`, then rotating by it.
+fn described(body_extra: &str) -> Vec<u8> {
+    let json = r#"{\"properties\": [[\"speed\", 45.0]]}"#;
+    let len = json.replace("\\\"", "\"").len();
+    module(
+        1,
+        &format!(
+            r#"(data (i32.const 400) "{json}")
+               (func (export "bayleaf_describe") (result i64) (i64.or (i64.shl (i64.const 400) (i64.const 32)) (i64.const {len})))
+               {ROTATE} {body_extra}"#
+        ),
+    )
+}
+
+#[test]
+fn declared_defaults_apply_unless_the_scene_overrides_them() {
+    let input = Arc::new(Input::default());
+    let (mut scene, id, script) = setup(&[]);
+    let mut host = ScriptHost::new();
+    load(&mut host, &mut scene, id, &script, &described("")).unwrap();
+    host.update(&mut scene, 1.0, 0.0, &input);
+    assert!((rotation_y(&scene, id) - 45.0).abs() < 1e-3, "the declared default 45 is used");
+
+    let (mut scene, id, script) = setup(&[("speed", 10.0)]);
+    let mut host = ScriptHost::new();
+    load(&mut host, &mut scene, id, &script, &described("")).unwrap();
+    host.update(&mut scene, 1.0, 0.0, &input);
+    assert!((rotation_y(&scene, id) - 10.0).abs() < 1e-3, "the scene's value wins");
+
+    assert_eq!(host.describe("d.wasm", &described("")).unwrap(), [("speed".to_owned(), 45.0)]);
+    assert!(host.describe("plain.wasm", &module(1, "")).unwrap().is_empty());
+}
+
+#[test]
+fn two_scripts_on_one_object_both_run() {
+    let (mut scene, id, script) = setup(&[("speed", 30.0)]);
+    let mut host = ScriptHost::new();
+    load_at(&mut host, &mut scene, id, 0, &script, &module(1, ROTATE)).unwrap();
+    load_at(&mut host, &mut scene, id, 1, &script, &module(1, ROTATE)).unwrap();
+    assert_eq!(host.len(), 2);
+    host.update(&mut scene, 1.0, 0.0, &Arc::new(Input::default()));
+    assert!((rotation_y(&scene, id) - 60.0).abs() < 1e-3, "each script turned the object 30°");
 }

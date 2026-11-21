@@ -15,6 +15,9 @@ pub trait SceneComponent: Component + Serialize + DeserializeOwned + Default {
     const LABEL: &'static str;
     /// False for components every object always has.
     const REMOVABLE: bool;
+    /// False for components the inspector shows in its own way and the generic Add Component
+    /// list leaves out.
+    const LISTED: bool = true;
 
     /// Checks a value that came from a file or a command.
     fn validate(&self) -> Result<(), String> {
@@ -246,27 +249,59 @@ impl SceneComponent for Sprite {
     }
 }
 
-/// A WebAssembly script attached to the object; see `docs/script-abi.md`.
+/// One WebAssembly script on an object; see `docs/script-abi.md`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Script {
+pub struct ScriptRef {
     /// Path to the `.wasm` module, relative to the scene file's folder.
     pub module: String,
-    /// Numbers the script reads with `property(name)`.
-    #[serde(default)]
+    /// Property values changed from the script's declared defaults.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub properties: std::collections::BTreeMap<String, f32>,
 }
 
-impl SceneComponent for Script {
-    const NAME: &'static str = "script";
-    const LABEL: &'static str = "Script";
+impl ScriptRef {
+    /// Display name: the module's file name without `.wasm`, in title case (`spinner.wasm` -> `Spinner`).
+    pub fn display_name(&self) -> String {
+        let file = self.module.rsplit(['/', '\\']).next().unwrap_or(&self.module);
+        let stem = file.strip_suffix(".wasm").unwrap_or(file);
+        stem.split(['_', '-', ' '])
+            .filter(|w| !w.is_empty())
+            .map(|w| {
+                let mut chars = w.chars();
+                chars.next().map(|first| first.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// The scripts on an object, in the order they run. The inspector shows each one as its own
+/// component, named after its module.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Scripts(pub Vec<ScriptRef>);
+
+/// Most scripts one object may carry.
+pub const MAX_SCRIPTS: usize = 64;
+
+impl SceneComponent for Scripts {
+    const NAME: &'static str = "scripts";
+    const LABEL: &'static str = "Scripts";
     const REMOVABLE: bool = true;
+    const LISTED: bool = false;
 
     fn validate(&self) -> Result<(), String> {
-        if self.module.contains('\0') {
-            return Err("module path contains a NUL character".to_owned());
+        if self.0.len() > MAX_SCRIPTS {
+            return Err(format!("an object may carry at most {MAX_SCRIPTS} scripts"));
         }
-        finite("script property", self.properties.values())
+        for script in &self.0 {
+            if script.module.is_empty() || script.module.contains('\0') {
+                return Err("a script needs a module path without NUL characters".to_owned());
+            }
+            finite("script property", script.properties.values())?;
+        }
+        Ok(())
     }
 }
 

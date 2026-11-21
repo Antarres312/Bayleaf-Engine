@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const FORMAT: &str = "bayleaf.scene";
-pub const VERSION: u32 = 1;
+/// Version 2 replaced the single `script` component with the `scripts` list; version 1 files still load.
+pub const VERSION: u32 = 2;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.

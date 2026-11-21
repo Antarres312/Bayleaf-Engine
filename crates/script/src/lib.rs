@@ -13,7 +13,7 @@ use std::time::SystemTime;
 
 use bayleaf_core::StableId;
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{Script, Transform};
+use bayleaf_scene::components::{ScriptRef, Scripts, Transform};
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
 
 /// ABI version the host implements.
@@ -40,10 +40,12 @@ pub enum ScriptError {
     AbiMismatch { module: String, found: i32, expected: i32 },
 }
 
-/// One problem with one object's script.
+/// One problem with one of an object's scripts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScriptFault {
     pub object: StableId,
+    /// Display name of the script, e.g. `Spinner`.
+    pub script: String,
     pub error: ScriptError,
 }
 
@@ -51,8 +53,13 @@ pub struct ScriptFault {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogLine {
     pub object: StableId,
+    /// Display name of the script, e.g. `Spinner`.
+    pub script: String,
     pub text: String,
 }
+
+/// Largest description text a script may return from `bayleaf_describe`.
+const MAX_DESCRIPTION_BYTES: u32 = 64 * 1024;
 
 /// Per-frame input the host passes to scripts.
 #[derive(Clone, Debug, Default)]
@@ -74,8 +81,58 @@ struct HostState {
     limits: StoreLimits,
 }
 
+impl HostState {
+    fn new(transform: [f32; 9], properties: BTreeMap<String, f32>, time: f64, input: &Arc<Input>) -> Self {
+        Self {
+            transform,
+            transform_changed: false,
+            properties,
+            time,
+            input: Arc::clone(input),
+            logs: Vec::new(),
+            fault: None,
+            limits: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).instances(1).build(),
+        }
+    }
+}
+
+/// Calls the optional `bayleaf_describe` export and parses the declared properties.
+/// The export returns `(ptr << 32) | len` of UTF-8 JSON: `{"properties": [["speed", 90.0], ...]}`.
+fn describe_instance(store: &mut Store<HostState>, instance: &wasmi::Instance, name: &str) -> Result<Vec<(String, f32)>, ScriptError> {
+    let Ok(describe) = instance.get_typed_func::<(), i64>(&*store, "bayleaf_describe") else {
+        return Ok(Vec::new());
+    };
+    let invalid = |message: String| ScriptError::Invalid(name.to_owned(), format!("bayleaf_describe: {message}"));
+    store.set_fuel(FUEL_PER_CALL).map_err(|e| invalid(e.to_string()))?;
+    let packed = describe.call(&mut *store, ()).map_err(|e| ScriptError::Trapped { module: name.to_owned(), message: e.to_string() })? as u64;
+    let (ptr, len) = ((packed >> 32) as u32, packed as u32);
+    if len > MAX_DESCRIPTION_BYTES {
+        return Err(invalid(format!("description of {len} bytes is longer than {MAX_DESCRIPTION_BYTES}")));
+    }
+    let memory = instance.get_export(&*store, "memory").and_then(wasmi::Extern::into_memory).ok_or_else(|| invalid("no memory export".to_owned()))?;
+    let mut bytes = vec![0; len as usize];
+    memory.read(&*store, ptr as usize, &mut bytes).map_err(|_| invalid("description is outside the script's memory".to_owned()))?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
+    let mut out = Vec::new();
+    for entry in value.get("properties").and_then(serde_json::Value::as_array).map_or(&[][..], Vec::as_slice) {
+        let pair = entry.as_array().filter(|p| p.len() == 2);
+        let (Some(key), Some(default)) = (pair.and_then(|p| p[0].as_str()), pair.and_then(|p| p[1].as_f64())) else {
+            return Err(invalid(format!("each property must be [name, number], got {entry}")));
+        };
+        let default = default as f32;
+        if key.is_empty() || key.len() > 64 || !default.is_finite() {
+            return Err(invalid(format!("property {key:?} needs a name of 1 to 64 bytes and a finite default")));
+        }
+        out.push((key.to_owned(), default));
+    }
+    Ok(out)
+}
+
 struct Instance {
     object: StableId,
+    /// Position in the object's `scripts` list.
+    index: usize,
+    script_name: String,
     path: PathBuf,
     module_name: String,
     modified: Option<SystemTime>,
@@ -109,25 +166,48 @@ impl ScriptHost {
         Self::default()
     }
 
-    /// Loads the scripts of every object that has a `script` component. Module paths are relative
-    /// to `base_dir`. Problems are recorded as faults; the other scripts still load.
+    /// Loads every script of every object. Module paths are relative to `base_dir`. Problems are
+    /// recorded as faults; the other scripts still load.
     pub fn load_scene(&mut self, scene: &mut Scene, base_dir: &Path, time: f64, input: &Arc<Input>) {
         let objects: Vec<StableId> = scene.world_matrices().into_iter().map(|(id, _)| id).collect();
         for object in objects {
-            if let Some(script) = scene.get::<Script>(object).cloned() {
+            let scripts = scene.get::<Scripts>(object).cloned().unwrap_or_default();
+            for (index, script) in scripts.0.iter().enumerate() {
                 let path = base_dir.join(&script.module);
-                if let Err(error) = self.load_file(object, &path, &script, scene, time, input) {
-                    self.faults.push(ScriptFault { object, error });
+                if let Err(error) = self.load_file(object, index, &path, script, scene, time, input) {
+                    self.faults.push(ScriptFault { object, script: script.display_name(), error });
                 }
             }
         }
     }
 
-    /// Loads one module file for `object` and runs its `bayleaf_start`.
-    pub fn load_file(&mut self, object: StableId, path: &Path, script: &Script, scene: &mut Scene, time: f64, input: &Arc<Input>) -> Result<(), ScriptError> {
+    /// Loads one module file as script `index` of `object` and runs its `bayleaf_start`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_file(
+        &mut self,
+        object: StableId,
+        index: usize,
+        path: &Path,
+        script: &ScriptRef,
+        scene: &mut Scene,
+        time: f64,
+        input: &Arc<Input>,
+    ) -> Result<(), ScriptError> {
         let bytes = std::fs::read(path).map_err(|e| ScriptError::Read { path: path.display().to_string(), message: e.to_string() })?;
         let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
-        self.load_bytes(object, path, modified, &bytes, script, scene, time, input)
+        self.load_bytes(object, index, path, modified, &bytes, script, scene, time, input)
+    }
+
+    /// The properties a module declares, with their defaults, in declaration order. Runs no script
+    /// code but `bayleaf_describe`; a module without it declares nothing.
+    pub fn describe(&self, name: &str, bytes: &[u8]) -> Result<Vec<(String, f32)>, ScriptError> {
+        let module = Module::new(&self.engine, bytes).map_err(|e| ScriptError::Invalid(name.to_owned(), e.to_string()))?;
+        let mut store = Store::new(&self.engine, HostState::new([0.0; 9], BTreeMap::new(), 0.0, &Arc::new(Input::default())));
+        store.limiter(|state| &mut state.limits);
+        store.set_fuel(FUEL_PER_CALL).map_err(|e| ScriptError::Trapped { module: name.to_owned(), message: e.to_string() })?;
+        let instance =
+            self.linker.instantiate_and_start(&mut store, &module).map_err(|e| ScriptError::Trapped { module: name.to_owned(), message: e.to_string() })?;
+        describe_instance(&mut store, &instance, name)
     }
 
     /// Loads a module from memory; `path` names it in messages and for hot reload.
@@ -135,26 +215,18 @@ impl ScriptHost {
     fn load_bytes(
         &mut self,
         object: StableId,
+        index: usize,
         path: &Path,
         modified: Option<SystemTime>,
         bytes: &[u8],
-        script: &Script,
+        script: &ScriptRef,
         scene: &mut Scene,
         time: f64,
         input: &Arc<Input>,
     ) -> Result<(), ScriptError> {
         let module_name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         let module = Module::new(&self.engine, bytes).map_err(|e| ScriptError::Invalid(module_name.clone(), e.to_string()))?;
-        let state = HostState {
-            transform: read_transform(scene, object),
-            transform_changed: false,
-            properties: script.properties.clone(),
-            time,
-            input: Arc::clone(input),
-            logs: Vec::new(),
-            fault: None,
-            limits: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).instances(1).build(),
-        };
+        let state = HostState::new(read_transform(scene, object), script.properties.clone(), time, input);
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| &mut state.limits);
         let trapped = |module: &str, e: wasmi::Error| ScriptError::Trapped { module: module.to_owned(), message: e.to_string() };
@@ -171,12 +243,17 @@ impl ScriptHost {
         if instance.get_export(&store, "memory").and_then(wasmi::Extern::into_memory).is_none() {
             return Err(ScriptError::Invalid(module_name, "it exports no memory".to_owned()));
         }
+        // Declared defaults, overridden by the values saved in the scene.
+        let mut properties: BTreeMap<String, f32> = describe_instance(&mut store, &instance, &module_name)?.into_iter().collect();
+        properties.extend(script.properties.iter().map(|(k, v)| (k.clone(), *v)));
+        store.data_mut().properties = properties;
         let update = instance.get_typed_func::<f32, ()>(&store, "bayleaf_update").ok();
         let start = instance.get_typed_func::<(), ()>(&store, "bayleaf_start").ok();
 
-        // Replace an earlier instance of the same object and module (hot reload).
-        self.instances.retain(|i| !(i.object == object && i.path == path));
-        let mut entry = Instance { object, path: path.to_path_buf(), module_name, modified, store, update, stopped: false };
+        // Replace an earlier instance in the same slot (hot reload).
+        self.instances.retain(|i| !(i.object == object && i.index == index));
+        let script_name = script.display_name();
+        let mut entry = Instance { object, index, script_name, path: path.to_path_buf(), module_name, modified, store, update, stopped: false };
         if let Some(start) = start {
             let result = call(&mut entry, |store| start.call(store, ()));
             self.collect(&mut entry);
@@ -209,12 +286,13 @@ impl ScriptHost {
                 state.input = Arc::clone(input);
             }
             let result = call(entry, |store| update.call(store, dt));
-            logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, text }));
+            let script = entry.script_name.clone();
+            logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
             match result {
                 Ok(()) => write_transform(scene, entry),
                 Err(error) => {
                     entry.stopped = true;
-                    faults.push(ScriptFault { object: entry.object, error });
+                    faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
                 }
             }
         }
@@ -224,26 +302,26 @@ impl ScriptHost {
 
     /// Reloads modules whose file changed since it was loaded. Returns the reloaded module names.
     pub fn reload_changed(&mut self, scene: &mut Scene, time: f64, input: &Arc<Input>) -> Vec<String> {
-        let changed: Vec<(StableId, PathBuf)> = self
+        let changed: Vec<(StableId, usize, PathBuf)> = self
             .instances
             .iter()
             .filter(|i| {
                 let now = std::fs::metadata(&i.path).and_then(|m| m.modified()).ok();
                 now.is_some() && now != i.modified
             })
-            .map(|i| (i.object, i.path.clone()))
+            .map(|i| (i.object, i.index, i.path.clone()))
             .collect();
         let mut reloaded = Vec::new();
-        for (object, path) in changed {
-            let Some(script) = scene.get::<Script>(object).cloned() else { continue };
-            match self.load_file(object, &path, &script, scene, time, input) {
+        for (object, index, path) in changed {
+            let Some(script) = scene.get::<Scripts>(object).and_then(|s| s.0.get(index)).cloned() else { continue };
+            match self.load_file(object, index, &path, &script, scene, time, input) {
                 Ok(()) => reloaded.push(path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())),
                 Err(error) => {
                     // Keep the old module's timestamp current so a broken file is reported once.
-                    if let Some(entry) = self.instances.iter_mut().find(|i| i.object == object && i.path == path) {
+                    if let Some(entry) = self.instances.iter_mut().find(|i| i.object == object && i.index == index) {
                         entry.modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
                     }
-                    self.faults.push(ScriptFault { object, error });
+                    self.faults.push(ScriptFault { object, script: script.display_name(), error });
                 }
             }
         }
@@ -276,7 +354,8 @@ impl ScriptHost {
     }
 
     fn collect(&mut self, entry: &mut Instance) {
-        let lines: Vec<LogLine> = entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, text }).collect();
+        let script = entry.script_name.clone();
+        let lines: Vec<LogLine> = entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }).collect();
         self.push_logs(lines);
     }
 

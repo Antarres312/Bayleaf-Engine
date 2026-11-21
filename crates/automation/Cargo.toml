@@ -1,6 +1,6 @@
 [package]
 name = "bayleaf-automation"
-description = "L6: JSON control channel and MCP server over the engine command registry. Confined to --automation-read-root and --automation-write-root (AA 18)."
+description = "L6: MCP server and editor control channel over the engine command registry, confined to --automation-read-root and --automation-write-root (AA 18)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,9 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+bayleaf-engine = { workspace = true }
+getrandom = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use bayleaf_core::StableId;
 use bayleaf_scene::Scene;
+use bayleaf_scene::components::{ScriptRef, Scripts};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -159,6 +160,39 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             run: |s, p| object_step(s, p, Step::Outdent),
         },
         CommandSpec {
+            id: "scene.script.add",
+            label: "Add Script",
+            menu: "",
+            shortcut: "",
+            params: "{id, module}; module: .wasm path relative to the scene file's folder; returns {index}",
+            prompt: Prompt::SelectedObject,
+            mutates: true,
+            enabled: always,
+            run: script_add,
+        },
+        CommandSpec {
+            id: "scene.script.remove",
+            label: "Remove Script",
+            menu: "",
+            shortcut: "",
+            params: "{id, index}",
+            prompt: Prompt::SelectedObject,
+            mutates: true,
+            enabled: always,
+            run: script_remove,
+        },
+        CommandSpec {
+            id: "scene.script.setProperty",
+            label: "Set Script Property",
+            menu: "",
+            shortcut: "",
+            params: "{id, index, name, value}; value null returns to the script's default",
+            prompt: Prompt::SelectedObject,
+            mutates: true,
+            enabled: always,
+            run: script_set_property,
+        },
+        CommandSpec {
             id: "scene.object.inspect",
             label: "Inspect Object",
             menu: "",
@@ -278,14 +312,16 @@ fn scene_new(session: &mut Session, params: &Value) -> Result<Value, CommandErro
 
 fn scene_open(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: PathParams = parse(params)?;
-    let scene = Scene::load(&p.path)?;
+    let path = session.allowed(&p.path, crate::confine::Access::Read)?;
+    let scene = Scene::load(&path)?;
     let objects = scene.object_count();
-    session.replace_scene(scene, Some(p.path));
+    session.replace_scene(scene, Some(path));
     Ok(json!({ "objects": objects }))
 }
 
 fn scene_save(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
     let path = session.scene_path.clone().ok_or_else(|| CommandError::Failed("the scene has no file yet; use Save Scene As".to_owned()))?;
+    let path = session.allowed(&path, crate::confine::Access::Write)?;
     session.scene.save(&path)?;
     session.dirty = false;
     Ok(json!({ "path": path }))
@@ -293,10 +329,11 @@ fn scene_save(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
 
 fn scene_save_as(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: PathParams = parse(params)?;
-    session.scene.save(&p.path)?;
-    session.scene_path = Some(p.path.clone());
+    let path = session.allowed(&p.path, crate::confine::Access::Write)?;
+    session.scene.save(&path)?;
+    session.scene_path = Some(path.clone());
     session.dirty = false;
-    Ok(json!({ "path": p.path }))
+    Ok(json!({ "path": path }))
 }
 
 #[derive(Deserialize)]
@@ -326,6 +363,8 @@ const MAX_RENDER_SIDE: u32 = 8192;
 
 fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: RenderParams = parse(params)?;
+    // Checked before any rendering work.
+    let path = session.allowed(&p.path, crate::confine::Access::Write)?;
     if !(1..=MAX_RENDER_SIDE).contains(&p.width) || !(1..=MAX_RENDER_SIDE).contains(&p.height) {
         return Err(CommandError::BadParams(format!("width and height must be between 1 and {MAX_RENDER_SIDE}")));
     }
@@ -346,8 +385,8 @@ fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandE
     let frame = bayleaf_render::extract(scene, camera, bayleaf_render::FrameOptions { show_grid: p.grid, selected: None });
     let gpu = bayleaf_render::HeadlessGpu::new().map_err(|e| CommandError::Failed(e.to_string()))?;
     let image = gpu.render(&frame, p.width, p.height).map_err(|e| CommandError::Failed(e.to_string()))?;
-    image.write_png(&p.path).map_err(|e| CommandError::Failed(e.to_string()))?;
-    Ok(json!({ "path": p.path, "width": p.width, "height": p.height, "camera": source }))
+    image.write_png(&path).map_err(|e| CommandError::Failed(e.to_string()))?;
+    Ok(json!({ "path": path, "width": p.width, "height": p.height, "camera": source }))
 }
 
 fn tree(scene: &Scene, parent: Option<StableId>) -> Vec<Value> {
@@ -432,6 +471,83 @@ fn object_step(session: &mut Session, params: &Value, step: Step) -> Result<Valu
     };
     session.scene.reparent_keeping_world(p.id, new_parent, new_index)?;
     Ok(json!({ "parent": new_parent }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScriptAddParams {
+    id: StableId,
+    /// Module path relative to the scene file's folder.
+    module: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScriptIndexParams {
+    id: StableId,
+    index: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScriptPropertyParams {
+    id: StableId,
+    index: usize,
+    name: String,
+    /// A number sets the value; null goes back to the script's declared default.
+    value: Option<f32>,
+}
+
+fn scripts_of(session: &Session, id: StableId) -> Result<Scripts, CommandError> {
+    if !session.scene.contains(id) {
+        return Err(CommandError::Failed(format!("no object with id {id}")));
+    }
+    Ok(session.scene.get::<Scripts>(id).cloned().unwrap_or_default())
+}
+
+fn script_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: ScriptAddParams = parse(params)?;
+    let mut scripts = scripts_of(session, p.id)?;
+    let module = p.module.replace('\\', "/");
+    scripts.0.push(ScriptRef { module, properties: Default::default() });
+    let index = scripts.0.len() - 1;
+    session.scene.set(p.id, scripts)?;
+    Ok(json!({ "index": index }))
+}
+
+fn script_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: ScriptIndexParams = parse(params)?;
+    let mut scripts = scripts_of(session, p.id)?;
+    if p.index >= scripts.0.len() {
+        return Err(CommandError::BadParams(format!("the object has {} scripts; there is no index {}", scripts.0.len(), p.index)));
+    }
+    scripts.0.remove(p.index);
+    if scripts.0.is_empty() {
+        session.scene.remove_component(p.id, "scripts")?;
+    } else {
+        session.scene.set(p.id, scripts)?;
+    }
+    Ok(json!({}))
+}
+
+fn script_set_property(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: ScriptPropertyParams = parse(params)?;
+    let mut scripts = scripts_of(session, p.id)?;
+    let count = scripts.0.len();
+    let script = scripts.0.get_mut(p.index).ok_or_else(|| CommandError::BadParams(format!("the object has {count} scripts; there is no index {}", p.index)))?;
+    if p.name.is_empty() || p.name.len() > 64 {
+        return Err(CommandError::BadParams("a property name has 1 to 64 bytes".to_owned()));
+    }
+    match p.value {
+        Some(value) => {
+            script.properties.insert(p.name, value);
+        }
+        None => {
+            script.properties.remove(&p.name);
+        }
+    }
+    session.scene.set(p.id, scripts)?;
+    Ok(json!({}))
 }
 
 fn object_reparent(session: &mut Session, params: &Value) -> Result<Value, CommandError> {

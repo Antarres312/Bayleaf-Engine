@@ -137,9 +137,21 @@ fn one() -> u32 {
 
 fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     parse::<NoParams>(params)?;
+    let dir = session.script_dir();
+    // Under automation every script module must be inside the readable folders.
+    let modules: Vec<std::path::PathBuf> = session
+        .scene
+        .world_matrices()
+        .into_iter()
+        .flat_map(|(id, _)| {
+            session.scene.get::<bayleaf_scene::components::Scripts>(id).map(|s| s.0.iter().map(|r| dir.join(&r.module)).collect::<Vec<_>>()).unwrap_or_default()
+        })
+        .collect();
+    for module in modules {
+        session.allowed(&module, crate::confine::Access::Read)?;
+    }
     let snapshot = session.scene.to_doc();
     let mut host = ScriptHost::new();
-    let dir = session.script_dir();
     let input = std::sync::Arc::clone(&session.input);
     host.load_scene(&mut session.scene, &dir, 0.0, &input);
     let (scripts, running) = (host.len(), host.running());
@@ -237,10 +249,10 @@ fn drain(session: &mut Session) {
     let name = |session: &Session, id| session.scene.name(id).unwrap_or("Object").to_owned();
     for line in logs {
         let who = name(session, line.object);
-        session.log(Level::Info, format!("[{who}] {}", line.text));
+        session.log(Level::Info, format!("[{who} · {}] {}", line.script, line.text));
     }
     for fault in faults {
         let who = name(session, fault.object);
-        session.log(Level::Error, format!("[{who}] script stopped: {}", fault.error));
+        session.log(Level::Error, format!("[{who} · {}] script stopped: {}", fault.script, fault.error));
     }
 }

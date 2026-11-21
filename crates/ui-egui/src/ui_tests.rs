@@ -7,7 +7,8 @@ use serde_json::json;
 use crate::Editor;
 
 fn harness() -> Harness<'static, Editor> {
-    let mut harness = Harness::new_ui_state(|ui, editor: &mut Editor| editor.ui(ui, None), Editor::default());
+    // The size of a typical editor window, so panels have their real widths.
+    let mut harness = Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(|ui, editor: &mut Editor| editor.ui(ui, None), Editor::default());
     harness.run();
     harness
 }
@@ -224,4 +225,51 @@ fn ctrl_and_mouse_wheel_over_the_files_resize_the_icons() {
     });
     harness.run_steps(20);
     assert!(harness.state().project.icon() > before, "Ctrl + wheel up makes the icons bigger");
+}
+
+#[test]
+fn each_script_is_its_own_card_named_after_its_module() {
+    let mut harness = harness();
+    let params = json!({ "name": "Actor", "components": { "scripts": [{ "module": "scripts/missing_thing.wasm" }, { "module": "other.wasm" }] } });
+    harness.state_mut().dispatch("scene.object.create", &params, None);
+    harness.run();
+    assert!(harness.query_by_label("Missing Thing").is_some(), "the card is titled after the module");
+    assert!(harness.query_by_label("Other").is_some());
+    assert!(harness.query_all_by_label_contains("Script file not found").next().is_some(), "a missing module says so");
+    assert!(harness.query_by_label("Scripts").is_none(), "there is no wrapper card");
+    harness.get_by_label("Remove Missing Thing").click();
+    harness.run();
+    let id = harness.state().selected.unwrap();
+    let scripts = harness.state().session.scene().component(id, "scripts").unwrap();
+    assert_eq!(scripts.as_array().map(Vec::len), Some(1));
+    assert_eq!(scripts[0]["module"], "other.wasm");
+}
+
+#[test]
+fn add_component_menu_lists_components_and_scripts() {
+    let mut harness = harness();
+    create_named(&mut harness, "Actor");
+    harness.get_by_label("Add Component").click();
+    harness.run();
+    for label in ["Mesh", "Camera", "Scripts"] {
+        assert!(harness.query_all_by_label(label).next().is_some(), "the menu has {label:?}");
+    }
+}
+
+#[test]
+fn agent_commands_are_confined_and_the_users_own_commands_are_not() {
+    let base = std::env::temp_dir().join(format!("bayleaf-ui-agent-{}", std::process::id()));
+    let (inside, outside) = (base.join("inside"), base.join("outside"));
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let confinement = bayleaf_engine::confine::Confinement::new(std::slice::from_ref(&inside), std::slice::from_ref(&inside)).unwrap();
+    let mut harness = harness();
+    let editor = harness.state_mut();
+    let refused = editor.execute_automation("scene.saveAs", &json!({ "path": outside.join("a.bscene") }), &confinement).unwrap_err();
+    assert!(refused.contains("outside"), "{refused}");
+    assert!(editor.execute_automation("scene.saveAs", &json!({ "path": "agent.bscene" }), &confinement).is_ok(), "relative paths land in the root");
+    assert!(inside.join("agent.bscene").exists());
+    editor.dispatch("scene.saveAs", &json!({ "path": outside.join("mine.bscene") }), None);
+    assert!(outside.join("mine.bscene").exists(), "the limit applies to the agent's request only");
+    std::fs::remove_dir_all(&base).ok();
 }

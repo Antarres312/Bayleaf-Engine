@@ -73,8 +73,15 @@ No crate below L6 may use egui, eframe, winit or rfd.
    script), ABI v1 (`docs/script-abi.md`), Rust SDK (`crates/script-sdk`), example scripts (`scripts/`,
    built by `cargo xtask scripts`), hot reload, play mode (`play.start/stop/pause/step/input/status`)
    that restores the edited scene, a Console panel, and a Project panel (asset browser).
-   Still open: script-declared properties with defaults, more input (mouse, gamepad), physics queries.
-5. **M4 Automation:** control channel and MCP with confined read/write roots (AA 18).
+   Scripts sit directly on objects, several per object, each shown as its own inspector card named after
+   its module; scripts declare properties with defaults (`bayleaf_describe`), and scenes store only
+   overrides (scene format version 2; version 1 files are migrated on load).
+   Still open: more input (mouse, gamepad), physics queries.
+5. **M4 Automation (done, 2026-11-21):** confined file access for agents (`--automation-read-root`,
+   `--automation-write-root`, AA 18), `bayleaf-cli mcp` (MCP over stdio, one tool per command), and an
+   editor control channel (`bayleaf --control`, loopback with a token) that the MCP server can bridge to.
+   See `docs/automation.md`. Still open: MCP resources (scene tree, renders as images), notifications
+   when the scene changes, and restricting the token file's access rules on Windows.
 6. **M5 Graphs:** shared graph editor, material graph, visual scripting.
 7. **M6 Gameplay framework** as opt-in modules.
 8. **M7 Streaming** (optional crate), physics and audio integrations.

@@ -3,7 +3,7 @@
 use bayleaf_ecs::{Entity, World};
 use serde_json::Value;
 
-use crate::components::{Camera, DirectionalLight, Mesh, Name, SceneComponent, Script, Sprite, Tags, Transform};
+use crate::components::{Camera, DirectionalLight, Mesh, Name, SceneComponent, Scripts, Sprite, Tags, Transform};
 
 /// One component type known to the scene.
 #[derive(Clone, Copy)]
@@ -11,6 +11,8 @@ pub struct ComponentKind {
     pub name: &'static str,
     pub label: &'static str,
     pub removable: bool,
+    /// False for components the generic Add Component list leaves out.
+    pub listed: bool,
     get: fn(&World, Entity) -> Option<Value>,
     set: fn(&mut World, Entity, Value) -> Result<(), String>,
     add_default: fn(&mut World, Entity) -> Result<(), String>,
@@ -24,6 +26,7 @@ impl ComponentKind {
             name: T::NAME,
             label: T::LABEL,
             removable: T::REMOVABLE,
+            listed: T::LISTED,
             get: get::<T>,
             set: set::<T>,
             add_default: add_default::<T>,
@@ -88,7 +91,7 @@ impl ComponentRegistry {
                 ComponentKind::of::<Sprite>(),
                 ComponentKind::of::<Camera>(),
                 ComponentKind::of::<DirectionalLight>(),
-                ComponentKind::of::<Script>(),
+                ComponentKind::of::<Scripts>(),
                 ComponentKind::of::<Tags>(),
             ],
         }

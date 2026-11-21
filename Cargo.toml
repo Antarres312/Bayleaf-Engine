@@ -20,6 +20,7 @@ bayleaf-script = { path = "crates/script" }
 bayleaf-streaming = { path = "crates/streaming" }
 bayleaf-engine = { path = "crates/engine" }
 bayleaf-ui-egui = { path = "crates/ui-egui" }
+bayleaf-automation = { path = "crates/automation" }
 
 anyhow = "1"
 thiserror = "2"

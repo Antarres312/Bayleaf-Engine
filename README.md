@@ -23,6 +23,17 @@ cargo xtask layers
 
 Requires Rust 1.95 or newer.
 
+## AI agents
+
+`bayleaf-cli mcp` is an MCP server for AI agents. It runs headless, or drives an open editor started
+with `--control`. Agents may only touch the folders you allow:
+
+```
+cargo run -p bayleaf-cli -- mcp --automation-read-root examples --automation-write-root out
+```
+
+Setup for Claude Code and the editor bridge: [docs/automation.md](docs/automation.md).
+
 ## License
 
 Dual-licensed under MIT or Apache-2.0, at your option.

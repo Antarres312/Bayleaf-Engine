@@ -148,3 +148,28 @@ fn loading_rejects_broken_documents() {
     }
     let _: SceneDoc = good;
 }
+
+#[test]
+fn version_1_scenes_load_with_their_script_moved_into_the_list() {
+    let v1 = json!({
+        "format": "bayleaf.scene",
+        "version": 1,
+        "objects": [{"id": "0123456789abcdef0123456789abcdef", "parent": null, "components": {
+            "name": "Old", "script": {"module": "scripts/spinner.wasm", "properties": {"speed": 60}}
+        }}]
+    });
+    let doc: SceneDoc = serde_json::from_value(v1).unwrap();
+    let scene = Scene::from_doc(&doc).unwrap();
+    let id = scene.children(None)[0];
+    let scripts = scene.get::<crate::components::Scripts>(id).unwrap();
+    assert_eq!(scripts.0.len(), 1);
+    assert_eq!(scripts.0[0].display_name(), "Spinner");
+    assert_eq!(scene.to_doc().version, doc::VERSION);
+}
+
+#[test]
+fn script_names_come_from_the_module_file() {
+    let name = |module: &str| crate::components::ScriptRef { module: module.into(), properties: Default::default() }.display_name();
+    assert_eq!(name("scripts/player_controller.wasm"), "Player Controller");
+    assert_eq!(name(r"a\b\mover.wasm"), "Mover");
+}

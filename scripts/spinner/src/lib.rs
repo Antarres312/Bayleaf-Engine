@@ -6,6 +6,8 @@ use bayleaf_script_sdk::{Script, Transform, log, property, script};
 struct Spinner;
 
 impl Script for Spinner {
+    const PROPERTIES: &'static [(&'static str, f32)] = &[("speed", 90.0)];
+
     fn start(&mut self) {
         log("spinner: started");
     }

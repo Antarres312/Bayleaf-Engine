@@ -208,7 +208,7 @@ fn scripted_scene(name: &str, module: &[u8]) -> (CommandRegistry, Session, Strin
     std::fs::write(dir.join("spin.wasm"), module).unwrap();
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();
-    let id = create(&registry, &mut session, json!({"name": "Spinner", "components": {"script": {"module": "spin.wasm", "properties": {"speed": 90}}}}));
+    let id = create(&registry, &mut session, json!({"name": "Spinner", "components": {"scripts": [{"module": "spin.wasm", "properties": {"speed": 90}}]}}));
     registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("play.bscene")})).unwrap();
     (registry, session, id, dir)
 }
@@ -272,4 +272,57 @@ fn a_missing_or_broken_script_is_reported_and_play_still_runs() {
     assert!(registry.execute(&mut session, "play.step", &json!({"steps": 0})).is_err());
     assert!(registry.execute(&mut session, "play.step", &json!({"seconds": -1})).is_err());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn confined_sessions_refuse_files_outside_the_roots() {
+    let base = std::env::temp_dir().join(format!("bayleaf-engine-confine-{}", std::process::id()));
+    let (inside, outside) = (base.join("inside"), base.join("outside"));
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    create(&registry, &mut session, json!({"name": "A"}));
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&inside), std::slice::from_ref(&inside)).unwrap()));
+
+    let refused = registry.execute(&mut session, "scene.saveAs", &json!({"path": outside.join("x.bscene")})).unwrap_err();
+    assert!(refused.to_string().contains("outside the allowed folders"), "{refused}");
+    assert!(!outside.join("x.bscene").exists());
+    assert!(registry.execute(&mut session, "scene.saveAs", &json!({"path": "../outside/y.bscene"})).is_err(), ".. cannot climb out");
+    assert!(registry.execute(&mut session, "scene.render", &json!({"path": outside.join("x.png")})).is_err());
+
+    // Relative paths land in the first write root.
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": "kept.bscene"})).unwrap();
+    assert!(inside.join("kept.bscene").exists());
+    registry.execute(&mut session, "scene.open", &json!({"path": "kept.bscene"})).unwrap();
+
+    // A script module outside the roots keeps play mode from starting.
+    let id = bayleaf_core::StableId::parse_hex(&create(&registry, &mut session, json!({}))).unwrap();
+    registry.execute(&mut session, "scene.script.add", &json!({"id": id, "module": "../outside/evil.wasm"})).unwrap();
+    assert!(registry.execute(&mut session, "play.start", &Value::Null).is_err());
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn scripts_are_added_edited_and_removed_one_by_one() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let id = create(&registry, &mut session, json!({}));
+    let first = registry.execute(&mut session, "scene.script.add", &json!({"id": id, "module": "scripts/spinner.wasm"})).unwrap();
+    let second = registry.execute(&mut session, "scene.script.add", &json!({"id": id, "module": r"scripts\mover.wasm"})).unwrap();
+    assert_eq!((first["index"].as_u64(), second["index"].as_u64()), (Some(0), Some(1)));
+    registry.execute(&mut session, "scene.script.setProperty", &json!({"id": id, "index": 1, "name": "speed", "value": 7})).unwrap();
+    let sid = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    let scripts = session.scene().component(sid, "scripts").unwrap();
+    assert_eq!(scripts[1]["module"], "scripts/mover.wasm", "paths are stored with forward slashes");
+    assert_eq!(scripts[1]["properties"]["speed"], 7.0);
+    registry.execute(&mut session, "scene.script.setProperty", &json!({"id": id, "index": 1, "name": "speed", "value": null})).unwrap();
+    assert!(session.scene().component(sid, "scripts").unwrap()[1].get("properties").is_none(), "null returns to the default");
+    assert!(registry.execute(&mut session, "scene.script.remove", &json!({"id": id, "index": 5})).is_err());
+    registry.execute(&mut session, "scene.script.remove", &json!({"id": id, "index": 0})).unwrap();
+    registry.execute(&mut session, "scene.script.remove", &json!({"id": id, "index": 0})).unwrap();
+    assert!(session.scene().component(sid, "scripts").is_err(), "the last removal removes the list");
+    // One undo step per change.
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert_eq!(session.scene().component(sid, "scripts").unwrap().as_array().map(Vec::len), Some(1));
 }

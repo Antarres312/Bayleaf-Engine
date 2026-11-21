@@ -13,6 +13,7 @@ mod hierarchy;
 mod inspector;
 mod project;
 mod scene_view;
+mod script_info;
 mod theme;
 mod value_editor;
 
@@ -41,10 +42,13 @@ pub struct Editor {
     hierarchy_filter: String,
     /// The object being renamed in the hierarchy, if any.
     renaming: Option<hierarchy::Rename>,
+    /// Shown in the status bar while an agent can control the editor, e.g. its address.
+    automation_note: Option<String>,
     theme_installed: bool,
     /// Logo texture and whether it was made for the dark theme.
     logo: Option<(egui::TextureHandle, bool)>,
     project: project::ProjectView,
+    script_info: script_info::ScriptInfo,
 }
 
 impl Default for Editor {
@@ -60,9 +64,11 @@ impl Default for Editor {
             dock: Layout::Standard.build(),
             hierarchy_filter: String::new(),
             renaming: None,
+            automation_note: None,
             theme_installed: false,
             logo: None,
             project: project::ProjectView::default(),
+            script_info: script_info::ScriptInfo::default(),
         }
     }
 }
@@ -91,6 +97,12 @@ impl Editor {
                         ui.label(egui::RichText::new("Modified").small().color(t.text));
                     });
                 }
+                if let Some(note) = &self.automation_note {
+                    // A visible sign that an agent can change the scene.
+                    egui::Frame::new().fill(t.accent).corner_radius(theme::RADIUS).inner_margin(egui::Margin::symmetric(8, 1)).show(ui, |ui| {
+                        ui.label(egui::RichText::new(format!("Agent control: {note}")).small().color(t.on_accent));
+                    });
+                }
                 ui.label(egui::RichText::new(&self.status).color(t.text_muted));
             });
         });
@@ -99,6 +111,35 @@ impl Editor {
         if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
             self.selected = None;
         }
+    }
+
+    /// Shows (or hides, with `None`) the agent-control badge in the status bar.
+    pub fn set_automation_note(&mut self, note: Option<String>) {
+        self.automation_note = note;
+    }
+
+    /// The command list, as automation's `engine.commands` returns it.
+    pub fn automation_commands(&self) -> serde_json::Value {
+        serde_json::to_value(self.registry.list(&self.session)).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// Runs a command for an agent, with file access confined to its folders. The status bar shows
+    /// what the agent did, so the person at the editor can follow along.
+    pub fn execute_automation(
+        &mut self,
+        command: &str,
+        params: &serde_json::Value,
+        confinement: &bayleaf_engine::confine::Confinement,
+    ) -> Result<serde_json::Value, String> {
+        self.session.set_confinement(Some(confinement.clone()));
+        let result = self.registry.execute(&mut self.session, command, params).map_err(|e| e.to_string());
+        self.session.set_confinement(None);
+        let label = self.registry.get(command).map_or(command, |c| c.label).trim_end_matches(['…', '.']);
+        self.status = match &result {
+            Ok(_) => format!("Agent: {label}: done"),
+            Err(e) => format!("Agent: {label}: {e}"),
+        };
+        result
     }
 
     /// Opens a scene file, asking first if the open scene has unsaved changes.

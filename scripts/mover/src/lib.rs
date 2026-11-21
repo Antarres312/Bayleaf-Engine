@@ -10,6 +10,8 @@ struct Mover {
 }
 
 impl Script for Mover {
+    const PROPERTIES: &'static [(&'static str, f32)] = &[("speed", 3.0), ("jump", 1.0)];
+
     fn update(&mut self, dt: f32) {
         let speed = property("speed").unwrap_or(3.0);
         let jump = property("jump").unwrap_or(1.0);

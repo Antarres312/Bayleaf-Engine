@@ -73,6 +73,10 @@ pub fn key_down(name: &str) -> bool {
 
 /// Behaviour of one scripted object. One value lives per object for the whole play session.
 pub trait Script: Default + Send + 'static {
+    /// Properties the editor shows on this script, with their defaults. `property(name)` returns
+    /// the value set in the scene, or this default.
+    const PROPERTIES: &'static [(&'static str, f32)] = &[];
+
     /// Runs once when play mode starts (or after a hot reload).
     fn start(&mut self) {}
     /// Runs every simulation step; `dt` is the step length in seconds.
@@ -93,6 +97,13 @@ macro_rules! script {
         }
 
         #[unsafe(no_mangle)]
+        pub extern "C" fn bayleaf_describe() -> u64 {
+            static DESCRIPTION: ::std::sync::OnceLock<String> = ::std::sync::OnceLock::new();
+            let text = DESCRIPTION.get_or_init(|| $crate::describe(<$ty as $crate::Script>::PROPERTIES));
+            $crate::pack(text)
+        }
+
+        #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_start() {
             let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
             let script = state.get_or_insert_with(<$ty as ::core::default::Default>::default);
@@ -108,9 +119,42 @@ macro_rules! script {
     };
 }
 
+/// The `bayleaf_describe` text for `properties` (used by [`script!`]).
+#[doc(hidden)]
+pub fn describe(properties: &[(&str, f32)]) -> String {
+    let entries: Vec<String> = properties
+        .iter()
+        .map(|(name, default)| {
+            let escaped: String = name
+                .chars()
+                .flat_map(|c| match c {
+                    '"' | '\\' => vec!['\\', c],
+                    c if c.is_control() => vec![],
+                    c => vec![c],
+                })
+                .collect();
+            let value = if default.is_finite() { *default } else { 0.0 };
+            format!("[\"{escaped}\", {value:?}]")
+        })
+        .collect();
+    format!("{{\"properties\": [{}]}}", entries.join(", "))
+}
+
+/// Packs a string's address and length as `(ptr << 32) | len` (used by [`script!`]).
+#[doc(hidden)]
+pub fn pack(text: &str) -> u64 {
+    ((text.as_ptr() as usize as u64) << 32) | (text.len() as u64 & 0xFFFF_FFFF)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Transform, property};
+
+    #[test]
+    fn descriptions_are_json_the_host_can_read() {
+        let text = super::describe(&[("speed", 90.0), ("odd \"name\"", 1.5)]);
+        assert_eq!(text, r#"{"properties": [["speed", 90.0], ["odd \"name\"", 1.5]]}"#);
+    }
 
     #[test]
     fn missing_properties_are_none_off_the_host() {

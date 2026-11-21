@@ -68,7 +68,7 @@ a member of the suite. The vision, decisions and milestones are in `docs/vision.
 in the same change that adds it.
 - L0 `crates/core`; L1 `crates/ecs`; L2 `crates/scene`, `crates/assets`, `crates/graph`; L3 `crates/render`;
   L4 `crates/script`, `crates/gameplay`, `crates/streaming`; L5 `crates/engine`; L6 `crates/ui-egui`, `crates/automation`.
-- Apps (L7): `apps/bayleaf` (editor), `apps/bayleaf-cli` (headless, later MCP). `xtask/` holds repository checks.
+- Apps (L7): `apps/bayleaf` (editor), `apps/bayleaf-cli` (headless and MCP). `xtask/` holds repository checks.
 - No crate below L6 uses egui, eframe, winit or rfd.
 
 **Commands.** Every action is a `CommandSpec` in `bayleaf-engine`. Ids are dotted camelCase (`scene.object.create`).
@@ -90,7 +90,12 @@ for checking a scene's look without a window.
 **Game scripts** are WebAssembly modules (ABI in `docs/script-abi.md`, host in `crates/script`). Visual scripts
 compile to the same ABI. Example scripts live in `scripts/`, a separate workspace: build them with
 `cargo xtask scripts` (needs `rustup target add wasm32-unknown-unknown`); the `.wasm` output is not committed.
-Play mode never records undo steps or dirties the file, and restores the scene on stop.
+Play mode never records undo steps or dirties the file, and restores the scene on stop. An object's scripts are
+one `Scripts` list component (several per object); the inspector shows each script as its own card.
+
+**Automation** (`crates/automation`, `docs/automation.md`). A command that reads or writes a file checks
+`Session::allowed` first, so agent requests stay inside the confinement roots; tests for a new file command
+cover a refused path. MCP tools are the commands, so a new command needs no MCP code.
 
 **Clean room.** Other engines are a source of behaviour only, learned from public docs, papers and tutorials.
 Do not copy their code, file layouts, class names, shaders, icons or wording. User-visible feature names are
