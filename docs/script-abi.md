@@ -15,7 +15,7 @@ so module-level state belongs to that one script slot. Any language that compile
 | `bayleaf_start` | `() -> ()` | no | once, when play mode starts or after a hot reload |
 | `bayleaf_update` | `(dt: f32) -> ()` | no | every simulation step; `dt` is in seconds |
 | `bayleaf_message` | `(value: f32) -> ()` | no | for each message sent to this object or to every object, after the step; `message_name` or `message_is` tell which |
-| `bayleaf_describe` | `() -> i64` | no | when the editor or play mode loads the module; returns `(ptr << 32) \| len` of UTF-8 JSON `{"properties": [["speed", 90.0], ...]}`: the properties the editor shows, with defaults, at most 64 KiB |
+| `bayleaf_describe` | `() -> i64` | no | when the editor or play mode loads the module; returns `(ptr << 32) \| len` of UTF-8 JSON `{"properties": [["speed", 90.0], ...], "menu": "Light/Flicker"}`: the properties the editor shows, with defaults, and optionally where Add Component lists the script (1 to 4 names of up to 64 characters separated by `/`; without it, under Scripts), at most 64 KiB |
 
 ## Imports (module `bayleaf`, the host provides)
 
@@ -42,7 +42,8 @@ so module-level state belongs to that one script slot. Any language that compile
 | `message_name` | `(out: i32, cap: i32) -> i32` | during `bayleaf_message`, writes up to `cap` bytes of the message's name and returns its full length; `0` outside it |
 | `apply_impulse` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | pushes the object's dynamic physics body by an impulse in world space, after the step; `1` when asked, `0` when this call already asked 64 times |
 | `set_velocity` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | sets the body's velocity (world units per second) after the step; `1` or `0` as above |
-| `action` | `(name_ptr: i32, name_len: i32) -> f32` | how far an input action from the project settings is pressed, 0 to 1 (the strongest of its key, mouse, gamepad button and stick bindings; sticks past a dead zone of 0.15); `0` for an unknown action |
+| `action` | `(name_ptr: i32, name_len: i32) -> f32` | an input action's value by its kind: a trigger `1` in the step it goes down, held `1` while down, value how far it is pressed, 0 to 1 (the strongest of its key, mouse, gamepad button and stick bindings; sticks past a dead zone of 0.15). Name it `Jump` for the active map or `Player/Jump`; an action of a map that is not active, or an unknown one, reads `0`. The script's object's own Input Map (an Input Map component) answers before the project's |
+| `input_map_set` | `(handle: i32, name_ptr: i32, name_len: i32) -> i32` | makes a map active: the project's Input Map (`handle` 0) or an object's own; `1` when it has that map, else `0`. Only the active map's actions read |
 | `character_walk` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | sets the object's Character walking velocity (world units per second) after the step; it keeps walking until changed. `1` when asked, `0` when this call already asked 64 times |
 | `character_jump` | `(handle: i32, speed: f32) -> i32` | makes the Character jump with an upward speed after the step, if it stands on something |
 | `character_grounded` | `(handle: i32) -> i32` | `1` while the Character stands on something (as the step began), else `0` |
@@ -69,7 +70,9 @@ call. A message sent while handling one is delivered after the next step, so scr
 each other cannot run forever. Messages sent from `bayleaf_start` arrive after the first step. The
 Rust SDK calls `Script::message(name, value)`; `Object::send` and `send_to_all` send.
 Its `game_value`, `set_game_value`, `player_value`, `set_player_value`, `saved_value`,
-`set_saved_value` and `end_game` use the game state.
+`set_saved_value` and `end_game` use the game state. `action`, `action_held`, `set_input_map` and
+`Object::set_input_map` use the input maps, and `Script::MENU` names where Add Component lists the
+script.
 
 ### Other objects
 

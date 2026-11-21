@@ -88,6 +88,7 @@ pub fn describe(session: &Session, path: &Path) -> Info {
         "bmaterial" | "bscript" => graph(path, &extension),
         "wasm" => script(path),
         "bproject" => project(path),
+        "binput" => input_map(session, path),
         e if TEXT_EXTENSIONS.contains(&e) || name.starts_with('.') => text(path, "Text"),
         _ => Info { kind: "File", ..Info::default() },
     };
@@ -222,6 +223,20 @@ fn project(path: &Path) -> Info {
         info.rows.push(("Name".to_owned(), file["name"].as_str().unwrap_or_default().to_owned()));
         info.rows.push(("Main scene".to_owned(), file["mainScene"].as_str().unwrap_or_default().to_owned()));
         info.text = None;
+    }
+    info
+}
+
+/// An Input Map: its maps, the one play starts with, and how many actions; or what is wrong.
+fn input_map(session: &Session, path: &Path) -> Info {
+    let mut info = Info { kind: "Input Map", ..Info::default() };
+    match crate::input_cmds::read_asset(session, path).and_then(|asset| asset.maps().map(|maps| (asset, maps))) {
+        Ok((asset, maps)) => {
+            info.row("Maps", maps.maps().join(", "));
+            info.row("Starts with", maps.start());
+            info.row("Actions", asset.actions.len());
+        }
+        Err(problem) => info.problems.push(problem),
     }
     info
 }

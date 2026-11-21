@@ -170,6 +170,12 @@ impl Object {
     pub fn send(self, message: &str, value: f32) -> bool {
         abi::send(self.0, message, value)
     }
+
+    /// Makes another map of this object's own Input Map active. False when it has none of its own
+    /// or no such map.
+    pub fn set_input_map(self, map: &str) -> bool {
+        abi::input_map_set(self.0, map)
+    }
 }
 
 /// Sends a message and a number to the scripts of every object, after this step. False when
@@ -239,14 +245,23 @@ pub enum PadButton {
     Right,
 }
 
-/// How far an input action from the project settings is pressed, from 0 to 1 (0 for an unknown action).
+/// An input action's value by its kind: a trigger 1 in the step it goes down, held 1 while down,
+/// value how far it is pressed (0 to 1). Name it `Jump` for the active map or `Player/Jump`; an
+/// action of a map that is not active, or an unknown one, reads 0. This object's own Input Map
+/// (an Input Map component) answers before the project's.
 pub fn action(name: &str) -> f32 {
     abi::action(name)
 }
 
-/// True while an input action is held (pressed more than half way).
+/// True while an input action reads more than half: held down, or a trigger in its step.
 pub fn action_held(name: &str) -> bool {
     abi::action(name) > 0.5
+}
+
+/// Makes another map of the project's Input Map active (`Menu`, `Player`). False when it has no
+/// such map. Only the active map's actions read.
+pub fn set_input_map(map: &str) -> bool {
+    abi::input_map_set(0, map)
 }
 
 /// A value of the game's state, shared by every script while the game runs; `None` until a
@@ -311,6 +326,9 @@ pub trait Script: Default + Send + 'static {
     /// Properties the editor shows on this script, with their defaults. `property(name)` returns
     /// the value set in the scene, or this default.
     const PROPERTIES: &'static [(&'static str, f32)] = &[];
+    /// Where Add Component lists the script: folders, then its name (`"Light/Flicker"`). Empty
+    /// for the Scripts folder, under the module's name.
+    const MENU: &'static str = "";
 
     /// Runs once when play mode starts (or after a hot reload).
     fn start(&mut self) {}
@@ -338,7 +356,7 @@ macro_rules! script {
         #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_describe() -> u64 {
             static DESCRIPTION: ::std::sync::OnceLock<String> = ::std::sync::OnceLock::new();
-            let text = DESCRIPTION.get_or_init(|| $crate::describe(<$ty as $crate::Script>::PROPERTIES));
+            let text = DESCRIPTION.get_or_init(|| $crate::describe(<$ty as $crate::Script>::PROPERTIES, <$ty as $crate::Script>::MENU));
             $crate::pack(text)
         }
 
@@ -367,23 +385,27 @@ macro_rules! script {
 
 /// The `bayleaf_describe` text for `properties` (used by [`script!`]).
 #[doc(hidden)]
-pub fn describe(properties: &[(&str, f32)]) -> String {
+pub fn describe(properties: &[(&str, f32)], menu: &str) -> String {
     let entries: Vec<String> = properties
         .iter()
         .map(|(name, default)| {
-            let escaped: String = name
-                .chars()
-                .flat_map(|c| match c {
-                    '"' | '\\' => vec!['\\', c],
-                    c if c.is_control() => vec![],
-                    c => vec![c],
-                })
-                .collect();
             let value = if default.is_finite() { *default } else { 0.0 };
-            format!("[\"{escaped}\", {value:?}]")
+            format!("[\"{}\", {value:?}]", escape(name))
         })
         .collect();
-    format!("{{\"properties\": [{}]}}", entries.join(", "))
+    let menu = if menu.is_empty() { String::new() } else { format!(", \"menu\": \"{}\"", escape(menu)) };
+    format!("{{\"properties\": [{}]{menu}}}", entries.join(", "))
+}
+
+/// Text inside a JSON string: quotes and backslashes escaped, control characters left out.
+fn escape(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| match c {
+            '"' | '\\' => vec!['\\', c],
+            c if c.is_control() => vec![],
+            c => vec![c],
+        })
+        .collect()
 }
 
 /// Packs a string's address and length as `(ptr << 32) | len` (used by [`script!`]).
@@ -398,8 +420,10 @@ mod tests {
 
     #[test]
     fn descriptions_are_json_the_host_can_read() {
-        let text = super::describe(&[("speed", 90.0), ("odd \"name\"", 1.5)]);
+        let text = super::describe(&[("speed", 90.0), ("odd \"name\"", 1.5)], "");
         assert_eq!(text, r#"{"properties": [["speed", 90.0], ["odd \"name\"", 1.5]]}"#);
+        let text = super::describe(&[], "Light/\"Flicker\"");
+        assert_eq!(text, r#"{"properties": [], "menu": "Light/\"Flicker\""}"#);
     }
 
     #[test]

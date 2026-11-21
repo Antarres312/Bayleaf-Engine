@@ -311,7 +311,7 @@ struct HostState {
     message: Option<String>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
-    actions: Arc<actions::Actions>,
+    input_maps: actions::SharedInput,
     state: SharedState,
     transform: [f32; 9],
     transform_changed: bool,
@@ -336,7 +336,7 @@ impl HostState {
             message: None,
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
-            actions: Arc::new(actions::Actions::default()),
+            input_maps: actions::SharedInput::default(),
             state: SharedState::default(),
             transform,
             transform_changed: false,
@@ -379,9 +379,9 @@ impl HostState {
 
 /// Calls the optional `bayleaf_describe` export and parses the declared properties.
 /// The export returns `(ptr << 32) | len` of UTF-8 JSON: `{"properties": [["speed", 90.0], ...]}`.
-fn describe_instance(store: &mut Store<HostState>, instance: &wasmi::Instance, name: &str) -> Result<Vec<(String, f32)>, ScriptError> {
+fn describe_instance(store: &mut Store<HostState>, instance: &wasmi::Instance, name: &str) -> Result<Description, ScriptError> {
     let Ok(describe) = instance.get_typed_func::<(), i64>(&*store, "bayleaf_describe") else {
-        return Ok(Vec::new());
+        return Ok(Description::default());
     };
     let invalid = |message: String| ScriptError::Invalid(name.to_owned(), format!("bayleaf_describe: {message}"));
     store.set_fuel(FUEL_PER_CALL).map_err(|e| invalid(e.to_string()))?;
@@ -406,7 +406,36 @@ fn describe_instance(store: &mut Store<HostState>, instance: &wasmi::Instance, n
         }
         out.push((key.to_owned(), default));
     }
-    Ok(out)
+    let menu = match value.get("menu").and_then(serde_json::Value::as_str) {
+        Some(text) => Some(menu_path(text).map_err(invalid)?),
+        None => None,
+    };
+    Ok(Description { properties: out, menu })
+}
+
+/// What a script says about itself (`bayleaf_describe`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Description {
+    /// Properties the editor shows, with their defaults.
+    pub properties: Vec<(String, f32)>,
+    /// Where Add Component lists it: folders, then its name (`Light/Flicker`).
+    pub menu: Option<String>,
+}
+
+/// Most folders in a menu path, and longest part.
+const MAX_MENU_DEPTH: usize = 4;
+const MAX_MENU_PART: usize = 64;
+
+/// A menu path as written: 1 to 4 parts separated by `/`, each 1 to 64 characters with no control
+/// characters, spaces around parts trimmed.
+pub fn menu_path(text: &str) -> Result<String, String> {
+    let parts: Vec<&str> = text.split('/').map(str::trim).collect();
+    let fine = parts.len() <= MAX_MENU_DEPTH && parts.iter().all(|p| !p.is_empty() && p.chars().count() <= MAX_MENU_PART && !p.chars().any(char::is_control));
+    if fine {
+        Ok(parts.join("/"))
+    } else {
+        Err(format!("menu {text:?} needs 1 to {MAX_MENU_DEPTH} names of 1 to {MAX_MENU_PART} characters separated by / (Light/Flicker)"))
+    }
 }
 
 struct Instance {
@@ -437,7 +466,7 @@ pub struct ScriptHost {
     messages: Vec<Message>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
-    actions: Arc<actions::Actions>,
+    input_maps: actions::SharedInput,
     state: SharedState,
 }
 
@@ -457,7 +486,7 @@ impl Default for ScriptHost {
             messages: Vec::new(),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
-            actions: Arc::new(actions::Actions::default()),
+            input_maps: actions::SharedInput::default(),
             state: SharedState::default(),
         }
     }
@@ -503,6 +532,11 @@ impl ScriptHost {
     /// The properties a module declares, with their defaults, in declaration order. Runs no script
     /// code but `bayleaf_describe`; a module without it declares nothing.
     pub fn describe(&self, name: &str, bytes: &[u8]) -> Result<Vec<(String, f32)>, ScriptError> {
+        self.describe_all(name, bytes).map(|d| d.properties)
+    }
+
+    /// What a module says about itself: its properties and where Add Component lists it.
+    pub fn describe_all(&self, name: &str, bytes: &[u8]) -> Result<Description, ScriptError> {
         let module = Module::new(&self.engine, bytes).map_err(|e| ScriptError::Invalid(name.to_owned(), e.to_string()))?;
         let mut store = Store::new(&self.engine, HostState::new(StableId::from_u128(0), [0.0; 9], BTreeMap::new(), 0.0, &Arc::new(Input::default())));
         store.limiter(|state| &mut state.limits);
@@ -531,7 +565,7 @@ impl ScriptHost {
         let mut state = HostState::new(object, read_transform(scene, object), script.properties.clone(), time, input);
         state.position = read_position(scene, object);
         state.state = Arc::clone(&self.state);
-        state.actions = Arc::clone(&self.actions);
+        state.input_maps = Arc::clone(&self.input_maps);
         state.world = WorldView::of(scene);
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| &mut state.limits);
@@ -550,7 +584,7 @@ impl ScriptHost {
             return Err(ScriptError::Invalid(module_name, "it exports no memory".to_owned()));
         }
         // Declared defaults, overridden by the values saved in the scene.
-        let mut properties: BTreeMap<String, f32> = describe_instance(&mut store, &instance, &module_name)?.into_iter().collect();
+        let mut properties: BTreeMap<String, f32> = describe_instance(&mut store, &instance, &module_name)?.properties.into_iter().collect();
         properties.extend(script.properties.iter().map(|(k, v)| (k.clone(), *v)));
         store.data_mut().properties = properties;
         let update = instance.get_typed_func::<f32, ()>(&store, "bayleaf_update").ok();
@@ -597,7 +631,7 @@ impl ScriptHost {
                 state.world = Arc::clone(&world);
                 state.velocities = Arc::clone(&self.velocities);
                 state.grounded = Arc::clone(&self.grounded);
-                state.actions = Arc::clone(&self.actions);
+                state.input_maps = Arc::clone(&self.input_maps);
                 state.state = Arc::clone(&self.state);
             }
             let result = call(entry, |store| update.call(store, dt));
@@ -643,7 +677,7 @@ impl ScriptHost {
                     state.world = Arc::clone(&world);
                     state.velocities = Arc::clone(&self.velocities);
                     state.grounded = Arc::clone(&self.grounded);
-                    state.actions = Arc::clone(&self.actions);
+                    state.input_maps = Arc::clone(&self.input_maps);
                     state.state = Arc::clone(&self.state);
                     state.message = Some(message.name.clone());
                 }
@@ -716,9 +750,10 @@ impl ScriptHost {
         self.deliver(scene, time, input);
     }
 
-    /// The project's input actions, which scripts read with `action`.
-    pub fn set_actions(&mut self, actions: actions::Actions) {
-        self.actions = Arc::new(actions);
+    /// The input maps scripts read with `action` and switch with `input_map_set`: the project's and
+    /// objects' own. The engine fills them when play starts and steps them each step.
+    pub fn with_input<T>(&self, change: impl FnOnce(&mut actions::InputSet) -> T) -> T {
+        change(&mut actions::lock(&self.input_maps))
     }
 
     /// The characters standing on something, as scripts see them in the next calls.
@@ -1139,9 +1174,23 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         )?;
         linker.func_wrap("bayleaf", "game_end", |caller: Caller<'_, HostState>, won: i32| -> i32 { i32::from(lock(&caller.data().state).end(won != 0)) })?;
         linker.func_wrap("bayleaf", "action", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<f32, wasmi::Error> {
-            let name = read_text(&caller, ptr, len, 64).map_err(|m| fault(&mut caller, format!("action: {m}")))?;
+            // `map/action`: two names of up to 64 bytes and the slash.
+            let name = read_text(&caller, ptr, len, 129).map_err(|m| fault(&mut caller, format!("action: {m}")))?;
             let state = caller.data();
-            Ok(state.actions.value(&name, &state.input))
+            Ok(actions::lock(&state.input_maps).of(state.object).map_or(0.0, |maps| maps.value(&name, &state.input)))
+        })?;
+        linker.func_wrap("bayleaf", "input_map_set", |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+            let name = read_text(&caller, ptr, len, 64).map_err(|m| fault(&mut caller, format!("input_map_set: {m}")))?;
+            // 0 is the project's map; a handle an object with its own Input Map.
+            let object = match handle {
+                0 => None,
+                _ => match caller.data().world.object(handle) {
+                    Some((id, _)) => Some(id),
+                    None => return Err(fault(&mut caller, format!("input_map_set: there is no object with handle {handle}"))),
+                },
+            };
+            let switched = actions::lock(&caller.data().input_maps).get_mut(object).is_some_and(|maps| maps.set_active(&name));
+            Ok(i32::from(switched))
         })?;
         linker.func_wrap(
             "bayleaf",

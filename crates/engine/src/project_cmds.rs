@@ -14,8 +14,9 @@ use crate::{CommandError, CommandSpec, Mutates, Prompt, Session, always, parse};
 pub const PROJECT_FORMAT: &str = "bayleaf.project";
 /// File extension of project files.
 pub const PROJECT_EXTENSION: &str = "bproject";
-/// Version 2 added `settings`. Version 1 files still open.
-const PROJECT_VERSION: u32 = 2;
+/// Version 2 added `settings`; version 3 moved the input actions into an Input Map asset
+/// (`settings.input.map`). Older files still open; opening one moves its actions.
+const PROJECT_VERSION: u32 = 3;
 
 /// A project file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -40,14 +41,21 @@ pub struct ProjectSettings {
     pub input: InputSettings,
 }
 
-/// Input actions: names scripts and Player Control ask for, and what presses them.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The project's input: an Input Map asset, the one map set every script and Player Control read
+/// (an object's own Input Map component comes first for that object).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InputSettings {
-    pub actions: Vec<ActionSetting>,
+    /// A `.binput` file, relative to the project folder; empty for none.
+    #[serde(default)]
+    pub map: String,
+    /// Actions written in the project file before format 3. Opening the project moves them into
+    /// an Input Map asset; until then play mode uses them as the map `Default`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<ActionSetting>>,
 }
 
-/// One action and its bindings: `key:W`, `mouse:Left`, `pad:South`, `axis:LeftX+`.
+/// An action as project files before format 3 kept it, with its bindings.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionSetting {
@@ -55,29 +63,22 @@ pub struct ActionSetting {
     pub bindings: Vec<String>,
 }
 
-impl Default for InputSettings {
-    /// Walking on WASD, the arrows and the left stick; jumping on Space and the bottom face button;
-    /// firing on the left mouse button and the right trigger.
-    fn default() -> Self {
-        let action = |name: &str, bindings: &[&str]| ActionSetting { name: name.to_owned(), bindings: bindings.iter().map(|b| (*b).to_owned()).collect() };
-        Self {
-            actions: vec![
-                action("MoveForward", &["key:W", "key:ArrowUp", "axis:LeftY+"]),
-                action("MoveBack", &["key:S", "key:ArrowDown", "axis:LeftY-"]),
-                action("MoveLeft", &["key:A", "key:ArrowLeft", "axis:LeftX-"]),
-                action("MoveRight", &["key:D", "key:ArrowRight", "axis:LeftX+"]),
-                action("Jump", &["key:Space", "pad:South"]),
-                action("Fire", &["mouse:Left", "axis:RightTrigger+"]),
-            ],
-        }
-    }
-}
+/// The map old inline actions are moved into.
+const LEGACY_MAP: &str = "Default";
 
 impl InputSettings {
-    /// The actions, checked, for the script host and Player Control.
-    pub fn actions(&self) -> Result<bayleaf_script::actions::Actions, String> {
-        let list: Vec<(String, Vec<String>)> = self.actions.iter().map(|a| (a.name.clone(), a.bindings.clone())).collect();
-        bayleaf_script::actions::Actions::new(&list)
+    /// Old inline actions as an Input Map asset: map `Default`, every action a value, as they read before.
+    pub fn legacy_asset(&self) -> Option<crate::input_cmds::InputAsset> {
+        let actions = self.actions.as_ref()?;
+        let list = actions
+            .iter()
+            .map(|a| crate::input_cmds::InputAction {
+                name: format!("{LEGACY_MAP}/{}", a.name),
+                kind: bayleaf_script::actions::ActionKind::Value,
+                bindings: a.bindings.clone(),
+            })
+            .collect();
+        Some(crate::input_cmds::InputAsset::new(LEGACY_MAP, list))
     }
 }
 
@@ -117,7 +118,10 @@ impl ProjectSettings {
         if !self.physics.gravity.iter().all(|g| g.is_finite() && g.abs() <= MAX_GRAVITY) {
             return Err(CommandError::BadParams(format!("gravity values must be finite and at most {MAX_GRAVITY} in size")));
         }
-        self.input.actions().map_err(CommandError::BadParams)?;
+        let map = &self.input.map;
+        if !(map.is_empty() || (map.len() <= 512 && map.ends_with(&format!(".{}", crate::input_cmds::INPUT_EXTENSION)))) {
+            return Err(CommandError::BadParams(format!("input.map must be the path of a .{} file", crate::input_cmds::INPUT_EXTENSION)));
+        }
         Ok(())
     }
 }
@@ -193,7 +197,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Project Settings",
             menu: "",
             shortcut: "",
-            params: "none; returns {project, settings}: the open project's settings (physics: {enabled, gravity, precision: \"single\" | \"double\"}, input: {actions: [{name, bindings: [key:W | mouse:Left | pad:South | axis:LeftX+]}]}), or the defaults and project: false outside a project",
+            params: "none; returns {project, settings}: the open project's settings (physics: {enabled, gravity, precision: \"single\" | \"double\"}, input: {map: the project's Input Map, a .binput file (see input.asset)}), or the defaults and project: false outside a project",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: always,
@@ -272,12 +276,13 @@ fn project_new(session: &mut Session, params: &Value) -> Result<Value, CommandEr
         version: PROJECT_VERSION,
         name: name.to_owned(),
         main_scene: "scenes/main.bscene".to_owned(),
-        settings: ProjectSettings::default(),
+        settings: ProjectSettings { input: InputSettings { map: STARTER_INPUT_MAP.to_owned(), actions: None }, ..ProjectSettings::default() },
     };
     write(&format!("{file_stem}.{PROJECT_EXTENSION}"), &serde_json::to_string_pretty(&project).unwrap_or_default())?;
     write("scenes/main.bscene", MAIN_SCENE)?;
     write("materials/ground.bmaterial", GROUND_MATERIAL)?;
     write("scripts/spin.bscript", SPIN_SCRIPT)?;
+    write(STARTER_INPUT_MAP, &crate::input_cmds::InputAsset::starter().to_text())?;
     write("assets/README.md", "Images, sounds and other files the game uses go here.\n")?;
     write(".gitignore", "# Files the editor or build tools make again.\n/build/\n/.build/\n*.wasm\n")?;
     write(
@@ -307,9 +312,37 @@ fn project_open(session: &mut Session, params: &Value) -> Result<Value, CommandE
     };
     let project = ProjectFile::read(&file)?;
     let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
+    move_inline_actions(session, &file, &dir, &project);
     let scene = inside(&dir, &project.main_scene);
     open_scene_at(session, &scene)?;
     Ok(json!({ "path": dir, "name": project.name, "scene": scene }))
+}
+
+/// Where a new project keeps its Input Map, relative to the project folder.
+const STARTER_INPUT_MAP: &str = "input/game.binput";
+
+/// A project from before format 3 keeps its input actions in the project file: they move into an
+/// Input Map asset (`input/actions.binput`, map `Default`) that the settings then name. When that
+/// cannot be written, nothing changes and play mode still reads them from the project file.
+fn move_inline_actions(session: &mut Session, file: &Path, dir: &Path, project: &ProjectFile) {
+    let Some(asset) = project.settings.input.legacy_asset().filter(|_| project.settings.input.map.is_empty()) else { return };
+    let relative = (1..100)
+        .map(|n| if n == 1 { "input/actions.binput".to_owned() } else { format!("input/actions_{n}.binput") })
+        .find(|r| !inside(dir, r).exists())
+        .unwrap_or_else(|| "input/actions.binput".to_owned());
+    let moved = (|| -> Result<(), CommandError> {
+        let path = session.allowed(file, Access::Write)?;
+        crate::input_cmds::write_asset(session, &inside(dir, &relative), &asset)?;
+        let mut updated = project.clone();
+        updated.settings.input = InputSettings { map: relative.clone(), actions: None };
+        updated.version = PROJECT_VERSION;
+        let text = serde_json::to_string_pretty(&updated).map_err(|e| CommandError::Failed(e.to_string()))?;
+        std::fs::write(&path, text).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", path.display())))
+    })();
+    match moved {
+        Ok(()) => session.log(crate::Level::Info, format!("The project's input actions moved into {relative} (map Default), chosen in Project Settings.")),
+        Err(error) => session.log(crate::Level::Info, format!("The project's input actions stay in the project file for now: {error}")),
+    }
 }
 
 fn open_scene_at(session: &mut Session, scene: &Path) -> Result<(), CommandError> {

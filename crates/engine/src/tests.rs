@@ -1245,3 +1245,101 @@ fn asset_delete_removes_files_and_scripts_from_the_workspace_but_never_the_proje
     assert!(dir.join("scripts/spin.bscript").exists());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A module that writes the value of `action` into the game value `key` every step.
+fn action_reader(pairs: &[(&str, &str)]) -> Vec<u8> {
+    let mut data = String::new();
+    let mut body = String::new();
+    for (index, (action, key)) in pairs.iter().enumerate() {
+        let (a, k) = (100 + index * 64, 132 + index * 64);
+        data.push_str(&format!("(data (i32.const {a}) \"{action}\") (data (i32.const {k}) \"{key}\")\n"));
+        body.push_str(&format!(
+            "(drop (call $set (i32.const 0) (i32.const 0) (i32.const {k}) (i32.const {}) (f64.promote_f32 (call $action (i32.const {a}) (i32.const {})))))\n",
+            key.len(),
+            action.len()
+        ));
+    }
+    wat::parse_str(format!(
+        r#"(module
+            (import "bayleaf" "action" (func $action (param i32 i32) (result f32)))
+            (import "bayleaf" "state_set" (func $set (param i32 i32 i32 i32 f64) (result i32)))
+            (memory (export "memory") 1)
+            {data}
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param f32) {body}))"#
+    ))
+    .unwrap()
+}
+
+#[test]
+fn input_maps_answer_per_object_count_triggers_once_and_switch() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-input-maps-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let car = json!({"start": "", "actions": [{"name": "Car/Horn", "kind": "trigger", "bindings": ["key:H"]}]});
+    registry.execute(&mut session, "input.asset.set", &json!({"path": "input/car.binput", "asset": car})).unwrap();
+    std::fs::write(dir.join("walker.wasm"), action_reader(&[("Jump", "walkerJump")])).unwrap();
+    std::fs::write(dir.join("driver.wasm"), action_reader(&[("Horn", "driverHorn"), ("Jump", "driverJump")])).unwrap();
+    create(&registry, &mut session, json!({"name": "Walker", "components": {"scripts": [{"module": "walker.wasm"}]}}));
+    let driver = create(
+        &registry,
+        &mut session,
+        json!({"name": "Driver", "components": {"scripts": [{"module": "driver.wasm"}], "inputMap": {"asset": "input/car.binput", "start": ""}}}),
+    );
+    let game =
+        |registry: &CommandRegistry, session: &mut Session, key: &str| registry.execute(session, "game.state", &Value::Null).unwrap()["game"][key].as_f64();
+
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.input", &json!({"keys": ["Space", "H"]})).unwrap();
+    registry.execute(&mut session, "play.step", &Value::Null).unwrap();
+    assert_eq!(game(&registry, &mut session, "walkerJump"), Some(1.0), "the project's map: Player/Jump");
+    assert_eq!(game(&registry, &mut session, "driverHorn"), Some(1.0), "an object's own map comes first");
+    assert_eq!(game(&registry, &mut session, "driverJump"), Some(0.0), "and its own map has no Jump");
+    registry.execute(&mut session, "play.step", &Value::Null).unwrap();
+    assert_eq!(game(&registry, &mut session, "walkerJump"), Some(0.0), "a trigger counts in one step only");
+
+    let state = registry.execute(&mut session, "input.map.set", &json!({"map": "Menu"})).unwrap();
+    assert_eq!(state["project"]["active"], "Menu");
+    assert_eq!(state["objects"][0]["object"], driver.as_str());
+    assert!(registry.execute(&mut session, "input.map.set", &json!({"map": "Nowhere"})).is_err());
+    registry.execute(&mut session, "play.input", &json!({"keys": []})).unwrap();
+    registry.execute(&mut session, "play.step", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.input", &json!({"keys": ["Space"]})).unwrap();
+    registry.execute(&mut session, "play.step", &Value::Null).unwrap();
+    assert_eq!(game(&registry, &mut session, "walkerJump"), Some(0.0), "Player's actions are off while Menu is active");
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+
+    // Assets are checked, and agents write them only inside their folders.
+    let bad = json!({"start": "", "actions": [{"name": "Jump", "kind": "held", "bindings": []}]});
+    assert!(registry.execute(&mut session, "input.asset.set", &json!({"path": "input/bad.binput", "asset": bad})).is_err(), "names are map/action");
+    let scenes = dir.join("scenes");
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), std::slice::from_ref(&scenes)).unwrap()));
+    assert!(registry.execute(&mut session, "input.asset.set", &json!({"path": "input/car.binput", "asset": car})).is_err());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn opening_an_old_project_moves_its_inline_actions_into_an_input_map() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-input-migrate-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    // A project file as format 2 wrote it.
+    let file = crate::project_cmds::project_file_in(&dir).unwrap();
+    let old = json!({
+        "format": "bayleaf.project", "version": 2, "name": "Old", "mainScene": "scenes/main.bscene",
+        "settings": {"input": {"actions": [{"name": "Jump", "bindings": ["key:Space"]}]}}
+    });
+    std::fs::write(&file, old.to_string()).unwrap();
+    let mut session = Session::default();
+    registry.execute(&mut session, "project.open", &json!({"path": dir})).unwrap();
+    let settings = registry.execute(&mut session, "project.settings", &Value::Null).unwrap();
+    assert_eq!(settings["settings"]["input"]["map"], "input/actions.binput");
+    let moved = registry.execute(&mut session, "input.asset", &json!({"path": "input/actions.binput"})).unwrap();
+    assert_eq!(moved["asset"]["actions"][0]["name"], "Default/Jump", "the actions keep their bindings, in the map Default");
+    assert!(std::fs::read_to_string(&file).unwrap().contains("\"version\": 3"));
+    std::fs::remove_dir_all(&dir).ok();
+}

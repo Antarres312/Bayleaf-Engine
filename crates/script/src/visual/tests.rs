@@ -280,8 +280,11 @@ fn every_node_kind_compiles_and_runs() {
     b.link(score, "value", keep_score, "value");
     let more = b.node("changeGameValue", json!({}));
     b.link(keep_score, "then", more, "run");
+    let to_menu = b.node("setInputMap", json!({ "map": "Menu", "scope": "This Object" }));
+    b.node("menuPath", json!({ "path": "Tests/Every Node" }));
+    b.link(more, "then", to_menu, "run");
     let finish = b.node("endGame", json!({}));
-    b.link(more, "then", finish, "run");
+    b.link(to_menu, "then", finish, "run");
     b.link(score, "set", finish, "won");
     let move_to = b.node("setPositionOf", json!({ "object": "Scripted" }));
     b.link(gate_on_flag, "false", move_to, "run");
@@ -551,4 +554,17 @@ fn game_values_reach_this_player_a_named_player_or_the_first_and_never_a_missing
     assert_eq!(state.get(crate::Scope::Player(blue), "lives"), Some(2.0), "This Object is the script's own player");
     assert_eq!(state.get(crate::Scope::Player(red), "lives"), Some(7.0), "a named player, then the first player, which is Red");
     assert_eq!(state.players.len(), 2, "no state for a missing name or an object that is no player");
+}
+
+#[test]
+fn a_menu_path_node_tells_where_add_component_lists_the_script() {
+    let mut b = spinner();
+    b.node("menuPath", json!({ "path": " Light / Flicker " }));
+    let described = ScriptHost::new().describe_all("flicker.bscript", &b.bytes()).unwrap();
+    assert_eq!(described.menu.as_deref(), Some("Light/Flicker"), "parts are trimmed");
+    assert_eq!(ScriptHost::new().describe_all("spin.bscript", &spinner().bytes()).unwrap().menu, None, "no node, no path");
+
+    let mut bad = spinner();
+    bad.node("menuPath", json!({ "path": "Light//Flicker" }));
+    assert!(compile(&bad.0).is_err(), "an empty part is refused");
 }

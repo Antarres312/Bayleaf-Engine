@@ -1,7 +1,7 @@
-//! Project Settings: what applies to the whole project, such as physics. Reads the settings once
-//! per project and changes them only through `project.settings.set`.
+//! Project Settings: what applies to the whole project, such as physics and the project's Input
+//! Map. Reads the settings once per project and changes them only through `project.settings.set`.
 
-use bayleaf_engine::project_cmds::{ActionSetting, InputSettings, PhysicsPrecision, PhysicsSettings, ProjectSettings, settings_of};
+use bayleaf_engine::project_cmds::{PhysicsPrecision, PhysicsSettings, ProjectSettings, settings_of};
 use serde_json::json;
 
 use crate::Editor;
@@ -12,15 +12,6 @@ use crate::theme::{self, ROW_HEIGHT};
 pub(crate) struct Shown {
     project: Option<std::path::PathBuf>,
     settings: Option<ProjectSettings>,
-    /// Each action's name and bindings as typed (bindings separated by commas), kept while they
-    /// are not valid yet.
-    drafts: Vec<(String, String)>,
-    /// Why the typed actions are not saved.
-    problem: Option<String>,
-}
-
-fn drafts_of(settings: &ProjectSettings) -> Vec<(String, String)> {
-    settings.input.actions.iter().map(|a| (a.name.clone(), a.bindings.join(", "))).collect()
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
@@ -28,10 +19,12 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let project = editor.session.project_dir().map(std::path::Path::to_path_buf);
     if editor.project_settings.settings.is_none() || editor.project_settings.project != project {
         let settings = settings_of(&editor.session);
-        editor.project_settings = Shown { drafts: drafts_of(&settings), settings: Some(settings), project: project.clone(), problem: None };
+        editor.project_settings = Shown { settings: Some(settings), project: project.clone() };
     }
     let Some(mut settings) = editor.project_settings.settings.clone() else { return };
     let before = settings.clone();
+    let input_files = editor.project.input_map_files();
+    let mut edit = None;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(4.0);
         if project.is_none() {
@@ -79,7 +72,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 });
             });
             ui.add_space(theme::SECTION_GAP);
-            input_section(ui, t, &mut editor.project_settings, &mut settings);
+            edit = input_section(ui, t, &input_files, &mut settings);
             ui.add_space(theme::GAP);
             ui.label(egui::RichText::new("Play mode uses these settings from its next start.").small().color(t.text_muted));
         });
@@ -90,58 +83,55 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             editor.project_settings.settings = Some(settings);
         }
     }
+    if let Some(relative) = edit {
+        let path = editor.session.script_dir().join(relative);
+        editor.inspect_file(path);
+    }
 }
 
-/// Input actions: a name and its bindings per row. The typed text is saved once every row reads
-/// right; until then the problem is shown under the list.
-fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, shown: &mut Shown, settings: &mut ProjectSettings) {
-    theme::headed(t, "Input Actions").show(ui, |ui| {
-        ui.label(egui::RichText::new("Bindings: key:W, mouse:Left, pad:South, axis:LeftX+ (separate with commas)").small().color(t.text_muted));
-        let mut changed = false;
-        let mut remove = None;
-        for (index, (name, bindings)) in shown.drafts.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                let field = ui.add_sized([120.0, ROW_HEIGHT - 4.0], egui::TextEdit::singleline(name));
-                ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Name of action {}", index + 1)));
-                changed |= field.changed();
-                let width = (ui.available_width() - 72.0).max(80.0);
-                let list = ui.add_sized([width, ROW_HEIGHT - 4.0], egui::TextEdit::singleline(bindings));
-                let label = format!("Bindings of {name}");
-                ui.ctx().accesskit_node_builder(list.id, |node| node.set_label(label));
-                changed |= list.changed();
-                if ui.button("Remove").on_hover_text("Remove this action").clicked() {
-                    remove = Some(index);
+/// The project's Input Map: which `.binput` asset every script and Player Control read (an
+/// object's own Input Map component comes first for it). Returns the asset to open for editing.
+fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, files: &[String], settings: &mut ProjectSettings) -> Option<String> {
+    let mut edit = None;
+    theme::headed(t, "Input").show(ui, |ui| {
+        crate::value_editor::row(ui, t, "Input Map", |ui, label, width| {
+            ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let current = settings.input.map.clone();
+                if !current.is_empty() {
+                    let button = ui.button("Edit").on_hover_text("Open it in the Inspector to change its actions");
+                    ui.ctx().accesskit_node_builder(button.id, |node| node.set_label("Edit the Input Map"));
+                    if button.clicked() {
+                        edit = Some(current.clone());
+                    }
                 }
+                let shown = if current.is_empty() { "None".to_owned() } else { current.clone() };
+                craft_ui::ComboBox::from_id_salt("project input map")
+                    .width((ui.available_width() - 1.0).max(16.0))
+                    .truncate()
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(current.is_empty(), "None").clicked() {
+                            settings.input.map.clear();
+                        }
+                        for file in files {
+                            if ui.selectable_label(current == *file, file).clicked() {
+                                settings.input.map = file.clone();
+                            }
+                        }
+                        if files.is_empty() {
+                            ui.label(egui::RichText::new("No .binput files yet: create one in the Project panel").color(t.text_muted));
+                        }
+                    })
+                    .response
+                    .labelled_by(label);
             });
-        }
-        if let Some(index) = remove {
-            shown.drafts.remove(index);
-            changed = true;
-        }
-        if ui.button("Add Action").clicked() {
-            shown.drafts.push((format!("Action{}", shown.drafts.len() + 1), String::new()));
-            changed = true;
-        }
-        if changed {
-            let actions = shown
-                .drafts
-                .iter()
-                .map(|(name, bindings)| ActionSetting {
-                    name: name.trim().to_owned(),
-                    bindings: bindings.split(',').map(str::trim).filter(|b| !b.is_empty()).map(str::to_owned).collect(),
-                })
-                .collect();
-            let candidate = InputSettings { actions };
-            match candidate.actions() {
-                Ok(_) => {
-                    settings.input = candidate;
-                    shown.problem = None;
-                }
-                Err(problem) => shown.problem = Some(problem),
-            }
-        }
-        if let Some(problem) = &shown.problem {
-            ui.add(egui::Label::new(egui::RichText::new(format!("Not saved: {problem}")).color(t.text)).wrap());
-        }
+        });
+        let note = if settings.input.actions.is_some() {
+            "This project's actions are still in its project file from an older version; open the project again to move them into an Input Map."
+        } else {
+            "Actions are named map/action (Player/Jump); one map is active at a time. Objects can carry their own with an Input Map component."
+        };
+        ui.add(egui::Label::new(egui::RichText::new(note).small().color(t.text_muted)).wrap());
     });
+    edit
 }

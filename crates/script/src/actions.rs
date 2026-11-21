@@ -1,7 +1,11 @@
-//! Input actions: named controls ("Jump", "MoveForward") bound to keys, mouse buttons and gamepad
+//! Input actions: named controls (`Player/Jump`, `Player/MoveForward`) in maps, one of them active at
+//! a time, bound to keys, mouse buttons and gamepad
 //! buttons and sticks, so scripts ask for the action rather than the key and players can rebind.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+
+use bayleaf_core::StableId;
 
 use crate::{Input, PAD_AXES, PAD_BUTTONS};
 
@@ -71,76 +75,283 @@ impl Binding {
     }
 }
 
-/// A project's actions.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Actions {
-    actions: Vec<(String, Vec<Binding>)>,
+/// How an action reports itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ActionKind {
+    /// 1 in the one step it goes down, else 0: a jump, a shot.
+    Trigger,
+    /// 1 from the step it goes down for as long as it is held, else 0.
+    #[default]
+    Held,
+    /// How far it is pressed, 0 to 1 (a stick or trigger leans part way): walking, steering.
+    Value,
 }
 
-impl Actions {
-    /// Actions from names and binding texts; refuses unknown bindings and too many of either.
-    pub fn new(list: &[(String, Vec<String>)]) -> Result<Self, String> {
+/// One action of an input map: `map/action`, its kind and what presses it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Action {
+    pub map: String,
+    pub name: String,
+    pub kind: ActionKind,
+    pub bindings: Vec<Binding>,
+}
+
+impl Action {
+    /// `map/action`.
+    pub fn full_name(&self) -> String {
+        format!("{}/{}", self.map, self.name)
+    }
+
+    /// The strongest of its bindings, 0 to 1.
+    fn raw(&self, input: &Input) -> f32 {
+        self.bindings.iter().map(|b| b.value(input)).fold(0.0, f32::max)
+    }
+}
+
+/// Whether `name` is 1 to 64 letters, digits or `_`.
+fn is_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Splits `map/action` into its two names, each 1 to 64 letters, digits or `_`.
+pub fn split_name(full: &str) -> Result<(&str, &str), String> {
+    match full.split_once('/') {
+        Some((map, action)) if is_name(map) && is_name(action) => Ok((map, action)),
+        _ => Err(format!("{full:?}: name an action map/action, each 1 to 64 letters, digits or _ (Player/Jump)")),
+    }
+}
+
+/// The actions of an Input Map asset, checked and sorted into maps. One map is active at a time;
+/// `start` is the one a game starts with.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InputMaps {
+    actions: Vec<Action>,
+    maps: Vec<String>,
+    start: String,
+}
+
+impl InputMaps {
+    /// Maps from `map/action` names, kinds and binding texts. `start` names the first active map;
+    /// empty for the first map listed. Refuses bad names, unknown bindings, and too many of either.
+    pub fn new(list: &[(String, ActionKind, Vec<String>)], start: &str) -> Result<Self, String> {
         if list.len() > MAX_ACTIONS {
-            return Err(format!("a project may have at most {MAX_ACTIONS} actions"));
+            return Err(format!("an input map asset may have at most {MAX_ACTIONS} actions"));
         }
-        let mut names = HashSet::new();
+        let mut seen = HashSet::new();
         let mut actions = Vec::new();
-        for (name, bindings) in list {
-            if name.is_empty() || name.len() > 64 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return Err(format!("action name {name:?} must be 1 to 64 letters, digits or _"));
-            }
-            if !names.insert(name.clone()) {
-                return Err(format!("action {name} is named twice"));
+        let mut maps: Vec<String> = Vec::new();
+        for (full, kind, bindings) in list {
+            let (map, name) = split_name(full)?;
+            if !seen.insert(full.clone()) {
+                return Err(format!("action {full} is named twice"));
             }
             if bindings.len() > MAX_BINDINGS {
-                return Err(format!("action {name} may have at most {MAX_BINDINGS} bindings"));
+                return Err(format!("action {full} may have at most {MAX_BINDINGS} bindings"));
             }
-            let parsed = bindings.iter().map(|b| Binding::parse(b)).collect::<Result<Vec<_>, _>>().map_err(|e| format!("action {name}: {e}"))?;
-            actions.push((name.clone(), parsed));
+            let parsed = bindings.iter().map(|b| Binding::parse(b)).collect::<Result<Vec<_>, _>>().map_err(|e| format!("action {full}: {e}"))?;
+            if !maps.iter().any(|m| m == map) {
+                maps.push(map.to_owned());
+            }
+            actions.push(Action { map: map.to_owned(), name: name.to_owned(), kind: *kind, bindings: parsed });
         }
-        Ok(Self { actions })
+        let start = if start.is_empty() { maps.first().cloned().unwrap_or_default() } else { start.to_owned() };
+        if !maps.is_empty() && !maps.contains(&start) {
+            return Err(format!("the starting map {start} has no actions; the maps are {}", maps.join(", ")));
+        }
+        Ok(Self { actions, maps, start })
     }
 
-    /// How far the action is pressed, 0 to 1 (the strongest of its bindings); 0 for an unknown action.
+    /// The maps, in the order their first actions are listed.
+    pub fn maps(&self) -> &[String] {
+        &self.maps
+    }
+
+    /// The map that is active when play starts.
+    pub fn start(&self) -> &str {
+        &self.start
+    }
+
+    pub fn actions(&self) -> &[Action] {
+        &self.actions
+    }
+
+    /// The action `name` means while `active` is the active map: `map/action` when `map` is
+    /// active, or a plain `action` of the active map. Actions of other maps are not active.
+    fn find(&self, active: &str, name: &str) -> Option<&Action> {
+        let (map, action) = name.split_once('/').unwrap_or((active, name));
+        if map != active {
+            return None;
+        }
+        self.actions.iter().find(|a| a.map == map && a.name == action)
+    }
+}
+
+/// An Input Map in play: which map is active, and which actions were down in the last step and
+/// this one, so a trigger counts only in the step it goes down.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InputState {
+    maps: Arc<InputMaps>,
+    active: String,
+    down_before: HashSet<String>,
+    down_now: HashSet<String>,
+}
+
+impl InputState {
+    pub fn new(maps: Arc<InputMaps>) -> Self {
+        let active = maps.start().to_owned();
+        Self { maps, active, down_before: HashSet::new(), down_now: HashSet::new() }
+    }
+
+    pub fn maps(&self) -> &InputMaps {
+        &self.maps
+    }
+
+    /// The active map.
+    pub fn active(&self) -> &str {
+        &self.active
+    }
+
+    /// Makes `map` the active map; false when the asset has no such map.
+    pub fn set_active(&mut self, map: &str) -> bool {
+        let known = self.maps.maps.iter().any(|m| m == map);
+        if known {
+            self.active = map.to_owned();
+        }
+        known
+    }
+
+    /// Takes the step's input: which actions of every map are down now. Every map is tracked, so
+    /// an action held while its map becomes active does not count as going down then.
+    pub fn step(&mut self, input: &Input) {
+        self.down_before = std::mem::take(&mut self.down_now);
+        self.down_now = self.maps.actions.iter().filter(|a| a.raw(input) > 0.5).map(Action::full_name).collect();
+    }
+
+    /// The action's value now, by its kind: a trigger 1 in the step it went down, held 1 while
+    /// down, value how far it is pressed. 0 for an action of an inactive map or an unknown one.
     pub fn value(&self, name: &str, input: &Input) -> f32 {
-        self.actions.iter().find(|(n, _)| n == name).map_or(0.0, |(_, bindings)| bindings.iter().map(|b| b.value(input)).fold(0.0, f32::max))
+        let Some(action) = self.maps.find(&self.active, name) else { return 0.0 };
+        let full = action.full_name();
+        match action.kind {
+            ActionKind::Value => action.raw(input),
+            ActionKind::Held => f32::from(u8::from(self.down_now.contains(&full))),
+            ActionKind::Trigger => f32::from(u8::from(self.down_now.contains(&full) && !self.down_before.contains(&full))),
+        }
     }
 
-    /// The action names, in the order they were given.
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.actions.iter().map(|(n, _)| n.as_str())
+    /// True in the step the action went down, whatever its kind.
+    pub fn pressed(&self, name: &str) -> bool {
+        self.maps.find(&self.active, name).is_some_and(|a| {
+            let full = a.full_name();
+            self.down_now.contains(&full) && !self.down_before.contains(&full)
+        })
+    }
+}
+
+/// The Input Maps scripts read in play: the project's, and objects' own (an Input Map component).
+#[derive(Clone, Debug, Default)]
+pub struct InputSet {
+    pub project: Option<InputState>,
+    pub objects: HashMap<StableId, InputState>,
+}
+
+impl InputSet {
+    /// What an object's scripts read: its own Input Map, else the project's.
+    pub fn of(&self, object: StableId) -> Option<&InputState> {
+        self.objects.get(&object).or(self.project.as_ref())
     }
 
-    pub fn contains(&self, name: &str) -> bool {
-        self.actions.iter().any(|(n, _)| n == name)
+    /// The project's map (`None`) or an object's own.
+    pub fn get_mut(&mut self, object: Option<StableId>) -> Option<&mut InputState> {
+        match object {
+            Some(id) => self.objects.get_mut(&id),
+            None => self.project.as_mut(),
+        }
     }
+
+    /// Takes the step's input in every map.
+    pub fn step(&mut self, input: &Input) {
+        for state in self.project.iter_mut().chain(self.objects.values_mut()) {
+            state.step(input);
+        }
+    }
+}
+
+/// The input maps every script of a play session shares; switching a map is seen by all.
+pub type SharedInput = Arc<Mutex<InputSet>>;
+
+/// The input maps, also after a script panicked while holding them.
+pub fn lock(input: &SharedInput) -> std::sync::MutexGuard<'_, InputSet> {
+    input.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Actions, Binding};
+    use std::sync::Arc;
+
+    use super::{ActionKind, Binding, InputMaps, InputState};
     use crate::{Input, Pad};
+
+    fn maps() -> InputMaps {
+        let action = |name: &str, kind, bindings: &[&str]| (name.to_owned(), kind, bindings.iter().map(|b| (*b).to_owned()).collect());
+        InputMaps::new(
+            &[
+                action("Player/MoveRight", ActionKind::Value, &["key:D", "axis:LeftX+"]),
+                action("Player/Jump", ActionKind::Trigger, &["key:Space", "pad:South", "mouse:Right"]),
+                action("Player/Fire", ActionKind::Held, &["key:F"]),
+                action("Menu/Confirm", ActionKind::Trigger, &["key:Space"]),
+            ],
+            "",
+        )
+        .unwrap()
+    }
+
+    fn keys(names: &[&str]) -> Input {
+        Input { keys: names.iter().map(|k| (*k).to_owned()).collect(), ..Input::default() }
+    }
 
     #[test]
     fn bindings_read_keys_buttons_and_sticks_past_the_dead_zone() {
-        let actions = Actions::new(&[
-            ("MoveRight".to_owned(), vec!["key:D".to_owned(), "axis:LeftX+".to_owned()]),
-            ("Jump".to_owned(), vec!["key:Space".to_owned(), "pad:South".to_owned(), "mouse:Right".to_owned()]),
-        ])
-        .unwrap();
-        let idle = Input::default();
-        assert_eq!(actions.value("MoveRight", &idle), 0.0);
-        let key = Input { keys: ["D".to_owned()].into_iter().collect(), ..Input::default() };
-        assert_eq!(actions.value("MoveRight", &key), 1.0);
-        let lean = |x: f32| Input { pad: Some(Pad { axes: [x, 0.0, 0.0, 0.0, 0.0, 0.0], buttons: 1 }), ..Input::default() };
-        assert_eq!(actions.value("MoveRight", &lean(0.1)), 0.0, "inside the dead zone");
-        assert!(actions.value("MoveRight", &lean(0.6)) > 0.4 && actions.value("MoveRight", &lean(-0.6)) == 0.0, "only the bound direction");
-        assert_eq!(actions.value("Jump", &lean(0.0)), 1.0, "South is button 0");
-        assert_eq!(actions.value("Jump", &Input { buttons: 2, ..Input::default() }), 1.0);
-        assert_eq!(actions.value("Nothing", &key), 0.0);
-
+        let mut state = InputState::new(Arc::new(maps()));
+        let lean = |x: f32| Input { pad: Some(Pad { axes: [x, 0.0, 0.0, 0.0, 0.0, 0.0], buttons: 0 }), ..Input::default() };
+        state.step(&lean(0.1));
+        assert_eq!(state.value("MoveRight", &lean(0.1)), 0.0, "inside the dead zone");
+        assert!(state.value("MoveRight", &lean(0.6)) > 0.4 && state.value("MoveRight", &lean(-0.6)) == 0.0, "only the bound direction");
         assert!(Binding::parse("pad:Jump").is_err());
         assert!(Binding::parse("axis:LeftX").is_err(), "a direction is needed");
-        assert!(Actions::new(&[("A".to_owned(), vec![]), ("A".to_owned(), vec![])]).is_err(), "names are unique");
+    }
+
+    #[test]
+    fn a_trigger_counts_once_held_while_down_and_only_the_active_map_answers() {
+        let mut state = InputState::new(Arc::new(maps()));
+        assert_eq!(state.active(), "Player", "the first map starts");
+        let space = keys(&["Space", "F"]);
+        state.step(&space);
+        assert_eq!(state.value("Player/Jump", &space), 1.0, "a trigger in the step it goes down");
+        assert_eq!(state.value("Fire", &space), 1.0, "a plain name is in the active map");
+        assert_eq!(state.value("Menu/Confirm", &space), 0.0, "another map's action is not active");
+        state.step(&space);
+        assert_eq!(state.value("Jump", &space), 0.0, "and not while it stays down");
+        assert_eq!(state.value("Fire", &space), 1.0, "held stays on");
+
+        assert!(state.set_active("Menu") && !state.set_active("Nowhere"));
+        state.step(&space);
+        assert_eq!(state.value("Confirm", &space), 0.0, "held from before the switch, it does not go down now");
+        assert_eq!(state.value("Player/Jump", &space), 0.0);
+        let idle = Input::default();
+        state.step(&idle);
+        state.step(&space);
+        assert!(state.pressed("Confirm") && state.value("Confirm", &space) == 1.0);
+    }
+
+    #[test]
+    fn names_are_map_slash_action_unique_and_the_start_map_exists() {
+        let one = |name: &str| (name.to_owned(), ActionKind::Held, Vec::new());
+        assert!(InputMaps::new(&[one("Jump")], "").is_err(), "a map is needed");
+        assert!(InputMaps::new(&[one("Player/Jump/High")], "").is_err());
+        assert!(InputMaps::new(&[one("A/B"), one("A/B")], "").is_err(), "names are unique");
+        assert!(InputMaps::new(&[one("A/B")], "C").is_err(), "the starting map has actions");
+        assert_eq!(InputMaps::new(&[one("A/B")], "A").unwrap().start(), "A");
     }
 }

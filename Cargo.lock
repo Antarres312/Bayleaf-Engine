@@ -603,6 +603,7 @@ dependencies = [
  "bayleaf-core",
  "bayleaf-graph",
  "bayleaf-scene",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
  "wasmi",

@@ -23,13 +23,15 @@ pub(crate) struct Inspected {
     texture: Option<egui::TextureHandle>,
     /// A Markdown file's contents, read and parsed, and its text.
     markdown: Option<(craft_flow::Flow, String)>,
+    /// An Input Map being edited, or why it could not be read.
+    input: Option<Result<crate::input_editor::Draft, String>>,
     /// Shows a Markdown file's text as written instead of formatted.
     show_source: bool,
 }
 
 impl Inspected {
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path, info: Info::default(), modified: None, texture: None, markdown: None, show_source: false }
+        Self { path, info: Info::default(), modified: None, texture: None, markdown: None, show_source: false, input: None }
     }
 
     /// Reads the file again when it changed since it was last read.
@@ -40,6 +42,8 @@ impl Inspected {
             self.modified = modified;
             self.texture = None;
             self.markdown = if crate::markdown_view::is_markdown(&self.path) { crate::markdown_view::read(&self.path) } else { None };
+            let is_input = self.path.extension().is_some_and(|e| e == bayleaf_engine::input_cmds::INPUT_EXTENSION);
+            self.input = is_input.then(|| bayleaf_engine::input_cmds::read_asset(editor_session, &self.path).map(|a| crate::input_editor::Draft::of(&a)));
         }
     }
 }
@@ -59,6 +63,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let name = file.path.file_name().map_or_else(|| file.path.display().to_string(), |n| n.to_string_lossy().into_owned());
     let shown_path = file.path.strip_prefix(editor.session.script_dir()).map_or_else(|_| file.path.clone(), Path::to_path_buf);
     let mut action = None;
+    let mut save_input = None;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(4.0);
@@ -112,7 +117,15 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             action = Some(chosen);
         }
 
-        if file.markdown.is_some() {
+        if let Some(draft) = file.input.as_mut() {
+            ui.add_space(6.0);
+            match draft {
+                Ok(draft) => save_input = crate::input_editor::show(ui, draft),
+                Err(problem) => {
+                    ui.add(egui::Label::new(egui::RichText::new(format!("This Input Map does not read: {problem}")).color(t.text)).wrap());
+                }
+            }
+        } else if file.markdown.is_some() {
             markdown_contents(ui, &mut file);
         } else if let Some(text) = &file.info.text {
             ui.add_space(6.0);
@@ -127,6 +140,14 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         }
     });
 
+    // An edited Input Map is saved; its new time on disk is taken, so the edits are not read back.
+    if let Some(asset) = save_input
+        && editor
+            .dispatch("input.asset.set", &serde_json::json!({ "path": file.path, "asset": { "start": asset.start, "actions": asset.actions } }), None)
+            .is_some()
+    {
+        file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
+    }
     let path = file.path.clone();
     editor.inspected_file = Some(file);
     match action {

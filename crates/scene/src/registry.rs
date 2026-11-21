@@ -4,7 +4,7 @@ use bayleaf_ecs::{Entity, World};
 use serde_json::Value;
 
 use crate::components::{
-    Camera, CharacterBody, Collider, DirectionalLight, Environment, GameRules, Mesh, Name, PlayerControl, PlayerStart, PointLight, Prefab, RigidBody,
+    Camera, CharacterBody, Collider, DirectionalLight, Environment, GameRules, InputMap, Mesh, Name, PlayerControl, PlayerStart, PointLight, Prefab, RigidBody,
     SceneComponent, Scripts, SpotLight, Sprite, Tags, Transform,
 };
 
@@ -16,6 +16,8 @@ pub struct ComponentKind {
     pub removable: bool,
     /// False for components the generic Add Component list leaves out.
     pub listed: bool,
+    /// Where Add Component lists it: folders, then its name (`Light/Point Light`); empty for the top.
+    pub menu: &'static str,
     get: fn(&World, Entity) -> Option<Value>,
     set: fn(&mut World, Entity, Value) -> Result<(), String>,
     add_default: fn(&mut World, Entity) -> Result<(), String>,
@@ -30,6 +32,7 @@ impl ComponentKind {
             label: T::LABEL,
             removable: T::REMOVABLE,
             listed: T::LISTED,
+            menu: T::MENU,
             get: get::<T>,
             set: set::<T>,
             add_default: add_default::<T>,
@@ -103,6 +106,7 @@ impl ComponentRegistry {
                 ComponentKind::of::<PlayerControl>(),
                 ComponentKind::of::<GameRules>(),
                 ComponentKind::of::<PlayerStart>(),
+                ComponentKind::of::<InputMap>(),
                 ComponentKind::of::<Scripts>(),
                 ComponentKind::of::<Tags>(),
                 ComponentKind::of::<Prefab>(),

@@ -246,14 +246,36 @@ fn each_script_is_its_own_card_named_after_its_module() {
 }
 
 #[test]
-fn add_component_menu_lists_components_and_scripts() {
+fn add_component_menu_lists_components_and_scripts_in_folders_by_their_menu_paths() {
     let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-add-menu-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    // A visual script that puts itself under Light.
+    let editor = harness.state_mut();
+    editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
+    let node = editor.dispatch("graph.node.add", &json!({ "kind": "menuPath", "position": [0, 0] }), None).unwrap();
+    editor.dispatch("graph.node.set", &json!({ "node": node["node"], "name": "path", "value": "Light/Flicker" }), None);
+    editor.dispatch("graph.save", &json!({ "path": dir.join("scripts").join("flicker.bscript") }), None);
+    editor.project.rescan_soon();
     create_named(&mut harness, "Actor");
+    harness.run_steps(2);
     harness.get_by_label("Add Component").click();
     harness.run();
-    for label in ["Mesh", "Camera", "Scripts"] {
-        assert!(harness.query_all_by_label(label).next().is_some(), "the menu has {label:?}");
+    for folder in ["Rendering", "Light", "Physics", "Scripts"] {
+        assert!(harness.query_by_label(folder).is_some(), "the menu has the folder {folder:?}");
     }
+    assert!(harness.query_by_label("Point Light").is_none(), "components sit in their folders");
+    harness.get_by_label("Light").click();
+    harness.run();
+    assert!(harness.query_by_label("Point Light").is_some(), "Light holds Point Light");
+    assert!(harness.query_by_label("Flicker").is_some(), "and the script that names Light/Flicker");
+    harness.get_by_label("Flicker").click();
+    harness.run();
+    let actor = harness.state().selected.unwrap();
+    let scripts = harness.state().session.scene().component(actor, "scripts").unwrap();
+    assert!(scripts.to_string().contains("flicker.bscript"), "choosing it adds the script: {scripts}");
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -713,29 +735,43 @@ fn project_settings_turn_physics_off_through_the_command() {
 }
 
 #[test]
-fn input_actions_save_when_they_read_right_and_explain_when_not() {
+fn input_map_edits_save_when_they_read_right_explain_when_not_and_stay_inside_the_panel() {
     let mut harness = harness();
     let dir = std::env::temp_dir().join(format!("bayleaf-ui-actions-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
     harness.state_mut().show_panel(crate::Panel::ProjectSettings);
-    harness.run();
+    harness.run_steps(2);
+    // The project's Input Map opens from Project Settings into the Inspector.
+    harness.get_by_label("Edit the Input Map").click();
+    harness.run_steps(2);
     let jump = |harness: &mut Harness<'static, Editor>| {
-        let settings = harness.state_mut().dispatch("project.settings", &json!({}), None).unwrap();
-        settings["settings"]["input"]["actions"].as_array().unwrap().iter().find(|a| a["name"] == "Jump").unwrap()["bindings"].clone()
+        let asset = harness.state_mut().dispatch("input.asset", &json!({ "path": "input/game.binput" }), None).unwrap();
+        asset["asset"]["actions"].as_array().unwrap().iter().find(|a| a["name"] == "Player/Jump").unwrap()["bindings"].clone()
     };
-    let retype = |harness: &mut Harness<'static, Editor>, text: &str| {
-        harness.get_by_label("Bindings of Jump").focus();
+    let retype = |harness: &mut Harness<'static, Editor>, label: &str, text: &str| {
+        harness.get_by_label(label).focus();
         harness.run();
         harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        harness.get_by_label("Bindings of Jump").type_text(text);
+        harness.get_by_label(label).type_text(text);
         harness.run();
     };
-    retype(&mut harness, "key:Space, key:J");
+    retype(&mut harness, "Bindings of Player/Jump", "key:Space, key:J");
     assert!(jump(&mut harness).as_array().unwrap().iter().any(|b| b == "key:J"), "a good binding is saved");
-    retype(&mut harness, "key:J, pad:Nope");
+    retype(&mut harness, "Bindings of Player/Jump", "key:J, pad:Nope");
     assert!(harness.query_by_label_contains("Not saved").is_some(), "a bad one is explained");
     assert!(!jump(&mut harness).as_array().unwrap().iter().any(|b| b == "pad:Nope"), "and not saved");
+    retype(&mut harness, "Bindings of Player/Jump", "key:J");
+    retype(&mut harness, "Name of Player/Jump", "Jump");
+    assert!(harness.query_by_label_contains("name an action map/action").is_some(), "a name without its map is explained");
+
+    // Every action row stays inside the Inspector: the last Remove button ends where the first does.
+    let removes: Vec<egui::Rect> = harness
+        .query_all(egui_kittest::kittest::By::new().predicate(|n| n.label().is_some_and(|l| l.starts_with("Remove Player/") || l.starts_with("Remove Menu/"))))
+        .map(|n| n.rect())
+        .collect();
+    assert!(removes.len() > 3);
+    assert!(removes.iter().all(|r| (r.right() - removes[0].right()).abs() < 1.0), "rows do not drift: {removes:?}");
     std::fs::remove_dir_all(&dir).ok();
 }
 

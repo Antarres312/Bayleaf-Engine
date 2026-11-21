@@ -18,6 +18,9 @@ pub trait SceneComponent: Component + Serialize + DeserializeOwned + Default {
     /// False for components the inspector shows in its own way and the generic Add Component
     /// list leaves out.
     const LISTED: bool = true;
+    /// Where Add Component lists it: folders, then its name (`Light/Point Light`); empty for
+    /// the top level.
+    const MENU: &'static str = "";
 
     /// Checks a value that came from a file or a command.
     fn validate(&self) -> Result<(), String> {
@@ -161,6 +164,7 @@ impl Default for Mesh {
 impl SceneComponent for Mesh {
     const NAME: &'static str = "mesh";
     const LABEL: &'static str = "Mesh";
+    const MENU: &'static str = "Rendering/Mesh";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -206,6 +210,7 @@ impl Default for Camera {
 impl SceneComponent for Camera {
     const NAME: &'static str = "camera";
     const LABEL: &'static str = "Camera";
+    const MENU: &'static str = "Rendering/Camera";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -252,6 +257,7 @@ impl Default for DirectionalLight {
 impl SceneComponent for DirectionalLight {
     const NAME: &'static str = "directionalLight";
     const LABEL: &'static str = "Directional Light";
+    const MENU: &'static str = "Light/Directional Light";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -298,6 +304,7 @@ impl Default for Environment {
 impl SceneComponent for Environment {
     const NAME: &'static str = "environment";
     const LABEL: &'static str = "Environment";
+    const MENU: &'static str = "Rendering/Environment";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -338,6 +345,7 @@ impl Default for PointLight {
 impl SceneComponent for PointLight {
     const NAME: &'static str = "pointLight";
     const LABEL: &'static str = "Point Light";
+    const MENU: &'static str = "Light/Point Light";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -374,6 +382,7 @@ impl Default for SpotLight {
 impl SceneComponent for SpotLight {
     const NAME: &'static str = "spotLight";
     const LABEL: &'static str = "Spot Light";
+    const MENU: &'static str = "Light/Spot Light";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -423,6 +432,7 @@ impl Default for Sprite {
 impl SceneComponent for Sprite {
     const NAME: &'static str = "sprite";
     const LABEL: &'static str = "Sprite";
+    const MENU: &'static str = "Rendering/Sprite";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -581,6 +591,7 @@ impl Default for RigidBody {
 impl SceneComponent for RigidBody {
     const NAME: &'static str = "rigidBody";
     const LABEL: &'static str = "Rigid Body";
+    const MENU: &'static str = "Physics/Rigid Body";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -635,6 +646,7 @@ impl Default for Collider {
 impl SceneComponent for Collider {
     const NAME: &'static str = "collider";
     const LABEL: &'static str = "Collider";
+    const MENU: &'static str = "Physics/Collider";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -676,6 +688,7 @@ impl Default for CharacterBody {
 impl SceneComponent for CharacterBody {
     const NAME: &'static str = "characterBody";
     const LABEL: &'static str = "Character";
+    const MENU: &'static str = "Physics/Character";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -729,6 +742,7 @@ impl Default for PlayerControl {
 impl SceneComponent for PlayerControl {
     const NAME: &'static str = "playerControl";
     const LABEL: &'static str = "Player Control";
+    const MENU: &'static str = "Gameplay/Player Control";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -783,6 +797,7 @@ impl Default for GameRules {
 impl SceneComponent for GameRules {
     const NAME: &'static str = "gameRules";
     const LABEL: &'static str = "Game Rules";
+    const MENU: &'static str = "Gameplay/Game Rules";
     const REMOVABLE: bool = true;
 
     fn validate(&self) -> Result<(), String> {
@@ -810,5 +825,33 @@ pub struct PlayerStart {}
 impl SceneComponent for PlayerStart {
     const NAME: &'static str = "playerStart";
     const LABEL: &'static str = "Player Start";
+    const MENU: &'static str = "Gameplay/Player Start";
     const REMOVABLE: bool = true;
+}
+
+/// This object's own Input Map: its scripts and Player Control read their actions from this
+/// asset instead of the project's (Project Settings), with its own active map.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InputMap {
+    /// A `.binput` file, relative to the project folder.
+    pub asset: String,
+    /// The map active when play starts; empty for the asset's own starting map.
+    #[serde(default)]
+    pub start: String,
+}
+
+impl SceneComponent for InputMap {
+    const NAME: &'static str = "inputMap";
+    const LABEL: &'static str = "Input Map";
+    const MENU: &'static str = "Input/Input Map";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        file_field("asset", &self.asset, &["binput"])?;
+        if self.start.len() > 64 || !self.start.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err("start must be a map name: up to 64 letters, digits or _".to_owned());
+        }
+        Ok(())
+    }
 }

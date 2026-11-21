@@ -39,6 +39,7 @@ mod raw {
         pub fn state_get(scope: i32, handle: i32, name_ptr: *const u8, name_len: usize, out: *mut f64) -> i32;
         pub fn state_set(scope: i32, handle: i32, name_ptr: *const u8, name_len: usize, value: f64) -> i32;
         pub fn game_end(won: i32) -> i32;
+        pub fn input_map_set(handle: i32, name_ptr: *const u8, name_len: usize) -> i32;
     }
 }
 
@@ -135,6 +136,9 @@ mod raw {
         0
     }
     pub unsafe fn game_end(_: i32) -> i32 {
+        0
+    }
+    pub unsafe fn input_map_set(_: i32, _: *const u8, _: usize) -> i32 {
         0
     }
 }
@@ -316,6 +320,12 @@ pub(crate) fn state_get(scope: i32, handle: i32, name: &str) -> Option<f64> {
 pub(crate) fn state_set(scope: i32, handle: i32, name: &str, value: f64) -> bool {
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::state_set(scope, handle, name.as_ptr(), name.len(), value) != 0 }
+}
+
+/// Makes a map active: the project's Input Map (handle 0) or an object's own.
+pub(crate) fn input_map_set(handle: i32, map: &str) -> bool {
+    // SAFETY: the pointer and length describe `map`; the host only reads.
+    unsafe { raw::input_map_set(handle, map.as_ptr(), map.len()) != 0 }
 }
 
 pub(crate) fn game_end(won: bool) -> bool {

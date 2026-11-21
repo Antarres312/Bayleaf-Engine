@@ -11,6 +11,7 @@ mod builtin;
 pub mod code_scripts;
 pub mod confine;
 mod graph_cmds;
+pub mod input_cmds;
 mod play;
 pub mod prefab_cmds;
 pub mod project_cmds;
@@ -410,6 +411,7 @@ impl CommandRegistry {
         commands.extend(code_scripts::commands());
         commands.extend(asset_info::commands());
         commands.extend(asset_cmds::commands());
+        commands.extend(input_cmds::commands());
         Self { commands }
     }
 

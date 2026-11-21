@@ -55,7 +55,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let scripts: Vec<ScriptRef> = editor.session.scene().get::<Scripts>(id).map(|s| s.0.clone()).unwrap_or_default();
     let cards: Vec<ScriptCard> =
         scripts.into_iter().map(|script| ScriptCard { declared: editor.script_info.properties(&script_dir.join(&script.module)), script }).collect();
-    let script_files = editor.project.script_files();
+    // Every script of the project, with the menu path it gives itself (read once per file change).
+    let script_menus: Vec<(String, Option<String>)> =
+        editor.project.script_files().into_iter().map(|module| (module.clone(), editor.script_info.menu(&script_dir.join(&module)))).collect();
     let file_fields = file_fields(editor, id, &script_dir);
     let mut open_material: Option<std::path::PathBuf> = None;
     let mut pending = None;
@@ -179,27 +181,36 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         let missing: Vec<_> = kinds.iter().filter(|k| k.listed && !components.iter().any(|(n, _)| n == &k.name)).collect();
         ui.add_space(4.0);
         let width = ui.available_width();
+        // Built-in components and scripts, in folders by their menu paths (`Light/Point Light`).
+        let mut entries: Vec<MenuEntry> = missing
+            .iter()
+            .map(|kind| MenuEntry {
+                path: if kind.menu.is_empty() { vec![kind.label.to_owned()] } else { kind.menu.split('/').map(str::to_owned).collect() },
+                hint: None,
+                add: Pending::Add(kind.name),
+            })
+            .collect();
+        for (module, menu) in &script_menus {
+            let name = ScriptRef { module: module.clone(), properties: Default::default() }.display_name();
+            let path = match menu {
+                Some(menu) => menu.split('/').map(str::to_owned).collect(),
+                None => vec!["Scripts".to_owned(), name],
+            };
+            entries.push(MenuEntry { path, hint: Some(module.clone()), add: Pending::AddScript(module.clone()) });
+        }
+        let mut chosen = None;
         egui::containers::menu::MenuButton::from_button(egui::Button::new("Add Component").min_size(egui::vec2(width, ROW_HEIGHT + 2.0))).ui(ui, |ui| {
             ui.set_min_width(width.min(260.0));
-            for kind in missing {
-                if ui.button(kind.label).clicked() {
-                    pending = Some(Pending::Add(kind.name));
-                    ui.close();
-                }
-            }
-            ui.separator();
-            ui.label(egui::RichText::new("Scripts").small().color(t.text_muted));
-            if script_files.is_empty() {
-                ui.label(egui::RichText::new("No .wasm files in the project folder").color(t.text_muted));
-            }
-            for module in &script_files {
-                let name = ScriptRef { module: module.clone(), properties: Default::default() }.display_name();
-                if ui.button(name).on_hover_text(module).clicked() {
-                    pending = Some(Pending::AddScript(module.clone()));
-                    ui.close();
-                }
+            let all: Vec<usize> = (0..entries.len()).collect();
+            menu_tree(ui, &entries, &all, 0, &mut chosen);
+            if script_menus.is_empty() {
+                ui.separator();
+                ui.label(egui::RichText::new("No scripts in the project folder").color(t.text_muted));
             }
         });
+        if let Some(index) = chosen {
+            pending = Some(entries.swap_remove(index).add);
+        }
         ui.label(egui::RichText::new("Tip: drag a script from the Project panel onto this panel.").small().color(t.text_muted));
     });
 
@@ -217,11 +228,56 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     }
 
     if let Some(path) = open_material {
-        editor.open_graph(&path);
+        // A graph opens in the graph editor; an Input Map in the Inspector's editor.
+        if path.extension().is_some_and(|e| e == bayleaf_engine::input_cmds::INPUT_EXTENSION) {
+            editor.inspect_file(path);
+        } else {
+            editor.open_graph(&path);
+        }
     }
     apply(editor, id, pending);
     if gesture_ended {
         editor.gesture += 1;
+    }
+}
+
+/// One choice of Add Component: where it is listed (folders, then its name) and what it adds.
+struct MenuEntry {
+    path: Vec<String>,
+    /// Shown on hover: a script's module.
+    hint: Option<String>,
+    add: Pending,
+}
+
+/// The entries `indices` at folder depth `depth`: their folders first, each a submenu, then the
+/// entries that end here. Sets `chosen` to the clicked entry.
+fn menu_tree(ui: &mut egui::Ui, entries: &[MenuEntry], indices: &[usize], depth: usize, chosen: &mut Option<usize>) {
+    let mut folders: Vec<&str> = Vec::new();
+    for &i in indices {
+        if let Some(folder) = entries[i].path.get(depth).filter(|_| entries[i].path.len() > depth + 1)
+            && !folders.contains(&folder.as_str())
+        {
+            folders.push(folder);
+        }
+    }
+    folders.sort_unstable();
+    for folder in &folders {
+        let inside: Vec<usize> = indices.iter().copied().filter(|&i| entries[i].path.len() > depth + 1 && entries[i].path[depth] == *folder).collect();
+        ui.menu_button(*folder, |ui| menu_tree(ui, entries, &inside, depth + 1, chosen));
+    }
+    let leaves: Vec<usize> = indices.iter().copied().filter(|&i| entries[i].path.len() == depth + 1).collect();
+    if !folders.is_empty() && !leaves.is_empty() {
+        ui.separator();
+    }
+    for i in leaves {
+        let mut button = ui.button(&entries[i].path[depth]);
+        if let Some(hint) = &entries[i].hint {
+            button = button.on_hover_text(hint);
+        }
+        if button.clicked() {
+            *chosen = Some(i);
+            ui.close();
+        }
     }
 }
 
@@ -409,10 +465,11 @@ fn file_row(
 /// The file fields of `id`'s components, with the project's files of each kind and whether the
 /// chosen file loads.
 fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path::Path) -> Vec<FileField> {
-    use bayleaf_engine::scene::components::{Mesh, Sprite};
+    use bayleaf_engine::scene::components::{InputMap, Mesh, Sprite};
     let scene = editor.session.scene();
     let mesh = scene.get::<Mesh>(id).cloned();
     let sprite = scene.get::<Sprite>(id).cloned();
+    let input_map = scene.get::<InputMap>(id).cloned();
     let mut fields = Vec::new();
     if let Some(mesh) = mesh {
         let material = (!mesh.material.is_empty()).then(|| editor.scene_view.materials.get(&base.join(&mesh.material)).err()).flatten();
@@ -449,6 +506,19 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
             files: editor.project.image_files(),
             problem: image,
             editable: false,
+        });
+    }
+    if let Some(component) = input_map {
+        let missing = !component.asset.is_empty() && !base.join(&component.asset).is_file();
+        fields.push(FileField {
+            component: "inputMap",
+            field: "asset",
+            label: "Asset",
+            none: "None (the project's Input Map)",
+            no_files: "No .binput files in the project folder",
+            files: editor.project.input_map_files(),
+            problem: missing.then(|| format!("{} is not there", component.asset)),
+            editable: true,
         });
     }
     fields

@@ -84,7 +84,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    show formatted in the Inspector (read by craft-markdown), with Source for the text as written; the
    mouse wheel zooms the graph editor; a Rust script is one entry in the Project panel, dragged as its
    module onto an object in the hierarchy, the scene view or the Inspector (built first when it has no
-   module yet); File > Open Recent lists the last 10 projects.
+   module yet); File > Open Recent lists the last 10 projects. Then: Add Component lists built-in
+   components and scripts in folders by their menu paths (`Light/Point Light`); a script names its
+   own (`menu` in `bayleaf_describe`, `Script::MENU`, the Menu Path node).
 3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
    a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with
@@ -151,7 +153,13 @@ No crate below L6 may use egui, eframe, winit or rfd.
    `triggerExit`.
 7. **M6 Gameplay framework** as opt-in modules (`gameplay` feature of `bayleaf-engine`). Started:
    input actions in the project settings (named actions bound to keys, mouse, gamepad buttons and
-   sticks; `action` in the ABI, Action and On Action Pressed nodes, the Input Actions panel), and
+   sticks; `action` in the ABI, Action and On Action Pressed nodes, the Input Actions panel); since
+   then Input Map assets (`.binput`): actions named `map/action`, each a trigger, held or value, of
+   which one map is active at a time; Project Settings names the project's asset (project format 3;
+   older projects move their actions into one when opened), and an Input Map component gives an
+   object its own; `input_map_set` and the Set Input Map node switch maps, `input.asset`,
+   `input.asset.set`, `input.map.set` and `input.state` serve agents, and the Inspector edits an
+   asset (scene format 12); and
    the `controller` role: Player Control steers an object's Character with MoveForward, MoveBack,
    MoveLeft, MoveRight and Jump relative to the camera, turns it to face where it walks, and makes the
    first camera trail it (scene format version 10). Then the `rules` role: a Game Rules component

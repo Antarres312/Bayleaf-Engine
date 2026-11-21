@@ -29,7 +29,8 @@ const MATH_OUT: &[PinDef] = &[pin("result", "Result", Any)];
 const MESSAGE: SettingDef = SettingDef { name: "message", label: "Message", kind: SettingKind::Name("hit") };
 const VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("count") };
 const VECTOR_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("target") };
-const ACTION: SettingDef = SettingDef { name: "action", label: "Action", kind: SettingKind::Name("Jump") };
+/// An action of an Input Map: `Jump` in the active map, or `Player/Jump`, live only while Player is active.
+const ACTION: SettingDef = SettingDef { name: "action", label: "Action", kind: SettingKind::Text("Jump") };
 const STATE_NAME: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("score") };
 /// Whose value: the game's, a player's (the one named in Player, else the first), this object's own
 /// when it is a player, or a saved one that lasts from one play to the next.
@@ -85,7 +86,7 @@ pub const CATALOG: Catalog = Catalog {
             kind: "action",
             label: "Action",
             category: "Inputs",
-            description: "How far an input action from the project settings is pressed (0 to 1), and whether it is held.",
+            description: "An input action's value by its kind (a trigger 1 in the step it goes down, held 1 while down, value how far it is pressed), and whether it is down. Name it Jump for the active map, or Player/Jump; actions of maps that are not active read 0.",
             inputs: &[],
             outputs: &[pin("value", "Value", Float), pin("held", "Held", Bool)],
             settings: &[ACTION],
@@ -95,7 +96,7 @@ pub const CATALOG: Catalog = Catalog {
             kind: "actionPressed",
             label: "On Action Pressed",
             category: "Events",
-            description: "Runs once in the step when an input action from the project settings is pressed.",
+            description: "Runs once in the step an input action goes down, while its map is active.",
             inputs: &[],
             outputs: &[THEN],
             settings: &[ACTION],
@@ -233,6 +234,16 @@ pub const CATALOG: Catalog = Catalog {
             &[pin("x", "X", Float), pin("y", "Y", Float), pin("z", "Z", Float)],
         ),
         NodeDef {
+            kind: "menuPath",
+            label: "Menu Path",
+            category: "Values",
+            description: "Where Add Component lists this script: folders, then its name (Light/Flicker). Without it the script is under Scripts.",
+            inputs: &[],
+            outputs: &[],
+            settings: &[SettingDef { name: "path", label: "Path", kind: SettingKind::Text("Scripts/My Script") }],
+            unique: true,
+        },
+        NodeDef {
             kind: "property",
             label: "Property",
             category: "Values",
@@ -326,6 +337,19 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[RUN, number("amount", "Amount", Float, 1.0)],
             outputs: &[THEN],
             settings: &[STATE_NAME, STATE_SCOPE, STATE_PLAYER],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setInputMap",
+            label: "Set Input Map",
+            category: "Inputs",
+            description: "Makes another map of an Input Map active (Player, Menu…): the project's, or this object's own when it has an Input Map component. Only the active map's actions work.",
+            inputs: &[RUN],
+            outputs: &[THEN],
+            settings: &[
+                SettingDef { name: "map", label: "Map", kind: SettingKind::Name("Menu") },
+                SettingDef { name: "scope", label: "Scope", kind: SettingKind::Choice(&["Project", "This Object"]) },
+            ],
             unique: false,
         },
         NodeDef {
@@ -557,7 +581,14 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     if !problems.is_empty() {
         return Err(problems);
     }
-    let description = serde_json::json!({ "properties": c.properties.iter().map(|(n, v)| serde_json::json!([n, v])).collect::<Vec<_>>() }).to_string();
+    let mut description = serde_json::json!({ "properties": c.properties.iter().map(|(n, v)| serde_json::json!([n, v])).collect::<Vec<_>>() });
+    if let Some(node) = graph.nodes.iter().find(|n| n.kind == "menuPath") {
+        match crate::menu_path(&c.setting_text(node.id, "path", "Scripts/My Script")) {
+            Ok(path) => description["menu"] = serde_json::json!(path),
+            Err(problem) => return Err(vec![Problem::on(node.id, problem)]),
+        }
+    }
+    let description = description.to_string();
     let (describe_at, describe_len) = c.text(description.as_bytes());
     let pages = c.next.div_ceil(65536).max(1);
 
@@ -739,6 +770,11 @@ impl Compiler<'_> {
                     format!("(f64.add (call $state_f64 {target} (i32.const {at}) (i32.const {len})) (f64.promote_f32 {value}))")
                 };
                 let _ = writeln!(code, "{indent}(drop (call $state_set {target} (i32.const {at}) (i32.const {len}) {new}))");
+            }
+            "setInputMap" => {
+                let (at, len) = self.named(next, "map", "name the map to make active")?;
+                let handle = if self.setting_text(next, "scope", "Project") == "This Object" { "(call $self_handle)" } else { "(i32.const 0)" };
+                let _ = writeln!(code, "{indent}(drop (call $input_map_set {handle} (i32.const {at}) (i32.const {len})))");
             }
             "endGame" => {
                 let won = self.input(next, "won").and_then(|v| as_bool(next, v))?;
@@ -1048,6 +1084,7 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "state_set" (func $state_set (param i32 i32 i32 i32 f64) (result i32)))
   (import "bayleaf" "game_end" (func $game_end (param i32) (result i32)))
   (import "bayleaf" "action" (func $action (param i32 i32) (result f32)))
+  (import "bayleaf" "input_map_set" (func $input_map_set (param i32 i32 i32) (result i32)))
   (import "bayleaf" "character_walk" (func $character_walk (param i32 f32 f32 f32) (result i32)))
   (import "bayleaf" "character_jump" (func $character_jump (param i32 f32) (result i32)))
   (import "bayleaf" "character_grounded" (func $character_grounded (param i32) (result i32)))

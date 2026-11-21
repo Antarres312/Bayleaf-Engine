@@ -24,23 +24,23 @@ pub struct Command {
     pub facing: Option<f32>,
 }
 
-/// Commands for every object with Player Control. `value` gives an action's value (0 to 1) and
-/// `pressed` whether it went down this step. Directions are relative to where the scene's first
+/// Commands for every object with Player Control. `value` gives an action's value (0 to 1) for an
+/// object and `pressed` whether it went down this step: each player may read its own Input Map. Directions are relative to where the scene's first
 /// camera looks, flattened onto the ground; without a camera, forward is -Z.
-pub fn drive(scene: &Scene, value: &dyn Fn(&str) -> f32, pressed: &dyn Fn(&str) -> bool) -> Vec<Command> {
+pub fn drive(scene: &Scene, value: &dyn Fn(StableId, &str) -> f32, pressed: &dyn Fn(StableId, &str) -> bool) -> Vec<Command> {
     let forward = camera_forward(scene);
     let right = Vec3::new(-forward.z, 0.0, forward.x);
-    let (x, z) = (value(MOVE_RIGHT) - value(MOVE_LEFT), value(MOVE_FORWARD) - value(MOVE_BACK));
-    let mut direction = right * x + forward * z;
-    if direction.length() > 1.0 {
-        direction = direction.normalize();
-    }
-    let jump = pressed(JUMP);
     scene
         .world_matrices()
         .into_iter()
         .filter_map(|(id, _)| {
             let control = scene.get::<PlayerControl>(id)?;
+            let (x, z) = (value(id, MOVE_RIGHT) - value(id, MOVE_LEFT), value(id, MOVE_FORWARD) - value(id, MOVE_BACK));
+            let mut direction = right * x + forward * z;
+            if direction.length() > 1.0 {
+                direction = direction.normalize();
+            }
+            let jump = pressed(id, JUMP);
             let walk = (direction * control.speed).to_array();
             let facing = (control.turn_to_move && direction.length_squared() > 1e-4).then(|| (-direction.x).atan2(-direction.z).to_degrees());
             Some(Command { object: id, walk, jump: jump.then_some(control.jump_speed), facing })
@@ -100,8 +100,8 @@ mod tests {
     #[test]
     fn forward_follows_the_camera_and_the_hero_turns_to_walk() {
         let (scene, hero) = scene_with_camera(0.0);
-        let held = |name: &str| if name == "MoveForward" { 1.0 } else { 0.0 };
-        let commands = drive(&scene, &held, &|_| false);
+        let held = |_, name: &str| if name == "MoveForward" { 1.0 } else { 0.0 };
+        let commands = drive(&scene, &held, &|_, _| false);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].object, hero);
         assert!(commands[0].walk[2] < -4.9, "the camera looks down -Z, so forward is -Z at 5 m/s: {:?}", commands[0].walk);
@@ -110,11 +110,11 @@ mod tests {
 
         // The camera turned 90° to the left looks down -X; forward goes there too.
         let (scene, _) = scene_with_camera(90.0);
-        let commands = drive(&scene, &held, &|name| name == "Jump");
+        let commands = drive(&scene, &held, &|_, name| name == "Jump");
         assert!(commands[0].walk[0] < -4.9, "{:?}", commands[0].walk);
         assert_eq!(commands[0].jump, Some(5.0));
-        let diagonal = |name: &str| if name == "MoveForward" || name == "MoveRight" { 1.0 } else { 0.0 };
-        let w = drive(&scene, &diagonal, &|_| false)[0].walk;
+        let diagonal = |_, name: &str| if name == "MoveForward" || name == "MoveRight" { 1.0 } else { 0.0 };
+        let w = drive(&scene, &diagonal, &|_, _| false)[0].walk;
         assert!(((w[0] * w[0] + w[2] * w[2]).sqrt() - 5.0).abs() < 1e-3, "diagonals are not faster: {w:?}");
     }
 

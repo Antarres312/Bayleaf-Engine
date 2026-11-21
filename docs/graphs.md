@@ -83,9 +83,13 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False
   Variable** for true or false. Each script on each object has its own variables; numbers and vectors
   start at 0, true/false at false.
-- **Action** gives how far an input action from the project settings is pressed and whether it is
-  held; **On Action Pressed** runs once when it goes down. Prefer actions to keys, so players can
-  rebind them.
+- **Action** gives an input action's value by its kind (a trigger 1 in the step it goes down, held 1
+  while down, value how far it is pressed) and whether it is down; **On Action Pressed** runs once
+  when it goes down. Name it `Jump` for the active map or `Player/Jump`; only the active map's
+  actions read. **Set Input Map** makes another map active, in the project's Input Map or this
+  object's own. Prefer actions to keys, so players can rebind them.
+- **Menu Path** says where Add Component lists the script (`Light/Flicker`); without it the script
+  is under Scripts.
 - **On Key Pressed** runs once when its key goes down; **On Timer** runs every given number of
   seconds of play.
 - **Walk**, **Jump** and **On Ground** steer an object with a Character: it walks at the given velocity

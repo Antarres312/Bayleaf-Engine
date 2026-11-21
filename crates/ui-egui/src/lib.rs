@@ -16,6 +16,7 @@ pub mod gamepad;
 mod gizmo;
 mod graph_view;
 mod hierarchy;
+mod input_editor;
 mod inspector;
 mod markdown_view;
 mod project;
@@ -278,6 +279,13 @@ impl Editor {
 
     /// Opens a panel if it is hidden and brings its tab to the front, once the panels are drawn
     /// (while they draw, the dock is out of the editor).
+    /// Shows a file in the Inspector in place of the selected objects, bringing the Inspector up.
+    pub(crate) fn inspect_file(&mut self, path: std::path::PathBuf) {
+        self.select_only(None);
+        self.inspected_file = Some(file_inspector::Inspected::new(path));
+        self.show_panel(Panel::Inspector);
+    }
+
     pub(crate) fn show_panel(&mut self, panel: Panel) {
         self.raise_panel = Some(panel);
         self.apply_raise();

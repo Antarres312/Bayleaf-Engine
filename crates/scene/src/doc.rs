@@ -13,8 +13,8 @@ pub const FORMAT: &str = "bayleaf.scene";
 /// component; version 7 added `environment.fogDistance`, `spotLight.shadows`, `pointLight.shadows` and prefab overrides; version 8
 /// added `rigidBody` and `collider`; version 9 added
 /// `characterBody`; version 10 added `playerControl`; version 11
-/// added `gameRules` and `playerStart`. Older files still load.
-pub const VERSION: u32 = 11;
+/// added `gameRules` and `playerStart`; version 12 added `inputMap`. Older files still load.
+pub const VERSION: u32 = 12;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.

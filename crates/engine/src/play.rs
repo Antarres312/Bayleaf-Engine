@@ -18,7 +18,7 @@ const MAX_STEPS: u32 = 100_000;
 pub(crate) struct Play {
     /// The scene as it was when play mode started; restored on stop.
     snapshot: SceneDoc,
-    host: ScriptHost,
+    pub(crate) host: ScriptHost,
     pub(crate) time: f64,
     pub(crate) paused: bool,
     since_reload_check: f32,
@@ -27,9 +27,8 @@ pub(crate) struct Play {
     physics: Option<bayleaf_physics::Physics>,
     /// Whether play mode already said physics is not there.
     told_no_physics: bool,
-    /// The project's input actions, and those held in the last step (to tell when one goes down).
-    actions: bayleaf_script::actions::Actions,
-    held: std::collections::HashSet<String>,
+    /// Input Map assets read in this session, by path: their maps, or why they could not be read.
+    input_assets: InputAssets,
     /// Whether the end of the game was already announced.
     told_outcome: bool,
     /// The saved values as the project holds them; `None` when its file could not be read, so it
@@ -170,13 +169,13 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
     ]
 }
 
-fn playing(session: &Session) -> Result<(), String> {
+pub(crate) fn playing(session: &Session) -> Result<(), String> {
     if session.is_playing() { Ok(()) } else { Err("play mode is not running".to_owned()) }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct NoParams {}
+pub(crate) struct NoParams {}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -213,12 +212,15 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let snapshot = session.scene.to_doc();
     let mut host = ScriptHost::new();
     let input = std::sync::Arc::clone(&session.input);
-    // Broken actions in the project file are reported, and play runs without them.
-    let (actions, actions_problem) = match crate::project_cmds::settings_of(session).input.actions() {
-        Ok(actions) => (actions, None),
-        Err(problem) => (bayleaf_script::actions::Actions::default(), Some(problem)),
-    };
-    host.set_actions(actions.clone());
+    // Input: the project's Input Map, and objects' own, ready before any script starts. A map that
+    // cannot be read is reported, and play runs without it.
+    let mut input_problems = Vec::new();
+    match project_input(session) {
+        Ok(maps) => host.with_input(|set| set.project = maps.map(bayleaf_script::actions::InputState::new)),
+        Err(problem) => input_problems.push(format!("The project's Input Map: {problem}")),
+    }
+    let mut input_assets = InputAssets::new();
+    input_problems.extend(sync_object_input(session, &host, &mut input_assets));
     // Saved values from earlier plays, before any script starts.
     let (saved_on_disk, saved_problem) = match crate::saved::read_saved(session) {
         Ok(values) => (Some(values), None),
@@ -242,8 +244,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         #[cfg(feature = "physics")]
         physics,
         told_no_physics: false,
-        actions,
-        held: std::collections::HashSet::new(),
+        input_assets,
         told_outcome: false,
         saved_on_disk,
         #[cfg(feature = "physics")]
@@ -255,8 +256,8 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         since_reload_check: 0.0,
     });
     session.log(Level::Info, format!("Play mode started: {running} of {scripts} scripts running."));
-    if let Some(problem) = actions_problem {
-        session.log(Level::Error, format!("Input actions in the project settings: {problem}"));
+    for problem in input_problems {
+        session.log(Level::Error, problem);
     }
     if let Some(problem) = saved_problem {
         session.log(Level::Error, format!("Saved values could not be read, so play starts without them and they are not saved: {problem}"));
@@ -368,8 +369,21 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
         let dt = remaining.min(MAX_STEP);
         remaining -= dt;
         let input = std::sync::Arc::clone(&session.input);
+        // Objects that came or went (spawned, destroyed) get or drop their own Input Map.
+        let mut assets = match session.play.as_mut() {
+            Some(play) => std::mem::take(&mut play.input_assets),
+            None => return,
+        };
+        let problems = session.play.as_ref().map(|play| sync_object_input(session, &play.host, &mut assets)).unwrap_or_default();
+        if let Some(play) = session.play.as_mut() {
+            play.input_assets = assets;
+        }
+        for problem in problems {
+            session.log(Level::Error, problem);
+        }
         let Some(play) = session.play.as_mut() else { return };
         play.time += f64::from(dt);
+        play.host.with_input(|set| set.step(&input));
         #[cfg(feature = "physics")]
         if let Some(physics) = &play.physics {
             play.host.set_velocities(physics.velocities());
@@ -377,7 +391,6 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
         }
         #[cfg(all(feature = "physics", feature = "gameplay"))]
         drive_players(play, &mut session.scene, &input);
-        play.held = play.actions.names().filter(|n| play.actions.value(n, &input) > 0.5).map(str::to_owned).collect();
         play.host.update(&mut session.scene, dt, play.time, &input);
         apply_requests(session);
         #[cfg(feature = "physics")]
@@ -583,14 +596,72 @@ fn cast(_: &mut Session, p: RaycastParams) -> Result<Value, CommandError> {
     Err(CommandError::Failed("this build has no physics".to_owned()))
 }
 
+/// Input Map assets read in a play session, by path: their maps, or why they could not be read.
+type InputAssets = std::collections::HashMap<String, Result<std::sync::Arc<bayleaf_script::actions::InputMaps>, String>>;
+
+/// The project's Input Map: the asset Project Settings names, actions still in an old project
+/// file, or for a scene outside any project the usual controls. `None` when the project has none.
+fn project_input(session: &Session) -> Result<Option<std::sync::Arc<bayleaf_script::actions::InputMaps>>, String> {
+    if session.project_dir().is_none() {
+        return crate::input_cmds::InputAsset::starter().maps().map(|m| Some(std::sync::Arc::new(m)));
+    }
+    let settings = crate::project_cmds::settings_of(session).input;
+    if settings.map.is_empty() {
+        return match settings.legacy_asset() {
+            Some(asset) => asset.maps().map(|m| Some(std::sync::Arc::new(m))),
+            None => Ok(None),
+        };
+    }
+    crate::input_cmds::load_maps(session, std::path::Path::new(&settings.map)).map(Some)
+}
+
+/// Gives each object with an Input Map component its own map state (starting with the
+/// component's map when it names one), and drops those of objects that are gone. Returns what
+/// went wrong with assets read for the first time and with starting maps.
+fn sync_object_input(session: &Session, host: &ScriptHost, assets: &mut InputAssets) -> Vec<String> {
+    let mut problems = Vec::new();
+    let wanted: Vec<(bayleaf_core::StableId, bayleaf_scene::components::InputMap)> = session
+        .scene
+        .world_matrices()
+        .into_iter()
+        .filter_map(|(id, _)| session.scene.get::<bayleaf_scene::components::InputMap>(id).filter(|c| !c.asset.is_empty()).map(|c| (id, c.clone())))
+        .collect();
+    host.with_input(|set| {
+        set.objects.retain(|id, _| wanted.iter().any(|(w, _)| w == id));
+        for (id, component) in wanted {
+            if set.objects.contains_key(&id) {
+                continue;
+            }
+            let maps = assets.entry(component.asset.clone()).or_insert_with(|| {
+                let loaded = crate::input_cmds::load_maps(session, std::path::Path::new(&component.asset));
+                if let Err(problem) = &loaded {
+                    problems.push(format!("Input Map {}: {problem}", component.asset));
+                }
+                loaded
+            });
+            let Ok(maps) = maps else { continue };
+            let mut state = bayleaf_script::actions::InputState::new(std::sync::Arc::clone(maps));
+            if !component.start.is_empty() && !state.set_active(&component.start) {
+                let name = session.scene.name(id).unwrap_or("Object");
+                problems.push(format!("[{name}] Input Map {} has no map {}; it starts with {}", component.asset, component.start, state.active()));
+            }
+            set.objects.insert(id, state);
+        }
+    });
+    problems
+}
+
 /// Player Control: steers each controlled Character with the input actions.
 #[cfg(all(feature = "physics", feature = "gameplay"))]
 fn drive_players(play: &mut Play, scene: &mut Scene, input: &bayleaf_script::Input) {
     let Some(physics) = play.physics.as_mut() else { return };
-    let (actions, held) = (&play.actions, &play.held);
-    let value = |name: &str| actions.value(name, input);
-    let pressed = |name: &str| value(name) > 0.5 && !held.contains(name);
-    for command in bayleaf_gameplay::controller::drive(scene, &value, &pressed) {
+    // Each player reads its own Input Map when it has one, else the project's.
+    let commands = play.host.with_input(|set| {
+        let value = |id, name: &str| set.of(id).map_or(0.0, |maps| maps.value(name, input));
+        let pressed = |id, name: &str| set.of(id).is_some_and(|maps| maps.pressed(name));
+        bayleaf_gameplay::controller::drive(scene, &value, &pressed)
+    });
+    for command in commands {
         physics.walk(command.object, command.walk);
         if let Some(speed) = command.jump {
             physics.jump(command.object, speed);

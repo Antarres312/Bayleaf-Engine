@@ -19,7 +19,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Create Asset",
             menu: "",
             shortcut: "",
-            params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
+            params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\" | \"inputMap\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: always,
@@ -84,6 +84,8 @@ pub enum AssetKind {
     VisualScript,
     /// A Rust script crate, built to WebAssembly.
     Script,
+    /// An Input Map: input actions in maps (`.binput`), starting with a game's usual controls.
+    InputMap,
 }
 
 impl AssetKind {
@@ -94,6 +96,7 @@ impl AssetKind {
             AssetKind::Scene => Some(bayleaf_scene::doc::EXTENSION),
             AssetKind::Material => Some(bayleaf_render::material::CATALOG.extension),
             AssetKind::VisualScript => Some(bayleaf_script::visual::CATALOG.extension),
+            AssetKind::InputMap => Some(crate::input_cmds::INPUT_EXTENSION),
         }
     }
 }
@@ -144,6 +147,7 @@ fn asset_create(session: &mut Session, params: &Value) -> Result<Value, CommandE
         AssetKind::Scene => starter_scene()?.save(&path)?,
         AssetKind::Material => std::fs::write(&path, bayleaf_graph::Graph::new(&bayleaf_render::material::CATALOG).to_json()).map_err(failed)?,
         AssetKind::VisualScript => std::fs::write(&path, bayleaf_graph::Graph::new(&bayleaf_script::visual::CATALOG).to_json()).map_err(failed)?,
+        AssetKind::InputMap => std::fs::write(&path, crate::input_cmds::InputAsset::starter().to_text()).map_err(failed)?,
     }
     Ok(json!({ "path": path }))
 }
