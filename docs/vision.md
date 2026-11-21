@@ -86,7 +86,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    module onto an object in the hierarchy, the scene view or the Inspector (built first when it has no
    module yet); File > Open Recent lists the last 10 projects. Then: Add Component lists built-in
    components and scripts in folders by their menu paths (`Light/Point Light`); a script names its
-   own (`menu` in `bayleaf_describe`, `Script::MENU`, the Menu Path node).
+   own (`menu` in `bayleaf_describe`, `Script::MENU`, the Menu Path node). Every field that picks a file
+   (Material, Model, Image, an Input Map, Player Prefab) also takes a file of its kind dragged from
+   the Project panel, and refuses others.
 3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
    a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with

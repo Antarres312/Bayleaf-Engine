@@ -160,6 +160,11 @@ impl ProjectView {
         self.files_of(&[Kind::Material])
     }
 
+    /// Every prefab (`.bprefab`) in the project.
+    pub(crate) fn prefab_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::Prefab])
+    }
+
     /// Every Input Map (`.binput`) in the project.
     pub(crate) fn input_map_files(&self) -> Vec<String> {
         self.files_of(&[Kind::InputMap])

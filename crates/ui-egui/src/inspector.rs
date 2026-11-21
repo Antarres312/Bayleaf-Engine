@@ -149,11 +149,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     if let Some(chosen) = file_row(ui, t, field, path, &script_dir, &mut open_material) {
                         let mut value = value.clone();
                         if let Some(object) = value.as_object_mut() {
-                            if chosen.is_empty() {
-                                object.remove(field.field);
-                            } else {
-                                object.insert(field.field.to_owned(), Value::String(chosen));
-                            }
+                            // An empty path is "none" (and fields such as Player Prefab must be present).
+                            object.insert(field.field.to_owned(), Value::String(chosen));
                         }
                         pending = Some(Pending::Set { component: kind.name, value });
                     }
@@ -435,7 +432,7 @@ fn file_row(
                 }
             }
             let shown = if current.is_empty() { field.none.to_owned() } else { current.to_owned() };
-            craft_ui::ComboBox::from_id_salt((field.component, field.field))
+            let list = craft_ui::ComboBox::from_id_salt((field.component, field.field))
                 .width((ui.available_width() - 1.0).max(16.0))
                 .truncate()
                 .selected_text(egui::RichText::new(shown).color(t.text))
@@ -454,6 +451,10 @@ fn file_row(
                 })
                 .response
                 .labelled_by(label);
+            // A file of the right kind can also be dragged here from the Project panel.
+            if let Some(dropped) = crate::value_editor::file_drop(ui, &list, |path| files.iter().any(|f| f == path)) {
+                chosen = Some(dropped);
+            }
         });
     });
     if let Some(problem) = &field.problem {
@@ -465,12 +466,25 @@ fn file_row(
 /// The file fields of `id`'s components, with the project's files of each kind and whether the
 /// chosen file loads.
 fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path::Path) -> Vec<FileField> {
-    use bayleaf_engine::scene::components::{InputMap, Mesh, Sprite};
+    use bayleaf_engine::scene::components::{GameRules, InputMap, Mesh, Sprite};
     let scene = editor.session.scene();
     let mesh = scene.get::<Mesh>(id).cloned();
     let sprite = scene.get::<Sprite>(id).cloned();
     let input_map = scene.get::<InputMap>(id).cloned();
+    let rules = scene.get::<GameRules>(id).is_some();
     let mut fields = Vec::new();
+    if rules {
+        fields.push(FileField {
+            component: "gameRules",
+            field: "playerPrefab",
+            label: "Player Prefab",
+            none: "None (the scene's own player)",
+            no_files: "No .bprefab files in the project folder",
+            files: editor.project.prefab_files(),
+            problem: None,
+            editable: false,
+        });
+    }
     if let Some(mesh) = mesh {
         let material = (!mesh.material.is_empty()).then(|| editor.scene_view.materials.get(&base.join(&mesh.material)).err()).flatten();
         fields.push(FileField {

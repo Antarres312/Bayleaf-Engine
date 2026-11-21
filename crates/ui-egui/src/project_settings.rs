@@ -153,7 +153,7 @@ fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, files: &[String], setting
                     }
                 }
                 let shown = if current.is_empty() { "None".to_owned() } else { current.clone() };
-                craft_ui::ComboBox::from_id_salt("project input map")
+                let list = craft_ui::ComboBox::from_id_salt("project input map")
                     .width((ui.available_width() - 1.0).max(16.0))
                     .truncate()
                     .selected_text(shown)
@@ -172,6 +172,10 @@ fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, files: &[String], setting
                     })
                     .response
                     .labelled_by(label);
+                // An Input Map can also be dragged here from the Project panel.
+                if let Some(dropped) = crate::value_editor::file_drop(ui, &list, |path| files.iter().any(|f| f == path)) {
+                    settings.input.map = dropped;
+                }
             });
         });
         let note = if settings.input.actions.is_some() {

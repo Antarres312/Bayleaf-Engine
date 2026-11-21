@@ -1215,3 +1215,48 @@ fn the_script_panel_declares_variables_and_their_nodes_pick_one_from_a_list() {
     harness.run();
     assert_eq!(graph(&harness).value(set, "name").and_then(|v| v.as_str()), Some("numbers"), "choosing from the list sets it");
 }
+
+/// Drags the Project panel entry `from` onto the widget labelled `to`, in small steps.
+fn drag_entry(harness: &mut Harness<'static, Editor>, from: &str, to: &str) {
+    let start = harness.get_by_label(from).rect().center();
+    let end = harness.get_by_label(to).rect().center();
+    harness.hover_at(start);
+    harness.drag_at(start);
+    harness.run();
+    for step in 1..=6 {
+        harness.hover_at(start + (end - start) * (step as f32 / 6.0));
+        harness.run();
+    }
+    harness.drop_at(end);
+    harness.run();
+}
+
+#[test]
+fn a_file_field_takes_a_dragged_file_of_its_kind_and_refuses_others() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-drop-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("notes.md"), "Not a material.\n").unwrap();
+    std::fs::write(dir.join("Rock.bmaterial"), "{}").unwrap();
+    let mut harness = harness();
+    harness.state_mut().dispatch("scene.saveAs", &json!({ "path": dir.join("s.bscene") }), None);
+    harness.run();
+    harness.state_mut().dispatch(
+        "scene.object.create",
+        &json!({ "name": "Boulder", "components": { "mesh": { "shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.5 } } }),
+        None,
+    );
+    harness.run();
+    harness.get_by_label("Boulder").click();
+    harness.run();
+    let material = |harness: &Harness<'static, Editor>| {
+        let scene = harness.state().session.scene();
+        let id = harness.state().selected.unwrap();
+        scene.get::<bayleaf_engine::scene::components::Mesh>(id).unwrap().material.clone()
+    };
+    drag_entry(&mut harness, "notes.md, File", "Material");
+    assert_eq!(material(&harness), "", "a file of another kind is refused");
+    drag_entry(&mut harness, "Rock.bmaterial, Material", "Material");
+    assert_eq!(material(&harness), "Rock.bmaterial", "a material dropped on the field is chosen");
+    std::fs::remove_dir_all(&dir).ok();
+}

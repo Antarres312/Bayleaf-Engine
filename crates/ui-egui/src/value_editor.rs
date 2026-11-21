@@ -85,6 +85,24 @@ pub(crate) fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, body: impl FnOn
     .inner
 }
 
+/// Lets a field take a file dragged from the Project panel. While a file that `accepts` takes is
+/// over the field, the field is ringed; a file it does not take shows a no-drop pointer and is
+/// left for whatever else may take it. Returns the dropped file's path (relative to the project).
+pub(crate) fn file_drop(ui: &egui::Ui, response: &egui::Response, accepts: impl Fn(&str) -> bool) -> Option<String> {
+    let asset = response.dnd_hover_payload::<crate::project::DraggedAsset>()?;
+    if !accepts(&asset.relative) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::NoDrop);
+        return None;
+    }
+    let t = theme::tokens(ui);
+    ui.painter().rect_stroke(response.rect, theme::RADIUS, egui::Stroke::new(2.0, t.focus), egui::StrokeKind::Inside);
+    if !ui.input(|i| i.pointer.any_released()) {
+        return None;
+    }
+    egui::DragAndDrop::clear_payload(ui.ctx());
+    Some(asset.relative.clone())
+}
+
 /// Edits `value` in place within `width`. `label` names the value for assistive technology.
 pub(crate) fn edit(ui: &mut egui::Ui, value: &mut Value, salt: impl std::hash::Hash + std::fmt::Debug, label: egui::Id, width: f32) -> Outcome {
     ui.push_id(salt, |ui| match value {
@@ -96,12 +114,8 @@ pub(crate) fn edit(ui: &mut egui::Ui, value: &mut Value, salt: impl std::hash::H
         Value::String(s) => {
             let response = ui.add_sized([width, ROW_HEIGHT], egui::TextEdit::singleline(s).align(egui::Align2::LEFT_CENTER)).labelled_by(label);
             // Text fields also take a file dragged from the Project panel: its path.
-            if response.dnd_hover_payload::<crate::project::DraggedAsset>().is_some() {
-                let t = theme::tokens(ui);
-                ui.painter().rect_stroke(response.rect, theme::RADIUS, egui::Stroke::new(2.0, t.focus), egui::StrokeKind::Inside);
-            }
-            if let Some(asset) = response.dnd_release_payload::<crate::project::DraggedAsset>() {
-                *s = asset.relative.clone();
+            if let Some(path) = file_drop(ui, &response, |_| true) {
+                *s = path;
                 return Outcome { changed: true, ended: true };
             }
             Outcome::from_response(&response)
