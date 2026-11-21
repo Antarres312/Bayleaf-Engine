@@ -273,3 +273,105 @@ fn agent_commands_are_confined_and_the_users_own_commands_are_not() {
     assert!(outside.join("mine.bscene").exists(), "the limit applies to the agent's request only");
     std::fs::remove_dir_all(&base).ok();
 }
+
+fn graph_harness(domain: &str) -> Harness<'static, Editor> {
+    let mut harness = harness();
+    harness.state_mut().dispatch("graph.new", &json!({ "domain": domain }), None);
+    harness.run();
+    harness
+}
+
+fn graph(harness: &Harness<'static, Editor>) -> bayleaf_engine::graph::Graph {
+    harness.state().session.graph().unwrap().graph.clone()
+}
+
+#[test]
+fn the_graph_panel_starts_empty_and_makes_a_new_material() {
+    let mut harness = harness();
+    harness.state_mut().show_panel(crate::Panel::Graph);
+    harness.run();
+    harness.get_by_label("New Material").click();
+    harness.run();
+    assert_eq!(graph(&harness).domain, "material");
+    assert!(harness.query_by_label_contains("Material Output node").is_some());
+    assert!(harness.query_by_label_contains("this material compiles").is_some(), "the problem strip says it is ready");
+}
+
+#[test]
+fn the_add_node_menu_searches_and_adds_and_undo_removes() {
+    let mut harness = graph_harness("material");
+    harness.get_by_label("Add Node").click();
+    harness.run();
+    harness.get_by_label("Search nodes").type_text("noi");
+    harness.run();
+    assert!(harness.query_by_label("Checker").is_none(), "the search filters the list");
+    harness.get_by_label("Noise").click();
+    harness.run();
+    assert_eq!(graph(&harness).nodes.len(), 2);
+    // Enter in the search takes the first match.
+    harness.get_by_label("Add Node").click();
+    harness.run();
+    harness.get_by_label("Search nodes").type_text("check");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(graph(&harness).nodes.iter().any(|n| n.kind == "checker"));
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    harness.run();
+    assert_eq!(graph(&harness).nodes.len(), 1);
+}
+
+#[test]
+fn pins_link_from_the_keyboard_and_the_link_is_announced_on_both_pins() {
+    let mut harness = graph_harness("material");
+    harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "color", "position": [0, 0] }), None);
+    harness.run();
+    harness.get_by_label_contains("Output Color (Color) of Color 2").click();
+    harness.run();
+    harness.get_by_label_contains("Input Base Color (Color) of Material Output 1").click();
+    harness.run();
+    assert_eq!(graph(&harness).links.len(), 1);
+    assert!(harness.query_by_label_contains("Base Color (Color) of Material Output 1, linked from Color 2").is_some());
+    // A number cannot feed a colour-only pin? It can (numbers widen), but a colour cannot feed a number.
+    harness.get_by_label_contains("Output Color (Color) of Color 2").click();
+    harness.run();
+    harness.get_by_label_contains("Input Roughness (Number) of Material Output 1").click();
+    harness.run();
+    assert_eq!(graph(&harness).links.len(), 1, "the refused link is not made");
+    assert!(harness.state().status.contains("Number"), "the status bar says why: {}", harness.state().status);
+}
+
+#[test]
+fn arrow_keys_move_the_focused_node_and_delete_removes_it() {
+    let mut harness = graph_harness("script");
+    let before = graph(&harness).nodes[0].position;
+    harness.get_by_label_contains("On Start node 1").focus();
+    harness.run();
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run();
+    let after = graph(&harness).nodes[0].position;
+    assert!(after[0] > before[0] && after[1] == before[1], "{before:?} -> {after:?}");
+    harness.key_press(egui::Key::Delete);
+    harness.run();
+    assert!(graph(&harness).node(1).is_none());
+}
+
+#[test]
+fn node_values_edit_through_commands_and_problems_name_their_node() {
+    let mut harness = graph_harness("script");
+    let editor = harness.state_mut();
+    editor.dispatch("graph.node.add", &json!({ "kind": "log", "position": [300, 40] }), None);
+    editor.dispatch("graph.node.add", &json!({ "kind": "position", "position": [0, 300] }), None);
+    editor.dispatch("graph.link.add", &json!({ "from": { "node": 1, "pin": "then" }, "to": { "node": 3, "pin": "run" } }), None);
+    editor.dispatch("graph.node.add", &json!({ "kind": "split", "position": [0, 300] }), None);
+    harness.run();
+    assert!(harness.query_by_label_contains("this visual script compiles").is_some());
+    harness.get_by_label("Message of node 3").focus();
+    harness.run();
+    harness.get_by_label("Message of node 3").type_text(" there");
+    harness.run();
+    assert_eq!(graph(&harness).value(3, "message").and_then(|v| v.as_str()), Some("Hello there"));
+    assert!(harness.state().session.history().len() <= 6, "typing merges into one undo step");
+}

@@ -1,0 +1,184 @@
+{
+  "format": "bayleaf.graph",
+  "version": 1,
+  "domain": "material",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "output",
+      "position": [
+        1200.0,
+        0.0
+      ],
+      "values": {
+        "roughness": 0.3
+      }
+    },
+    {
+      "id": 2,
+      "kind": "objectColor",
+      "position": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "fresnel",
+      "position": [
+        0.0,
+        120.0
+      ],
+      "values": {
+        "power": 3.0
+      }
+    },
+    {
+      "id": 4,
+      "kind": "time",
+      "position": [
+        0.0,
+        240.0
+      ]
+    },
+    {
+      "id": 5,
+      "kind": "multiply",
+      "position": [
+        240.0,
+        240.0
+      ],
+      "values": {
+        "b": 3.0
+      }
+    },
+    {
+      "id": 6,
+      "kind": "sine",
+      "position": [
+        480.0,
+        240.0
+      ]
+    },
+    {
+      "id": 7,
+      "kind": "blend",
+      "position": [
+        720.0,
+        200.0
+      ],
+      "values": {
+        "a": 0.4,
+        "b": 1.0
+      }
+    },
+    {
+      "id": 8,
+      "kind": "multiply",
+      "position": [
+        480.0,
+        100.0
+      ]
+    },
+    {
+      "id": 9,
+      "kind": "multiply",
+      "position": [
+        960.0,
+        120.0
+      ]
+    }
+  ],
+  "links": [
+    {
+      "from": {
+        "node": 4,
+        "pin": "seconds"
+      },
+      "to": {
+        "node": 5,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 5,
+        "pin": "result"
+      },
+      "to": {
+        "node": 6,
+        "pin": "value"
+      }
+    },
+    {
+      "from": {
+        "node": 6,
+        "pin": "result"
+      },
+      "to": {
+        "node": 7,
+        "pin": "factor"
+      }
+    },
+    {
+      "from": {
+        "node": 3,
+        "pin": "factor"
+      },
+      "to": {
+        "node": 8,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 2,
+        "pin": "color"
+      },
+      "to": {
+        "node": 8,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 8,
+        "pin": "result"
+      },
+      "to": {
+        "node": 9,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 7,
+        "pin": "result"
+      },
+      "to": {
+        "node": 9,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 9,
+        "pin": "result"
+      },
+      "to": {
+        "node": 1,
+        "pin": "emissive"
+      }
+    },
+    {
+      "from": {
+        "node": 2,
+        "pin": "color"
+      },
+      "to": {
+        "node": 1,
+        "pin": "baseColor"
+      }
+    }
+  ]
+}

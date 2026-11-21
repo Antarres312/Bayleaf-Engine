@@ -15,6 +15,7 @@ rust-version = "1.95"
 bayleaf-core = { path = "crates/core" }
 bayleaf-ecs = { path = "crates/ecs" }
 bayleaf-scene = { path = "crates/scene" }
+bayleaf-graph = { path = "crates/graph" }
 bayleaf-render = { path = "crates/render" }
 bayleaf-script = { path = "crates/script" }
 bayleaf-streaming = { path = "crates/streaming" }

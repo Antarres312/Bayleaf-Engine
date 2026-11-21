@@ -9,11 +9,15 @@
 mod extract;
 mod gpu;
 mod headless;
+pub mod material;
 mod mesh;
 
-pub use extract::{CameraView, DrawItem, Frame, FrameOptions, LightItem, MAX_LIGHTS, Ray, bounds, extract, object_bounds, object_camera, pick, scene_camera};
+pub use extract::{
+    CameraView, DrawItem, Frame, FrameOptions, LightItem, MAX_LIGHTS, Ray, bounds, extract, extract_with, object_bounds, object_camera, pick, scene_camera,
+};
 pub use gpu::{COLOR_FORMAT, RenderTarget, Renderer};
 pub use headless::{HeadlessGpu, Image};
+pub use material::{CompiledMaterial, MaterialLibrary};
 pub use wgpu;
 
 /// Errors from rendering. Messages are shown to the user.

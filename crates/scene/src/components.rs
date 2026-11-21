@@ -120,11 +120,15 @@ pub struct Mesh {
     pub metallic: f32,
     /// 0 for a mirror finish, 1 for fully rough.
     pub roughness: f32,
+    /// Material graph file (`.bmaterial`), relative to the scene's folder. Empty: colour, metallic
+    /// and roughness above. With a material, its Object Color node reads `color`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub material: String,
 }
 
 impl Default for Mesh {
     fn default() -> Self {
-        Self { shape: Shape::Cube, color: [0.8, 0.8, 0.8, 1.0], metallic: 0.0, roughness: 0.5 }
+        Self { shape: Shape::Cube, color: [0.8, 0.8, 0.8, 1.0], metallic: 0.0, roughness: 0.5, material: String::new() }
     }
 }
 
@@ -136,7 +140,11 @@ impl SceneComponent for Mesh {
     fn validate(&self) -> Result<(), String> {
         unit_range("color", &self.color)?;
         unit_range("metallic", &[self.metallic])?;
-        unit_range("roughness", &[self.roughness])
+        unit_range("roughness", &[self.roughness])?;
+        if !self.material.is_empty() && (self.material.len() > 512 || !self.material.ends_with(".bmaterial")) {
+            return Err("material must be the path of a .bmaterial file (at most 512 characters)".to_owned());
+        }
+        Ok(())
     }
 
     fn options(field: &str) -> &'static [&'static str] {

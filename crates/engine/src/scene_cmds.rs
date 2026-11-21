@@ -8,7 +8,7 @@ use bayleaf_scene::components::{ScriptRef, Scripts};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{CommandError, CommandSpec, Prompt, Session, always, parse};
+use crate::{CommandError, CommandSpec, Mutates, Prompt, Session, always, parse};
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
     vec![
@@ -19,7 +19,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+N",
             params: "none",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: crate::not_playing,
             run: scene_new,
         },
@@ -30,7 +30,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+O",
             params: "{path}",
             prompt: Prompt::OpenScene,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: crate::not_playing,
             run: scene_open,
         },
@@ -41,7 +41,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+S",
             params: "none",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: |s| {
                 crate::not_playing(s)?;
                 if s.scene_path.is_some() { Ok(()) } else { Err("the scene has no file yet; use Save Scene As".to_owned()) }
@@ -55,7 +55,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+Shift+S",
             params: "{path}",
             prompt: Prompt::SaveScene,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: crate::not_playing,
             run: scene_save_as,
         },
@@ -67,7 +67,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             params: "{path, width?, height?, camera?, grid?}; writes a PNG. camera: an object with a camera component; \
                      default: the first camera in the scene, else a view framing every object",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: always,
             run: scene_render,
         },
@@ -78,7 +78,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "none; returns the object tree",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: always,
             run: scene_objects,
         },
@@ -89,7 +89,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "none",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: always,
             run: scene_components,
         },
@@ -100,7 +100,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+Shift+N",
             params: "{parent?, name?, index?, components?: {name: value or null}}; returns {id}",
             prompt: Prompt::None,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: object_create,
         },
@@ -111,7 +111,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Delete",
             params: "{id}",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: object_delete,
         },
@@ -122,7 +122,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Alt+ArrowUp",
             params: "{id}; moves before the previous sibling",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: |s, p| object_step(s, p, Step::Up),
         },
@@ -133,7 +133,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Alt+ArrowDown",
             params: "{id}; moves after the next sibling",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: |s, p| object_step(s, p, Step::Down),
         },
@@ -144,7 +144,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Alt+ArrowRight",
             params: "{id}; becomes the last child of the previous sibling",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: |s, p| object_step(s, p, Step::Indent),
         },
@@ -155,7 +155,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Alt+ArrowLeft",
             params: "{id}; moves right after its parent",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: |s, p| object_step(s, p, Step::Outdent),
         },
@@ -166,7 +166,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{id, module}; module: .wasm path relative to the scene file's folder; returns {index}",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: script_add,
         },
@@ -177,7 +177,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{id, index}",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: script_remove,
         },
@@ -188,7 +188,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{id, index, name, value}; value null returns to the script's default",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: script_set_property,
         },
@@ -199,7 +199,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{id}; returns {id, parent, children, components}",
             prompt: Prompt::SelectedObject,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: always,
             run: object_inspect,
         },
@@ -210,7 +210,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{id, parent?, index?, keepWorld? = true}; parent null moves to the root",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: object_reparent,
         },
@@ -221,7 +221,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{id, component, value}",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: component_set,
         },
@@ -232,7 +232,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{id, component}",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: component_add,
         },
@@ -243,7 +243,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{id, component}",
             prompt: Prompt::SelectedObject,
-            mutates: true,
+            mutates: Mutates::Scene,
             enabled: always,
             run: component_remove,
         },
@@ -382,11 +382,19 @@ fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandE
             }
         },
     };
-    let frame = bayleaf_render::extract(scene, camera, bayleaf_render::FrameOptions { show_grid: p.grid, selected: None });
+    let mut library = session.material_library();
+    let mut warnings: Vec<String> = Vec::new();
+    let base = session.script_dir();
+    let options = bayleaf_render::FrameOptions { show_grid: p.grid, selected: None, time: 0.0 };
+    let frame = bayleaf_render::extract_with(scene, camera, options, &mut |material| {
+        let loaded = session.allowed(&base.join(material), crate::confine::Access::Read).map_err(|e| e.to_string()).and_then(|path| library.get(&path));
+        loaded.map_err(|e| warnings.push(format!("material {material}: {e}"))).ok()
+    });
     let gpu = bayleaf_render::HeadlessGpu::new().map_err(|e| CommandError::Failed(e.to_string()))?;
     let image = gpu.render(&frame, p.width, p.height).map_err(|e| CommandError::Failed(e.to_string()))?;
     image.write_png(&path).map_err(|e| CommandError::Failed(e.to_string()))?;
-    Ok(json!({ "path": path, "width": p.width, "height": p.height, "camera": source }))
+    warnings.dedup();
+    Ok(json!({ "path": path, "width": p.width, "height": p.height, "camera": source, "warnings": warnings }))
 }
 
 fn tree(scene: &Scene, parent: Option<StableId>) -> Vec<Value> {

@@ -5,7 +5,8 @@ A game engine and editor written from scratch in Rust.
 - Native editor (egui on wgpu). The web build compiles the same code to WebAssembly.
 - A scene of objects with components, backed by an archetype ECS.
 - Game scripts as sandboxed WebAssembly modules with hot reload.
-- Node graphs for materials and visual scripting.
+- Node graphs for materials (compiled to WGSL) and visual scripts (compiled to WebAssembly). See
+  [docs/graphs.md](docs/graphs.md).
 - Opt-in gameplay modules and optional world streaming.
 - Every action is a command, so the editor, `bayleaf-cli` and AI agents (MCP) drive the same engine.
 

@@ -75,6 +75,10 @@ pub(crate) struct SceneView {
     pub show_grid: bool,
     gpu: Option<GpuView>,
     framed_once: bool,
+    /// Compiled material graphs; the one open in the graph editor shows unsaved changes live.
+    pub materials: bayleaf_render::MaterialLibrary,
+    /// When the view first drew, for the Time node of animated materials.
+    started: Option<std::time::Instant>,
 }
 
 impl SceneView {
@@ -173,7 +177,23 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         );
     }
 
-    let frame = bayleaf_render::extract(editor.session.scene(), view.orbit.view(aspect), FrameOptions { show_grid: view.show_grid, selected: editor.selected });
+    if let Some(doc) = editor.session.graph()
+        && doc.graph.domain == bayleaf_render::material::CATALOG.domain
+        && let Some(path) = &doc.path
+    {
+        view.materials.set_live(Some((path, &doc.graph)));
+    } else {
+        view.materials.set_live(None);
+    }
+    let started = *view.started.get_or_insert_with(std::time::Instant::now);
+    let time = if editor.session.is_playing() { editor.session.play_time() as f32 } else { started.elapsed().as_secs_f32() };
+    let base = editor.session.script_dir();
+    let materials = &mut view.materials;
+    let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time };
+    let frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut |path| materials.get(&base.join(path)).ok());
+    if frame.items.iter().any(|i| i.material.as_ref().is_some_and(|m| m.animated)) {
+        ui.ctx().request_repaint();
+    }
     gpu_view.renderer.render(&gpu.device, &gpu.queue, &gpu_view.target, &frame);
 
     let image = egui::Image::new(egui::load::SizedTexture::new(gpu_view.texture, size)).sense(egui::Sense::click_and_drag());

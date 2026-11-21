@@ -82,7 +82,12 @@ No crate below L6 may use egui, eframe, winit or rfd.
    editor control channel (`bayleaf --control`, loopback with a token) that the MCP server can bridge to.
    See `docs/automation.md`. Still open: MCP resources (scene tree, renders as images), notifications
    when the scene changes, and restricting the token file's access rules on Windows.
-6. **M5 Graphs:** shared graph editor, material graph, visual scripting.
+6. **M5 Graphs (done, 2026-11-21):** a shared graph model and editor panel; material graphs that compile
+   to WGSL (`.bmaterial`, picked per mesh, live preview while editing, animated with Time); visual
+   scripts that compile to WebAssembly with the script ABI (`.bscript`, with properties, branching
+   and keys); `graph.*` commands sharing the undo history. Scene format version 3 (`mesh.material`).
+   See `docs/graphs.md`. Still open: textures in materials, variables and events beyond start and
+   update in visual scripts, comments and groups on the canvas, copy and paste of nodes.
 7. **M6 Gameplay framework** as opt-in modules.
 8. **M7 Streaming** (optional crate), physics and audio integrations.
 

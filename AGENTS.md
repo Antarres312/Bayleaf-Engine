@@ -88,10 +88,15 @@ for checking a scene's look without a window.
 `streaming` feature of `bayleaf-engine`. The core must build and run without any of them.
 
 **Game scripts** are WebAssembly modules (ABI in `docs/script-abi.md`, host in `crates/script`). Visual scripts
-compile to the same ABI. Example scripts live in `scripts/`, a separate workspace: build them with
+compile to the same ABI. Visual scripts (`.bscript`) compile in `crates/script/src/visual.rs` when loaded. Example scripts live in `scripts/`, a separate workspace: build them with
 `cargo xtask scripts` (needs `rustup target add wasm32-unknown-unknown`); the `.wasm` output is not committed.
 Play mode never records undo steps or dirties the file, and restores the scene on stop. An object's scripts are
 one `Scripts` list component (several per object); the inspector shows each script as its own card.
+
+**Graphs** (`docs/graphs.md`). The model is `crates/graph`; each domain's node kinds and compiler live with
+its output (`crates/render/src/material.rs`, `crates/script/src/visual.rs`). A new node kind goes into the
+catalog and the compiler; the every-node tests fail until the kind is in their graph. The editor panel is
+`crates/ui-egui/src/graph_view.rs` and changes graphs only through `graph.*` commands.
 
 **Automation** (`crates/automation`, `docs/automation.md`). A command that reads or writes a file checks
 `Session::allowed` first, so agent requests stay inside the confinement roots; tests for a new file command

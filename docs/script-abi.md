@@ -4,7 +4,7 @@ A game script is a WebAssembly module (`wasm32`, no WASI). An object carries a l
 `scripts` component); the inspector shows each as its own component, named after its module file
 (`player_controller.wasm` -> "Player Controller"). Every script on every object gets its own instance,
 so module-level state belongs to that one script slot. Any language that compiles to WebAssembly can implement this ABI. The Rust SDK is
-`crates/script-sdk`, and visual scripts will compile to the same ABI (milestone M5).
+`crates/script-sdk`, and visual scripts (`.bscript`, see `docs/graphs.md`) compile to the same ABI when they are loaded.
 
 ## Exports (the script provides)
 

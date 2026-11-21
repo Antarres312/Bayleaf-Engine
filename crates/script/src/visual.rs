@@ -1,0 +1,550 @@
+//! Visual scripts: their node kinds and the compiler that turns a graph into a WebAssembly module
+//! with the same ABI as any other script (`docs/script-abi.md`).
+//!
+//! Event nodes (On Start, On Update) begin chains of actions joined by flow links. Data nodes are
+//! pure: they are computed where an action needs them. The compiler writes WebAssembly text and
+//! assembles it, so the result runs under the same fuel and memory limits as hand-written scripts.
+
+use std::fmt::Write as _;
+
+use bayleaf_graph::{Catalog, Graph, NodeDef, PinDef, PinDefault, PinType, Problem, SettingDef, SettingKind};
+
+use PinType::{Any, Bool, Float, Flow, Vec3};
+
+const fn pin(name: &'static str, label: &'static str, ty: PinType) -> PinDef {
+    PinDef::new(name, label, ty)
+}
+
+const fn number(name: &'static str, label: &'static str, ty: PinType, value: f32) -> PinDef {
+    PinDef::with(name, label, ty, PinDefault::Float(value))
+}
+
+const fn vector(name: &'static str, label: &'static str, value: [f32; 3]) -> PinDef {
+    PinDef::with(name, label, Vec3, PinDefault::Vec3(value))
+}
+
+const RUN: PinDef = pin("run", "Run", Flow);
+const THEN: PinDef = pin("then", "Then", Flow);
+const MATH_OUT: &[PinDef] = &[pin("result", "Result", Any)];
+
+const fn node(
+    kind: &'static str,
+    label: &'static str,
+    category: &'static str,
+    description: &'static str,
+    inputs: &'static [PinDef],
+    outputs: &'static [PinDef],
+) -> NodeDef {
+    NodeDef { kind, label, category, description, inputs, outputs, settings: &[], unique: false }
+}
+
+const fn action(kind: &'static str, label: &'static str, description: &'static str, inputs: &'static [PinDef]) -> NodeDef {
+    NodeDef { kind, label, category: "Actions", description, inputs, outputs: &[THEN], settings: &[], unique: false }
+}
+
+/// The node kinds of visual scripts.
+pub const CATALOG: Catalog = Catalog {
+    domain: "script",
+    label: "Visual Script",
+    extension: "bscript",
+    starter: &[("start", [40.0, 40.0]), ("update", [40.0, 200.0])],
+    nodes: &[
+        node("start", "On Start", "Events", "Runs once when play mode starts.", &[], &[THEN]),
+        node("update", "On Update", "Events", "Runs every simulation step.", &[], &[THEN, pin("dt", "Step Seconds", Float)]),
+        NodeDef {
+            kind: "log",
+            label: "Log",
+            category: "Actions",
+            description: "Writes the message, and the value if one is linked, to the console.",
+            inputs: &[RUN, pin("value", "Value", Float)],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "message", label: "Message", kind: SettingKind::Text("Hello") }],
+            unique: false,
+        },
+        action("setPosition", "Set Position", "Moves the object to a position (relative to its parent).", &[RUN, vector("position", "Position", [0.0; 3])]),
+        action("moveBy", "Move By", "Moves the object by an offset.", &[RUN, vector("offset", "Offset", [0.0; 3])]),
+        action("setRotation", "Set Rotation", "Sets the rotation, in degrees about X, Y and Z.", &[RUN, vector("rotation", "Rotation", [0.0; 3])]),
+        action("rotateBy", "Rotate By", "Turns the object by degrees about X, Y and Z.", &[RUN, vector("degrees", "Degrees", [0.0; 3])]),
+        action("setScale", "Set Scale", "Sets the size along X, Y and Z.", &[RUN, vector("scale", "Scale", [1.0; 3])]),
+        NodeDef {
+            kind: "branch",
+            label: "Branch",
+            category: "Flow",
+            description: "Continues with True or False, depending on the condition.",
+            inputs: &[RUN, PinDef::with("condition", "Condition", Bool, PinDefault::Bool(false))],
+            outputs: &[pin("true", "True", Flow), pin("false", "False", Flow)],
+            settings: &[],
+            unique: false,
+        },
+        NodeDef {
+            kind: "number",
+            label: "Number",
+            category: "Values",
+            description: "A fixed number.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", Float)],
+            settings: &[SettingDef { name: "value", label: "Value", kind: SettingKind::Float(1.0) }],
+            unique: false,
+        },
+        node(
+            "vector",
+            "Make Vector",
+            "Values",
+            "A vector from three numbers.",
+            &[number("x", "X", Float, 0.0), number("y", "Y", Float, 0.0), number("z", "Z", Float, 0.0)],
+            &[pin("vector", "Vector", Vec3)],
+        ),
+        node(
+            "split",
+            "Split Vector",
+            "Values",
+            "The three numbers of a vector.",
+            &[pin("vector", "Vector", Vec3)],
+            &[pin("x", "X", Float), pin("y", "Y", Float), pin("z", "Z", Float)],
+        ),
+        NodeDef {
+            kind: "property",
+            label: "Property",
+            category: "Values",
+            description: "A number set per object in the Inspector, with a default.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", Float)],
+            settings: &[
+                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("speed") },
+                SettingDef { name: "default", label: "Default", kind: SettingKind::Float(1.0) },
+            ],
+            unique: false,
+        },
+        node("position", "Position", "Object", "The object's position, relative to its parent.", &[], &[pin("position", "Position", Vec3)]),
+        node("rotation", "Rotation", "Object", "The object's rotation in degrees.", &[], &[pin("rotation", "Rotation", Vec3)]),
+        node("scale", "Scale", "Object", "The object's size along X, Y and Z.", &[], &[pin("scale", "Scale", Vec3)]),
+        node("time", "Time", "Inputs", "Seconds since play mode started.", &[], &[pin("seconds", "Seconds", Float)]),
+        NodeDef {
+            kind: "keyDown",
+            label: "Key Held",
+            category: "Inputs",
+            description: "True while the key is held (names like W, Space, ArrowUp).",
+            inputs: &[],
+            outputs: &[pin("down", "Held", Bool)],
+            settings: &[SettingDef { name: "key", label: "Key", kind: SettingKind::Name("Space") }],
+            unique: false,
+        },
+        node("add", "Add", "Math", "A + B.", &[number("a", "A", Any, 0.0), number("b", "B", Any, 0.0)], MATH_OUT),
+        node("subtract", "Subtract", "Math", "A − B.", &[number("a", "A", Any, 0.0), number("b", "B", Any, 0.0)], MATH_OUT),
+        node("multiply", "Multiply", "Math", "A × B.", &[number("a", "A", Any, 1.0), number("b", "B", Any, 1.0)], MATH_OUT),
+        node("divide", "Divide", "Math", "A ÷ B.", &[number("a", "A", Any, 1.0), number("b", "B", Any, 1.0)], MATH_OUT),
+        node("sine", "Sine", "Math", "The sine of the input, in radians.", &[number("value", "Value", Any, 0.0)], MATH_OUT),
+        node(
+            "choose",
+            "Choose",
+            "Math",
+            "A when the condition is true, otherwise B.",
+            &[PinDef::with("condition", "Condition", Bool, PinDefault::Bool(false)), number("a", "A", Any, 1.0), number("b", "B", Any, 0.0)],
+            MATH_OUT,
+        ),
+        node(
+            "greater",
+            "Greater Than",
+            "Logic",
+            "True when A > B.",
+            &[number("a", "A", Float, 0.0), number("b", "B", Float, 0.0)],
+            &[pin("result", "Result", Bool)],
+        ),
+        node("and", "And", "Logic", "True when both are true.", &[pin("a", "A", Bool), pin("b", "B", Bool)], &[pin("result", "Result", Bool)]),
+        node("or", "Or", "Logic", "True when either is true.", &[pin("a", "A", Bool), pin("b", "B", Bool)], &[pin("result", "Result", Bool)]),
+        node("not", "Not", "Logic", "True when the input is false.", &[pin("value", "Value", Bool)], &[pin("result", "Result", Bool)]),
+    ],
+};
+
+/// Most WebAssembly text one graph may produce (shared chains are copied, so this can grow).
+const MAX_TEXT: usize = 8 << 20;
+/// Where static text starts in the module's memory. Bytes 0..36 hold the transform.
+const DATA_START: u32 = 1024;
+/// Room after a log message for the number.
+const NUMBER_ROOM: u32 = 32;
+
+/// A compiled value: WebAssembly expressions that leave it on the stack.
+#[derive(Clone)]
+enum Val {
+    F(String),
+    V([String; 3]),
+    B(String),
+}
+
+struct Compiler<'g> {
+    graph: &'g Graph,
+    data: Vec<(u32, Vec<u8>)>,
+    next: u32,
+    properties: Vec<(String, f32)>,
+}
+
+/// Compiles a visual script into a WebAssembly module.
+pub fn compile(graph: &Graph) -> Result<Vec<u8>, Vec<Problem>> {
+    let text = to_wat(graph)?;
+    wat::parse_str(&text).map_err(|e| vec![Problem::graph(format!("internal compiler error: {e}"))])
+}
+
+/// The WebAssembly text of a visual script.
+pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
+    graph.check(&CATALOG).map_err(|e| vec![Problem::graph(e.to_string())])?;
+    let mut c = Compiler { graph, data: Vec::new(), next: DATA_START, properties: Vec::new() };
+    let mut problems = Vec::new();
+    let mut start = String::new();
+    let mut update = String::new();
+    let mut events: Vec<&bayleaf_graph::Node> = graph.nodes.iter().filter(|n| n.kind == "start" || n.kind == "update").collect();
+    events.sort_by_key(|n| n.id);
+    for event in events {
+        match c.chain(event.id, "then", 0) {
+            Ok(code) if event.kind == "start" => start.push_str(&code),
+            Ok(code) => update.push_str(&code),
+            Err(p) => problems.push(p),
+        }
+        if start.len() + update.len() > MAX_TEXT {
+            return Err(vec![Problem::graph("the script is too large; reuse fewer shared chains")]);
+        }
+    }
+    // Property nodes declare properties even when nothing reads them yet.
+    for node in graph.nodes.iter().filter(|n| n.kind == "property") {
+        c.declare_property(node.id);
+    }
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    let description = serde_json::json!({ "properties": c.properties.iter().map(|(n, v)| serde_json::json!([n, v])).collect::<Vec<_>>() }).to_string();
+    let (describe_at, describe_len) = c.text(description.as_bytes());
+    let pages = c.next.div_ceil(65536).max(1);
+
+    let mut out = String::new();
+    out.push_str(PRELUDE);
+    let _ = writeln!(out, "  (memory (export \"memory\") {pages})");
+    for (at, bytes) in &c.data {
+        let mut escaped = String::with_capacity(bytes.len() * 3);
+        for b in bytes {
+            let _ = write!(escaped, "\\{b:02x}");
+        }
+        let _ = writeln!(out, "  (data (i32.const {at}) \"{escaped}\")");
+    }
+    let _ = writeln!(
+        out,
+        "  (func (export \"bayleaf_describe\") (result i64) (i64.or (i64.shl (i64.const {describe_at}) (i64.const 32)) (i64.const {describe_len})))"
+    );
+    let _ = writeln!(out, "  (func (export \"bayleaf_start\")\n{start}  )");
+    let _ = writeln!(out, "  (func (export \"bayleaf_update\") (param $dt f32)\n    (global.set $dt (local.get $dt))\n{update}  )");
+    out.push_str(")\n");
+    Ok(out)
+}
+
+/// A WebAssembly f32 literal.
+fn lit(value: f32) -> String {
+    format!("(f32.const {value:?})")
+}
+
+impl Compiler<'_> {
+    /// Places bytes in the module's memory and returns their address and length.
+    fn text(&mut self, bytes: &[u8]) -> (u32, u32) {
+        self.reserve(bytes, 0)
+    }
+
+    /// Places bytes followed by `room` free bytes.
+    fn reserve(&mut self, bytes: &[u8], room: u32) -> (u32, u32) {
+        let at = self.next;
+        let len = bytes.len() as u32;
+        self.data.push((at, bytes.to_vec()));
+        self.next = (at + len + room).next_multiple_of(4);
+        (at, len)
+    }
+
+    fn setting_text(&self, node: u32, name: &str, default: &str) -> String {
+        self.graph.value(node, name).and_then(|v| v.as_str()).unwrap_or(default).to_owned()
+    }
+
+    fn setting_number(&self, node: u32, name: &str, default: f32) -> f32 {
+        self.graph.value(node, name).and_then(bayleaf_graph::as_f32).unwrap_or(default)
+    }
+
+    fn declare_property(&mut self, node: u32) -> String {
+        let name = self.setting_text(node, "name", "speed");
+        let default = self.setting_number(node, "default", 1.0);
+        if !self.properties.iter().any(|(n, _)| *n == name) {
+            self.properties.push((name.clone(), default));
+        }
+        name
+    }
+
+    /// The actions that follow the flow output `pin` of `node`.
+    fn chain(&mut self, node: u32, pin: &str, depth: usize) -> Result<String, Problem> {
+        let graph = self.graph;
+        let Some(link) = graph.links_from(node, pin).next() else { return Ok(String::new()) };
+        let next = link.to.node;
+        let (n, def) = graph.node_def(&CATALOG, next).map_err(|e| Problem::on(next, e.to_string()))?;
+        let indent = "    ".repeat(depth + 1);
+        let mut code = String::new();
+        let vec3 = |c: &mut Self, name: &str| c.input(next, name).and_then(|v| as_vec(next, v));
+        match n.kind.as_str() {
+            "log" => {
+                let message = self.setting_text(next, "message", "Hello");
+                if graph.link_into(next, "value").is_some() {
+                    let value = self.input(next, "value").and_then(|v| as_float(next, v))?;
+                    let mut bytes = message.into_bytes();
+                    bytes.push(b' ');
+                    let (at, len) = self.reserve(&bytes, NUMBER_ROOM);
+                    let _ = writeln!(code, "{indent}(call $log (i32.const {at}) (i32.add (i32.const {len}) (call $fmt {value} (i32.const {}))))", at + len);
+                } else {
+                    let (at, len) = self.text(message.as_bytes());
+                    let _ = writeln!(code, "{indent}(call $log (i32.const {at}) (i32.const {len}))");
+                }
+            }
+            "setPosition" | "setRotation" | "setScale" | "moveBy" | "rotateBy" => {
+                let (input, offset, call) = match n.kind.as_str() {
+                    "setPosition" => ("position", 0, "$set3"),
+                    "setRotation" => ("rotation", 12, "$set3"),
+                    "setScale" => ("scale", 24, "$set3"),
+                    "moveBy" => ("offset", 0, "$add3"),
+                    _ => ("degrees", 12, "$add3"),
+                };
+                let [x, y, z] = vec3(self, input)?;
+                let _ = writeln!(code, "{indent}(call {call} (i32.const {offset}) {x} {y} {z})");
+            }
+            "branch" => {
+                let condition = self.input(next, "condition").and_then(|v| as_bool(next, v))?;
+                let yes = self.chain(next, "true", depth + 1)?;
+                let no = self.chain(next, "false", depth + 1)?;
+                let _ = writeln!(code, "{indent}(if {condition}\n{indent}  (then\n{yes}{indent}  )\n{indent}  (else\n{no}{indent}  ))");
+                return Ok(code);
+            }
+            _ => return Err(Problem::on(next, format!("{} is not an action; link flow only into actions", def.label))),
+        }
+        code.push_str(&self.chain(next, "then", depth)?);
+        Ok(code)
+    }
+
+    /// The value of an input: its link, its stored value, or its default.
+    fn input(&mut self, node: u32, pin: &str) -> Result<Val, Problem> {
+        let graph = self.graph;
+        let (_, def) = graph.node_def(&CATALOG, node).map_err(|e| Problem::on(node, e.to_string()))?;
+        let pin_def = def.input(pin).ok_or_else(|| Problem::on(node, format!("{} has no input {pin}", def.label)))?;
+        if let Some(link) = graph.link_into(node, pin) {
+            return self.output(link.from.node, &link.from.pin);
+        }
+        if let Some(value) = graph.value(node, pin) {
+            if let Some(v) = value.as_bool() {
+                return Ok(Val::B(format!("(i32.const {})", i32::from(v))));
+            }
+            if let Some(v) = bayleaf_graph::as_f32(value) {
+                return Ok(if pin_def.ty == Vec3 { Val::V([lit(v), lit(v), lit(v)]) } else { Val::F(lit(v)) });
+            }
+            if let Some([x, y, z]) = bayleaf_graph::as_triple(value) {
+                return Ok(Val::V([lit(x), lit(y), lit(z)]));
+            }
+        }
+        Ok(match (pin_def.default, pin_def.ty) {
+            (PinDefault::Bool(b), _) => Val::B(format!("(i32.const {})", i32::from(b))),
+            (_, Bool) => Val::B("(i32.const 0)".to_owned()),
+            (PinDefault::Vec3(v) | PinDefault::Color(v), _) => Val::V(v.map(lit)),
+            (PinDefault::Float(v), Vec3 | PinType::Color) => Val::V([lit(v), lit(v), lit(v)]),
+            (PinDefault::Float(v), _) => Val::F(lit(v)),
+            (_, Vec3 | PinType::Color) => Val::V([lit(0.0), lit(0.0), lit(0.0)]),
+            _ => Val::F(lit(0.0)),
+        })
+    }
+
+    /// The value of one output of a data node.
+    fn output(&mut self, node: u32, pin: &str) -> Result<Val, Problem> {
+        let graph = self.graph;
+        let (n, def) = graph.node_def(&CATALOG, node).map_err(|e| Problem::on(node, e.to_string()))?;
+        let transform = |base: u32| Val::V([0, 1, 2].map(|i| format!("(call $t (i32.const {}))", base + i)));
+        Ok(match n.kind.as_str() {
+            "update" if pin == "dt" => Val::F("(global.get $dt)".to_owned()),
+            "number" => Val::F(lit(self.setting_number(node, "value", 1.0))),
+            "vector" => {
+                let x = self.input(node, "x").and_then(|v| as_float(node, v))?;
+                let y = self.input(node, "y").and_then(|v| as_float(node, v))?;
+                let z = self.input(node, "z").and_then(|v| as_float(node, v))?;
+                Val::V([x, y, z])
+            }
+            "split" => {
+                let [x, y, z] = self.input(node, "vector").and_then(|v| as_vec(node, v))?;
+                Val::F(match pin {
+                    "x" => x,
+                    "y" => y,
+                    _ => z,
+                })
+            }
+            "property" => {
+                let name = self.declare_property(node);
+                let (at, len) = self.text(name.as_bytes());
+                Val::F(format!("(call $property (i32.const {at}) (i32.const {len}))"))
+            }
+            "position" => transform(0),
+            "rotation" => transform(3),
+            "scale" => transform(6),
+            "time" => Val::F("(f32.demote_f64 (call $time))".to_owned()),
+            "keyDown" => {
+                let key = self.setting_text(node, "key", "Space");
+                let (at, len) = self.text(key.as_bytes());
+                Val::B(format!("(call $key_down (i32.const {at}) (i32.const {len}))"))
+            }
+            "add" | "subtract" | "multiply" | "divide" => {
+                let op = match n.kind.as_str() {
+                    "add" => "f32.add",
+                    "subtract" => "f32.sub",
+                    "multiply" => "f32.mul",
+                    _ => "f32.div",
+                };
+                let a = self.input(node, "a")?;
+                let b = self.input(node, "b")?;
+                zip(node, a, b, |a, b| format!("({op} {a} {b})"))?
+            }
+            "sine" => match self.input(node, "value")? {
+                Val::F(v) => Val::F(format!("(call $sin {v})")),
+                Val::V(v) => Val::V(v.map(|c| format!("(call $sin {c})"))),
+                Val::B(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
+            },
+            "choose" => {
+                let condition = self.input(node, "condition").and_then(|v| as_bool(node, v))?;
+                let a = self.input(node, "a")?;
+                let b = self.input(node, "b")?;
+                zip(node, a, b, |a, b| format!("(select {a} {b} {condition})"))?
+            }
+            "greater" => {
+                let a = self.input(node, "a").and_then(|v| as_float(node, v))?;
+                let b = self.input(node, "b").and_then(|v| as_float(node, v))?;
+                Val::B(format!("(f32.gt {a} {b})"))
+            }
+            "and" | "or" => {
+                let a = self.input(node, "a").and_then(|v| as_bool(node, v))?;
+                let b = self.input(node, "b").and_then(|v| as_bool(node, v))?;
+                Val::B(format!("(i32.{} {a} {b})", n.kind))
+            }
+            "not" => Val::B(format!("(i32.eqz {})", self.input(node, "value").and_then(|v| as_bool(node, v))?)),
+            _ => return Err(Problem::on(node, format!("{} gives no value here", def.label))),
+        })
+    }
+}
+
+/// Applies `op` to two numbers, or to each part when either is a vector.
+fn zip(node: u32, a: Val, b: Val, op: impl Fn(&str, &str) -> String) -> Result<Val, Problem> {
+    Ok(match (a, b) {
+        (Val::F(a), Val::F(b)) => Val::F(op(&a, &b)),
+        (Val::V(a), Val::V(b)) => Val::V([op(&a[0], &b[0]), op(&a[1], &b[1]), op(&a[2], &b[2])]),
+        (Val::V(a), Val::F(b)) => Val::V(a.map(|c| op(&c, &b))),
+        (Val::F(a), Val::V(b)) => Val::V(b.map(|c| op(&a, &c))),
+        _ => return Err(Problem::on(node, "math needs numbers or vectors, not true/false")),
+    })
+}
+
+fn as_float(node: u32, value: Val) -> Result<String, Problem> {
+    match value {
+        Val::F(f) => Ok(f),
+        Val::V(_) => Err(Problem::on(node, "this input takes a number but gets a vector; use Split Vector")),
+        Val::B(_) => Err(Problem::on(node, "this input takes a number but gets true/false; use Choose")),
+    }
+}
+
+fn as_vec(node: u32, value: Val) -> Result<[String; 3], Problem> {
+    match value {
+        Val::V(v) => Ok(v),
+        Val::F(f) => Ok([f.clone(), f.clone(), f]),
+        Val::B(_) => Err(Problem::on(node, "this input takes a vector but gets true/false")),
+    }
+}
+
+fn as_bool(node: u32, value: Val) -> Result<String, Problem> {
+    match value {
+        Val::B(b) => Ok(b),
+        _ => Err(Problem::on(node, "this input takes true/false; use Greater Than")),
+    }
+}
+
+/// Imports, the transform helpers, sine and number formatting shared by every compiled script.
+const PRELUDE: &str = r#"(module
+  (import "bayleaf" "log" (func $log (param i32 i32)))
+  (import "bayleaf" "transform_get" (func $transform_get (param i32)))
+  (import "bayleaf" "transform_set" (func $transform_set (param i32)))
+  (import "bayleaf" "property" (func $property (param i32 i32) (result f32)))
+  (import "bayleaf" "time" (func $time (result f64)))
+  (import "bayleaf" "key_down" (func $key_down (param i32 i32) (result i32)))
+  (global $dt (mut f32) (f32.const 0))
+  (func (export "bayleaf_abi") (result i32) (i32.const 1))
+  ;; Transform value i (0..8: position, rotation, scale).
+  (func $t (param $i i32) (result f32)
+    (call $transform_get (i32.const 0))
+    (f32.load (i32.shl (local.get $i) (i32.const 2))))
+  ;; Sets three transform values starting at byte offset $at.
+  (func $set3 (param $at i32) (param $x f32) (param $y f32) (param $z f32)
+    (call $transform_get (i32.const 0))
+    (f32.store (local.get $at) (local.get $x))
+    (f32.store offset=4 (local.get $at) (local.get $y))
+    (f32.store offset=8 (local.get $at) (local.get $z))
+    (call $transform_set (i32.const 0)))
+  ;; Adds to three transform values starting at byte offset $at.
+  (func $add3 (param $at i32) (param $x f32) (param $y f32) (param $z f32)
+    (call $transform_get (i32.const 0))
+    (f32.store (local.get $at) (f32.add (f32.load (local.get $at)) (local.get $x)))
+    (f32.store offset=4 (local.get $at) (f32.add (f32.load offset=4 (local.get $at)) (local.get $y)))
+    (f32.store offset=8 (local.get $at) (f32.add (f32.load offset=8 (local.get $at)) (local.get $z)))
+    (call $transform_set (i32.const 0)))
+  ;; Sine: reduce to [-pi/2, pi/2], then the Taylor series to x^9.
+  (func $sin (param $x f32) (result f32) (local $x2 f32)
+    (local.set $x (f32.sub (local.get $x) (f32.mul (f32.nearest (f32.mul (local.get $x) (f32.const 0.15915494))) (f32.const 6.2831855))))
+    (if (f32.gt (local.get $x) (f32.const 1.5707964)) (then (local.set $x (f32.sub (f32.const 3.1415927) (local.get $x)))))
+    (if (f32.lt (local.get $x) (f32.const -1.5707964)) (then (local.set $x (f32.sub (f32.const -3.1415927) (local.get $x)))))
+    (local.set $x2 (f32.mul (local.get $x) (local.get $x)))
+    (f32.mul (local.get $x)
+      (f32.add (f32.const 1)
+        (f32.mul (local.get $x2)
+          (f32.add (f32.const -0.16666667)
+            (f32.mul (local.get $x2)
+              (f32.add (f32.const 0.008333333)
+                (f32.mul (local.get $x2)
+                  (f32.add (f32.const -0.0001984127)
+                    (f32.mul (local.get $x2) (f32.const 0.0000027557319)))))))))))
+  ;; Writes $v with up to three decimals at $at; returns the length.
+  (func $fmt (param $v f32) (param $at i32) (result i32) (local $p i32) (local $n i64) (local $ip i64) (local $fr i64) (local $tmp i32) (local $end i32)
+    (local.set $p (local.get $at))
+    (if (f32.ne (local.get $v) (local.get $v)) (then
+      (i32.store8 (local.get $p) (i32.const 78))
+      (i32.store8 offset=1 (local.get $p) (i32.const 97))
+      (i32.store8 offset=2 (local.get $p) (i32.const 78))
+      (return (i32.const 3))))
+    (if (f32.lt (local.get $v) (f32.const 0)) (then
+      (i32.store8 (local.get $p) (i32.const 45))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (local.set $v (f32.neg (local.get $v)))))
+    (if (f32.ge (local.get $v) (f32.const 1e9)) (then
+      (i32.store8 (local.get $p) (i32.const 62))
+      (i32.store8 offset=1 (local.get $p) (i32.const 49))
+      (i32.store8 offset=2 (local.get $p) (i32.const 101))
+      (i32.store8 offset=3 (local.get $p) (i32.const 57))
+      (return (i32.sub (i32.add (local.get $p) (i32.const 4)) (local.get $at)))))
+    (local.set $n (i64.trunc_f64_u (f64.nearest (f64.mul (f64.promote_f32 (local.get $v)) (f64.const 1000)))))
+    (local.set $ip (i64.div_u (local.get $n) (i64.const 1000)))
+    (local.set $fr (i64.rem_u (local.get $n) (i64.const 1000)))
+    (local.set $end (i32.add (local.get $p) (i32.const 20)))
+    (local.set $tmp (local.get $end))
+    (loop $digits
+      (local.set $tmp (i32.sub (local.get $tmp) (i32.const 1)))
+      (i32.store8 (local.get $tmp) (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_u (local.get $ip) (i64.const 10)))))
+      (local.set $ip (i64.div_u (local.get $ip) (i64.const 10)))
+      (br_if $digits (i64.ne (local.get $ip) (i64.const 0))))
+    (block $moved (loop $move
+      (br_if $moved (i32.ge_u (local.get $tmp) (local.get $end)))
+      (i32.store8 (local.get $p) (i32.load8_u (local.get $tmp)))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (local.set $tmp (i32.add (local.get $tmp) (i32.const 1)))
+      (br $move)))
+    (if (i64.ne (local.get $fr) (i64.const 0)) (then
+      (i32.store8 (local.get $p) (i32.const 46))
+      (i32.store8 offset=1 (local.get $p) (i32.add (i32.const 48) (i32.wrap_i64 (i64.div_u (local.get $fr) (i64.const 100)))))
+      (i32.store8 offset=2 (local.get $p) (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_u (i64.div_u (local.get $fr) (i64.const 10)) (i64.const 10)))))
+      (i32.store8 offset=3 (local.get $p) (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_u (local.get $fr) (i64.const 10)))))
+      (local.set $p (i32.add (local.get $p) (i32.const 4)))
+      (block $trimmed (loop $trim
+        (br_if $trimmed (i32.ne (i32.load8_u (i32.sub (local.get $p) (i32.const 1))) (i32.const 48)))
+        (local.set $p (i32.sub (local.get $p) (i32.const 1)))
+        (br $trim)))))
+    (i32.sub (local.get $p) (local.get $at)))
+"#;
+
+#[cfg(test)]
+mod tests;

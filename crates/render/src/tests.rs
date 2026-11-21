@@ -3,7 +3,12 @@ use bayleaf_core::math::{Vec2, Vec3};
 use bayleaf_scene::Scene;
 use serde_json::json;
 
-use crate::{CameraView, FrameOptions, HeadlessGpu, RenderError, extract, pick, scene_camera};
+use std::sync::Arc;
+
+use bayleaf_graph::{Graph, Link, PinRef};
+
+use crate::material::{CATALOG, compile};
+use crate::{CameraView, FrameOptions, HeadlessGpu, RenderError, extract, extract_with, pick, scene_camera};
 
 fn object(scene: &mut Scene, component: &str, value: serde_json::Value, position: [f32; 3], rotation: [f32; 3]) -> StableId {
     let id = scene.create_object(None, component).unwrap();
@@ -17,7 +22,7 @@ fn mesh(scene: &mut Scene, shape: &str, position: [f32; 3]) -> StableId {
     object(scene, "mesh", json!({"shape": shape, "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.5}), position, [0.0; 3])
 }
 
-const OPTIONS: FrameOptions = FrameOptions { show_grid: false, selected: None };
+const OPTIONS: FrameOptions = FrameOptions { show_grid: false, selected: None, time: 0.0 };
 
 #[test]
 fn pick_returns_the_nearest_object_under_the_point() {
@@ -50,7 +55,7 @@ fn sprites_are_unlit_transparent_and_sized() {
     let mut scene = Scene::new();
     object(&mut scene, "sprite", json!({"color": [1, 0, 0, 1], "size": [3, 1]}), [0.0; 3], [0.0; 3]);
     let frame = extract(&scene, CameraView::framing(Vec3::ZERO, 1.0, 1.0), OPTIONS);
-    let sprite = frame.items[0];
+    let sprite = &frame.items[0];
     assert!(sprite.unlit && sprite.is_transparent());
     assert!(sprite.model.x_axis.length() > sprite.model.y_axis.length());
 }
@@ -106,4 +111,104 @@ fn faces_turned_toward_the_light_are_brighter() {
     let lit = image.pixel(44, 32).unwrap();
     let dark = image.pixel(20, 32).unwrap();
     assert!(brightness(lit) > brightness(dark), "lit side {lit:?} not brighter than {dark:?}");
+}
+
+fn link(graph: &mut Graph, from: u32, from_pin: &str, to: u32, to_pin: &str) {
+    graph.connect(&CATALOG, Link { from: PinRef::new(from, from_pin), to: PinRef::new(to, to_pin) }).unwrap();
+}
+
+/// A material that uses every node kind, wired into the output.
+fn every_node_material() -> Graph {
+    let mut g = Graph::new(&CATALOG);
+    let out = g.nodes[0].id;
+    let mut previous: Option<u32> = None;
+    for def in CATALOG.nodes.iter().filter(|d| d.kind != "output") {
+        let id = g.add_node(&CATALOG, def.kind, [0.0, 0.0]).unwrap();
+        // Feed the previous node into the first input that accepts it, then chain onwards.
+        if let Some(prev) = previous {
+            let prev_def = CATALOG.get(&g.node(prev).unwrap().kind).unwrap();
+            if let Some(from) = prev_def.outputs.first() {
+                // Only links that are always valid: numbers anywhere, otherwise equal types.
+                let fits = |p: &&bayleaf_graph::PinDef| from.ty == bayleaf_graph::PinType::Float || (from.ty == p.ty && from.ty != bayleaf_graph::PinType::Any);
+                if let Some(to) = def.inputs.iter().find(fits) {
+                    let _ = g.connect(&CATALOG, Link { from: PinRef::new(prev, from.name), to: PinRef::new(id, to.name) });
+                }
+            }
+        }
+        previous = Some(id);
+        // Every node also adds into the emission, so each one is compiled.
+        if let Some(from) = def.outputs.first() {
+            let make = g.add_node(&CATALOG, "vector", [0.0, 0.0]).unwrap();
+            if from.ty == bayleaf_graph::PinType::Float {
+                link(&mut g, id, from.name, make, "x");
+            } else {
+                // Through Split Vector, so vector and colour results fit too.
+                let split = g.add_node(&CATALOG, "split", [0.0, 0.0]).unwrap();
+                link(&mut g, id, from.name, split, "vector");
+                link(&mut g, split, "x", make, "y");
+            }
+            let sum = g.add_node(&CATALOG, "add", [0.0, 0.0]).unwrap();
+            link(&mut g, make, "vector", sum, "b");
+            let existing = g.link_into(out, "emissive").map(|l| l.from.clone());
+            if let Some(existing) = existing {
+                link(&mut g, existing.node, &existing.pin, sum, "a");
+            }
+            link(&mut g, sum, "result", out, "emissive");
+        }
+    }
+    g
+}
+
+#[test]
+fn a_material_using_every_node_compiles() {
+    let graph = every_node_material();
+    let compiled = compile(&graph).unwrap_or_else(|p| panic!("{p:?}"));
+    for def in CATALOG.nodes.iter().filter(|d| d.kind != "output") {
+        assert!(graph.nodes.iter().any(|n| n.kind == def.kind), "{} is not in the test graph", def.kind);
+    }
+    assert!(compiled.animated, "the graph uses Time");
+}
+
+#[test]
+fn a_vector_into_a_number_input_is_a_problem_on_that_node() {
+    let mut g = Graph::new(&CATALOG);
+    let out = g.nodes[0].id;
+    let position = g.add_node(&CATALOG, "position", [0.0, 0.0]).unwrap();
+    let add = g.add_node(&CATALOG, "add", [0.0, 0.0]).unwrap();
+    link(&mut g, position, "position", add, "a");
+    link(&mut g, add, "result", out, "roughness");
+    let problems = compile(&g).unwrap_err();
+    assert_eq!(problems[0].node, Some(out));
+    assert!(problems[0].message.contains("Split Vector"), "{problems:?}");
+}
+
+#[test]
+fn materials_change_the_drawn_colour_and_every_node_is_valid_on_the_gpu() {
+    let Some(gpu) = gpu() else { return };
+    let mut scene = Scene::new();
+    mesh(&mut scene, "cube", [0.0, 0.0, 0.0]);
+    object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3}), [0.0; 3], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 50.0, 1.0);
+
+    let mut red = Graph::new(&CATALOG);
+    let out = red.nodes[0].id;
+    red.set_value(&CATALOG, out, "baseColor", json!([0.0, 0.0, 0.0])).unwrap();
+    red.set_value(&CATALOG, out, "emissive", json!([1.0, 0.0, 0.0])).unwrap();
+    let red = Arc::new(compile(&red).unwrap());
+    let frame = extract_with(&scene, camera, OPTIONS, &mut |_| Some(Arc::clone(&red)));
+    // The mesh has no material path, so the resolver is not asked.
+    assert!(frame.items[0].material.is_none());
+    let id = scene.world_matrices()[0].0;
+    scene
+        .set_component(id, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.5, "material": "red.bmaterial"}))
+        .unwrap();
+    let frame = extract_with(&scene, camera, OPTIONS, &mut |path| (path == "red.bmaterial").then(|| Arc::clone(&red)));
+    let image = gpu.render(&frame, 64, 64).unwrap();
+    let [r, g, b, _] = image.pixel(32, 32).unwrap();
+    // The light adds a white highlight; the emission makes red dominate.
+    assert!(r > 200 && r > g + 100 && r > b + 100, "expected red, got {:?}", [r, g, b]);
+
+    let every = Arc::new(compile(&every_node_material()).unwrap());
+    let frame = extract_with(&scene, camera, OPTIONS, &mut |_| Some(Arc::clone(&every)));
+    gpu.render(&frame, 32, 32).unwrap_or_else(|e| panic!("the GPU refused the generated shader: {e}\n{}", every.surface));
 }

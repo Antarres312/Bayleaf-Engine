@@ -3,7 +3,7 @@
 use bayleaf_scene::Scene;
 use serde_json::{Value, json};
 
-use crate::{CommandError, CommandSpec, HistoryStep, Prompt, Session, always};
+use crate::{CommandError, CommandSpec, HistoryStep, Mutates, Prompt, Session, Snapshot, always};
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
     vec![
@@ -14,7 +14,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "none",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: always,
             run: app_version,
         },
@@ -25,7 +25,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+Z",
             params: "none",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: |s| {
                 crate::not_playing(s)?;
                 if s.can_undo() { Ok(()) } else { Err("nothing to undo".to_owned()) }
@@ -39,7 +39,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+Y",
             params: "none",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: |s| {
                 crate::not_playing(s)?;
                 if s.can_redo() { Ok(()) } else { Err("nothing to redo".to_owned()) }
@@ -55,20 +55,34 @@ fn app_version(_: &mut Session, _: &Value) -> Result<Value, CommandError> {
 
 fn undo(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
     let step = session.undo.pop().ok_or_else(|| CommandError::Failed("nothing to undo".to_owned()))?;
-    let current = session.scene.to_doc();
-    session.scene = Scene::from_doc(&step.before)?;
-    session.dirty = true;
     let command = step.command.clone();
+    let current = restore(session, step.before)?;
     session.redo.push(HistoryStep { command: step.command, before: current, merge_key: None });
     Ok(json!({ "undone": command }))
 }
 
 fn redo(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
     let step = session.redo.pop().ok_or_else(|| CommandError::Failed("nothing to redo".to_owned()))?;
-    let current = session.scene.to_doc();
-    session.scene = Scene::from_doc(&step.before)?;
-    session.dirty = true;
     let command = step.command.clone();
+    let current = restore(session, step.before)?;
     session.undo.push(HistoryStep { command: step.command, before: current, merge_key: None });
     Ok(json!({ "redone": command }))
+}
+
+/// Puts a snapshot back and returns the state it replaced, for the opposite stack.
+fn restore(session: &mut Session, snapshot: Snapshot) -> Result<Snapshot, CommandError> {
+    match snapshot {
+        Snapshot::Scene(doc) => {
+            let current = session.scene.to_doc();
+            session.scene = Scene::from_doc(&doc)?;
+            session.dirty = true;
+            Ok(Snapshot::Scene(current))
+        }
+        Snapshot::Graph(graph) => {
+            let open = session.graph.as_mut().ok_or_else(|| CommandError::Failed("the graph of this step is closed".to_owned()))?;
+            let current = std::mem::replace(&mut open.graph, graph);
+            open.dirty = true;
+            Ok(Snapshot::Graph(current))
+        }
+    }
 }

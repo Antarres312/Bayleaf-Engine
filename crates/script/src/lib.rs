@@ -16,6 +16,23 @@ use bayleaf_scene::Scene;
 use bayleaf_scene::components::{ScriptRef, Scripts, Transform};
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
 
+pub mod visual;
+
+/// File extension of visual scripts, which compile to modules when loaded.
+pub const VISUAL_EXTENSION: &str = "bscript";
+
+/// The WebAssembly module of a script file: a `.wasm` file as it is, a visual script compiled.
+pub fn module_bytes(path: &Path) -> Result<Vec<u8>, ScriptError> {
+    let read_error = |e: std::io::Error| ScriptError::Read { path: path.display().to_string(), message: e.to_string() };
+    if path.extension().is_some_and(|e| e == VISUAL_EXTENSION) {
+        let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let text = std::fs::read_to_string(path).map_err(read_error)?;
+        let graph = bayleaf_graph::Graph::from_json(&text, &visual::CATALOG).map_err(|e| ScriptError::Invalid(name.clone(), e.to_string()))?;
+        return visual::compile(&graph).map_err(|p| ScriptError::Invalid(name, bayleaf_graph::summary(&p)));
+    }
+    std::fs::read(path).map_err(read_error)
+}
+
 /// ABI version the host implements.
 pub const ABI_VERSION: i32 = 1;
 /// Instructions one call may run before it is stopped.
@@ -32,7 +49,7 @@ const MAX_LOG_LINES: usize = 1000;
 pub enum ScriptError {
     #[error("cannot read {path}: {message}")]
     Read { path: String, message: String },
-    #[error("{0} is not a valid WebAssembly module: {1}")]
+    #[error("{0} is not a valid script: {1}")]
     Invalid(String, String),
     #[error("{module}: {message}")]
     Trapped { module: String, message: String },
@@ -193,7 +210,7 @@ impl ScriptHost {
         time: f64,
         input: &Arc<Input>,
     ) -> Result<(), ScriptError> {
-        let bytes = std::fs::read(path).map_err(|e| ScriptError::Read { path: path.display().to_string(), message: e.to_string() })?;
+        let bytes = module_bytes(path)?;
         let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
         self.load_bytes(object, index, path, modified, &bytes, script, scene, time, input)
     }

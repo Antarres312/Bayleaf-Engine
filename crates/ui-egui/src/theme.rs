@@ -41,7 +41,16 @@ pub(crate) struct Tokens {
     pub axis_y: Color32,
     pub axis_z: Color32,
     pub warning: Color32,
+    /// Text and marks on a warning fill.
+    pub on_warning: Color32,
     pub error: Color32,
+    /// Graph pins and links, by what they carry. Pins also differ by shape (flow pins are arrows).
+    pub pin_flow: Color32,
+    pub pin_number: Color32,
+    pub pin_vector: Color32,
+    pub pin_color: Color32,
+    pub pin_bool: Color32,
+    pub pin_any: Color32,
 }
 
 pub(crate) const DARK: Tokens = Tokens {
@@ -67,7 +76,14 @@ pub(crate) const DARK: Tokens = Tokens {
     axis_y: Color32::from_rgb(0x6B, 0xC4, 0x6D),
     axis_z: Color32::from_rgb(0x6C, 0xB6, 0xFF),
     warning: Color32::from_rgb(0xE5, 0xB5, 0x4B),
+    on_warning: Color32::from_rgb(0x13, 0x15, 0x1A),
     error: Color32::from_rgb(0xFF, 0x7B, 0x72),
+    pin_flow: Color32::from_rgb(0xE6, 0xE8, 0xEE),
+    pin_number: Color32::from_rgb(0x6B, 0xC4, 0x6D),
+    pin_vector: Color32::from_rgb(0x6C, 0xB6, 0xFF),
+    pin_color: Color32::from_rgb(0xE5, 0xB5, 0x4B),
+    pin_bool: Color32::from_rgb(0xFF, 0x7B, 0x72),
+    pin_any: Color32::from_rgb(0xC4, 0x9B, 0xFF),
 };
 
 pub(crate) const LIGHT: Tokens = Tokens {
@@ -93,7 +109,14 @@ pub(crate) const LIGHT: Tokens = Tokens {
     axis_y: Color32::from_rgb(0x2E, 0x7D, 0x32),
     axis_z: Color32::from_rgb(0x1F, 0x63, 0xC6),
     warning: Color32::from_rgb(0x9A, 0x67, 0x00),
+    on_warning: Color32::WHITE,
     error: Color32::from_rgb(0xC6, 0x28, 0x28),
+    pin_flow: Color32::from_rgb(0x1B, 0x20, 0x2C),
+    pin_number: Color32::from_rgb(0x2E, 0x7D, 0x32),
+    pin_vector: Color32::from_rgb(0x1F, 0x63, 0xC6),
+    pin_color: Color32::from_rgb(0x9A, 0x67, 0x00),
+    pin_bool: Color32::from_rgb(0xC6, 0x28, 0x28),
+    pin_any: Color32::from_rgb(0x7B, 0x3F, 0xC4),
 };
 
 /// Corner radius of buttons and fields.
@@ -253,6 +276,14 @@ mod tests {
             ("z axis on surface", t.axis_z, t.surface),
             ("error on panel", t.error, t.panel),
         ];
+        let pins = [("flow", t.pin_flow), ("number", t.pin_number), ("vector", t.pin_vector), ("color", t.pin_color), ("bool", t.pin_bool), ("any", t.pin_any)];
+        for (pin, color) in pins {
+            // Pins sit on node cards; links run over the canvas backdrop.
+            for (bg_name, bg) in [("surface", t.surface), ("backdrop", t.backdrop)] {
+                assert!(contrast(color, bg) >= 3.0, "{name}: {pin} pin on {bg_name} is {:.2}:1", contrast(color, bg));
+            }
+        }
+        assert!(contrast(t.on_warning, t.warning) >= 4.5, "{name}: the ! on a warning badge");
         for (what, fg, bg) in text_pairs {
             assert!(contrast(fg, bg) >= 4.5, "{name}: {what} is {:.2}:1", contrast(fg, bg));
         }
@@ -262,6 +293,8 @@ mod tests {
             ("focus ring on field", t.focus, t.field),
             ("focus ring on pressed control", t.focus, t.control_active),
             ("accent on panel", t.accent, t.panel),
+            ("warning badge on surface", t.warning, t.surface),
+            ("warning badge on panel", t.warning, t.panel),
         ] {
             assert!(contrast(fg, bg) >= 3.0, "{name}: {what} is {:.2}:1", contrast(fg, bg));
         }

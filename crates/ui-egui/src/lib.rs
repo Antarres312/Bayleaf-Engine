@@ -9,6 +9,7 @@
 pub mod brand;
 mod console;
 mod dock;
+mod graph_view;
 mod hierarchy;
 mod inspector;
 mod project;
@@ -49,6 +50,9 @@ pub struct Editor {
     logo: Option<(egui::TextureHandle, bool)>,
     project: project::ProjectView,
     script_info: script_info::ScriptInfo,
+    graph_view: graph_view::GraphView,
+    /// A panel to bring to the front after this frame's panels are drawn.
+    raise_panel: Option<Panel>,
 }
 
 impl Default for Editor {
@@ -69,6 +73,8 @@ impl Default for Editor {
             logo: None,
             project: project::ProjectView::default(),
             script_info: script_info::ScriptInfo::default(),
+            graph_view: graph_view::GraphView::default(),
+            raise_panel: None,
         }
     }
 }
@@ -107,6 +113,7 @@ impl Editor {
             });
         });
         egui::CentralPanel::default().frame(egui::Frame::new().fill(t.backdrop)).show(ui, |ui| dock::show(self, ui, gpu));
+        self.apply_raise();
         self.update_title(ui.ctx());
         if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
             self.selected = None;
@@ -148,6 +155,33 @@ impl Editor {
             return;
         }
         self.dispatch("scene.open", &json!({ "path": path }), None);
+    }
+
+    /// Opens a material graph or visual script in the graph editor, asking first if the open graph has unsaved changes.
+    pub fn open_graph(&mut self, path: &std::path::Path) {
+        if self.session.graph().is_some_and(|g| g.dirty) && !confirm_discard_graph() {
+            return;
+        }
+        self.dispatch("graph.open", &json!({ "path": path }), None);
+    }
+
+    /// Opens a panel if it is hidden and brings its tab to the front, once the panels are drawn
+    /// (while they draw, the dock is out of the editor).
+    pub(crate) fn show_panel(&mut self, panel: Panel) {
+        self.raise_panel = Some(panel);
+        self.apply_raise();
+    }
+
+    fn apply_raise(&mut self) {
+        if self.dock.iter_all_tabs().next().is_none() {
+            return;
+        }
+        if let Some(panel) = self.raise_panel.take() {
+            dock::set_open(&mut self.dock, panel, true);
+            if let Some(path) = self.dock.find_tab(&panel) {
+                let _ = self.dock.set_active_tab(path);
+            }
+        }
     }
 
     /// In play mode: passes the held keys to the scripts and advances the simulation by one frame.
@@ -261,15 +295,24 @@ impl Editor {
         if ctx.text_edit_focused() {
             return;
         }
+        // While a graph node or pin has focus, plain keys such as Delete and the arrows belong to the graph.
+        let graph_keys = self.graph_view.focused;
         // F2 renames the selected object in place, in the hierarchy.
         if let Some(id) = self.selected
+            && !graph_keys
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2))
         {
             self.renaming = Some(hierarchy::Rename { id, text: String::new(), focused: false });
         }
         // Only enabled commands: Play and Stop share Ctrl+P, and only one of them is enabled at a time.
-        let shortcuts: Vec<(&'static str, egui::KeyboardShortcut)> =
-            self.registry.list(&self.session).into_iter().filter(|c| c.enabled).filter_map(|c| parse_shortcut(c.shortcut).map(|s| (c.id, s))).collect();
+        let shortcuts: Vec<(&'static str, egui::KeyboardShortcut)> = self
+            .registry
+            .list(&self.session)
+            .into_iter()
+            .filter(|c| c.enabled)
+            .filter_map(|c| parse_shortcut(c.shortcut).map(|s| (c.id, s)))
+            .filter(|(_, s)| !(graph_keys && s.modifiers.is_none()))
+            .collect();
         for (id, shortcut) in shortcuts {
             if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
                 self.run_with_prompt(id);
@@ -318,6 +361,9 @@ impl Editor {
                 {
                     self.selected = Some(created);
                 }
+                if matches!(id, "graph.new" | "graph.open") {
+                    self.show_panel(Panel::Graph);
+                }
                 Some(result)
             }
             Err(error) => {
@@ -336,6 +382,16 @@ impl Editor {
             self.title = title;
         }
     }
+}
+
+/// Asks before closing a graph with unsaved changes.
+pub(crate) fn confirm_discard_graph() -> bool {
+    let answer = rfd::MessageDialog::new()
+        .set_title("Unsaved changes")
+        .set_description("The graph has unsaved changes. Discard them?")
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    answer == rfd::MessageDialogResult::Yes
 }
 
 fn confirm_discard() -> bool {

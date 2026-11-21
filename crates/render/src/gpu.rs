@@ -1,11 +1,14 @@
 //! GPU side: pipelines, buffers and an offscreen render target.
 
+use std::collections::HashMap;
+
 use bayleaf_core::math::{Mat4, Vec3};
 use bayleaf_scene::components::Shape;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::extract::{DrawItem, Frame, MAX_LIGHTS, normal_matrix};
+use crate::material::CompiledMaterial;
 use crate::mesh::{self, Vertex};
 
 /// Colour format of [`RenderTarget`]. sRGB, so shaders write linear colour.
@@ -114,8 +117,12 @@ impl RenderTarget {
 pub struct Renderer {
     globals: wgpu::Buffer,
     globals_group: wgpu::BindGroup,
-    opaque: wgpu::RenderPipeline,
-    transparent: wgpu::RenderPipeline,
+    layout: wgpu::PipelineLayout,
+    /// Opaque and transparent pipelines by material key; 0 is the built-in surface, `None` a
+    /// material whose shader the GPU refused (drawn with the built-in surface instead).
+    pipelines: HashMap<u64, Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>>,
+    /// Why the last refused material shader was refused.
+    material_error: Option<String>,
     grid: wgpu::RenderPipeline,
     meshes: Vec<(Shape, GpuMesh)>,
     instances: wgpu::Buffer,
@@ -149,17 +156,17 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout)],
             immediate_size: 0,
         });
-        let mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("bayleaf mesh shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/mesh.wgsl").into()),
-        });
         let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bayleaf grid shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/grid.wgsl").into()),
         });
 
-        let opaque = mesh_pipeline(device, &layout, &mesh_shader, false);
-        let transparent = mesh_pipeline(device, &layout, &mesh_shader, true);
+        let mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bayleaf mesh shader"),
+            source: wgpu::ShaderSource::Wgsl(mesh_source(DEFAULT_SURFACE).into()),
+        });
+        let mut pipelines = HashMap::new();
+        pipelines.insert(0, Some((mesh_pipeline(device, &layout, &mesh_shader, false), mesh_pipeline(device, &layout, &mesh_shader, true))));
         let grid = grid_pipeline(device, &layout, &grid_shader);
 
         let meshes = Shape::ALL
@@ -182,17 +189,55 @@ impl Renderer {
 
         let instance_capacity = 256;
         let instances = instance_buffer(device, instance_capacity);
-        Self { globals, globals_group, opaque, transparent, grid, meshes, instances, instance_capacity }
+        Self { globals, globals_group, layout, pipelines, material_error: None, grid, meshes, instances, instance_capacity }
+    }
+
+    /// Why the GPU refused the last material shader it was given, if it refused one.
+    pub fn material_error(&self) -> Option<&str> {
+        self.material_error.as_deref()
+    }
+
+    /// Builds the pipelines of a material the first time it is drawn. A shader the GPU refuses
+    /// is remembered as refused, so it is tried once, and its objects use the built-in surface.
+    fn prepare(&mut self, device: &wgpu::Device, material: &CompiledMaterial) {
+        if self.pipelines.contains_key(&material.key) {
+            return;
+        }
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bayleaf material shader"),
+            source: wgpu::ShaderSource::Wgsl(mesh_source(&material.surface).into()),
+        });
+        let pipelines = (mesh_pipeline(device, &self.layout, &shader, false), mesh_pipeline(device, &self.layout, &shader, true));
+        let entry = match pollster::block_on(scope.pop()) {
+            None => Some(pipelines),
+            Some(error) => {
+                self.material_error = Some(error_chain(&error));
+                None
+            }
+        };
+        self.pipelines.insert(material.key, entry);
+    }
+
+    fn pipeline(&self, key: u64, transparent: bool) -> Option<&wgpu::RenderPipeline> {
+        let pair = match self.pipelines.get(&key) {
+            Some(Some(pair)) => pair,
+            _ => self.pipelines.get(&0)?.as_ref()?,
+        };
+        Some(if transparent { &pair.1 } else { &pair.0 })
     }
 
     /// Records and submits the commands that draw `frame` into `target`.
     pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, target: &RenderTarget, frame: &Frame) {
         let globals = globals_for(frame);
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        for material in frame.items.iter().filter_map(|i| i.material.as_deref()) {
+            self.prepare(device, material);
+        }
 
-        // Opaque items grouped by shape, then transparent items back to front.
+        // Opaque items grouped by material and shape, then transparent items back to front.
         let mut opaque: Vec<&DrawItem> = frame.items.iter().filter(|i| !i.is_transparent()).collect();
-        opaque.sort_by_key(|i| shape_index(i.shape));
+        opaque.sort_by_key(|i| (material_key(i), shape_index(i.shape)));
         let mut transparent: Vec<&DrawItem> = frame.items.iter().filter(|i| i.is_transparent()).collect();
         let eye = frame.camera.position;
         transparent.sort_by(|a, b| distance(b.model, eye).total_cmp(&distance(a.model, eye)));
@@ -232,16 +277,18 @@ impl Renderer {
             pass.set_bind_group(0, &self.globals_group, &[]);
             pass.set_vertex_buffer(1, self.instances.slice(..));
 
-            pass.set_pipeline(&self.opaque);
-            let mut start = 0u32;
-            for (shape, mesh) in &self.meshes {
-                let count = opaque.iter().filter(|i| i.shape == *shape).count() as u32;
-                if count > 0 {
+            // Runs of opaque items that share a material and a shape are drawn as one instanced call.
+            let mut start = 0usize;
+            while start < opaque.len() {
+                let first = opaque[start];
+                let run = opaque[start..].iter().take_while(|i| material_key(i) == material_key(first) && i.shape == first.shape).count();
+                if let (Some(pipeline), Some((_, mesh))) = (self.pipeline(material_key(first), false), self.meshes.iter().find(|(s, _)| *s == first.shape)) {
+                    pass.set_pipeline(pipeline);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..mesh.index_count, 0, start..start + count);
+                    pass.draw_indexed(0..mesh.index_count, 0, start as u32..(start + run) as u32);
                 }
-                start += count;
+                start += run;
             }
 
             if frame.show_grid {
@@ -249,10 +296,10 @@ impl Renderer {
                 pass.draw(0..6, 0..1);
             }
 
-            pass.set_pipeline(&self.transparent);
             for (offset, item) in transparent.iter().enumerate() {
-                if let Some((_, mesh)) = self.meshes.iter().find(|(s, _)| *s == item.shape) {
-                    let index = start + offset as u32;
+                if let (Some(pipeline), Some((_, mesh))) = (self.pipeline(material_key(item), true), self.meshes.iter().find(|(s, _)| *s == item.shape)) {
+                    let index = (opaque.len() + offset) as u32;
+                    pass.set_pipeline(pipeline);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, index..index + 1);
@@ -271,7 +318,7 @@ fn globals_for(frame: &Frame) -> Globals {
     let count = frame.lights.len().min(MAX_LIGHTS) as f32;
     Globals {
         view_proj: frame.camera.view_proj().to_cols_array_2d(),
-        camera_pos: frame.camera.position.extend(1.0).to_array(),
+        camera_pos: frame.camera.position.extend(frame.time).to_array(),
         ambient: frame.ambient.extend(count).to_array(),
         lights,
     }
@@ -379,4 +426,30 @@ fn grid_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// The built-in surface: the mesh component's colour, metallic and roughness.
+pub(crate) const DEFAULT_SURFACE: &str = "fn surface(s: SurfaceIn) -> Surface {
+    return Surface(s.color.rgb, s.params.x, s.params.y, vec3<f32>(0.0), s.color.a);
+}";
+
+/// The mesh shader with `surface` filled in.
+pub(crate) fn mesh_source(surface: &str) -> String {
+    include_str!("shaders/mesh.wgsl").replace("// @surface", surface)
+}
+
+fn material_key(item: &DrawItem) -> u64 {
+    item.material.as_ref().map_or(0, |m| m.key)
+}
+
+/// An error and its causes, for messages.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }

@@ -9,12 +9,12 @@ publish = false
 
 [dependencies]
 bayleaf-core = { workspace = true }
+bayleaf-graph = { workspace = true }
 bayleaf-scene = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 wasmi = { workspace = true }
-
-[dev-dependencies]
+# Assembles the WebAssembly text that visual scripts compile to.
 wat = { workspace = true }
 
 [lints]

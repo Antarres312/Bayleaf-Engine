@@ -6,7 +6,7 @@ use bayleaf_script::{ScriptFault, ScriptHost};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{CommandError, CommandSpec, Level, Prompt, Session, parse};
+use crate::{CommandError, CommandSpec, Level, Mutates, Prompt, Session, parse};
 
 /// How often play mode looks for changed script modules, in simulated seconds.
 const RELOAD_CHECK_INTERVAL: f32 = 0.5;
@@ -33,7 +33,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+P",
             params: "none; returns {scripts, running}",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: |s| if s.is_playing() { Err("play mode is already running".to_owned()) } else { Ok(()) },
             run: start,
         },
@@ -44,7 +44,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+P",
             params: "none; restores the scene as it was before play",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: playing,
             run: stop,
         },
@@ -55,7 +55,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "Ctrl+Shift+P",
             params: "none; toggles pause",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: playing,
             run: pause,
         },
@@ -66,7 +66,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{seconds? = 1/60, steps? = 1}; advances play mode, also when paused",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: playing,
             run: step_command,
         },
@@ -77,7 +77,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "{keys: [names]}; the keys scripts see as held, until the next call or the next editor frame",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: playing,
             run: input,
         },
@@ -88,7 +88,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "none",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: crate::always,
             run: |s, p| {
                 parse::<NoParams>(p)?;
@@ -103,7 +103,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             shortcut: "",
             params: "none; returns {playing, paused, time, scripts, running, console}",
             prompt: Prompt::None,
-            mutates: false,
+            mutates: Mutates::No,
             enabled: crate::always,
             run: status,
         },

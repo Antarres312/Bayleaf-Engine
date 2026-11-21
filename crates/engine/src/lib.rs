@@ -7,6 +7,7 @@
 
 mod builtin;
 pub mod confine;
+mod graph_cmds;
 mod play;
 mod scene_cmds;
 
@@ -14,8 +15,11 @@ mod scene_cmds;
 #[cfg(feature = "streaming")]
 pub use bayleaf_streaming as streaming;
 
+pub use bayleaf_graph as graph;
+pub use bayleaf_render as render;
 pub use bayleaf_scene as scene;
 pub use bayleaf_script as script;
+pub use graph_cmds::{GraphDoc, catalog_for_domain, catalog_for_path, problems};
 
 use std::path::{Path, PathBuf};
 
@@ -46,10 +50,27 @@ impl From<bayleaf_scene::SceneError> for CommandError {
     }
 }
 
+/// What an undo step restores.
+enum Snapshot {
+    Scene(SceneDoc),
+    Graph(bayleaf_graph::Graph),
+}
+
 struct HistoryStep {
     command: String,
-    before: SceneDoc,
+    before: Snapshot,
     merge_key: Option<String>,
+}
+
+/// Which document a command changes, and so what its undo step restores.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mutates {
+    /// Changes nothing that undo covers (reads, files, play mode).
+    No,
+    /// Changes the scene; one undo step, and the scene file is marked modified.
+    Scene,
+    /// Changes the open graph; one undo step, and the graph file is marked modified.
+    Graph,
 }
 
 /// State that commands read and change: the open scene, its file, the undo history and play mode.
@@ -65,6 +86,8 @@ pub struct Session {
     console: Vec<ConsoleLine>,
     /// Set while an automation request runs: the folders it may read and write.
     confinement: Option<confine::Confinement>,
+    /// The graph open in the graph editor.
+    graph: Option<GraphDoc>,
 }
 
 /// How important a console line is.
@@ -183,13 +206,35 @@ impl Session {
         self.scene = scene;
         self.scene_path = path;
         self.dirty = false;
-        self.undo.clear();
-        self.redo.clear();
+        self.forget(|s| matches!(s, Snapshot::Scene(_)));
+    }
+
+    /// Drops the undo and redo steps `which` selects.
+    fn forget(&mut self, which: impl Fn(&Snapshot) -> bool) {
+        self.undo.retain(|s| !which(&s.before));
+        self.redo.retain(|s| !which(&s.before));
+    }
+
+    /// The graph open in the graph editor.
+    pub fn graph(&self) -> Option<&GraphDoc> {
+        self.graph.as_ref()
+    }
+
+    /// A material library that shows the open material graph as it is, before it is saved.
+    pub fn material_library(&self) -> bayleaf_render::MaterialLibrary {
+        let mut library = bayleaf_render::MaterialLibrary::new();
+        if let Some(doc) = &self.graph
+            && doc.graph.domain == bayleaf_render::material::CATALOG.domain
+            && let Some(path) = &doc.path
+        {
+            library.set_live(Some((path, &doc.graph)));
+        }
+        library
     }
 }
 
-type RunFn = fn(&mut Session, &Value) -> Result<Value, CommandError>;
-type EnabledFn = fn(&Session) -> Result<(), String>;
+pub(crate) type RunFn = fn(&mut Session, &Value) -> Result<Value, CommandError>;
+pub(crate) type EnabledFn = fn(&Session) -> Result<(), String>;
 
 /// What a front end has to ask the user for before running a command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -218,8 +263,8 @@ pub struct CommandSpec {
     /// Human-readable description of the params object.
     pub params: &'static str,
     pub prompt: Prompt,
-    /// True when the command changes the scene and records one undo step.
-    pub mutates: bool,
+    /// What the command changes; changes record one undo step.
+    pub mutates: Mutates,
     pub enabled: EnabledFn,
     pub run: RunFn,
 }
@@ -250,6 +295,7 @@ impl CommandRegistry {
         let mut commands = builtin::commands();
         commands.extend(scene_cmds::commands());
         commands.extend(play::commands());
+        commands.extend(graph_cmds::commands());
         Self { commands }
     }
 
@@ -289,26 +335,45 @@ impl CommandRegistry {
         }
         let spec = self.get(id).ok_or_else(|| CommandError::Unknown(id.to_owned()))?;
         (spec.enabled)(session).map_err(|reason| CommandError::Disabled { id: id.to_owned(), reason })?;
-        if !spec.mutates {
-            return (spec.run)(session, params);
-        }
-        let before = session.scene.to_doc();
+        let before = match spec.mutates {
+            Mutates::No => return (spec.run)(session, params),
+            Mutates::Scene => Snapshot::Scene(session.scene.to_doc()),
+            Mutates::Graph => {
+                Snapshot::Graph(session.graph.as_ref().map(|g| g.graph.clone()).ok_or_else(|| CommandError::Failed(graph_cmds::NO_GRAPH.to_owned()))?)
+            }
+        };
         match (spec.run)(session, params) {
-            // Play-mode changes are thrown away on stop, so they are not undo steps and do not dirty the file.
-            Ok(result) if session.is_playing() => Ok(result),
+            // Play-mode changes to the scene are thrown away on stop, so they are not undo steps and do not dirty the file.
+            Ok(result) if session.is_playing() && spec.mutates == Mutates::Scene => Ok(result),
             Ok(result) => {
                 let merges = merge_key.is_some() && session.undo.last().is_some_and(|s| s.merge_key.as_deref() == merge_key);
                 if !merges {
                     session.undo.push(HistoryStep { command: id.to_owned(), before, merge_key: merge_key.map(str::to_owned) });
                 }
                 session.redo.clear();
-                session.dirty = true;
+                match spec.mutates {
+                    Mutates::Graph => {
+                        if let Some(graph) = session.graph.as_mut() {
+                            graph.dirty = true;
+                        }
+                    }
+                    _ => session.dirty = true,
+                }
                 Ok(result)
             }
             Err(error) => {
-                // A failed command leaves the scene as it was.
-                if let Ok(scene) = Scene::from_doc(&before) {
-                    session.scene = scene;
+                // A failed command leaves its document as it was.
+                match before {
+                    Snapshot::Scene(doc) => {
+                        if let Ok(scene) = Scene::from_doc(&doc) {
+                            session.scene = scene;
+                        }
+                    }
+                    Snapshot::Graph(graph) => {
+                        if let Some(open) = session.graph.as_mut() {
+                            open.graph = graph;
+                        }
+                    }
                 }
                 Err(error)
             }

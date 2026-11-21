@@ -39,6 +39,9 @@ enum Kind {
     Folder,
     Scene,
     Script,
+    /// A visual script (`.bscript`): a graph that is also a script.
+    VisualScript,
+    Material,
     Image,
     Other,
 }
@@ -48,6 +51,8 @@ impl Kind {
         match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
             Some(bayleaf_engine::scene::doc::EXTENSION) => Kind::Scene,
             Some("wasm") => Kind::Script,
+            Some("bscript") => Kind::VisualScript,
+            Some("bmaterial") => Kind::Material,
             Some("png" | "jpg" | "jpeg" | "webp" | "ktx2") => Kind::Image,
             _ => Kind::Other,
         }
@@ -58,6 +63,8 @@ impl Kind {
             Kind::Folder => "Folder",
             Kind::Scene => "Scene",
             Kind::Script => "Script",
+            Kind::VisualScript => "Visual Script",
+            Kind::Material => "Material",
             Kind::Image => "Image",
             Kind::Other => "File",
         }
@@ -96,9 +103,18 @@ pub(crate) struct ProjectView {
 }
 
 impl ProjectView {
-    /// Every `.wasm` file in the project, as paths relative to the project folder.
+    /// Every script (`.wasm` and `.bscript`) in the project, as paths relative to the project folder.
     pub(crate) fn script_files(&self) -> Vec<String> {
-        let mut files: Vec<String> = self.tree.values().flatten().filter(|e| e.kind == Kind::Script).map(|e| relative_path(&self.root, &e.path)).collect();
+        self.files_of(&[Kind::Script, Kind::VisualScript])
+    }
+
+    /// Every material graph in the project, as paths relative to the project folder.
+    pub(crate) fn material_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::Material])
+    }
+
+    fn files_of(&self, kinds: &[Kind]) -> Vec<String> {
+        let mut files: Vec<String> = self.tree.values().flatten().filter(|e| kinds.contains(&e.kind)).map(|e| relative_path(&self.root, &e.path)).collect();
         files.sort();
         files
     }
@@ -112,7 +128,10 @@ impl ProjectView {
 
 enum Action {
     OpenScene(PathBuf),
+    OpenGraph(PathBuf),
     AddScript(String),
+    /// A new graph of this domain, saved in the open folder.
+    NewGraph(&'static str),
 }
 
 /// What the panel's parts ask for after drawing.
@@ -171,6 +190,20 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     editor.project = view;
     match outcome.action {
         Some(Action::OpenScene(path)) => editor.open_scene(&path),
+        Some(Action::OpenGraph(path)) => editor.open_graph(&path),
+        Some(Action::NewGraph(domain)) => {
+            let extension = if domain == "material" { "bmaterial" } else { "bscript" };
+            let stem = if domain == "material" { "new_material" } else { "new_script" };
+            let folder = editor.project.current.clone();
+            let path = (1..).map(|n| folder.join(if n == 1 { format!("{stem}.{extension}") } else { format!("{stem}_{n}.{extension}") })).find(|p| !p.exists());
+            if let Some(path) = path
+                && (editor.session.graph().is_none_or(|g| !g.dirty) || crate::confirm_discard_graph())
+                && editor.dispatch("graph.new", &json!({ "domain": domain }), None).is_some()
+            {
+                editor.dispatch("graph.save", &json!({ "path": path }), None);
+                editor.project.scanned = None;
+            }
+        }
         Some(Action::AddScript(module)) => {
             if let Some(id) = editor.selected {
                 editor.dispatch("scene.script.add", &json!({ "id": id, "module": module }), None);
@@ -190,6 +223,18 @@ fn toolbar(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) {
         s.interact_size.y = LIST_ROW;
         s.button_padding = egui::vec2(6.0, 1.0);
         s.slider_rail_height = 3.0;
+        let create = ui.menu_button("+", |ui| {
+            if ui.button("New Material").on_hover_text("A material graph in this folder").clicked() {
+                outcome.action = Some(Action::NewGraph("material"));
+                ui.close();
+            }
+            if ui.button("New Visual Script").on_hover_text("A visual script in this folder").clicked() {
+                outcome.action = Some(Action::NewGraph("script"));
+                ui.close();
+            }
+        });
+        ui.ctx().accesskit_node_builder(create.response.id, |node| node.set_label("Create file"));
+        create.response.on_hover_text("Create a material or visual script here");
         let mut crumbs: Vec<PathBuf> = view.current.ancestors().take_while(|p| p.starts_with(&view.root)).map(Path::to_path_buf).collect();
         crumbs.reverse();
         for (i, crumb) in crumbs.iter().enumerate() {
@@ -385,6 +430,7 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
         match entry.kind {
             Kind::Folder => outcome.enter = Some(entry.path.clone()),
             Kind::Scene => outcome.action = Some(Action::OpenScene(entry.path.clone())),
+            Kind::Material | Kind::VisualScript => outcome.action = Some(Action::OpenGraph(entry.path.clone())),
             _ => {}
         }
     }
@@ -407,7 +453,11 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
             outcome.action = Some(Action::OpenScene(entry.path.clone()));
             ui.close();
         }
-        if entry.kind == Kind::Script {
+        if matches!(entry.kind, Kind::Material | Kind::VisualScript) && ui.button("Open in Graph Editor").clicked() {
+            outcome.action = Some(Action::OpenGraph(entry.path.clone()));
+            ui.close();
+        }
+        if matches!(entry.kind, Kind::Script | Kind::VisualScript) {
             let button = ui.add_enabled(selected_object, egui::Button::new("Add to Selected Object"));
             if button.on_disabled_hover_text("Select an object first").clicked() {
                 outcome.action = Some(Action::AddScript(relative.clone()));
@@ -452,13 +502,20 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             painter.add(egui::Shape::closed_line(vec![left, mid, bottom, lb], stroke(color)));
             painter.add(egui::Shape::closed_line(vec![mid, right, rb, bottom], stroke(color)));
         }
-        Kind::Script | Kind::Image | Kind::Other => {
+        Kind::Material => {
+            // A shaded ball with a highlight.
+            let center = rect.center();
+            painter.circle(center, s * 0.36, t.surface_active, stroke(t.pin_color));
+            painter.circle_filled(center + egui::vec2(-s * 0.1, -s * 0.1), s * 0.14, t.pin_color);
+        }
+        Kind::Script | Kind::VisualScript | Kind::Image | Kind::Other => {
             // A page with a folded corner.
             let fold = s * 0.22;
             let (l, r, top, bottom) = (rect.left() + s * 0.18, rect.right() - s * 0.18, rect.top() + s * 0.08, rect.bottom() - s * 0.08);
             let page = vec![egui::pos2(l, top), egui::pos2(r - fold, top), egui::pos2(r, top + fold), egui::pos2(r, bottom), egui::pos2(l, bottom)];
             let accent = match kind {
                 Kind::Script => t.axis_z,
+                Kind::VisualScript => t.pin_any,
                 Kind::Image => t.axis_y,
                 _ => t.text_muted,
             };
@@ -466,6 +523,14 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             painter.add(egui::Shape::line(vec![egui::pos2(r - fold, top), egui::pos2(r - fold, top + fold), egui::pos2(r, top + fold)], stroke(accent)));
             let inner = egui::Rect::from_min_max(egui::pos2(l + s * 0.1, top + fold + s * 0.06), egui::pos2(r - s * 0.1, bottom - s * 0.1));
             match kind {
+                Kind::VisualScript if s >= 24.0 => {
+                    // Two linked nodes.
+                    let a = egui::Rect::from_min_size(inner.min, inner.size() * egui::vec2(0.4, 0.35));
+                    let b = egui::Rect::from_min_size(inner.min + inner.size() * egui::vec2(0.6, 0.65), inner.size() * egui::vec2(0.4, 0.35));
+                    painter.rect_filled(a, 2.0, accent);
+                    painter.rect_filled(b, 2.0, accent);
+                    painter.line_segment([a.right_center(), b.left_center()], stroke(accent));
+                }
                 Kind::Script if s >= 24.0 => {
                     painter.text(inner.center(), egui::Align2::CENTER_CENTER, "{ }", egui::FontId::monospace(s * 0.24), accent);
                 }

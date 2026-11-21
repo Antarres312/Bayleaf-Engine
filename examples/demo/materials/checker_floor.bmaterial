@@ -1,0 +1,71 @@
+{
+  "format": "bayleaf.graph",
+  "version": 1,
+  "domain": "material",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "output",
+      "position": [
+        540.0,
+        40.0
+      ],
+      "values": {
+        "roughness": 0.85
+      }
+    },
+    {
+      "id": 2,
+      "kind": "checker",
+      "position": [
+        0.0,
+        0.0
+      ],
+      "values": {
+        "scale": 1.0
+      }
+    },
+    {
+      "id": 3,
+      "kind": "blend",
+      "position": [
+        260.0,
+        40.0
+      ],
+      "values": {
+        "a": [
+          0.07,
+          0.085,
+          0.08
+        ],
+        "b": [
+          0.13,
+          0.16,
+          0.14
+        ]
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": {
+        "node": 2,
+        "pin": "value"
+      },
+      "to": {
+        "node": 3,
+        "pin": "factor"
+      }
+    },
+    {
+      "from": {
+        "node": 3,
+        "pin": "result"
+      },
+      "to": {
+        "node": 1,
+        "pin": "baseColor"
+      }
+    }
+  ]
+}

@@ -57,6 +57,9 @@ impl HeadlessGpu {
         let mut renderer = Renderer::new(&self.device);
         let target = RenderTarget::new(&self.device, width, height);
         renderer.render(&self.device, &self.queue, &target, frame);
+        if let Some(error) = renderer.material_error() {
+            return Err(RenderError::Gpu(format!("a material shader was refused: {error}")));
+        }
         self.read_back(&target)
     }
 

@@ -14,6 +14,7 @@ streaming = ["dep:bayleaf-streaming"]
 
 [dependencies]
 bayleaf-core = { workspace = true }
+bayleaf-graph = { workspace = true }
 bayleaf-scene = { workspace = true }
 bayleaf-render = { workspace = true }
 bayleaf-script = { workspace = true }

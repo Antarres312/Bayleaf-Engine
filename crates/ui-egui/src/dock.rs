@@ -4,7 +4,7 @@
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 
-use crate::{Editor, console, hierarchy, inspector, project, scene_view, theme};
+use crate::{Editor, console, graph_view, hierarchy, inspector, project, scene_view, theme};
 
 /// The panels of the editor window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -14,10 +14,12 @@ pub enum Panel {
     Inspector,
     Console,
     Project,
+    /// The graph editor, a tab beside the scene view.
+    Graph,
 }
 
 impl Panel {
-    pub const ALL: [Panel; 5] = [Panel::Hierarchy, Panel::Scene, Panel::Inspector, Panel::Project, Panel::Console];
+    pub const ALL: [Panel; 6] = [Panel::Hierarchy, Panel::Scene, Panel::Graph, Panel::Inspector, Panel::Project, Panel::Console];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -26,6 +28,7 @@ impl Panel {
             Panel::Inspector => "Inspector",
             Panel::Console => "Console",
             Panel::Project => "Project",
+            Panel::Graph => "Graph",
         }
     }
 
@@ -58,7 +61,7 @@ impl Layout {
     }
 
     pub fn build(self) -> DockState<Panel> {
-        let mut state = DockState::new(vec![Panel::Scene]);
+        let mut state = DockState::new(vec![Panel::Scene, Panel::Graph]);
         let surface = state.main_surface_mut();
         match self {
             Layout::Standard => {
@@ -88,8 +91,9 @@ struct SavedLayout {
     dock: DockState<Panel>,
 }
 
-/// Version 2 added the Project and Console panels; older saved layouts fall back to the default.
-const LAYOUT_VERSION: u32 = 2;
+/// Version 2 added the Project and Console panels, version 3 the Graph panel; older saved layouts
+/// fall back to the default.
+const LAYOUT_VERSION: u32 = 3;
 
 pub(crate) fn to_text(dock: &DockState<Panel>) -> Option<String> {
     ron::to_string(&SavedLayout { version: LAYOUT_VERSION, dock: dock.clone() }).ok()
@@ -124,6 +128,10 @@ pub(crate) fn set_open(dock: &mut DockState<Panel>, panel: Panel, open: bool) {
                 let surface = dock.main_surface_mut();
                 let node = scene.node_path().node;
                 match panel {
+                    // The graph editor shares the scene view's area, as another tab.
+                    Panel::Graph => {
+                        surface[node].append_tab(panel);
+                    }
                     Panel::Hierarchy => {
                         surface.split_left(node, 0.24, vec![panel]);
                     }
@@ -164,6 +172,7 @@ impl TabViewer for Panels<'_> {
             Panel::Inspector => inspector::show(self.editor, ui),
             Panel::Console => console::show(self.editor, ui),
             Panel::Project => project::show(self.editor, ui),
+            Panel::Graph => graph_view::show(self.editor, ui),
         }
     }
 

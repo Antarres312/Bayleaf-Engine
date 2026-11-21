@@ -489,6 +489,7 @@ name = "bayleaf-engine"
 version = "0.1.0"
 dependencies = [
  "bayleaf-core",
+ "bayleaf-graph",
  "bayleaf-render",
  "bayleaf-scene",
  "bayleaf-script",
@@ -506,12 +507,18 @@ version = "0.1.0"
 [[package]]
 name = "bayleaf-graph"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "bayleaf-render"
 version = "0.1.0"
 dependencies = [
  "bayleaf-core",
+ "bayleaf-graph",
  "bayleaf-scene",
  "bytemuck",
  "png",
@@ -537,6 +544,7 @@ name = "bayleaf-script"
 version = "0.1.0"
 dependencies = [
  "bayleaf-core",
+ "bayleaf-graph",
  "bayleaf-scene",
  "serde_json",
  "thiserror 2.0.21",

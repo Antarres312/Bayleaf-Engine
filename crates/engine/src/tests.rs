@@ -326,3 +326,106 @@ fn scripts_are_added_edited_and_removed_one_by_one() {
     registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
     assert_eq!(session.scene().component(sid, "scripts").unwrap().as_array().map(Vec::len), Some(1));
 }
+
+fn node(registry: &CommandRegistry, session: &mut Session, kind: &str) -> u64 {
+    registry.execute(session, "graph.node.add", &json!({"kind": kind, "position": [0, 0]})).unwrap()["node"].as_u64().unwrap()
+}
+
+fn pins(from: u64, from_pin: &str, to: u64, to_pin: &str) -> Value {
+    json!({"from": {"node": from, "pin": from_pin}, "to": {"node": to, "pin": to_pin}})
+}
+
+#[test]
+fn graph_edits_share_the_undo_history_and_saving_clears_dirty() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    assert!(registry.execute(&mut session, "graph.node.add", &json!({"kind": "number"})).is_err(), "no graph open");
+    registry.execute(&mut session, "graph.new", &json!({"domain": "material"})).unwrap();
+    create(&registry, &mut session, json!({"name": "Scene edit"}));
+    let color = node(&registry, &mut session, "color");
+    let output = session.graph().unwrap().graph.nodes[0].id;
+    registry.execute(&mut session, "graph.link.add", &pins(color, "color", u64::from(output), "baseColor")).unwrap();
+    assert!(session.graph().unwrap().dirty);
+    assert_eq!(session.history(), ["scene.object.create", "graph.node.add", "graph.link.add"]);
+
+    // A refused link names the clash and changes nothing.
+    let refused = registry.execute(&mut session, "graph.link.add", &pins(color, "color", u64::from(output), "roughness")).unwrap_err();
+    assert!(refused.to_string().contains("Number"), "{refused}");
+    assert_eq!(session.history().len(), 3);
+
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert!(session.graph().unwrap().graph.links.is_empty());
+    registry.execute(&mut session, "edit.redo", &Value::Null).unwrap();
+    assert_eq!(session.graph().unwrap().graph.links.len(), 1);
+
+    let dir = std::env::temp_dir().join(format!("bayleaf-graph-save-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    assert!(registry.execute(&mut session, "graph.save", &Value::Null).is_err(), "a new graph needs a path");
+    assert!(registry.execute(&mut session, "graph.save", &json!({"path": dir.join("red.bscript")})).is_err(), "materials end in .bmaterial");
+    registry.execute(&mut session, "graph.save", &json!({"path": dir.join("red.bmaterial")})).unwrap();
+    assert!(!session.graph().unwrap().dirty);
+    let saved = session.graph().unwrap().graph.clone();
+
+    // Opening a graph drops the old graph's undo steps but keeps the scene's.
+    registry.execute(&mut session, "graph.open", &json!({"path": dir.join("red.bmaterial")})).unwrap();
+    assert_eq!(session.graph().unwrap().graph, saved);
+    assert_eq!(session.history(), ["scene.object.create"]);
+    assert!(registry.execute(&mut session, "graph.get", &Value::Null).unwrap()["problems"].as_array().unwrap().is_empty());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn hostile_graph_params_change_nothing() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
+    let start = session.graph().unwrap().graph.nodes[0].id;
+    let hostile = [
+        json!({"kind": "../../etc", "position": [0, 0]}),
+        json!({"kind": "number", "position": [1e39, 0]}),
+        json!({"node": 99999, "position": [0, 0]}),
+        json!({"node": -1}),
+        json!({"node": start, "name": "missing", "value": 1}),
+        json!({"node": start, "pin": "then"}),
+        json!({"from": {"node": start, "pin": "then"}, "to": {"node": start, "pin": "run"}}),
+        json!({"from": {"node": start, "pin": "nope"}, "to": {"node": 7, "pin": "run"}}),
+        json!({"domain": "unknown"}),
+        json!({"path": "../../escape.bscript"}),
+    ];
+    let ids: Vec<_> = registry
+        .list(&session)
+        .into_iter()
+        .map(|c| c.id)
+        .filter(|id| id.starts_with("graph.") && !matches!(*id, "graph.new" | "graph.close" | "graph.open" | "graph.save"))
+        .collect();
+    for id in &ids {
+        for bad in &hostile {
+            let before = session.graph().cloned();
+            if registry.execute(&mut session, id, bad).is_err() {
+                assert_eq!(session.graph().cloned(), before, "{id} changed the graph on failure with {bad}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_visual_script_from_the_graph_editor_runs_in_play_mode() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
+    let update = session.graph().unwrap().graph.nodes.iter().find(|n| n.kind == "update").unwrap().id;
+    let rotate = node(&registry, &mut session, "rotateBy");
+    registry.execute(&mut session, "graph.node.set", &json!({"node": rotate, "name": "degrees", "value": [0, 45, 0]})).unwrap();
+    registry.execute(&mut session, "graph.link.add", &pins(u64::from(update), "then", rotate, "run")).unwrap();
+
+    let dir = std::env::temp_dir().join(format!("bayleaf-graph-play-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    registry.execute(&mut session, "graph.save", &json!({"path": dir.join("turn.bscript")})).unwrap();
+    let id = create(&registry, &mut session, json!({"name": "Turner", "components": {"scripts": [{"module": "turn.bscript"}]}}));
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("turn.bscene")})).unwrap();
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.1, "steps": 2})).unwrap();
+    assert!((rotation_y(&session, &id) - 90.0).abs() < 1e-3, "45° per step");
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}

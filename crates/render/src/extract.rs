@@ -3,7 +3,11 @@
 use bayleaf_core::StableId;
 use bayleaf_core::math::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use bayleaf_scene::Scene;
+use std::sync::Arc;
+
 use bayleaf_scene::components::{Camera, DirectionalLight, Mesh, Projection, Shape, Sprite};
+
+use crate::material::CompiledMaterial;
 
 /// Lights beyond this count are ignored.
 pub const MAX_LIGHTS: usize = 4;
@@ -66,7 +70,7 @@ pub struct Ray {
 }
 
 /// One drawn shape.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct DrawItem {
     pub object: StableId,
     pub shape: Shape,
@@ -76,11 +80,17 @@ pub struct DrawItem {
     pub roughness: f32,
     /// Sprites ignore lighting.
     pub unlit: bool,
+    /// A compiled material graph; `None` uses colour, metallic and roughness.
+    pub material: Option<Arc<CompiledMaterial>>,
 }
 
 impl DrawItem {
     pub fn is_transparent(&self) -> bool {
-        self.unlit || self.color.w < 1.0
+        self.unlit
+            || match &self.material {
+                Some(material) => material.transparent,
+                None => self.color.w < 1.0,
+            }
     }
 }
 
@@ -102,6 +112,8 @@ pub struct Frame {
     pub clear_color: Vec4,
     pub show_grid: bool,
     pub selected: Option<StableId>,
+    /// Seconds, for animated materials.
+    pub time: f32,
 }
 
 /// Options for [`extract`].
@@ -109,13 +121,21 @@ pub struct Frame {
 pub struct FrameOptions {
     pub show_grid: bool,
     pub selected: Option<StableId>,
+    /// Seconds, for animated materials.
+    pub time: f32,
 }
 
 /// Light used when the scene has none, so a new scene is not black.
 const FALLBACK_LIGHT: LightItem = LightItem { direction: Vec3::new(-0.4, -1.0, -0.6), radiance: Vec3::new(2.8, 2.8, 2.8) };
 
-/// Collects the draw items and lights of `scene` as seen by `camera`.
+/// Collects the draw items and lights of `scene` as seen by `camera`, without materials.
 pub fn extract(scene: &Scene, camera: CameraView, options: FrameOptions) -> Frame {
+    extract_with(scene, camera, options, &mut |_| None)
+}
+
+/// Like [`extract`], with `material` giving the compiled material of a mesh's `material` path
+/// (`None`: draw it with its colour, metallic and roughness).
+pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, material: &mut dyn FnMut(&str) -> Option<Arc<CompiledMaterial>>) -> Frame {
     let mut items = Vec::new();
     let mut lights = Vec::new();
     for (id, world) in scene.world_matrices() {
@@ -128,11 +148,21 @@ pub fn extract(scene: &Scene, camera: CameraView, options: FrameOptions) -> Fram
                 metallic: mesh.metallic,
                 roughness: mesh.roughness,
                 unlit: false,
+                material: if mesh.material.is_empty() { None } else { material(&mesh.material) },
             });
         }
         if let Some(sprite) = scene.get::<Sprite>(id) {
             let model = world * Mat4::from_scale(Vec3::new(sprite.size[0], sprite.size[1], 1.0));
-            items.push(DrawItem { object: id, shape: Shape::Quad, model, color: Vec4::from(sprite.color), metallic: 0.0, roughness: 1.0, unlit: true });
+            items.push(DrawItem {
+                object: id,
+                shape: Shape::Quad,
+                model,
+                color: Vec4::from(sprite.color),
+                metallic: 0.0,
+                roughness: 1.0,
+                unlit: true,
+                material: None,
+            });
         }
         if let Some(light) = scene.get::<DirectionalLight>(id)
             && lights.len() < MAX_LIGHTS
@@ -152,6 +182,7 @@ pub fn extract(scene: &Scene, camera: CameraView, options: FrameOptions) -> Fram
         clear_color: Vec4::new(0.035, 0.04, 0.05, 1.0),
         show_grid: options.show_grid,
         selected: options.selected,
+        time: options.time,
     }
 }
 
@@ -168,13 +199,13 @@ pub fn object_camera(scene: &Scene, id: StableId, aspect: f32) -> Option<CameraV
 
 /// Centre and radius of a sphere around every drawn shape, or `None` for a scene with nothing to draw.
 pub fn bounds(scene: &Scene) -> Option<(Vec3, f32)> {
-    let frame = extract(scene, CameraView::look_at(Vec3::ONE, Vec3::ZERO, 60.0, 1.0), FrameOptions { show_grid: false, selected: None });
+    let frame = extract(scene, CameraView::look_at(Vec3::ONE, Vec3::ZERO, 60.0, 1.0), FrameOptions { show_grid: false, selected: None, time: 0.0 });
     item_bounds(frame.items.iter())
 }
 
 /// Bounds of one object's shapes.
 pub fn object_bounds(scene: &Scene, id: StableId) -> Option<(Vec3, f32)> {
-    let frame = extract(scene, CameraView::look_at(Vec3::ONE, Vec3::ZERO, 60.0, 1.0), FrameOptions { show_grid: false, selected: None });
+    let frame = extract(scene, CameraView::look_at(Vec3::ONE, Vec3::ZERO, 60.0, 1.0), FrameOptions { show_grid: false, selected: None, time: 0.0 });
     item_bounds(frame.items.iter().filter(|i| i.object == id)).or_else(|| scene.world_matrix(id).map(|m| (m.w_axis.truncate(), 0.5)))
 }
 

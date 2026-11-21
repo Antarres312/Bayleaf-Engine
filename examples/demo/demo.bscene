@@ -1,6 +1,6 @@
 {
   "format": "bayleaf.scene",
-  "version": 2,
+  "version": 3,
   "objects": [
     {
       "id": "943fe1457f5309fddb13504f8c2d2aac",
@@ -13,6 +13,7 @@
             0.3199999928474426,
             1.0
           ],
+          "material": "materials/checker_floor.bmaterial",
           "metallic": 0.0,
           "roughness": 0.949999988079071,
           "shape": "plane"
@@ -48,6 +49,7 @@
             0.2199999988079071,
             1.0
           ],
+          "material": "materials/glow.bmaterial",
           "metallic": 0.0,
           "roughness": 0.4000000059604645,
           "shape": "cube"
@@ -183,6 +185,47 @@
             1.0,
             1.0,
             1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "8bffe19a8a5b2ca3b1a8d907ed4d786b",
+      "parent": null,
+      "components": {
+        "mesh": {
+          "color": [
+            0.25,
+            0.6000000238418579,
+            0.8999999761581421,
+            1.0
+          ],
+          "material": "materials/glow.bmaterial",
+          "metallic": 0.10000000149011612,
+          "roughness": 0.3499999940395355,
+          "shape": "sphere"
+        },
+        "name": "Floating Orb",
+        "scripts": [
+          {
+            "module": "scripts/bob.bscript"
+          }
+        ],
+        "transform": {
+          "position": [
+            -2.5,
+            1.2000000476837158,
+            1.5
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.800000011920929,
+            0.800000011920929,
+            0.800000011920929
           ]
         }
       }

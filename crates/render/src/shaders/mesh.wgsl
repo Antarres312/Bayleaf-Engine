@@ -16,6 +16,7 @@ struct Light {
 
 struct Globals {
     view_proj: mat4x4<f32>,
+    // xyz: camera position, w: seconds (material Time node)
     camera_pos: vec4<f32>,
     // rgb: ambient light, w: number of lights
     ambient: vec4<f32>,
@@ -79,6 +80,48 @@ fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
     return f0 + (vec3<f32>(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+// What a pixel is made of. A material graph replaces `surface`; the default reads the mesh component.
+struct Surface {
+    base: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    emissive: vec3<f32>,
+    alpha: f32,
+};
+
+struct SurfaceIn {
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    // Towards the camera.
+    view: vec3<f32>,
+    color: vec4<f32>,
+    params: vec4<f32>,
+    time: f32,
+};
+
+// Pattern helpers for material graphs: the usual sine-based hash, and value noise made by blending
+// the hashes of the eight surrounding lattice points with a smoothstep fade.
+fn bl_hash(p: vec3<f32>) -> f32 {
+    return fract(sin(dot(p, vec3<f32>(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+fn bl_noise(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = mix(mix(bl_hash(i), bl_hash(i + vec3<f32>(1.0, 0.0, 0.0)), u.x), mix(bl_hash(i + vec3<f32>(0.0, 1.0, 0.0)), bl_hash(i + vec3<f32>(1.0, 1.0, 0.0)), u.x), u.y);
+    let b = mix(mix(bl_hash(i + vec3<f32>(0.0, 0.0, 1.0)), bl_hash(i + vec3<f32>(1.0, 0.0, 1.0)), u.x), mix(bl_hash(i + vec3<f32>(0.0, 1.0, 1.0)), bl_hash(i + vec3<f32>(1.0, 1.0, 1.0)), u.x), u.y);
+    return mix(a, b, u.z);
+}
+
+fn bl_checker(p: vec3<f32>) -> f32 {
+    // A small offset keeps faces that lie exactly on a cell border from flickering.
+    let c = floor(p + vec3<f32>(1e-3));
+    return f32(i32(c.x + c.y + c.z) & 1);
+}
+
+// @surface
+
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let selected = in.params.z > 0.5;
@@ -95,9 +138,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
         n = -n;
     }
     let v = normalize(globals.camera_pos.xyz - in.world_pos);
-    let base = in.color.rgb;
-    let metallic = clamp(in.params.x, 0.0, 1.0);
-    let roughness = clamp(in.params.y, 0.045, 1.0);
+    let s = surface(SurfaceIn(in.world_pos, n, v, in.color, in.params, globals.camera_pos.w));
+    let base = max(s.base, vec3<f32>(0.0));
+    let metallic = clamp(s.metallic, 0.0, 1.0);
+    let roughness = clamp(s.roughness, 0.045, 1.0);
+    let alpha = clamp(s.alpha, 0.0, 1.0);
     let f0 = mix(vec3<f32>(0.04), base, metallic);
     let n_dot_v = max(dot(n, v), 1e-4);
     let r = roughness + 1.0;
@@ -121,10 +166,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
         color = color + (diffuse + specular) * light.radiance.rgb * n_dot_l;
     }
 
+    color = color + max(s.emissive, vec3<f32>(0.0));
     if (selected) {
         // A light tint plus a glow toward grazing angles, so the surface keeps its own colour.
         let rim = pow(1.0 - n_dot_v, 4.0);
         color = mix(color, SELECTION, 0.06) + SELECTION * rim * 0.9;
     }
-    return vec4<f32>(color, in.color.a);
+    return vec4<f32>(color, alpha);
 }

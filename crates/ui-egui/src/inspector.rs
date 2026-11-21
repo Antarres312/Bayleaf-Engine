@@ -40,6 +40,13 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let cards: Vec<ScriptCard> =
         scripts.into_iter().map(|script| ScriptCard { declared: editor.script_info.properties(&script_dir.join(&script.module)), script }).collect();
     let script_files = editor.project.script_files();
+    let material_files = editor.project.material_files();
+    // Whether the mesh's material loads, checked before drawing.
+    let material_problem = editor.session.scene().get::<bayleaf_engine::scene::components::Mesh>(id).filter(|m| !m.material.is_empty()).and_then(|m| {
+        let path = script_dir.join(&m.material);
+        editor.scene_view.materials.get(&path).err()
+    });
+    let mut open_material: Option<std::path::PathBuf> = None;
     let mut pending = None;
     let mut gesture_ended = false;
 
@@ -67,10 +74,31 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             let Some(kind) = kinds.iter().find(|k| k.name == *name) else { continue };
             card(ui, t, ("component card", *name), kind.label, None, kind.removable, |ui| {
                 let mut edited = value.clone();
+                // The mesh's material is picked from the project's material files below, not typed.
+                let material = (*name == "mesh")
+                    .then(|| edited.as_object_mut().and_then(|o| o.remove("material")).and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default());
                 let outcome = value_editor::edit_fields(ui, &mut edited, kind.name, &|field| kind.options(field));
                 gesture_ended |= outcome.ended;
                 if outcome.changed {
-                    pending = Some(Pending::Set { component: kind.name, value: edited });
+                    if let (Some(material), Some(object)) = (&material, edited.as_object_mut())
+                        && !material.is_empty()
+                    {
+                        object.insert("material".to_owned(), Value::String(material.clone()));
+                    }
+                    pending = Some(Pending::Set { component: kind.name, value: edited.clone() });
+                }
+                if let Some(material) = material
+                    && let Some(chosen) = material_row(ui, t, &material, &material_files, material_problem.as_deref(), &script_dir, &mut open_material)
+                {
+                    let mut value = value.clone();
+                    if let Some(object) = value.as_object_mut() {
+                        if chosen.is_empty() {
+                            object.remove("material");
+                        } else {
+                            object.insert("material".to_owned(), Value::String(chosen));
+                        }
+                    }
+                    pending = Some(Pending::Set { component: kind.name, value });
                 }
             })
             .then(|| pending = Some(Pending::Remove(kind.name)));
@@ -132,6 +160,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         }
     }
 
+    if let Some(path) = open_material {
+        editor.open_graph(&path);
+    }
     apply(editor, id, pending);
     if gesture_ended {
         editor.gesture += 1;
@@ -240,4 +271,53 @@ pub(crate) fn empty_state(ui: &mut egui::Ui, title: &str, hint: &str) {
         ui.label(egui::RichText::new(title).strong());
         ui.add(egui::Label::new(egui::RichText::new(hint).color(t.text_muted)).wrap());
     });
+}
+
+/// The mesh's material: a choice of the project's material files, a button that opens the chosen
+/// one in the graph editor, and a warning when it does not load. Returns a new choice ("" for none).
+fn material_row(
+    ui: &mut egui::Ui,
+    t: &theme::Tokens,
+    current: &str,
+    files: &[String],
+    problem: Option<&str>,
+    base: &std::path::Path,
+    open: &mut Option<std::path::PathBuf>,
+) -> Option<String> {
+    let mut chosen = None;
+    ui.horizontal(|ui| {
+        let label = ui.add_sized([theme::LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(egui::RichText::new("Material").color(t.text_muted)).truncate());
+        let edit_width = if current.is_empty() { 0.0 } else { 44.0 + ui.spacing().item_spacing.x };
+        let width = (ui.available_width() - edit_width).max(60.0);
+        let shown = if current.is_empty() { "None (colour above)".to_owned() } else { current.to_owned() };
+        egui::ComboBox::from_id_salt("mesh material")
+            .width(width)
+            .selected_text(egui::RichText::new(shown).color(t.text))
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(current.is_empty(), "None (colour above)").clicked() {
+                    chosen = Some(String::new());
+                }
+                for file in files {
+                    if ui.selectable_label(current == file, file).clicked() {
+                        chosen = Some(file.clone());
+                    }
+                }
+                if files.is_empty() {
+                    ui.label(egui::RichText::new("No .bmaterial files in the project folder").color(t.text_muted));
+                }
+            })
+            .response
+            .labelled_by(label.id);
+        if !current.is_empty() {
+            let edit = ui.add_sized([44.0, ROW_HEIGHT], egui::Button::new("Edit"));
+            ui.ctx().accesskit_node_builder(edit.id, |node| node.set_label("Edit material"));
+            if edit.on_hover_text("Open this material in the graph editor").clicked() {
+                *open = Some(base.join(current));
+            }
+        }
+    });
+    if let Some(problem) = problem {
+        ui.add(egui::Label::new(egui::RichText::new(format!("Warning: {problem}")).color(t.warning)).wrap());
+    }
+    chosen.filter(|c| c != current)
 }
