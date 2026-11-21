@@ -743,6 +743,8 @@ fn input_map_edits_save_when_they_read_right_explain_when_not_and_stay_inside_th
     harness.state_mut().show_panel(crate::Panel::ProjectSettings);
     harness.run_steps(2);
     // The project's Input Map opens from Project Settings into the Inspector.
+    harness.get_by_label("Input").click();
+    harness.run();
     harness.get_by_label("Edit the Input Map").click();
     harness.run_steps(2);
     let jump = |harness: &mut Harness<'static, Editor>| {
@@ -1090,4 +1092,29 @@ fn open_recent_lists_projects_newest_first_and_opens_one_again() {
     next.restore_recent_projects(&saved);
     assert_eq!(next.recent_projects_text(), saved);
     std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn project_settings_list_their_categories_on_the_left_physics_first() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-settings-categories-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().show_panel(crate::Panel::ProjectSettings);
+    harness.run_steps(2);
+    let item = |harness: &Harness<'static, Editor>, name: &'static str| {
+        harness
+            .query_all(egui_kittest::kittest::By::new().predicate(move |n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(name)))
+            .next()
+            .unwrap()
+            .rect()
+    };
+    let (physics, input) = (item(&harness, "Physics"), item(&harness, "Input"));
+    assert!(physics.top() < input.top(), "Physics comes first");
+    assert!(physics.right() < harness.get_by_label("Physics in play mode").rect().left(), "the list is on the left of the settings");
+    assert!(harness.query_by_label("Edit the Input Map").is_none(), "only the chosen category shows");
+    harness.get_by_label("Input").click();
+    harness.run();
+    assert!(harness.query_by_label("Edit the Input Map").is_some() && harness.query_by_label("Physics in play mode").is_none(), "Input shows its own settings");
+    std::fs::remove_dir_all(&dir).ok();
 }
