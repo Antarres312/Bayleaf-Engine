@@ -28,6 +28,7 @@ mod raw {
         pub fn pad_connected() -> i32;
         pub fn apply_impulse(handle: i32, x: f32, y: f32, z: f32) -> i32;
         pub fn character_walk(handle: i32, x: f32, y: f32, z: f32) -> i32;
+        pub fn action(name_ptr: *const u8, name_len: usize) -> f32;
         pub fn character_jump(handle: i32, speed: f32) -> i32;
         pub fn character_grounded(handle: i32) -> i32;
         pub fn set_velocity(handle: i32, x: f32, y: f32, z: f32) -> i32;
@@ -35,6 +36,9 @@ mod raw {
         pub fn raycast(ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max: f32, out: *mut f32) -> i32;
         pub fn pad_axis(index: i32) -> f32;
         pub fn pad_button(index: i32) -> i32;
+        pub fn state_get(scope: i32, handle: i32, name_ptr: *const u8, name_len: usize, out: *mut f64) -> i32;
+        pub fn state_set(scope: i32, handle: i32, name_ptr: *const u8, name_len: usize, value: f64) -> i32;
+        pub fn game_end(won: i32) -> i32;
     }
 }
 
@@ -99,6 +103,9 @@ mod raw {
     pub unsafe fn character_walk(_: i32, _: f32, _: f32, _: f32) -> i32 {
         0
     }
+    pub unsafe fn action(_: *const u8, _: usize) -> f32 {
+        0.0
+    }
     pub unsafe fn character_jump(_: i32, _: f32) -> i32 {
         0
     }
@@ -119,6 +126,15 @@ mod raw {
         0.0
     }
     pub unsafe fn pad_button(_: i32) -> i32 {
+        0
+    }
+    pub unsafe fn state_get(_: i32, _: i32, _: *const u8, _: usize, _: *mut f64) -> i32 {
+        0
+    }
+    pub unsafe fn state_set(_: i32, _: i32, _: *const u8, _: usize, _: f64) -> i32 {
+        0
+    }
+    pub unsafe fn game_end(_: i32) -> i32 {
         0
     }
 }
@@ -280,4 +296,29 @@ pub(crate) fn character_jump(handle: i32, speed: f32) -> bool {
 pub(crate) fn character_grounded(handle: i32) -> bool {
     // SAFETY: a plain number in and out.
     unsafe { raw::character_grounded(handle) != 0 }
+}
+
+pub(crate) fn action(name: &str) -> f32 {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::action(name.as_ptr(), name.len()) }
+}
+
+/// A value of the game's state (scope 0), a player's (scope 1; handle 0 for the first player) or a
+/// saved one (scope 2).
+pub(crate) fn state_get(scope: i32, handle: i32, name: &str) -> Option<f64> {
+    let mut out = 0.0f64;
+    // SAFETY: the pointer and length describe `name`, which the host only reads; `out` is one
+    // writable f64 that outlives the call.
+    let set = unsafe { raw::state_get(scope, handle, name.as_ptr(), name.len(), &mut out) != 0 };
+    set.then_some(out)
+}
+
+pub(crate) fn state_set(scope: i32, handle: i32, name: &str, value: f64) -> bool {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::state_set(scope, handle, name.as_ptr(), name.len(), value) != 0 }
+}
+
+pub(crate) fn game_end(won: bool) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::game_end(i32::from(won)) != 0 }
 }

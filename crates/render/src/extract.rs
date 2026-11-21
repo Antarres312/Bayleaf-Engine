@@ -472,6 +472,16 @@ pub fn scene_camera(scene: &Scene, aspect: f32) -> Option<CameraView> {
     scene.world_matrices().into_iter().find_map(|(id, world)| scene.get::<Camera>(id).map(|camera| CameraView::from_camera(world, camera, aspect)))
 }
 
+/// What the game shows: the first camera's view, or for a scene without a camera a view of
+/// everything in it.
+pub fn game_camera(scene: &Scene, aspect: f32) -> CameraView {
+    scene_camera(scene, aspect).unwrap_or_else(|| {
+        let (center, radius) = bounds(scene).unwrap_or((DVec3::ZERO, 2.0));
+        let eye = center + DVec3::new(0.6, 0.45, 1.0).normalize() * (f64::from(radius.max(0.5)) * 2.6 + 1.0);
+        CameraView::look_at_world(eye, center, 60.0, aspect)
+    })
+}
+
 /// The view of camera object `id`, if it has a camera component.
 pub fn object_camera(scene: &Scene, id: StableId, aspect: f32) -> Option<CameraView> {
     let camera = scene.get::<Camera>(id)?;

@@ -15,7 +15,7 @@ mod mesh;
 pub use bayleaf_assets as assets;
 pub use extract::{
     AssetSource, CameraView, DrawItem, FileAssets, Frame, FrameOptions, LightItem, LightKind, MAX_LIGHTS, NoAssets, Ray, Sky, bounds, extract, extract_with,
-    material_preview, object_bounds, object_camera, pick, scene_camera,
+    game_camera, material_preview, object_bounds, object_camera, pick, scene_camera,
 };
 pub use gpu::{COLOR_FORMAT, RenderTarget, Renderer};
 pub use headless::{HeadlessGpu, Image};

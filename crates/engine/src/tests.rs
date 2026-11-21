@@ -959,3 +959,187 @@ fn a_scripted_character_walks_and_rays_find_it() {
     registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Player Control: W walks the hero the way the camera looks, Space jumps, and the camera follows.
+#[cfg(all(feature = "physics", feature = "gameplay"))]
+#[test]
+fn player_control_walks_where_the_camera_looks_and_the_camera_follows() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-player-control-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    // The starter scene has a camera looking down -Z from +Z, and ground with no collider; add a floor.
+    let collider = json!({"shape": "box", "size": [1, 1, 1], "friction": 0.5, "restitution": 0, "trigger": false});
+    create(
+        &registry,
+        &mut session,
+        json!({"name": "Floor", "components": {"collider": collider, "transform": {"position": [0, -0.5, 0], "rotation": [0, 0, 0], "scale": [200, 1, 200]}}}),
+    );
+    let character = json!({"height": 1.8, "radius": 0.4, "maxSlope": 45, "stepHeight": 0.3});
+    let control = json!({"speed": 4, "jumpSpeed": 6, "turnToMove": true, "camera": "follow", "cameraDistance": 6, "cameraHeight": 3});
+    let id = create(
+        &registry,
+        &mut session,
+        json!({"name": "Hero", "components": {"characterBody": character, "playerControl": control, "transform": {"position": [0, 1, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}}}),
+    );
+    let hero = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    let position = |s: &Session| s.scene().get::<bayleaf_scene::components::Transform>(hero).unwrap().position;
+
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.05, "steps": 10})).unwrap();
+    registry.execute(&mut session, "play.input", &json!({"keys": ["W"]})).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.05, "steps": 20})).unwrap();
+    let walked = position(&session);
+    assert!(walked[2] < -3.0 && walked[0].abs() < 0.5, "W walks toward -Z, where the camera looks: {walked:?}");
+
+    let camera = session
+        .scene()
+        .world_matrices()
+        .into_iter()
+        .map(|(id, _)| id)
+        .find(|id| session.scene().get::<bayleaf_scene::components::Camera>(*id).is_some())
+        .unwrap();
+    let eye = session.scene().get::<bayleaf_scene::components::Transform>(camera).unwrap().position;
+    let flat = ((eye[0] - walked[0]).powi(2) + (eye[2] - walked[2]).powi(2)).sqrt();
+    assert!((flat - 6.0).abs() < 0.3, "the camera trails 6 m behind: {flat}");
+
+    registry.execute(&mut session, "play.input", &json!({"keys": ["Space"]})).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.05, "steps": 3})).unwrap();
+    assert!(position(&session)[1] > walked[1] + 0.3, "Space jumps");
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Game Rules: the player prefab starts at the Player Start, a fall sends it back there, and the
+/// time limit ends the game once, which every script hears. The state starts empty.
+#[cfg(all(feature = "physics", feature = "gameplay"))]
+#[test]
+fn game_rules_place_restart_and_end_the_game_and_the_state_starts_empty() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-game-rules-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    // A referee that notes the win in the game's state.
+    let referee = wat::parse_str(
+        r#"(module
+            (import "bayleaf" "message_is" (func $is (param i32 i32) (result i32)))
+            (import "bayleaf" "state_set" (func $set (param i32 i32 i32 i32 f64) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "gameWon")
+            (data (i32.const 120) "cheered")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param f32))
+            (func (export "bayleaf_message") (param f32)
+              (if (call $is (i32.const 100) (i32.const 7))
+                (then (drop (call $set (i32.const 0) (i32.const 0) (i32.const 120) (i32.const 7) (f64.const 1)))))))"#,
+    )
+    .unwrap();
+    let base = session.script_dir();
+    std::fs::write(base.join("referee.wasm"), referee).unwrap();
+    create(&registry, &mut session, json!({"name": "Referee", "components": {"scripts": [{"module": "referee.wasm"}]}}));
+    let character = json!({"height": 1.8, "radius": 0.4, "maxSlope": 45, "stepHeight": 0.3});
+    let hero = create(
+        &registry,
+        &mut session,
+        json!({"name": "Hero", "components": {"characterBody": character, "playerControl": {"speed": 4, "jumpSpeed": 6, "turnToMove": true, "camera": "none", "cameraDistance": 6, "cameraHeight": 3}}}),
+    );
+    registry.execute(&mut session, "scene.prefab.create", &json!({"id": hero, "path": "hero.bprefab"})).unwrap();
+    registry.execute(&mut session, "scene.object.delete", &json!({"id": hero})).unwrap();
+    // The start is in the air with nothing below: the player falls and starts over.
+    let start = json!({"position": [40, 2, 0], "rotation": [0, 90, 0], "scale": [1, 1, 1]});
+    create(&registry, &mut session, json!({"name": "Start", "components": {"playerStart": {}, "transform": start}}));
+    let rules = json!({"playerPrefab": "hero.bprefab", "respawn": true, "respawnHeight": -5, "timeLimit": 3, "timeUp": "win"});
+    create(&registry, &mut session, json!({"name": "Rules", "components": {"gameRules": rules}}));
+    let edited = session.scene().to_doc();
+    let players = |s: &Session| {
+        s.scene().world_matrices().into_iter().filter(|(id, _)| s.scene().get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect::<Vec<_>>()
+    };
+
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    let placed = players(&session);
+    assert_eq!(placed.len(), 1, "the rules placed one player");
+    let (player, world) = placed[0];
+    assert!((world.w_axis.x - 40.0).abs() < 1e-6, "at the Player Start: {:?}", world.w_axis);
+    let state = registry.execute(&mut session, "game.state", &Value::Null).unwrap();
+    assert!(state["game"].as_object().unwrap().is_empty() && state["players"].as_array().unwrap().is_empty() && state["outcome"].is_null(), "{state}");
+    assert!(
+        registry.execute(&mut session, "game.state.set", &json!({"name": "lives", "value": 3, "player": bayleaf_core::StableId::random().unwrap()})).is_err(),
+        "only players have a player state"
+    );
+    let state = registry.execute(&mut session, "game.state.set", &json!({"name": "lives", "value": 3, "player": player})).unwrap();
+    assert_eq!(state["players"][0]["values"]["lives"], 3.0);
+
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.05, "steps": 40})).unwrap();
+    assert!(session.console().iter().any(|l| l.text.contains("starts over")), "the fall was noticed: {:?}", session.console());
+    let y = session.scene().world_matrix(player).unwrap().w_axis.y;
+    assert!(y > -5.0, "and the player is back above the line: {y}");
+    assert!(registry.execute(&mut session, "game.state", &Value::Null).unwrap()["outcome"].is_null(), "the game still runs");
+
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.05, "steps": 30})).unwrap();
+    let state = registry.execute(&mut session, "game.state", &Value::Null).unwrap();
+    assert_eq!(state["outcome"], "won", "time ran out, which wins here: {state}");
+    assert_eq!(state["game"]["cheered"], 1.0, "scripts heard gameWon");
+    assert_eq!(session.console().iter().filter(|l| l.text == "Game won.").count(), 1, "announced once");
+    assert!(session.console().iter().all(|l| l.level != crate::Level::Error), "{:?}", session.console());
+
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert_eq!(session.scene().to_doc(), edited, "stop takes the placed player away");
+    assert!(registry.execute(&mut session, "game.state", &Value::Null).unwrap()["game"].as_object().unwrap().is_empty());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Saved values last from one play to the next in the project, a broken file is never written
+/// over, and agents may change them only inside their write folders.
+#[test]
+fn saved_values_last_between_plays_and_stay_inside_the_confinement() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-saved-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    // Counts the plays in a saved value.
+    let counter = wat::parse_str(
+        r#"(module
+            (import "bayleaf" "state_get" (func $get (param i32 i32 i32 i32 i32) (result i32)))
+            (import "bayleaf" "state_set" (func $set (param i32 i32 i32 i32 f64) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "plays")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_start")
+              (drop (call $get (i32.const 2) (i32.const 0) (i32.const 100) (i32.const 5) (i32.const 200)))
+              (drop (call $set (i32.const 2) (i32.const 0) (i32.const 100) (i32.const 5) (f64.add (f64.load (i32.const 200)) (f64.const 1))))))"#,
+    )
+    .unwrap();
+    std::fs::write(session.script_dir().join("counter.wasm"), counter).unwrap();
+    create(&registry, &mut session, json!({"name": "Counter", "components": {"scripts": [{"module": "counter.wasm"}]}}));
+    let plays = |registry: &CommandRegistry, session: &mut Session| registry.execute(session, "game.state", &Value::Null).unwrap()["saved"]["plays"].clone();
+
+    assert!(plays(&registry, &mut session).is_null(), "nothing saved yet");
+    for _ in 0..2 {
+        registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+        registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    }
+    assert_eq!(plays(&registry, &mut session), 2.0, "each play counted on from the last");
+
+    // A file that does not read is reported and left as it is.
+    let file = dir.join(crate::saved::SAVED_FILE);
+    std::fs::write(&file, "not json").unwrap();
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert!(session.console().iter().any(|l| l.level == crate::Level::Error && l.text.contains("could not be read")));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "not json", "not written over");
+    assert_eq!(registry.execute(&mut session, "game.saved.clear", &Value::Null).unwrap()["removed"], true);
+    assert!(!file.exists());
+
+    // An agent that may write only the scenes folder may not keep or clear saved values.
+    let scenes = dir.join("scenes");
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), std::slice::from_ref(&scenes)).unwrap()));
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert!(!file.exists(), "nothing written outside the write folders");
+    assert!(session.console().iter().any(|l| l.text.contains("could not be written")));
+    assert!(registry.execute(&mut session, "game.saved.clear", &Value::Null).is_err(), "clearing is refused too");
+    std::fs::remove_dir_all(&dir).ok();
+}

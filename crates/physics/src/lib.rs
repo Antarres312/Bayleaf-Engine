@@ -178,6 +178,11 @@ impl Physics {
         both!(mut self, w => w.jump(id, speed))
     }
 
+    /// Moves a body to a world place at once and stops it. False when the object has no body.
+    pub fn teleport(&mut self, id: StableId, world: DMat4) -> bool {
+        both!(mut self, w => w.teleport(id, world))
+    }
+
     /// True when the object is a character.
     pub fn is_character(&self, id: StableId) -> bool {
         both!(self, w => w.is_character(id))

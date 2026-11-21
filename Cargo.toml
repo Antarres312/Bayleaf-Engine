@@ -16,6 +16,7 @@ bayleaf-core = { path = "crates/core" }
 bayleaf-ecs = { path = "crates/ecs" }
 bayleaf-scene = { path = "crates/scene" }
 bayleaf-physics = { path = "crates/physics" }
+bayleaf-gameplay = { path = "crates/gameplay" }
 bayleaf-graph = { path = "crates/graph" }
 bayleaf-assets = { path = "crates/assets" }
 bayleaf-render = { path = "crates/render" }

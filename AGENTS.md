@@ -85,8 +85,10 @@ wgpu. Shaders are in `crates/render/src/shaders/`. Tests that need a GPU skip wh
 set `BAYLEAF_GPU_REQUIRED=1` to make them fail instead. `bayleaf-cli run --cmd scene.render` writes a PNG
 for checking a scene's look without a window.
 
-**Opt-in modules.** Each gameplay role is a cargo feature of `bayleaf-gameplay`. World streaming is the
-`streaming` feature of `bayleaf-engine`. The core must build and run without any of them.
+**Opt-in modules.** Each gameplay role is a cargo feature of `bayleaf-gameplay`; the `gameplay` feature
+of `bayleaf-engine` turns them on. World streaming is its `streaming` feature and rigid-body physics
+(Rapier, `crates/physics`) its `physics` feature. The apps turn physics and gameplay on. The core must
+build and run without any of them: check `cargo clippy -p bayleaf-engine` with and without them.
 
 **Game scripts** are WebAssembly modules (ABI in `docs/script-abi.md`, host in `crates/script`). Visual scripts
 compile to the same ABI. Visual scripts (`.bscript`) compile in `crates/script/src/visual.rs` when loaded. Example scripts live in `scripts/`, a separate workspace: build them with

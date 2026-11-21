@@ -83,12 +83,23 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False
   Variable** for true or false. Each script on each object has its own variables; numbers and vectors
   start at 0, true/false at false.
+- **Action** gives how far an input action from the project settings is pressed and whether it is
+  held; **On Action Pressed** runs once when it goes down. Prefer actions to keys, so players can
+  rebind them.
 - **On Key Pressed** runs once when its key goes down; **On Timer** runs every given number of
   seconds of play.
 - **Walk**, **Jump** and **On Ground** steer an object with a Character: it walks at the given velocity
   until changed, climbs steps and gentle slopes, slides along walls, and jumps from the ground.
 - **Add Impulse**, **Set Velocity** and **Velocity** move physics bodies. **On Message** with `collision`,
   `collisionEnd`, `triggerEnter` or `triggerExit` runs when the object touches another collider.
+- **Game Value** reads a number the game keeps under a name; **Set Game Value** and **Change Game
+  Value** write it, and every script sees it. Scope picks whose: Game, Player (the object named in
+  Player, else the first player; a name that finds no player reads nothing and writes nowhere), This
+  Object (the script's own object, when it has Player Control), or Saved (kept in the project from one
+  play to the next, such as a best score). The state is empty when play starts (saved values aside):
+  Value is 0 and Is Set is false until something sets it, and Change Game Value counts a name not set
+  yet as 0. **End Game** ends the game won or lost;
+  only the first ending counts, and every script then gets the message `gameWon` or `gameLost`.
 - **Raycast** sends a ray and gives whether it hit another object's shape or sprite, how far, and where.
 - **Gamepad Stick**, **Gamepad Trigger** and **Gamepad Button Held** read the first connected gamepad
   (see `docs/script-abi.md` for the button names).

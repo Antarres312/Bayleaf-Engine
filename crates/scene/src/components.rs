@@ -692,3 +692,123 @@ impl SceneComponent for CharacterBody {
         Ok(())
     }
 }
+
+/// How a Player Control places the camera.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CameraFollow {
+    /// The camera stays where the scene puts it.
+    #[default]
+    None,
+    /// The scene's first camera trails the object at a distance and height, looking at it.
+    Follow,
+}
+
+/// Lets the player steer this object's Character with the project's input actions (MoveForward,
+/// MoveBack, MoveLeft, MoveRight, Jump), relative to where the camera looks.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlayerControl {
+    /// Walking speed, world units per second.
+    pub speed: f32,
+    /// Upward speed of a jump.
+    pub jump_speed: f32,
+    /// Turns the object to face where it walks.
+    pub turn_to_move: bool,
+    pub camera: CameraFollow,
+    pub camera_distance: f32,
+    pub camera_height: f32,
+}
+
+impl Default for PlayerControl {
+    fn default() -> Self {
+        Self { speed: 5.0, jump_speed: 5.0, turn_to_move: true, camera: CameraFollow::Follow, camera_distance: 6.0, camera_height: 3.0 }
+    }
+}
+
+impl SceneComponent for PlayerControl {
+    const NAME: &'static str = "playerControl";
+    const LABEL: &'static str = "Player Control";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        let ranged = |v: f32, max: f32| v.is_finite() && (0.0..=max).contains(&v);
+        if !(ranged(self.speed, 1000.0) && ranged(self.jump_speed, 1000.0)) {
+            return Err("speed and jumpSpeed must be between 0 and 1000".to_owned());
+        }
+        if !(ranged(self.camera_distance, 10_000.0) && self.camera_height.is_finite() && self.camera_height.abs() <= 10_000.0) {
+            return Err("cameraDistance must be between 0 and 10000 and cameraHeight at most 10000 either way".to_owned());
+        }
+        Ok(())
+    }
+
+    fn options(field: &str) -> &'static [&'static str] {
+        if field == "camera" { &["none", "follow"] } else { &[] }
+    }
+}
+
+/// What happens when the time limit runs out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TimeUp {
+    /// The game is lost.
+    #[default]
+    Lose,
+    /// The game is won (survive until the time is up).
+    Win,
+}
+
+/// The rules of the game in this scene: who the player is, where it starts, when it starts over,
+/// and how long the game lasts. Put it on one object; the first one in the hierarchy counts.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GameRules {
+    /// A `.bprefab` placed at the Player Start when play begins, if the scene has no object with
+    /// Player Control yet; empty for none.
+    pub player_prefab: String,
+    /// Players that fall below this height go back to the Player Start.
+    pub respawn: bool,
+    pub respawn_height: f32,
+    /// Seconds until the game ends; 0 for no limit.
+    pub time_limit: f32,
+    pub time_up: TimeUp,
+}
+
+impl Default for GameRules {
+    fn default() -> Self {
+        Self { player_prefab: String::new(), respawn: true, respawn_height: -20.0, time_limit: 0.0, time_up: TimeUp::Lose }
+    }
+}
+
+impl SceneComponent for GameRules {
+    const NAME: &'static str = "gameRules";
+    const LABEL: &'static str = "Game Rules";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        file_field("playerPrefab", &self.player_prefab, &["bprefab"])?;
+        if !self.respawn_height.is_finite() {
+            return Err("respawnHeight must be a finite number".to_owned());
+        }
+        if !(self.time_limit.is_finite() && (0.0..=1.0e7).contains(&self.time_limit)) {
+            return Err("timeLimit must be 0 (none) or a number of seconds up to 10000000".to_owned());
+        }
+        Ok(())
+    }
+
+    fn options(field: &str) -> &'static [&'static str] {
+        if field == "timeUp" { &["lose", "win"] } else { &[] }
+    }
+}
+
+/// Where the player appears when play begins and when it starts over: this object's place and
+/// turn. The first one in the hierarchy counts.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlayerStart {}
+
+impl SceneComponent for PlayerStart {
+    const NAME: &'static str = "playerStart";
+    const LABEL: &'static str = "Player Start";
+    const REMOVABLE: bool = true;
+}

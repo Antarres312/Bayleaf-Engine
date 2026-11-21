@@ -711,3 +711,48 @@ fn project_settings_turn_physics_off_through_the_command() {
     assert_eq!(settings["settings"]["physics"]["precision"], "double");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn input_actions_save_when_they_read_right_and_explain_when_not() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-actions-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().show_panel(crate::Panel::ProjectSettings);
+    harness.run();
+    let jump = |harness: &mut Harness<'static, Editor>| {
+        let settings = harness.state_mut().dispatch("project.settings", &json!({}), None).unwrap();
+        settings["settings"]["input"]["actions"].as_array().unwrap().iter().find(|a| a["name"] == "Jump").unwrap()["bindings"].clone()
+    };
+    let retype = |harness: &mut Harness<'static, Editor>, text: &str| {
+        harness.get_by_label("Bindings of Jump").focus();
+        harness.run();
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.get_by_label("Bindings of Jump").type_text(text);
+        harness.run();
+    };
+    retype(&mut harness, "key:Space, key:J");
+    assert!(jump(&mut harness).as_array().unwrap().iter().any(|b| b == "key:J"), "a good binding is saved");
+    retype(&mut harness, "key:J, pad:Nope");
+    assert!(harness.query_by_label_contains("Not saved").is_some(), "a bad one is explained");
+    assert!(!jump(&mut harness).as_array().unwrap().iter().any(|b| b == "pad:Nope"), "and not saved");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn play_raises_the_game_view_which_shows_the_state_and_stop_returns_to_the_scene() {
+    let mut harness = harness();
+    create_named(&mut harness, "Actor");
+    // Without a GPU neither view draws; each tab's own toolbar shows which is in front.
+    assert!(harness.query_by_label("State").is_none() && harness.query_by_label("Grid").is_some(), "the Scene tab is in front before play");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(3);
+    assert!(harness.query_by_label("State").is_some(), "play brings the Game tab to the front");
+    assert!(harness.query_all_by_label("Nothing set yet.").next().is_some(), "the state starts empty");
+    harness.state_mut().dispatch("game.state.set", &json!({ "name": "coins", "value": 3 }), None);
+    harness.run_steps(2);
+    assert!(harness.query_by_label("coins 3, Game").is_some(), "the value shows with its name");
+    harness.get_by_label("Stop playing").click();
+    harness.run();
+    assert!(harness.query_by_label("State").is_none() && harness.query_by_label("Grid").is_some(), "stop brings the Scene tab back");
+}

@@ -27,6 +27,14 @@ pub(crate) struct Play {
     physics: Option<bayleaf_physics::Physics>,
     /// Whether play mode already said physics is not there.
     told_no_physics: bool,
+    /// The project's input actions, and those held in the last step (to tell when one goes down).
+    actions: bayleaf_script::actions::Actions,
+    held: std::collections::HashSet<String>,
+    /// Whether the end of the game was already announced.
+    told_outcome: bool,
+    /// The saved values as the project holds them; `None` when its file could not be read, so it
+    /// is not written over.
+    saved_on_disk: Option<std::collections::BTreeMap<String, f64>>,
     /// Whether play mode already said single-precision physics is too far from the centre.
     #[cfg(feature = "physics")]
     told_far: bool,
@@ -105,6 +113,39 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             },
         },
         CommandSpec {
+            id: "game.state",
+            label: "Game State",
+            menu: "",
+            shortcut: "",
+            params: "none; the game's values and each player's (both empty at first), saved values kept between plays (in the project's saves/progress.json), and outcome: \"won\", \"lost\" or null",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: game_state,
+        },
+        CommandSpec {
+            id: "game.state.set",
+            label: "Set Game Value",
+            menu: "",
+            shortcut: "",
+            params: "{name, value, player?, saved?}: sets a value in the game's state, a player's (an object with Player Control) or, with saved: true, a saved one; play mode only",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: playing,
+            run: game_state_set,
+        },
+        CommandSpec {
+            id: "game.saved.clear",
+            label: "Clear Saved Values",
+            menu: "",
+            shortcut: "",
+            params: "none; forgets the values the game saved in the project, and in play mode the ones it holds",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: game_saved_clear,
+        },
+        CommandSpec {
             id: "physics.raycast",
             label: "Physics Raycast",
             menu: "",
@@ -172,6 +213,20 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let snapshot = session.scene.to_doc();
     let mut host = ScriptHost::new();
     let input = std::sync::Arc::clone(&session.input);
+    // Broken actions in the project file are reported, and play runs without them.
+    let (actions, actions_problem) = match crate::project_cmds::settings_of(session).input.actions() {
+        Ok(actions) => (actions, None),
+        Err(problem) => (bayleaf_script::actions::Actions::default(), Some(problem)),
+    };
+    host.set_actions(actions.clone());
+    // Saved values from earlier plays, before any script starts.
+    let (saved_on_disk, saved_problem) = match crate::saved::read_saved(session) {
+        Ok(values) => (Some(values), None),
+        Err(problem) => (None, Some(problem)),
+    };
+    if let Some(values) = &saved_on_disk {
+        host.with_state(|state| state.saved = values.clone());
+    }
     host.load_scene(&mut session.scene, &dir, 0.0, &input);
     let (scripts, running) = (host.len(), host.running());
     #[cfg(feature = "physics")]
@@ -187,6 +242,10 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         #[cfg(feature = "physics")]
         physics,
         told_no_physics: false,
+        actions,
+        held: std::collections::HashSet::new(),
+        told_outcome: false,
+        saved_on_disk,
         #[cfg(feature = "physics")]
         told_far: false,
         snapshot,
@@ -196,12 +255,21 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         since_reload_check: 0.0,
     });
     session.log(Level::Info, format!("Play mode started: {running} of {scripts} scripts running."));
+    if let Some(problem) = actions_problem {
+        session.log(Level::Error, format!("Input actions in the project settings: {problem}"));
+    }
+    if let Some(problem) = saved_problem {
+        session.log(Level::Error, format!("Saved values could not be read, so play starts without them and they are not saved: {problem}"));
+    }
+    #[cfg(feature = "gameplay")]
+    spawn_player(session);
     drain(session);
     Ok(json!({ "scripts": scripts, "running": running }))
 }
 
 fn stop(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     parse::<NoParams>(params)?;
+    keep_saved(session);
     let play = session.play.take().ok_or_else(|| CommandError::Failed("play mode is not running".to_owned()))?;
     session.scene = Scene::from_doc(&play.snapshot)?;
     session.log(Level::Info, format!("Play mode stopped after {:.2} s; the scene is back as it was.", play.time));
@@ -307,6 +375,9 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
             play.host.set_velocities(physics.velocities());
             play.host.set_grounded(physics.grounded());
         }
+        #[cfg(all(feature = "physics", feature = "gameplay"))]
+        drive_players(play, &mut session.scene, &input);
+        play.held = play.actions.names().filter(|n| play.actions.value(n, &input) > 0.5).map(str::to_owned).collect();
         play.host.update(&mut session.scene, dt, play.time, &input);
         apply_requests(session);
         #[cfg(feature = "physics")]
@@ -326,6 +397,14 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
             }
             apply_requests(session);
         }
+        // The camera follows after physics moved the player.
+        #[cfg(feature = "gameplay")]
+        if let Some((camera, placed)) = bayleaf_gameplay::controller::follow_camera(&session.scene) {
+            let _ = session.scene.set(camera, placed);
+        }
+        #[cfg(feature = "gameplay")]
+        apply_rules(session);
+        report_outcome(session, &input);
         let Some(play) = session.play.as_mut() else { return };
         play.since_reload_check += dt;
         if play.since_reload_check >= RELOAD_CHECK_INTERVAL {
@@ -504,6 +583,186 @@ fn cast(_: &mut Session, p: RaycastParams) -> Result<Value, CommandError> {
     Err(CommandError::Failed("this build has no physics".to_owned()))
 }
 
+/// Player Control: steers each controlled Character with the input actions.
+#[cfg(all(feature = "physics", feature = "gameplay"))]
+fn drive_players(play: &mut Play, scene: &mut Scene, input: &bayleaf_script::Input) {
+    let Some(physics) = play.physics.as_mut() else { return };
+    let (actions, held) = (&play.actions, &play.held);
+    let value = |name: &str| actions.value(name, input);
+    let pressed = |name: &str| value(name) > 0.5 && !held.contains(name);
+    for command in bayleaf_gameplay::controller::drive(scene, &value, &pressed) {
+        physics.walk(command.object, command.walk);
+        if let Some(speed) = command.jump {
+            physics.jump(command.object, speed);
+        }
+        if let Some(yaw) = command.facing
+            && let Some(mut transform) = scene.get::<bayleaf_scene::components::Transform>(command.object).cloned()
+        {
+            transform.rotation[1] = yaw;
+            let _ = scene.set(command.object, transform);
+        }
+    }
+}
+
+/// Game Rules: places the player prefab at the Player Start when the scene has no player yet.
+#[cfg(feature = "gameplay")]
+fn spawn_player(session: &mut Session) {
+    let Some(rules) = bayleaf_gameplay::rules::rules(&session.scene) else { return };
+    if rules.player_prefab.is_empty() || !bayleaf_gameplay::rules::players(&session.scene).is_empty() {
+        return;
+    }
+    let start = bayleaf_gameplay::rules::start(&session.scene);
+    let placed = spawn_with(session, &rules.player_prefab, |transform| {
+        let scale = transform.scale;
+        *transform = bayleaf_scene::components::Transform::from_matrix(start);
+        transform.scale = scale;
+    });
+    if let Err(error) = placed {
+        session.log(Level::Error, format!("Game Rules could not place the player {}: {error}", rules.player_prefab));
+    }
+}
+
+/// Game Rules each step: fallen players start over at the Player Start; the time limit ends the game.
+#[cfg(feature = "gameplay")]
+fn apply_rules(session: &mut Session) {
+    let Some(rules) = bayleaf_gameplay::rules::rules(&session.scene) else { return };
+    let mut restarted = Vec::new();
+    for id in bayleaf_gameplay::rules::fallen(&session.scene, &rules) {
+        let Some(placed) = bayleaf_gameplay::rules::placed_at_start(&session.scene, id) else { continue };
+        let _ = session.scene.set(id, placed);
+        #[cfg(feature = "physics")]
+        if let (Some(play), Some(world)) = (session.play.as_mut(), session.scene.world_matrix(id))
+            && let Some(physics) = play.physics.as_mut()
+        {
+            physics.teleport(id, world);
+        }
+        restarted.push(session.scene.name(id).unwrap_or("Player").to_owned());
+    }
+    for name in restarted {
+        session.log(Level::Info, format!("[{name}] fell and starts over at the Player Start"));
+    }
+    let Some(play) = session.play.as_mut() else { return };
+    if bayleaf_gameplay::rules::time_up(&rules, play.time) {
+        let won = rules.time_up == bayleaf_scene::components::TimeUp::Win;
+        play.host.with_state(|state| state.end(won));
+    }
+}
+
+/// Announces the end of the game once: in the console and to every script (gameWon or gameLost).
+fn report_outcome(session: &mut Session, input: &std::sync::Arc<bayleaf_script::Input>) {
+    let Some(play) = session.play.as_mut() else { return };
+    let Some(won) = play.host.with_state(|state| state.outcome) else { return };
+    if std::mem::replace(&mut play.told_outcome, true) {
+        return;
+    }
+    play.host.broadcast(&mut session.scene, if won { "gameWon" } else { "gameLost" }, 0.0, play.time, input);
+    session.log(Level::Info, if won { "Game won." } else { "Game lost." }.to_owned());
+    apply_requests(session);
+    keep_saved(session);
+}
+
+impl Session {
+    /// The game's state while it plays: the game's values, each player's, the saved ones and how
+    /// the game ended. `None` outside play mode.
+    pub fn game_state(&self) -> Option<bayleaf_script::GameState> {
+        self.play.as_ref().map(|play| play.host.state())
+    }
+}
+
+/// Writes the saved values to the project when scripts changed them. Outside a project they last
+/// for this play only, which the console says once.
+fn keep_saved(session: &mut Session) {
+    let Some(play) = session.play.as_mut() else { return };
+    let saved = play.host.with_state(|state| state.saved.clone());
+    let Some(on_disk) = play.saved_on_disk.as_mut() else { return };
+    if *on_disk == saved {
+        return;
+    }
+    *on_disk = saved.clone();
+    if session.project_dir().is_none() {
+        session.log(Level::Info, "Saved values are kept only in a project; open or make one to keep them between plays.".to_owned());
+        return;
+    }
+    if let Err(error) = crate::saved::write_saved(session, &saved) {
+        session.log(Level::Error, format!("Saved values could not be written: {error}"));
+    }
+}
+
+/// The game's state as JSON: the game's values, each player's, the saved ones and how the game
+/// ended. Outside play mode only saved values exist, as the project holds them.
+fn state_json(session: &Session) -> Value {
+    let (state, problem) = match session.play.as_ref() {
+        Some(play) => (play.host.state(), None),
+        None => match crate::saved::read_saved(session) {
+            Ok(saved) => (bayleaf_script::GameState { saved, ..Default::default() }, None),
+            Err(problem) => (bayleaf_script::GameState::default(), Some(problem)),
+        },
+    };
+    let players: Vec<Value> = state.players.iter().map(|(id, values)| json!({ "object": id, "name": session.scene.name(*id), "values": values })).collect();
+    let outcome = state.outcome.map(|won| if won { "won" } else { "lost" });
+    let file = crate::saved::saved_path(session);
+    json!({
+        "playing": session.is_playing(),
+        "game": state.game,
+        "players": players,
+        "saved": state.saved,
+        "savedFile": file,
+        "savedProblem": problem,
+        "outcome": outcome,
+    })
+}
+
+fn game_state(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    parse::<NoParams>(params)?;
+    Ok(state_json(session))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateSetParams {
+    name: String,
+    value: f64,
+    /// A player object; the game's own state when left out.
+    #[serde(default)]
+    player: Option<bayleaf_core::StableId>,
+    /// A saved value, kept between plays.
+    #[serde(default)]
+    saved: bool,
+}
+
+fn game_state_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: StateSetParams = parse(params)?;
+    let scope = match (p.player, p.saved) {
+        (Some(_), true) => return Err(CommandError::BadParams("give player or saved, not both".to_owned())),
+        (Some(player), false) if session.scene.get::<bayleaf_scene::components::PlayerControl>(player).is_none() => {
+            return Err(CommandError::BadParams(format!("{player} is not a player (an object with Player Control)")));
+        }
+        (Some(player), false) => bayleaf_script::Scope::Player(player),
+        (None, true) => bayleaf_script::Scope::Saved,
+        (None, false) => bayleaf_script::Scope::Game,
+    };
+    let play = session.play.as_mut().ok_or_else(|| CommandError::Failed("the game state exists only in play mode".to_owned()))?;
+    if !play.host.with_state(|state| state.set(scope, &p.name, p.value)) {
+        return Err(CommandError::BadParams(format!(
+            "give a name of 1 to 64 bytes and a finite number; a state holds at most {} values",
+            bayleaf_script::MAX_STATE_VALUES
+        )));
+    }
+    Ok(state_json(session))
+}
+
+/// Forgets the project's saved values, and in play mode the ones the game holds.
+fn game_saved_clear(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    parse::<NoParams>(params)?;
+    let removed = crate::saved::clear_saved(session).map_err(CommandError::Failed)?;
+    if let Some(play) = session.play.as_mut() {
+        play.host.with_state(|state| state.saved.clear());
+        play.saved_on_disk = Some(std::collections::BTreeMap::new());
+    }
+    session.log(Level::Info, "Saved values cleared.".to_owned());
+    Ok(json!({ "removed": removed }))
+}
+
 /// The message name scripts get for a physics contact.
 #[cfg(feature = "physics")]
 fn contact_name(kind: bayleaf_physics::ContactKind) -> &'static str {
@@ -516,14 +775,19 @@ fn contact_name(kind: bayleaf_physics::ContactKind) -> &'static str {
 }
 
 /// Places a linked copy of a prefab at a world position and starts its scripts.
-fn spawn(session: &mut Session, prefab: &str, position: [f32; 3]) -> Result<(), String> {
+fn spawn(session: &mut Session, prefab: &str, position: [f32; 3]) -> Result<bayleaf_core::StableId, String> {
+    spawn_with(session, prefab, |transform| transform.position = position.map(f64::from))
+}
+
+/// Places a linked copy of a prefab, `place` setting its transform, and starts its scripts.
+fn spawn_with(session: &mut Session, prefab: &str, place: impl FnOnce(&mut bayleaf_scene::components::Transform)) -> Result<bayleaf_core::StableId, String> {
     if session.scene.object_count() >= MAX_OBJECTS {
         return Err(format!("the scene already has {MAX_OBJECTS} objects"));
     }
     let objects = crate::prefab_cmds::read_prefab(session, prefab).map_err(|e| e.to_string())?;
     let id = *session.scene.import(&objects, None, None).map_err(|e| e.to_string())?.first().ok_or("the prefab is empty")?;
     let mut transform = session.scene.get::<bayleaf_scene::components::Transform>(id).cloned().unwrap_or_default();
-    transform.position = position.map(f64::from);
+    place(&mut transform);
     session.scene.set(id, transform).map_err(|e| e.to_string())?;
     session.scene.set(id, bayleaf_scene::components::Prefab::new(prefab)).map_err(|e| e.to_string())?;
     // Start the scripts of every object in the new copy.
@@ -541,11 +805,11 @@ fn spawn(session: &mut Session, prefab: &str, position: [f32; 3]) -> Result<(), 
     }
     for (object, index, script) in started {
         let path = session.allowed(&base.join(&script.module), crate::confine::Access::Read).map_err(|e| e.to_string())?;
-        let Some(play) = session.play.as_mut() else { return Ok(()) };
+        let Some(play) = session.play.as_mut() else { return Ok(id) };
         if let Err(error) = play.host.load_file(object, index, &path, &script, &mut session.scene, play.time, &input) {
             let who = session.scene.name(object).unwrap_or("Object").to_owned();
             session.log(Level::Error, format!("[{who} · {}] {error}", script.display_name()));
         }
     }
-    Ok(())
+    Ok(id)
 }

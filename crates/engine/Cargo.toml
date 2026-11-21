@@ -13,6 +13,8 @@ default = []
 streaming = ["dep:bayleaf-streaming"]
 # Rigid-body physics in play mode (Rapier). Projects without physics leave it off.
 physics = ["dep:bayleaf-physics"]
+# Gameplay roles (Player Control). Projects without them leave it off.
+gameplay = ["dep:bayleaf-gameplay", "bayleaf-gameplay/controller", "bayleaf-gameplay/rules"]
 
 [dependencies]
 bayleaf-core = { workspace = true }
@@ -22,6 +24,7 @@ bayleaf-render = { workspace = true }
 bayleaf-script = { workspace = true }
 bayleaf-streaming = { workspace = true, optional = true }
 bayleaf-physics = { workspace = true, optional = true }
+bayleaf-gameplay = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -109,6 +109,8 @@ pub enum SettingKind {
     Text(&'static str),
     /// Text that names something: letters, digits and `_` only.
     Name(&'static str),
+    /// One of a fixed list of words; the first is the default.
+    Choice(&'static [&'static str]),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -667,6 +669,10 @@ fn check_value(def: &NodeDef, name: &str, value: &Value) -> Result<(), GraphErro
             SettingKind::Name(_) => match value.as_str() {
                 Some(text) if !text.is_empty() && text.len() <= 64 && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => Ok(()),
                 _ => Err(bad("a name of letters, digits and _ (at most 64)")),
+            },
+            SettingKind::Choice(choices) => match value.as_str() {
+                Some(text) if choices.contains(&text) => Ok(()),
+                _ => Err(bad(&format!("one of {}", choices.join(", ")))),
             },
         };
     }

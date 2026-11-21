@@ -1136,6 +1136,29 @@ fn setting_row(ui: &mut egui::Ui, t: &Tokens, node: &Node, setting: &bayleaf_eng
                 requests.end_gesture = true;
             }
         }
+        SettingKind::Choice(choices) => {
+            let default = choices.first().copied().unwrap_or_default();
+            let current = value_or(node, setting.name, json!(default)).as_str().unwrap_or(default).to_owned();
+            let mut picked = None;
+            let response = ui.put(field, |ui: &mut egui::Ui| {
+                egui::ComboBox::from_id_salt(("graph choice", node.id, setting.name))
+                    .selected_text(current.as_str())
+                    .width(field.width())
+                    .show_ui(ui, |ui| {
+                        for choice in choices {
+                            if ui.selectable_label(current == *choice, *choice).clicked() && current != *choice {
+                                picked = Some(*choice);
+                            }
+                        }
+                    })
+                    .response
+            });
+            labelled(ui, &response, &format!("{name}: {current}"));
+            if let Some(choice) = picked {
+                requests.merge("graph.node.set", json!({ "node": node.id, "name": setting.name, "value": choice }), key);
+                requests.end_gesture = true;
+            }
+        }
     }
 }
 

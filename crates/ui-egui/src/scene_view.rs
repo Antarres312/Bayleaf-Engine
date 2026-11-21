@@ -135,31 +135,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
 /// View controls and the play controls. Returns a play command to run.
 fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&'static str> {
     let mut command = None;
-    let session = &editor.session;
     ui.horizontal(|ui| {
-        let t = crate::theme::tokens(ui);
-        // Accessible names start with the visible label but say more, as the Play menu shares the word.
-        let named = |response: egui::Response, name: &str| {
-            response.ctx.accesskit_node_builder(response.id, |node| node.set_label(name));
-            response
-        };
-        if session.is_playing() {
-            let (label, name) = if session.is_paused() { ("Resume", "Resume playing") } else { ("Pause", "Pause playing") };
-            if named(ui.button(label), name).on_hover_text("Ctrl+Shift+P").clicked() {
-                command = Some("play.pause");
-            }
-            let stop = ui.add(egui::Button::new(egui::RichText::new("Stop").color(t.on_accent)).fill(t.accent));
-            if named(stop, "Stop playing").on_hover_text("Stop and restore the scene (Ctrl+P)").clicked() {
-                command = Some("play.stop");
-            }
-            let state = if session.is_paused() { "Paused" } else { "Playing" };
-            ui.label(egui::RichText::new(format!("{state} · {:.1} s", session.play_time())).strong());
-        } else {
-            let play = ui.add(egui::Button::new(egui::RichText::new("Play").color(t.on_accent)).fill(t.accent));
-            if named(play, "Play scene").on_hover_text("Run the scene's scripts (Ctrl+P)").clicked() {
-                command = Some("play.start");
-            }
-        }
+        command = play_controls(ui, &editor.session);
         ui.separator();
         let frame_label = if editor.selected.is_some() { "Frame Selection" } else { "Frame All" };
         if ui.button(frame_label).on_hover_text("Move the view to show it (F)").clicked() {
@@ -180,6 +157,35 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
         ui.separator();
         ui.weak("Drag: orbit · Shift+drag: pan · Scroll: zoom · Click: select");
     });
+    command
+}
+
+/// Play, or Pause and Stop with the time played, in a horizontal row. Returns a play command to run.
+pub(crate) fn play_controls(ui: &mut egui::Ui, session: &bayleaf_engine::Session) -> Option<&'static str> {
+    let mut command = None;
+    let t = crate::theme::tokens(ui);
+    // Accessible names start with the visible label but say more, as the Play menu shares the word.
+    let named = |response: egui::Response, name: &str| {
+        response.ctx.accesskit_node_builder(response.id, |node| node.set_label(name));
+        response
+    };
+    if session.is_playing() {
+        let (label, name) = if session.is_paused() { ("Resume", "Resume playing") } else { ("Pause", "Pause playing") };
+        if named(ui.button(label), name).on_hover_text("Ctrl+Shift+P").clicked() {
+            command = Some("play.pause");
+        }
+        let stop = ui.add(egui::Button::new(egui::RichText::new("Stop").color(t.on_accent)).fill(t.accent));
+        if named(stop, "Stop playing").on_hover_text("Stop and restore the scene (Ctrl+P)").clicked() {
+            command = Some("play.stop");
+        }
+        let state = if session.is_paused() { "Paused" } else { "Playing" };
+        ui.label(egui::RichText::new(format!("{state} · {:.1} s", session.play_time())).strong());
+    } else {
+        let play = ui.add(egui::Button::new(egui::RichText::new("Play").color(t.on_accent)).fill(t.accent));
+        if named(play, "Play scene").on_hover_text("Run the scene's scripts (Ctrl+P)").clicked() {
+            command = Some("play.start");
+        }
+    }
     command
 }
 
@@ -324,22 +330,16 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         paint_handles(ui, &projector, projector.relative(*world), view.tool, active, response.rect);
     }
 
-    // Mouse. In play mode the view is the game's: the pointer and buttons go to the scripts, and
-    // the left button no longer orbits or selects (the right and middle buttons still move the view).
-    let playing = editor.session.is_playing();
-    if playing {
-        send_pointer(editor, ui, &response);
-    }
+    // Mouse. The view stays the editor's in play mode too: the game's pointer comes from the Game
+    // view, so here the mouse still orbits, pans and selects to look around the running game.
     // While a handle is dragged, the view stays put.
     if view.gizmo_drag.is_none() {
-        move_view(view, ui, &response, size, playing);
+        move_view(view, ui, &response, size);
     }
     // A press and release that barely moved is a click, even if egui already counted it as a drag.
     let tiny_drag = response.drag_stopped_by(egui::PointerButton::Primary)
         && ui.input(|i| i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| a.distance(b) < 5.0));
-    if playing && (response.clicked() || tiny_drag) {
-        response.request_focus();
-    } else if response.clicked() || tiny_drag {
+    if response.clicked() || tiny_drag {
         response.request_focus();
         if let Some(pos) = response.interact_pointer_pos() {
             let local = (pos - response.rect.min) / response.rect.size();
@@ -393,24 +393,13 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     }
 }
 
-/// Gives the scripts the pointer over the view and the mouse buttons held there.
-fn send_pointer(editor: &mut Editor, ui: &egui::Ui, response: &egui::Response) {
-    let pointer = response.hover_pos().map(|p| {
-        let local = (p - response.rect.min) / response.rect.size();
-        [local.x * 2.0 - 1.0, 1.0 - local.y * 2.0]
-    });
-    let buttons = ui.input(|i| u8::from(i.pointer.primary_down()) | u8::from(i.pointer.secondary_down()) << 1 | u8::from(i.pointer.middle_down()) << 2);
-    // Buttons count only while the pointer is over the view.
-    editor.session.set_pointer(pointer, if pointer.is_some() { buttons } else { 0 });
-}
-
-/// Orbit, pan and zoom with the mouse. In play mode the left button belongs to the game.
-fn move_view(view: &mut SceneView, ui: &egui::Ui, response: &egui::Response, size: egui::Vec2, playing: bool) {
+/// Orbit, pan and zoom with the mouse.
+fn move_view(view: &mut SceneView, ui: &egui::Ui, response: &egui::Response, size: egui::Vec2) {
     let shift = ui.input(|i| i.modifiers.shift);
     let delta = response.drag_delta() / size.y;
-    if response.dragged_by(egui::PointerButton::Middle) || (response.dragged_by(egui::PointerButton::Primary) && shift && !playing) {
+    if response.dragged_by(egui::PointerButton::Middle) || (response.dragged_by(egui::PointerButton::Primary) && shift) {
         view.orbit.pan(Vec2::new(delta.x, delta.y));
-    } else if (response.dragged_by(egui::PointerButton::Primary) && !playing) || response.dragged_by(egui::PointerButton::Secondary) {
+    } else if response.dragged_by(egui::PointerButton::Primary) || response.dragged_by(egui::PointerButton::Secondary) {
         view.orbit.rotate(-delta.x * 3.0, delta.y * 3.0);
     }
     if response.hovered() {

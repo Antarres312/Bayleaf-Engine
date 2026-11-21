@@ -506,6 +506,7 @@ name = "bayleaf-engine"
 version = "0.1.0"
 dependencies = [
  "bayleaf-core",
+ "bayleaf-gameplay",
  "bayleaf-graph",
  "bayleaf-physics",
  "bayleaf-render",
@@ -521,6 +522,11 @@ dependencies = [
 [[package]]
 name = "bayleaf-gameplay"
 version = "0.1.0"
+dependencies = [
+ "bayleaf-core",
+ "bayleaf-scene",
+ "serde_json",
+]
 
 [[package]]
 name = "bayleaf-graph"

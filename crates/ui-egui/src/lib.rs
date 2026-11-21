@@ -10,6 +10,7 @@ pub mod brand;
 mod console;
 mod dock;
 mod file_inspector;
+mod game_view;
 pub mod gamepad;
 mod gizmo;
 mod graph_view;
@@ -46,6 +47,9 @@ pub struct Editor {
     gesture: u64,
     title: String,
     scene_view: scene_view::SceneView,
+    game_view: game_view::GameView,
+    /// Play mode as last frame saw it: starting raises the Game view, stopping the scene view.
+    was_playing: bool,
     dock: egui_dock::DockState<Panel>,
     hierarchy_filter: String,
     /// The object being renamed in the hierarchy, if any.
@@ -89,6 +93,8 @@ impl Default for Editor {
             gesture: 0,
             title: String::new(),
             scene_view: scene_view::SceneView::new(),
+            game_view: game_view::GameView::default(),
+            was_playing: false,
             dock: Layout::Standard.build(),
             hierarchy_filter: String::new(),
             renaming: None,
@@ -123,6 +129,10 @@ impl Editor {
         self.handle_shortcuts(ui.ctx());
         self.poll_builds(ui.ctx());
         self.run_play_frame(ui.ctx());
+        if self.session.is_playing() != self.was_playing {
+            self.was_playing = self.session.is_playing();
+            self.show_panel(if self.was_playing { Panel::Game } else { Panel::Scene });
+        }
         egui::Panel::top("menu_bar").frame(egui::Frame::new().fill(t.backdrop).inner_margin(egui::Margin::symmetric(8, 4))).show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.logo_mark(ui);
@@ -287,7 +297,7 @@ impl Editor {
         self.session.set_pad(pad);
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         self.session.tick(dt);
-        // The scene view sets the pointer again while it is shown; hidden, the game sees none.
+        // The Game view sets the pointer again while it is shown; hidden, the game sees none.
         self.session.set_pointer(None, 0);
         if !self.session.is_paused() {
             ctx.request_repaint();

@@ -36,6 +36,49 @@ pub struct ProjectFile {
 pub struct ProjectSettings {
     #[serde(default)]
     pub physics: PhysicsSettings,
+    #[serde(default)]
+    pub input: InputSettings,
+}
+
+/// Input actions: names scripts and Player Control ask for, and what presses them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InputSettings {
+    pub actions: Vec<ActionSetting>,
+}
+
+/// One action and its bindings: `key:W`, `mouse:Left`, `pad:South`, `axis:LeftX+`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionSetting {
+    pub name: String,
+    pub bindings: Vec<String>,
+}
+
+impl Default for InputSettings {
+    /// Walking on WASD, the arrows and the left stick; jumping on Space and the bottom face button;
+    /// firing on the left mouse button and the right trigger.
+    fn default() -> Self {
+        let action = |name: &str, bindings: &[&str]| ActionSetting { name: name.to_owned(), bindings: bindings.iter().map(|b| (*b).to_owned()).collect() };
+        Self {
+            actions: vec![
+                action("MoveForward", &["key:W", "key:ArrowUp", "axis:LeftY+"]),
+                action("MoveBack", &["key:S", "key:ArrowDown", "axis:LeftY-"]),
+                action("MoveLeft", &["key:A", "key:ArrowLeft", "axis:LeftX-"]),
+                action("MoveRight", &["key:D", "key:ArrowRight", "axis:LeftX+"]),
+                action("Jump", &["key:Space", "pad:South"]),
+                action("Fire", &["mouse:Left", "axis:RightTrigger+"]),
+            ],
+        }
+    }
+}
+
+impl InputSettings {
+    /// The actions, checked, for the script host and Player Control.
+    pub fn actions(&self) -> Result<bayleaf_script::actions::Actions, String> {
+        let list: Vec<(String, Vec<String>)> = self.actions.iter().map(|a| (a.name.clone(), a.bindings.clone())).collect();
+        bayleaf_script::actions::Actions::new(&list)
+    }
 }
 
 /// Physics in play mode.
@@ -74,6 +117,7 @@ impl ProjectSettings {
         if !self.physics.gravity.iter().all(|g| g.is_finite() && g.abs() <= MAX_GRAVITY) {
             return Err(CommandError::BadParams(format!("gravity values must be finite and at most {MAX_GRAVITY} in size")));
         }
+        self.input.actions().map_err(CommandError::BadParams)?;
         Ok(())
     }
 }
@@ -149,7 +193,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Project Settings",
             menu: "",
             shortcut: "",
-            params: "none; returns {project, settings}: the open project's settings (physics: {enabled, gravity, precision: \"single\" | \"double\"}), or the defaults and project: false outside a project",
+            params: "none; returns {project, settings}: the open project's settings (physics: {enabled, gravity, precision: \"single\" | \"double\"}, input: {actions: [{name, bindings: [key:W | mouse:Left | pad:South | axis:LeftX+]}]}), or the defaults and project: false outside a project",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: always,
@@ -239,7 +283,7 @@ fn project_new(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     write(
         "README.md",
         &format!(
-            "# {name}\n\nA Bayleaf Engine project. Open `{file_stem}.{PROJECT_EXTENSION}` in the editor.\n\n- `scenes/`: scenes; `main.bscene` opens first\n- `materials/`: material graphs\n- `scripts/`: visual scripts and WebAssembly scripts\n- `assets/`: images, sounds and other files\n"
+            "# {name}\n\nA Bayleaf Engine project. Open `{file_stem}.{PROJECT_EXTENSION}` in the editor.\n\n- `scenes/`: scenes; `main.bscene` opens first\n- `materials/`: material graphs\n- `scripts/`: visual scripts and WebAssembly scripts\n- `assets/`: images, sounds and other files\n- `saves/`: values the game keeps between plays, such as a best score (safe to delete)\n"
         ),
     )?;
     let scene = inside(&dir, &project.main_scene);

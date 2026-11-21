@@ -131,9 +131,27 @@ No crate below L6 may use egui, eframe, winit or rfd.
    the links between them (`graph.node.copy/paste/duplicate`), and zoom keys (Ctrl + Plus, Minus, 0);
    images in materials; comment boxes on the canvas (`graph.comment.*`) that move the nodes inside;
    a material preview on a sphere; variables and On Message / Send Message in visual scripts.
-   Then: vector and true/false variables, On Key Pressed, On Timer and gamepad nodes. Still open:
-   events from physics (collisions, triggers).
-7. **M6 Gameplay framework** as opt-in modules.
+   Then: vector and true/false variables, On Key Pressed, On Timer and gamepad nodes; physics
+   contacts reach visual scripts as On Message with `collision`, `collisionEnd`, `triggerEnter` and
+   `triggerExit`.
+7. **M6 Gameplay framework** as opt-in modules (`gameplay` feature of `bayleaf-engine`). Started:
+   input actions in the project settings (named actions bound to keys, mouse, gamepad buttons and
+   sticks; `action` in the ABI, Action and On Action Pressed nodes, the Input Actions panel), and
+   the `controller` role: Player Control steers an object's Character with MoveForward, MoveBack,
+   MoveLeft, MoveRight and Jump relative to the camera, turns it to face where it walks, and makes the
+   first camera trail it (scene format version 10). Then the `rules` role: a Game Rules component
+   (scene format version 11) places a player prefab at the first Player Start when the scene has no
+   player, sends players that fall below a height back there, and can end the game after a time
+   limit, won or lost. Game and player state are named numbers in the script host, empty when play
+   starts (`state_get`, `state_set`, `game_end` in the ABI; Game Value, Set Game Value, Change Game
+   Value and End Game nodes; `game.state` and `game.state.set` for agents); the ending is announced
+   once, in the console and as `gameWon` or `gameLost` to every script. Then: Game Value nodes reach any player (Scope Player
+   with a name, or This Object); saved values last between plays in the project's
+   `saves/progress.json` (Scope Saved, `saved_value` in the Rust SDK, `game.saved.clear`), written when
+   play stops or the game ends, never over a file that did not read; and a Game tab beside the Scene
+   tab shows the game through its first camera, takes the game's pointer, and lists the game's,
+   players' and saved values. Play brings it to the front and Stop the Scene tab, which stays the
+   editor's view during play. Graph node settings can be a list of choices (Scope).
 8. **M7 Streaming** (optional crate), physics and audio integrations. Physics is started: the
    `physics` feature of `bayleaf-engine` (`crates/physics`, on Rapier) gives Rigid Body and Collider
    components (box, sphere, capsule; triggers), steps at 60 Hz in play mode, tells scripts about

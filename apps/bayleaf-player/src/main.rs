@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use bayleaf_engine::render::{self, CameraView, FrameOptions, RenderTarget, Renderer};
+use bayleaf_engine::render::{self, FrameOptions, RenderTarget, Renderer};
 use bayleaf_engine::{CommandRegistry, Level, Session};
 use clap::Parser;
 use eframe::egui;
@@ -99,7 +99,7 @@ impl Player {
         }
         let aspect = size.x / size.y;
         let scene = self.session.scene();
-        let camera = render::scene_camera(scene, aspect).unwrap_or_else(|| fallback_camera(scene, aspect));
+        let camera = render::game_camera(scene, aspect);
         let allow = |path: &Path| Ok(path.to_path_buf());
         let mut assets = render::FileAssets {
             base: self.session.script_dir(),
@@ -138,13 +138,6 @@ impl Player {
         ui.painter().rect_filled(panel, 3.0, egui::Color32::from_rgba_unmultiplied(0x30, 0x08, 0x08, 0xe0));
         ui.painter().galley(panel.min + egui::vec2(8.0, 8.0), galley, egui::Color32::WHITE);
     }
-}
-
-/// A view of everything in the scene, for a scene without a camera.
-fn fallback_camera(scene: &bayleaf_engine::scene::Scene, aspect: f32) -> CameraView {
-    let (center, radius) = render::bounds(scene).unwrap_or((bayleaf_core::math::DVec3::ZERO, 2.0));
-    let eye = center + bayleaf_core::math::DVec3::new(0.6, 0.45, 1.0).normalize() * (f64::from(radius.max(0.5)) * 2.6 + 1.0);
-    CameraView::look_at_world(eye, center, 60.0, aspect)
 }
 
 impl eframe::App for Player {

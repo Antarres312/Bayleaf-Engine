@@ -13,6 +13,7 @@ mod graph_cmds;
 mod play;
 pub mod prefab_cmds;
 pub mod project_cmds;
+pub mod saved;
 mod scene_cmds;
 
 /// Optional world streaming, present only with the `streaming` feature.

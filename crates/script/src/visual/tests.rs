@@ -266,6 +266,23 @@ fn every_node_kind_compiles_and_runs() {
     b.link(walk, "then", jump_gate, "run");
     b.link(standing, "grounded", jump_gate, "condition");
     b.link(jump_gate, "true", jump, "run");
+    let fire = b.node("actionPressed", json!({ "action": "Fire" }));
+    let fire_log = b.node("log", json!({ "message": "fire" }));
+    b.link(fire, "then", fire_log, "run");
+    let aim = b.node("action", json!({ "action": "Aim" }));
+    b.link(aim, "value", fire_log, "value");
+    let aim_gate = b.node("branch", json!({}));
+    b.link(fire_log, "then", aim_gate, "run");
+    b.link(aim, "held", aim_gate, "condition");
+    let score = b.node("gameValue", json!({}));
+    let keep_score = b.node("setGameValue", json!({ "scope": "Player" }));
+    b.link(jump, "then", keep_score, "run");
+    b.link(score, "value", keep_score, "value");
+    let more = b.node("changeGameValue", json!({}));
+    b.link(keep_score, "then", more, "run");
+    let finish = b.node("endGame", json!({}));
+    b.link(more, "then", finish, "run");
+    b.link(score, "set", finish, "won");
     let move_to = b.node("setPositionOf", json!({ "object": "Scripted" }));
     b.link(gate_on_flag, "false", move_to, "run");
     b.link(read_vector, "value", move_to, "position");
@@ -478,4 +495,60 @@ fn move_by_keeps_small_steps_far_from_the_centre() {
     assert!(host.take_faults().is_empty());
     let moved = transform(&scene, id).position[0] - far;
     assert!((moved - 0.1).abs() < 1e-6, "100 steps of 1 mm make 10 cm: {moved}");
+}
+
+#[test]
+fn game_state_starts_empty_counts_from_zero_and_the_first_ending_counts() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let before = b.node("gameValue", json!({ "name": "coins" }));
+    let report = b.node("log", json!({ "message": "set before" }));
+    b.link(start, "then", report, "run");
+    let as_number = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    b.link(before, "set", as_number, "condition");
+    b.link(as_number, "result", report, "value");
+    let add = b.node("changeGameValue", json!({ "name": "coins", "amount": 2.0 }));
+    b.link(report, "then", add, "run");
+    let again = b.node("changeGameValue", json!({ "name": "coins", "amount": 3.0 }));
+    b.link(add, "then", again, "run");
+    let lives = b.node("setGameValue", json!({ "name": "lives", "scope": "Player", "value": 3.0 }));
+    b.link(again, "then", lives, "run");
+    let win = b.node("endGame", json!({}));
+    b.link(lives, "then", win, "run");
+    let lose = b.node("endGame", json!({ "won": false }));
+    b.link(win, "then", lose, "run");
+    let (_, _, mut host) = run(&b.bytes(), &[]);
+    assert!(host.take_faults().is_empty());
+    assert_eq!(host.take_logs()[0].text, "set before 0", "nothing is set at first");
+    let state = host.state();
+    assert_eq!(state.game.get("coins"), Some(&5.0), "a missing value counts from 0");
+    assert!(state.players.is_empty(), "with no player, player values go nowhere");
+    assert_eq!(state.outcome, Some(true), "the first ending counts");
+}
+
+#[test]
+fn game_values_reach_this_player_a_named_player_or_the_first_and_never_a_missing_one() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let mut last = (start, "then");
+    for (scope, player, value) in [("This Object", "", 2.0), ("Player", "Red", 1.0), ("Player", "", 7.0), ("Player", "Nobody", 9.0), ("Player", "Rock", 9.0)] {
+        let set = b.node("setGameValue", json!({ "name": "lives", "scope": scope, "player": player, "value": value }));
+        b.link(last.0, last.1, set, "run");
+        last = (set, "then");
+    }
+    let mut scene = Scene::new();
+    let red = scene.create_object(None, "Red").unwrap();
+    let blue = scene.create_object(None, "Blue").unwrap();
+    scene.create_object(None, "Rock").unwrap();
+    for player in [red, blue] {
+        scene.set(player, bayleaf_scene::components::PlayerControl::default()).unwrap();
+    }
+    let script = ScriptRef { module: "test.bscript".into(), properties: BTreeMap::new() };
+    let mut host = ScriptHost::new();
+    host.load_bytes(blue, 0, Path::new("test.bscript"), None, &b.bytes(), &script, &mut scene, 0.0, &Arc::new(Input::default())).unwrap();
+    assert!(host.take_faults().is_empty(), "a missing player is no fault");
+    let state = host.state();
+    assert_eq!(state.get(crate::Scope::Player(blue), "lives"), Some(2.0), "This Object is the script's own player");
+    assert_eq!(state.get(crate::Scope::Player(red), "lives"), Some(7.0), "a named player, then the first player, which is Red");
+    assert_eq!(state.players.len(), 2, "no state for a missing name or an object that is no player");
 }

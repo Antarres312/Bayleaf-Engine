@@ -17,6 +17,7 @@ use bayleaf_scene::Scene;
 use bayleaf_scene::components::{ScriptRef, Scripts, Transform};
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
 
+pub mod actions;
 pub mod visual;
 
 /// File extension of visual scripts, which compile to modules when loaded.
@@ -141,6 +142,80 @@ pub enum Request {
     Jump { by: StableId, object: StableId, speed: f32 },
 }
 
+/// Named numbers the game keeps while it plays: the game's own, each player's (a player is an
+/// object with Player Control), the saved ones that last from one play to the next, and how the
+/// game ended. Everything starts empty, except saved values the project kept; reading a name that
+/// was never set gives nothing, not an error.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GameState {
+    pub game: BTreeMap<String, f64>,
+    pub players: BTreeMap<StableId, BTreeMap<String, f64>>,
+    /// Kept between plays (the engine loads and writes them), such as a best score.
+    pub saved: BTreeMap<String, f64>,
+    /// `Some(true)` won, `Some(false)` lost; the first ending counts.
+    pub outcome: Option<bool>,
+}
+
+/// Whose value: the game's, a player's, or a saved one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scope {
+    Game,
+    Player(StableId),
+    Saved,
+}
+
+/// Most values in the game's state, in each player's, and saved.
+pub const MAX_STATE_VALUES: usize = 1024;
+
+/// Whether a name and number may be kept: a name of 1 to 64 bytes and a finite number.
+pub fn valid_value(name: &str, value: f64) -> bool {
+    !name.is_empty() && name.len() <= 64 && value.is_finite()
+}
+
+impl GameState {
+    /// Sets a value; false when the name is not 1 to 64 bytes, the number is not finite, or the
+    /// state is full.
+    pub fn set(&mut self, scope: Scope, name: &str, value: f64) -> bool {
+        if !valid_value(name, value) {
+            return false;
+        }
+        let map = match scope {
+            Scope::Game => &mut self.game,
+            Scope::Player(id) => self.players.entry(id).or_default(),
+            Scope::Saved => &mut self.saved,
+        };
+        if map.len() >= MAX_STATE_VALUES && !map.contains_key(name) {
+            return false;
+        }
+        map.insert(name.to_owned(), value);
+        true
+    }
+
+    pub fn get(&self, scope: Scope, name: &str) -> Option<f64> {
+        match scope {
+            Scope::Game => self.game.get(name).copied(),
+            Scope::Player(id) => self.players.get(&id)?.get(name).copied(),
+            Scope::Saved => self.saved.get(name).copied(),
+        }
+    }
+
+    /// Ends the game, unless it already ended. Returns true when this call ended it.
+    pub fn end(&mut self, won: bool) -> bool {
+        if self.outcome.is_some() {
+            return false;
+        }
+        self.outcome = Some(won);
+        true
+    }
+}
+
+/// The state shared by every script of a play session.
+pub type SharedState = Arc<std::sync::Mutex<GameState>>;
+
+fn lock(state: &SharedState) -> std::sync::MutexGuard<'_, GameState> {
+    state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Physics bodies' velocities, as scripts see them during a step.
 pub type Velocities = std::collections::HashMap<StableId, [f32; 3]>;
 
@@ -172,6 +247,8 @@ struct WorldView {
     shapes: Vec<Option<(DMat4, RayShape)>>,
     /// Each object's position in double precision, by the same index.
     positions: Vec<[f64; 3]>,
+    /// Objects with Player Control, in hierarchy order.
+    players: Vec<StableId>,
 }
 
 impl WorldView {
@@ -180,7 +257,8 @@ impl WorldView {
         let objects = all.iter().map(|(id, _)| (*id, scene.name(*id).unwrap_or_default().to_owned(), read_transform(scene, *id))).collect();
         let shapes = all.iter().map(|(id, world)| ray_shape(scene, *id, *world)).collect();
         let positions = all.iter().map(|(id, _)| read_position(scene, *id)).collect();
-        Arc::new(Self { objects, shapes, positions })
+        let players = all.iter().map(|(id, _)| *id).filter(|id| scene.get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect();
+        Arc::new(Self { objects, shapes, positions, players })
     }
 
     /// The nearest shape a ray hits within `max`, other than `skip`: its index and the distance.
@@ -233,6 +311,8 @@ struct HostState {
     message: Option<String>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
+    actions: Arc<actions::Actions>,
+    state: SharedState,
     transform: [f32; 9],
     transform_changed: bool,
     properties: BTreeMap<String, f32>,
@@ -256,6 +336,8 @@ impl HostState {
             message: None,
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
+            actions: Arc::new(actions::Actions::default()),
+            state: SharedState::default(),
             transform,
             transform_changed: false,
             properties,
@@ -355,6 +437,8 @@ pub struct ScriptHost {
     messages: Vec<Message>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
+    actions: Arc<actions::Actions>,
+    state: SharedState,
 }
 
 impl Default for ScriptHost {
@@ -373,6 +457,8 @@ impl Default for ScriptHost {
             messages: Vec::new(),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
+            actions: Arc::new(actions::Actions::default()),
+            state: SharedState::default(),
         }
     }
 }
@@ -444,6 +530,8 @@ impl ScriptHost {
         let module = Module::new(&self.engine, bytes).map_err(|e| ScriptError::Invalid(module_name.clone(), e.to_string()))?;
         let mut state = HostState::new(object, read_transform(scene, object), script.properties.clone(), time, input);
         state.position = read_position(scene, object);
+        state.state = Arc::clone(&self.state);
+        state.actions = Arc::clone(&self.actions);
         state.world = WorldView::of(scene);
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| &mut state.limits);
@@ -509,6 +597,8 @@ impl ScriptHost {
                 state.world = Arc::clone(&world);
                 state.velocities = Arc::clone(&self.velocities);
                 state.grounded = Arc::clone(&self.grounded);
+                state.actions = Arc::clone(&self.actions);
+                state.state = Arc::clone(&self.state);
             }
             let result = call(entry, |store| update.call(store, dt));
             let script = entry.script_name.clone();
@@ -553,6 +643,8 @@ impl ScriptHost {
                     state.world = Arc::clone(&world);
                     state.velocities = Arc::clone(&self.velocities);
                     state.grounded = Arc::clone(&self.grounded);
+                    state.actions = Arc::clone(&self.actions);
+                    state.state = Arc::clone(&self.state);
                     state.message = Some(message.name.clone());
                 }
                 let result = call(entry, |store| on_message.call(store, message.value));
@@ -606,6 +698,27 @@ impl ScriptHost {
     /// The physics bodies' velocities scripts read in the next calls.
     pub fn set_velocities(&mut self, velocities: Velocities) {
         self.velocities = Arc::new(velocities);
+    }
+
+    /// The game and player state scripts share (empty at the start of play).
+    pub fn state(&self) -> GameState {
+        lock(&self.state).clone()
+    }
+
+    /// Changes the shared state from outside the scripts (commands, game rules).
+    pub fn with_state<T>(&self, change: impl FnOnce(&mut GameState) -> T) -> T {
+        change(&mut lock(&self.state))
+    }
+
+    /// Sends a message to every script now, as `notify` does for one object.
+    pub fn broadcast(&mut self, scene: &mut Scene, name: &str, value: f32, time: f64, input: &Arc<Input>) {
+        self.messages.push(Message { to: None, name: name.to_owned(), value });
+        self.deliver(scene, time, input);
+    }
+
+    /// The project's input actions, which scripts read with `action`.
+    pub fn set_actions(&mut self, actions: actions::Actions) {
+        self.actions = Arc::new(actions);
     }
 
     /// The characters standing on something, as scripts see them in the next calls.
@@ -893,6 +1006,27 @@ fn physics_request(
     Ok(1)
 }
 
+/// Which state a call means: `None` the game's; `Some(Some(id))` a player's; `Some(None)` a
+/// player that is not there (handle 0 with no player). Scope 0 is the game, 1 a player: handle 0
+/// the first player, else that object.
+/// The store a `state_get` or `state_set` call names; `None` when it names a player that is not
+/// there.
+fn state_scope(caller: &mut Caller<'_, HostState>, what: &str, scope: i32, handle: i32) -> Result<Option<Scope>, wasmi::Error> {
+    match scope {
+        0 => Ok(Some(Scope::Game)),
+        2 => Ok(Some(Scope::Saved)),
+        1 if handle == 0 => Ok(caller.data().world.players.first().copied().map(Scope::Player)),
+        // -1 names no object, as a search that found nothing; it is no player.
+        1 if handle == -1 => Ok(None),
+        1 => match caller.data().world.object(handle) {
+            // Only objects with Player Control have a player state.
+            Some((id, _)) => Ok(caller.data().world.players.contains(&id).then_some(Scope::Player(id))),
+            None => Err(fault(caller, format!("{what}: there is no object with handle {handle}"))),
+        },
+        _ => Err(fault(caller, format!("{what}: scope is 0 (the game), 1 (a player) or 2 (saved)"))),
+    }
+}
+
 fn make_linker(engine: &Engine) -> Linker<HostState> {
     let mut linker = Linker::new(engine);
     let result = (|| -> Result<(), wasmi::errors::LinkerError> {
@@ -982,6 +1116,32 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         )?;
         linker.func_wrap("bayleaf", "set_velocity", |mut caller: Caller<'_, HostState>, handle: i32, x: f32, y: f32, z: f32| -> Result<i32, wasmi::Error> {
             physics_request(&mut caller, "set_velocity", handle, [x, y, z], |by, object, velocity| Request::SetVelocity { by, object, velocity })
+        })?;
+        linker.func_wrap(
+            "bayleaf",
+            "state_get",
+            |mut caller: Caller<'_, HostState>, scope: i32, handle: i32, ptr: i32, len: i32, out: i32| -> Result<i32, wasmi::Error> {
+                let name = read_text(&caller, ptr, len, 64).map_err(|m| fault(&mut caller, format!("state_get: {m}")))?;
+                let value = state_scope(&mut caller, "state_get", scope, handle)?.and_then(|scope| lock(&caller.data().state).get(scope, &name));
+                write_guest(&mut caller, out, &value.unwrap_or(0.0).to_le_bytes(), "state_get")?;
+                Ok(i32::from(value.is_some()))
+            },
+        )?;
+        linker.func_wrap(
+            "bayleaf",
+            "state_set",
+            |mut caller: Caller<'_, HostState>, scope: i32, handle: i32, ptr: i32, len: i32, value: f64| -> Result<i32, wasmi::Error> {
+                let name = read_text(&caller, ptr, len, 64).map_err(|m| fault(&mut caller, format!("state_set: {m}")))?;
+                let scope = state_scope(&mut caller, "state_set", scope, handle)?;
+                let stored = scope.is_some_and(|scope| lock(&caller.data().state).set(scope, &name, value));
+                Ok(i32::from(stored))
+            },
+        )?;
+        linker.func_wrap("bayleaf", "game_end", |caller: Caller<'_, HostState>, won: i32| -> i32 { i32::from(lock(&caller.data().state).end(won != 0)) })?;
+        linker.func_wrap("bayleaf", "action", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<f32, wasmi::Error> {
+            let name = read_text(&caller, ptr, len, 64).map_err(|m| fault(&mut caller, format!("action: {m}")))?;
+            let state = caller.data();
+            Ok(state.actions.value(&name, &state.input))
         })?;
         linker.func_wrap(
             "bayleaf",

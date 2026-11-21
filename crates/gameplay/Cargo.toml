@@ -8,14 +8,18 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+bayleaf-core = { workspace = true, optional = true }
+bayleaf-scene = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
 
 [features]
 default = []
-rules = []
-controller = []
-pawn = []
-game-state = []
-player-state = []
+# Player Control: input actions steer a Character; the camera follows.
+controller = ["dep:bayleaf-core", "dep:bayleaf-scene"]
+# Game Rules: the player appears at the Player Start, starts over after a fall, and the time limit ends the game.
+rules = ["dep:bayleaf-core", "dep:bayleaf-scene"]
 
 [lints]
 workspace = true

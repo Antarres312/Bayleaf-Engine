@@ -239,6 +239,58 @@ pub enum PadButton {
     Right,
 }
 
+/// How far an input action from the project settings is pressed, from 0 to 1 (0 for an unknown action).
+pub fn action(name: &str) -> f32 {
+    abi::action(name)
+}
+
+/// True while an input action is held (pressed more than half way).
+pub fn action_held(name: &str) -> bool {
+    abi::action(name) > 0.5
+}
+
+/// A value of the game's state, shared by every script while the game runs; `None` until a
+/// script or an agent sets it (the state starts empty).
+pub fn game_value(name: &str) -> Option<f64> {
+    abi::state_get(0, 0, name)
+}
+
+/// Sets a value of the game's state. False for an empty or too long name (over 64 bytes), a
+/// number that is not finite, or a state that already holds too many values.
+pub fn set_game_value(name: &str, value: f64) -> bool {
+    abi::state_set(0, 0, name, value)
+}
+
+/// A value of a player's state (`None` for the first player, an object with Player Control);
+/// `None` until it is set, or when there is no such player.
+pub fn player_value(player: Option<Object>, name: &str) -> Option<f64> {
+    abi::state_get(1, player.map_or(0, |p| p.0), name)
+}
+
+/// Sets a value of a player's state (`None` for the first player). False as for
+/// [`set_game_value`], or when there is no such player.
+pub fn set_player_value(player: Option<Object>, name: &str, value: f64) -> bool {
+    abi::state_set(1, player.map_or(0, |p| p.0), name, value)
+}
+
+/// A saved value: kept from one play to the next in the project (such as a best score); `None`
+/// until it is set.
+pub fn saved_value(name: &str) -> Option<f64> {
+    abi::state_get(2, 0, name)
+}
+
+/// Sets a saved value; it is written to the project when play stops or the game ends. False as
+/// for [`set_game_value`].
+pub fn set_saved_value(name: &str, value: f64) -> bool {
+    abi::state_set(2, 0, name, value)
+}
+
+/// Ends the game as won or lost. Every script then gets the message `gameWon` or `gameLost`.
+/// Only the first ending counts: false when the game has already ended.
+pub fn end_game(won: bool) -> bool {
+    abi::game_end(won)
+}
+
 /// True while a gamepad is connected.
 pub fn pad_connected() -> bool {
     abi::pad_connected()

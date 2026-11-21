@@ -12,8 +12,9 @@ pub const FORMAT: &str = "bayleaf.scene";
 /// `prefab` link; version 5 added `mesh.model` and `sprite.image`; version 6 added the `environment`
 /// component; version 7 added `environment.fogDistance`, `spotLight.shadows`, `pointLight.shadows` and prefab overrides; version 8
 /// added `rigidBody` and `collider`; version 9 added
-/// `characterBody`. Older files still load.
-pub const VERSION: u32 = 9;
+/// `characterBody`; version 10 added `playerControl`; version 11
+/// added `gameRules` and `playerStart`. Older files still load.
+pub const VERSION: u32 = 11;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.

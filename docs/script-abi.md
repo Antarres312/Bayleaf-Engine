@@ -42,6 +42,7 @@ so module-level state belongs to that one script slot. Any language that compile
 | `message_name` | `(out: i32, cap: i32) -> i32` | during `bayleaf_message`, writes up to `cap` bytes of the message's name and returns its full length; `0` outside it |
 | `apply_impulse` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | pushes the object's dynamic physics body by an impulse in world space, after the step; `1` when asked, `0` when this call already asked 64 times |
 | `set_velocity` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | sets the body's velocity (world units per second) after the step; `1` or `0` as above |
+| `action` | `(name_ptr: i32, name_len: i32) -> f32` | how far an input action from the project settings is pressed, 0 to 1 (the strongest of its key, mouse, gamepad button and stick bindings; sticks past a dead zone of 0.15); `0` for an unknown action |
 | `character_walk` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | sets the object's Character walking velocity (world units per second) after the step; it keeps walking until changed. `1` when asked, `0` when this call already asked 64 times |
 | `character_jump` | `(handle: i32, speed: f32) -> i32` | makes the Character jump with an upward speed after the step, if it stands on something |
 | `character_grounded` | `(handle: i32) -> i32` | `1` while the Character stands on something (as the step began), else `0` |
@@ -50,18 +51,25 @@ so module-level state belongs to that one script slot. Any language that compile
 | `pad_connected` | `() -> i32` | `1` while a gamepad is connected (the first one), else `0` |
 | `pad_axis` | `(index: i32) -> f32` | `0` left stick x, `1` left stick y, `2` right stick x, `3` right stick y (-1 to 1, y up), `4` left trigger, `5` right trigger (0 to 1); `0` without a gamepad or for another index |
 | `pad_button` | `(index: i32) -> i32` | `1` while the button is held: 0 South, 1 East, 2 West, 3 North, 4 LeftBumper, 5 RightBumper, 6 LeftTrigger, 7 RightTrigger, 8 Select, 9 Start, 10 LeftStick, 11 RightStick, 12 Up, 13 Down, 14 Left, 15 Right |
+| `state_get` | `(scope: i32, handle: i32, name_ptr: i32, name_len: i32, out: i32) -> i32` | reads a value of the game's state (`scope` 0), a player's (`scope` 1: the player object's handle, `0` for the first player, `-1` for none) or a saved one (`scope` 2, `handle` 0): writes one `f64` and returns `1` when it is set, else `0` (and writes 0). The game's and players' state start empty when play starts; saved values come from the project's `saves/progress.json` |
+| `state_set` | `(scope: i32, handle: i32, name_ptr: i32, name_len: i32, value: f64) -> i32` | sets a value at once, seen by every script; `1` when set, `0` for an empty name, a number that is not finite, a state already holding 1024 values, or no such player (handle `-1`, or an object without Player Control); a name over 64 bytes is a fault. Saved values are written to the project when play stops or the game ends |
+| `game_end` | `(won: i32) -> i32` | ends the game, won (`1`) or lost (`0`); `1` when this ended it, `0` when it had already ended. Every script then gets the message `gameWon` or `gameLost` |
 
 ### Messages
 
 In a build with physics, contacts arrive as messages to both objects' scripts after the physics
 step: `collision` and `collisionEnd` when colliders start and stop touching, `triggerEnter` and
-`triggerExit` when one of them is a trigger. The value is the other object's handle.
+`triggerExit` when one of them is a trigger. The value is the other object's handle. When the game ends (`game_end`, or
+the time limit of the scene's Game Rules), every object's scripts get `gameWon` or `gameLost` once,
+with the value 0.
 
 Messages are delivered after every script's update in the step, in the order sent. Each script of
 the target object that exports `bayleaf_message` gets the call, with the same limits as any other
 call. A message sent while handling one is delivered after the next step, so scripts that answer
 each other cannot run forever. Messages sent from `bayleaf_start` arrive after the first step. The
 Rust SDK calls `Script::message(name, value)`; `Object::send` and `send_to_all` send.
+Its `game_value`, `set_game_value`, `player_value`, `set_player_value`, `saved_value`,
+`set_saved_value` and `end_game` use the game state.
 
 ### Other objects
 

@@ -4,7 +4,7 @@
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 
-use crate::{Editor, console, graph_view, hierarchy, inspector, project, project_settings, scene_view, theme};
+use crate::{Editor, console, game_view, graph_view, hierarchy, inspector, project, project_settings, scene_view, theme};
 
 /// The panels of the editor window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -18,10 +18,13 @@ pub enum Panel {
     Graph,
     /// Settings for the whole project, a tab beside the scene view.
     ProjectSettings,
+    /// The game as players see it, a tab beside the scene view.
+    Game,
 }
 
 impl Panel {
-    pub const ALL: [Panel; 7] = [Panel::Hierarchy, Panel::Scene, Panel::Graph, Panel::Inspector, Panel::Project, Panel::Console, Panel::ProjectSettings];
+    pub const ALL: [Panel; 8] =
+        [Panel::Hierarchy, Panel::Scene, Panel::Game, Panel::Graph, Panel::Inspector, Panel::Project, Panel::Console, Panel::ProjectSettings];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -32,6 +35,7 @@ impl Panel {
             Panel::Project => "Project",
             Panel::Graph => "Graph",
             Panel::ProjectSettings => "Project Settings",
+            Panel::Game => "Game",
         }
     }
 
@@ -64,7 +68,7 @@ impl Layout {
     }
 
     pub fn build(self) -> DockState<Panel> {
-        let mut state = DockState::new(vec![Panel::Scene, Panel::Graph, Panel::ProjectSettings]);
+        let mut state = DockState::new(vec![Panel::Scene, Panel::Game, Panel::Graph, Panel::ProjectSettings]);
         let surface = state.main_surface_mut();
         match self {
             Layout::Standard => {
@@ -132,7 +136,7 @@ pub(crate) fn set_open(dock: &mut DockState<Panel>, panel: Panel, open: bool) {
                 let node = scene.node_path().node;
                 match panel {
                     // The graph editor shares the scene view's area, as another tab.
-                    Panel::Graph | Panel::ProjectSettings => {
+                    Panel::Graph | Panel::ProjectSettings | Panel::Game => {
                         surface[node].append_tab(panel);
                     }
                     Panel::Hierarchy => {
@@ -177,6 +181,7 @@ impl TabViewer for Panels<'_> {
             Panel::Project => project::show(self.editor, ui),
             Panel::Graph => graph_view::show(self.editor, ui, self.gpu),
             Panel::ProjectSettings => project_settings::show(self.editor, ui),
+            Panel::Game => game_view::show(self.editor, ui, self.gpu),
         }
     }
 

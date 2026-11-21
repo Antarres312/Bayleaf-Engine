@@ -29,6 +29,12 @@ const MATH_OUT: &[PinDef] = &[pin("result", "Result", Any)];
 const MESSAGE: SettingDef = SettingDef { name: "message", label: "Message", kind: SettingKind::Name("hit") };
 const VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("count") };
 const VECTOR_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("target") };
+const ACTION: SettingDef = SettingDef { name: "action", label: "Action", kind: SettingKind::Name("Jump") };
+const STATE_NAME: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("score") };
+/// Whose value: the game's, a player's (the one named in Player, else the first), this object's own
+/// when it is a player, or a saved one that lasts from one play to the next.
+const STATE_SCOPE: SettingDef = SettingDef { name: "scope", label: "Scope", kind: SettingKind::Choice(&["Game", "Player", "This Object", "Saved"]) };
+const STATE_PLAYER: SettingDef = SettingDef { name: "player", label: "Player", kind: SettingKind::Text("") };
 const FLAG: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("done") };
 
 const fn node(
@@ -73,6 +79,26 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[RUN, number("value", "Value", Float, 0.0)],
             outputs: &[THEN],
             settings: &[MESSAGE, SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "action",
+            label: "Action",
+            category: "Inputs",
+            description: "How far an input action from the project settings is pressed (0 to 1), and whether it is held.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", Float), pin("held", "Held", Bool)],
+            settings: &[ACTION],
+            unique: false,
+        },
+        NodeDef {
+            kind: "actionPressed",
+            label: "On Action Pressed",
+            category: "Events",
+            description: "Runs once in the step when an input action from the project settings is pressed.",
+            inputs: &[],
+            outputs: &[THEN],
+            settings: &[ACTION],
             unique: false,
         },
         NodeDef {
@@ -273,6 +299,46 @@ pub const CATALOG: Catalog = Catalog {
         },
         action("destroySelf", "Destroy This Object", "Deletes this object and its children after this step.", &[RUN]),
         NodeDef {
+            kind: "gameValue",
+            label: "Game Value",
+            category: "Game",
+            description: "A number the game keeps under a name: the game's own (Scope Game), a player's (Scope Player: the object named in Player, else the first player) or this object's (Scope This Object, when it has Player Control); Scope Saved keeps it from one play to the next, as for a best score. Nothing is set at first: Value is 0 and Is Set is false until something sets it.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", Float), pin("set", "Is Set", Bool)],
+            settings: &[STATE_NAME, STATE_SCOPE, STATE_PLAYER],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setGameValue",
+            label: "Set Game Value",
+            category: "Game",
+            description: "Keeps a number under a name in the game's state or a player's (see Game Value for the scopes).",
+            inputs: &[RUN, number("value", "Value", Float, 0.0)],
+            outputs: &[THEN],
+            settings: &[STATE_NAME, STATE_SCOPE, STATE_PLAYER],
+            unique: false,
+        },
+        NodeDef {
+            kind: "changeGameValue",
+            label: "Change Game Value",
+            category: "Game",
+            description: "Adds an amount to a number in the game's state or a player's; a name not set yet counts as 0.",
+            inputs: &[RUN, number("amount", "Amount", Float, 1.0)],
+            outputs: &[THEN],
+            settings: &[STATE_NAME, STATE_SCOPE, STATE_PLAYER],
+            unique: false,
+        },
+        NodeDef {
+            kind: "endGame",
+            label: "End Game",
+            category: "Game",
+            description: "Ends the game, won or lost; every script then gets the message gameWon or gameLost. Only the first ending counts.",
+            inputs: &[RUN, PinDef::with("won", "Won", Bool, PinDefault::Bool(true))],
+            outputs: &[THEN],
+            settings: &[],
+            unique: false,
+        },
+        NodeDef {
             kind: "walk",
             label: "Walk",
             category: "Physics",
@@ -437,17 +503,23 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     // Globals the events keep between steps.
     let mut state: Vec<String> = Vec::new();
     let mut events: Vec<&bayleaf_graph::Node> =
-        graph.nodes.iter().filter(|n| matches!(n.kind.as_str(), "start" | "update" | "message" | "keyPressed" | "timer")).collect();
+        graph.nodes.iter().filter(|n| matches!(n.kind.as_str(), "start" | "update" | "message" | "keyPressed" | "actionPressed" | "timer")).collect();
     events.sort_by_key(|n| n.id);
     for event in events {
         match c.chain(event.id, "then", 1) {
             Ok(code) if event.kind == "start" => start.push_str(&code),
             Ok(code) if event.kind == "update" => update.push_str(&code),
-            Ok(code) if event.kind == "keyPressed" => {
-                // Runs when the key is down now and was not in the last step.
-                let key = c.setting_text(event.id, "key", "Space");
-                let (at, len) = c.text(key.as_bytes());
-                let held = format!("(call $key_down (i32.const {at}) (i32.const {len}))");
+            Ok(code) if event.kind == "keyPressed" || event.kind == "actionPressed" => {
+                // Runs when the key or action is down now and was not in the last step.
+                let held = if event.kind == "keyPressed" {
+                    let key = c.setting_text(event.id, "key", "Space");
+                    let (at, len) = c.text(key.as_bytes());
+                    format!("(call $key_down (i32.const {at}) (i32.const {len}))")
+                } else {
+                    let action = c.setting_text(event.id, "action", "Jump");
+                    let (at, len) = c.text(action.as_bytes());
+                    format!("(f32.gt (call $action (i32.const {at}) (i32.const {len})) (f32.const 0.5))")
+                };
                 let was = format!("$was_{}", event.id);
                 state.push(format!("(global {was} (mut i32) (i32.const 0))"));
                 let _ = writeln!(update, "    (if (i32.and {held} (i32.eqz (global.get {was})))\n      (then\n{code}      ))\n    (global.set {was} {held})");
@@ -560,6 +632,30 @@ impl Compiler<'_> {
         self.graph.value(node, name).and_then(bayleaf_graph::as_f32).unwrap_or(default)
     }
 
+    /// Where a game value node reads and writes: the scope and handle arguments of `state_get` and
+    /// `state_set` (as WebAssembly), and the name placed in memory.
+    fn state_target(&mut self, node: u32) -> Result<(String, u32, u32), Problem> {
+        let target = match self.setting_text(node, "scope", "Game").as_str() {
+            "Game" => "(i32.const 0) (i32.const 0)".to_owned(),
+            "Saved" => "(i32.const 2) (i32.const 0)".to_owned(),
+            "This Object" => "(i32.const 1) (call $self_handle)".to_owned(),
+            "Player" => {
+                let player = self.setting_text(node, "player", "");
+                if player.trim().is_empty() {
+                    "(i32.const 1) (i32.const 0)".to_owned()
+                } else {
+                    // A name that finds nothing is no player (-1), not the first one (0).
+                    let (at, len) = self.text(player.as_bytes());
+                    format!("(i32.const 1) (call $or_none (call $find (i32.const {at}) (i32.const {len})))")
+                }
+            }
+            _ => return Err(Problem::on(node, "the scope is Game, Player, This Object or Saved")),
+        };
+        let name = self.setting_text(node, "name", "score");
+        let (at, len) = self.text(name.as_bytes());
+        Ok((target, at, len))
+    }
+
     /// The text of a name setting placed in memory, or a problem when it is empty.
     fn named(&mut self, node: u32, setting: &str, missing: &str) -> Result<(u32, u32), Problem> {
         let name = self.setting_text(node, setting, "");
@@ -632,6 +728,21 @@ impl Compiler<'_> {
             }
             "destroySelf" => {
                 let _ = writeln!(code, "{indent}(drop (call $destroy (call $self_handle)))");
+            }
+            "setGameValue" | "changeGameValue" => {
+                let (target, at, len) = self.state_target(next)?;
+                let input = if n.kind == "setGameValue" { "value" } else { "amount" };
+                let value = self.input(next, input).and_then(|v| as_float(next, v))?;
+                let new = if n.kind == "setGameValue" {
+                    format!("(f64.promote_f32 {value})")
+                } else {
+                    format!("(f64.add (call $state_f64 {target} (i32.const {at}) (i32.const {len})) (f64.promote_f32 {value}))")
+                };
+                let _ = writeln!(code, "{indent}(drop (call $state_set {target} (i32.const {at}) (i32.const {len}) {new}))");
+            }
+            "endGame" => {
+                let won = self.input(next, "won").and_then(|v| as_bool(next, v))?;
+                let _ = writeln!(code, "{indent}(drop (call $game_end {won}))");
             }
             "walk" | "jump" => {
                 let object = self.setting_text(next, "object", "");
@@ -786,6 +897,17 @@ impl Compiler<'_> {
                 let (at, len) = self.named(node, "object", "name the object to read")?;
                 Val::V([0, 1, 2].map(|i| format!("(call $t_of (call $find (i32.const {at}) (i32.const {len})) (i32.const {i}))")))
             }
+            "gameValue" => {
+                let (target, at, len) = self.state_target(node)?;
+                let get = format!("(call $state_get {target} (i32.const {at}) (i32.const {len}) (i32.const 128))");
+                if pin == "set" { Val::B(get) } else { Val::F(format!("(f32.demote_f64 (call $state_f64 {target} (i32.const {at}) (i32.const {len})))")) }
+            }
+            "action" => {
+                let name = self.setting_text(node, "action", "Jump");
+                let (at, len) = self.text(name.as_bytes());
+                let value = format!("(call $action (i32.const {at}) (i32.const {len}))");
+                if pin == "held" { Val::B(format!("(f32.gt {value} (f32.const 0.5))")) } else { Val::F(value) }
+            }
             "onGround" => Val::B("(call $character_grounded (call $self_handle))".to_owned()),
             "velocity" => Val::V([0, 4, 8].map(|offset| format!("(call $velocity_value (i32.const {offset}))"))),
             "raycast" => {
@@ -922,6 +1044,10 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "destroy" (func $destroy (param i32) (result i32)))
   (import "bayleaf" "send" (func $send (param i32 i32 i32 f32) (result i32)))
   (import "bayleaf" "message_is" (func $message_is (param i32 i32) (result i32)))
+  (import "bayleaf" "state_get" (func $state_get (param i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "state_set" (func $state_set (param i32 i32 i32 i32 f64) (result i32)))
+  (import "bayleaf" "game_end" (func $game_end (param i32) (result i32)))
+  (import "bayleaf" "action" (func $action (param i32 i32) (result f32)))
   (import "bayleaf" "character_walk" (func $character_walk (param i32 f32 f32 f32) (result i32)))
   (import "bayleaf" "character_jump" (func $character_jump (param i32 f32) (result i32)))
   (import "bayleaf" "character_grounded" (func $character_grounded (param i32) (result i32)))
@@ -951,6 +1077,13 @@ const PRELUDE: &str = r#"(module
   (func $velocity_value (param $offset i32) (result f32)
     (drop (call $velocity_of (call $self_handle) (i32.const 64)))
     (f32.load (i32.add (i32.const 64) (local.get $offset))))
+  ;; A handle, or -1 (no object) for 0, so a player name that finds nothing is no player.
+  (func $or_none (param $h i32) (result i32)
+    (select (local.get $h) (i32.const -1) (local.get $h)))
+  ;; A state value (0 when not set), read through bytes 128..136.
+  (func $state_f64 (param $scope i32) (param $handle i32) (param $at i32) (param $len i32) (result f64)
+    (drop (call $state_get (local.get $scope) (local.get $handle) (local.get $at) (local.get $len) (i32.const 128)))
+    (f64.load (i32.const 128)))
   ;; Casts a ray and returns the result value at $offset (0 distance, 4/8/12 hit point x/y/z; bytes 48..64).
   (func $ray_value (param $ox f32) (param $oy f32) (param $oz f32) (param $dx f32) (param $dy f32) (param $dz f32) (param $max f32) (param $offset i32) (result f32)
     (drop (call $raycast (local.get $ox) (local.get $oy) (local.get $oz) (local.get $dx) (local.get $dy) (local.get $dz) (local.get $max) (i32.const 48)))

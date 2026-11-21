@@ -142,7 +142,14 @@ impl World {
                 Some(parent) => parent.inverse() * world,
                 None => world,
             };
-            let transform = Transform::from_matrix(local);
+            let mut transform = Transform::from_matrix(local);
+            // A character only moves: its turn and size stay as the scene (and Player Control) set them.
+            if body.character.is_some()
+                && let Some(own) = scene.get::<Transform>(*id)
+            {
+                transform.rotation = own.rotation;
+                transform.scale = own.scale;
+            }
             if transform.is_finite() {
                 let _ = scene.set(*id, transform);
             }
@@ -265,6 +272,20 @@ impl World {
         }
         walker.vertical = f64::from(speed);
         walker.grounded = false;
+        true
+    }
+
+    /// Moves a body to a world place at once, stopping it (a character also stops falling).
+    pub(crate) fn teleport(&mut self, id: StableId, world: DMat4) -> bool {
+        let Some(body) = self.bodies.get_mut(&id) else { return false };
+        if let Some(walker) = body.character.as_mut() {
+            walker.vertical = 0.0;
+        }
+        let Some(rb) = self.world.bodies.get_mut(body.handle) else { return false };
+        let pose = pose_of(world).0;
+        rb.set_position(pose, true);
+        rb.set_next_kinematic_position(pose);
+        rb.set_linvel(vector(DVec3::ZERO), true);
         true
     }
 
