@@ -1393,3 +1393,36 @@ fn get_component_shows_the_chosen_components_fields_as_pins_and_drops_links_to_f
     assert!(harness.query_by_label_contains(&format!("Output Intensity (Number) of Get Component {get}")).is_none());
     assert!(graph(&harness).links.is_empty(), "the link to a field the node lost is gone");
 }
+
+#[test]
+fn a_script_is_chosen_as_a_component_from_the_list_or_by_dragging_and_its_properties_become_pins() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-script-component-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    let editor = harness.state_mut();
+    editor.dispatch("project.new", &json!({ "path": dir }), None);
+    editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
+    let property = editor.dispatch("graph.node.add", &json!({ "kind": "property", "position": [40, 420] }), None).unwrap()["node"].clone();
+    editor.dispatch("graph.node.set", &json!({ "node": property, "name": "name", "value": "speed" }), None);
+    editor.dispatch("graph.save", &json!({ "path": dir.join("bob.bscript") }), None);
+    let read = editor.dispatch("graph.node.add", &json!({ "kind": "tryGetComponent", "position": [300, 20] }), None).unwrap()["node"].as_u64().unwrap() as u32;
+    let get = editor.dispatch("graph.node.add", &json!({ "kind": "getComponent", "position": [300, 300] }), None).unwrap()["node"].as_u64().unwrap() as u32;
+    editor.project.rescan_soon();
+    harness.run_steps(2);
+
+    harness.get_by_label_contains(&format!("Component of node {read}:")).click();
+    harness.run();
+    // Scripts follow the components in the list, below its fold.
+    harness.get_by_label("Bob").scroll_to_me();
+    harness.run();
+    harness.get_by_label("Bob").click();
+    harness.run();
+    assert_eq!(graph(&harness).value(read, "component").and_then(|v| v.as_str()), Some("Bob"));
+    assert_eq!(graph(&harness).value(read, "fields"), Some(&json!(["speed"])), "the node keeps the script's properties");
+    assert!(harness.query_by_label_contains(&format!("Output Speed (Number) of Try Get Component {read}")).is_some(), "they are its pins");
+
+    drag_entry(&mut harness, "bob, Visual Script", &format!("Component of node {get}: Point Light"));
+    assert_eq!(graph(&harness).value(get, "component").and_then(|v| v.as_str()), Some("Bob"), "a dragged script is chosen too");
+    assert!(harness.query_by_label_contains(&format!("Output Speed (Number) of Get Component {get}")).is_some());
+    std::fs::remove_dir_all(&dir).ok();
+}

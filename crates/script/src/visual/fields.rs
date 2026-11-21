@@ -2,6 +2,10 @@
 //! and Set Component show the fields of the component named in their Component setting as pins.
 //! Only fields that are numbers, vectors, colours or true/false are listed; a field's pin name is
 //! its name in scene files (`intensity`, `skyColor`).
+//!
+//! A script on an object is a component too: named by its name (`Bob`), its properties are number
+//! pins. The node keeps the property names in its `fields` setting, chosen in the editor from what
+//! the script declares, so a graph compiles without reading other scripts.
 
 use bayleaf_graph::{Node, NodeDef, PinDef, PinDefault, PinType};
 
@@ -11,6 +15,8 @@ use PinType::{Bool, Color, Float, Vec3};
 /// The Component setting of Get Component, Try Get Component and Set Component.
 pub(super) const COMPONENT: bayleaf_graph::SettingDef =
     bayleaf_graph::SettingDef { name: "component", label: "Component", kind: bayleaf_graph::SettingKind::Text("Point Light") };
+/// The properties of the script a node names, kept by the node.
+pub(super) const FIELDS: bayleaf_graph::SettingDef = bayleaf_graph::SettingDef { name: "fields", label: "Fields", kind: bayleaf_graph::SettingKind::Names };
 
 pub(super) const GET: &str = "The fields of a component on the linked object (else this object), as the step began. A missing component reads as zeros; Try Get Component says whether it was found.";
 pub(super) const TRY_GET: &str = "The fields of a component on the linked object (else this object), as the step began, and whether the object has it.";
@@ -53,7 +59,7 @@ macro_rules! component {
                 description: GET,
                 inputs: &[TARGET],
                 outputs: &[$(PinDef::new($field, $field_label, $ty)),*],
-                settings: &[COMPONENT],
+                settings: &[COMPONENT, FIELDS],
                 unique: false,
             },
             try_get: NodeDef {
@@ -63,7 +69,7 @@ macro_rules! component {
                 description: TRY_GET,
                 inputs: &[TARGET],
                 outputs: &[PinDef::new("found", "Found", Bool), $(PinDef::new($field, $field_label, $ty)),*],
-                settings: &[COMPONENT],
+                settings: &[COMPONENT, FIELDS],
                 unique: false,
             },
             set: NodeDef {
@@ -73,7 +79,7 @@ macro_rules! component {
                 description: SET,
                 inputs: &[RUN, TARGET, $(PinDef::with($field, $field_label, $ty, PinDefault::Implicit("unchanged"))),*],
                 outputs: &[THEN],
-                settings: &[COMPONENT],
+                settings: &[COMPONENT, FIELDS],
                 unique: false,
             },
         }
@@ -149,9 +155,87 @@ pub fn component_of(node: &Node) -> Option<&'static ComponentNodes> {
     COMPONENTS.iter().find(|c| crate::kind_key(c.name) == key || crate::kind_key(c.label) == key)
 }
 
-/// The pins of a Get Component, Try Get Component or Set Component node: its component's fields.
+/// The property names a node keeps for the script it names, if it names a script.
+pub fn script_fields(node: &Node) -> Option<Vec<String>> {
+    if component_of(node).is_some() {
+        return None;
+    }
+    let names = node.values.get("fields")?.as_array()?;
+    Some(names.iter().filter_map(|n| n.as_str().map(str::to_owned)).collect())
+}
+
+/// Most distinct script pin sets kept at once; each is made once and kept for the program's life.
+const MAX_SCRIPT_VARIANTS: usize = 1024;
+
+/// Script variants made so far, by node kind and property names.
+static SCRIPT_VARIANTS: std::sync::Mutex<Vec<(String, Vec<String>, &'static NodeDef)>> = std::sync::Mutex::new(Vec::new());
+
+/// The pins of a node that names a script: one number pin per property.
+fn script_variant(node: &Node, fields: Vec<String>) -> Option<&'static NodeDef> {
+    let mut made = SCRIPT_VARIANTS.lock().ok()?;
+    if let Some((_, _, def)) = made.iter().find(|(kind, names, _)| *kind == node.kind && *names == fields) {
+        return Some(def);
+    }
+    if made.len() >= MAX_SCRIPT_VARIANTS {
+        return None;
+    }
+    let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
+    let pins = |default: PinDefault| -> Vec<PinDef> {
+        fields.iter().map(|name| PinDef { name: leak(name.clone()), label: leak(super::title(name)), ty: Float, default }).collect()
+    };
+    let def = match node.kind.as_str() {
+        "getComponent" => NodeDef {
+            kind: "getComponent",
+            label: "Get Component",
+            category: "Find",
+            description: GET,
+            inputs: &[TARGET],
+            outputs: Box::leak(pins(PinDefault::None).into_boxed_slice()),
+            settings: &[COMPONENT, FIELDS],
+            unique: false,
+        },
+        "tryGetComponent" => {
+            let mut outputs = vec![PinDef::new("found", "Found", Bool)];
+            outputs.extend(pins(PinDefault::None));
+            NodeDef {
+                kind: "tryGetComponent",
+                label: "Try Get Component",
+                category: "Find",
+                description: TRY_GET,
+                inputs: &[TARGET],
+                outputs: Box::leak(outputs.into_boxed_slice()),
+                settings: &[COMPONENT, FIELDS],
+                unique: false,
+            }
+        }
+        "setComponent" => {
+            let mut inputs = vec![RUN, TARGET];
+            inputs.extend(pins(PinDefault::Implicit("unchanged")));
+            NodeDef {
+                kind: "setComponent",
+                label: "Set Component",
+                category: "Actions",
+                description: SET,
+                inputs: Box::leak(inputs.into_boxed_slice()),
+                outputs: &[THEN],
+                settings: &[COMPONENT, FIELDS],
+                unique: false,
+            }
+        }
+        _ => return None,
+    };
+    let def: &'static NodeDef = Box::leak(Box::new(def));
+    made.push((node.kind.clone(), fields, def));
+    Some(def)
+}
+
+/// The pins of a Get Component, Try Get Component or Set Component node: its component's fields,
+/// or the properties of the script it names.
 pub fn variant(node: &Node) -> Option<&'static NodeDef> {
-    let component = component_of(node)?;
+    if !matches!(node.kind.as_str(), "getComponent" | "tryGetComponent" | "setComponent") {
+        return None;
+    }
+    let Some(component) = component_of(node) else { return script_variant(node, script_fields(node)?) };
     match node.kind.as_str() {
         "getComponent" => Some(&component.get),
         "tryGetComponent" => Some(&component.try_get),

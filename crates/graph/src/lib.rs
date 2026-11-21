@@ -119,6 +119,9 @@ pub enum SettingKind {
     Name(&'static str),
     /// One of a fixed list of words; the first is the default.
     Choice(&'static [&'static str]),
+    /// A list of up to 64 names (1 to 64 characters each) the node keeps for itself, such as the
+    /// properties of the script a Get Component names. Not shown as a row of the node.
+    Names,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -126,6 +129,13 @@ pub struct SettingDef {
     pub name: &'static str,
     pub label: &'static str,
     pub kind: SettingKind,
+}
+
+impl SettingDef {
+    /// Whether the node shows it as a row (a list of names is kept, not shown).
+    pub fn shown(&self) -> bool {
+        !matches!(self.kind, SettingKind::Names)
+    }
 }
 
 /// One kind of node in a domain.
@@ -873,6 +883,15 @@ fn check_value(def: &NodeDef, name: &str, value: &Value) -> Result<(), GraphErro
             SettingKind::Choice(choices) => match value.as_str() {
                 Some(text) if choices.contains(&text) => Ok(()),
                 _ => Err(bad(&format!("one of {}", choices.join(", ")))),
+            },
+            SettingKind::Names => match value.as_array() {
+                Some(names)
+                    if names.len() <= 64
+                        && names.iter().all(|n| n.as_str().is_some_and(|t| (1..=64).contains(&t.chars().count()) && !t.chars().any(char::is_control))) =>
+                {
+                    Ok(())
+                }
+                _ => Err(bad("a list of up to 64 names of 1 to 64 characters")),
             },
         };
     }

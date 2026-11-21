@@ -768,3 +768,51 @@ fn component_fields_are_read_as_pins_and_set_only_where_linked() {
     let problems = compile(&physics.0).unwrap_err();
     assert!(problems.iter().any(|p| p.message.contains("read only")), "{problems:?}");
 }
+
+/// A script reads another object's script properties by the script's name and sets one; the other
+/// script sees the new value from the next step.
+#[test]
+fn a_script_on_another_object_is_read_and_set_like_a_component() {
+    // Bob logs its speed every step.
+    let mut bob = Builder::new();
+    let update = bob.node("update", json!({}));
+    let speed = bob.node("property", json!({ "name": "speed", "default": 2.0 }));
+    let log = bob.node("log", json!({ "message": "speed" }));
+    bob.link(update, "then", log, "run");
+    bob.link(speed, "value", log, "value");
+    // The reader reads Bob's speed on the object Target and sets it to 9.
+    let mut reader = Builder::new();
+    let update = reader.node("update", json!({}));
+    let target = reader.node("findNamed", json!({ "name": "Target" }));
+    let read = reader.node("tryGetComponent", json!({ "component": "Bob", "fields": ["speed"] }));
+    reader.link(target, "object", read, "target");
+    let said = reader.node("log", json!({ "message": "read" }));
+    reader.link(update, "then", said, "run");
+    reader.link(read, "speed", said, "value");
+    let nine = reader.node("number", json!({ "value": 9.0 }));
+    let write = reader.node("setComponent", json!({ "component": "Bob", "fields": ["speed"] }));
+    reader.link(said, "then", write, "run");
+    reader.link(target, "object", write, "target");
+    reader.link(nine, "value", write, "speed");
+    let found = reader.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    reader.link(read, "found", found, "condition");
+    let told = reader.node("log", json!({ "message": "found" }));
+    reader.link(write, "then", told, "run");
+    reader.link(found, "result", told, "value");
+
+    let mut scene = Scene::new();
+    let target_id = scene.create_object(None, "Target").unwrap();
+    let reader_id = scene.create_object(None, "Reader").unwrap();
+    let mut host = ScriptHost::new();
+    let input = Arc::new(Input::default());
+    let bob_ref = ScriptRef { module: "bob.bscript".into(), properties: BTreeMap::new() };
+    host.load_bytes(target_id, 0, Path::new("bob.bscript"), None, &bob.bytes(), &bob_ref, &mut scene, 0.0, &input).unwrap();
+    let reader_ref = ScriptRef { module: "reader.bscript".into(), properties: BTreeMap::new() };
+    host.load_bytes(reader_id, 0, Path::new("reader.bscript"), None, &reader.bytes(), &reader_ref, &mut scene, 0.0, &input).unwrap();
+
+    host.update(&mut scene, 0.1, 0.1, &input);
+    host.update(&mut scene, 0.1, 0.2, &input);
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["speed 2", "read 2", "found 1", "speed 9", "read 9", "found 1"]);
+}

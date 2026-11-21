@@ -6,7 +6,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -253,6 +253,9 @@ struct WorldView {
     /// The fields of each object's readable components (`visual::COMPONENTS`), by the same index;
     /// empty unless a loaded script reads or sets component fields.
     fields: Vec<Vec<(&'static str, serde_json::Value)>>,
+    /// The scripts on each object with their properties as the step began, by object; empty unless a
+    /// loaded script reads or sets component fields.
+    scripts: HashMap<StableId, Vec<ScriptValues>>,
     /// What each object is, by the same index, for searches: its components' names and labels,
     /// its tags and its scripts' names, each as `kind_key` makes them.
     kinds: Vec<Vec<String>>,
@@ -261,7 +264,9 @@ struct WorldView {
 }
 
 impl WorldView {
-    fn of(scene: &Scene, with_fields: bool) -> Arc<Self> {
+    /// `scripts` is `Some` when scripts read or set component fields: then their values come along.
+    fn of(scene: &Scene, scripts: Option<HashMap<StableId, Vec<ScriptValues>>>) -> Arc<Self> {
+        let with_fields = scripts.is_some();
         let all = scene.world_matrices();
         let objects = all.iter().map(|(id, _)| (*id, scene.name(*id).unwrap_or_default().to_owned(), read_transform(scene, *id))).collect();
         let shapes = all.iter().map(|(id, world)| ray_shape(scene, *id, *world)).collect();
@@ -269,7 +274,7 @@ impl WorldView {
         let players = all.iter().map(|(id, _)| *id).filter(|id| scene.get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect();
         let kinds = all.iter().map(|(id, _)| object_kinds(scene, *id)).collect();
         let fields = if with_fields { all.iter().map(|(id, _)| object_fields(scene, *id)).collect() } else { Vec::new() };
-        Arc::new(Self { objects, shapes, positions, players, kinds, fields })
+        Arc::new(Self { objects, shapes, positions, players, kinds, fields, scripts: scripts.unwrap_or_default() })
     }
 
     /// The nearest shape a ray hits within `max`, other than `skip`: its index and the distance.
@@ -311,6 +316,29 @@ impl WorldView {
     fn get(&self, handle: i32) -> Option<&(StableId, String, [f32; 9])> {
         usize::try_from(handle).ok().and_then(|h| h.checked_sub(1)).and_then(|i| self.objects.get(i))
     }
+}
+
+/// One script on an object, as a component other scripts read: its names as search keys (the name
+/// the Inspector shows and its file name without the extension) and its properties.
+#[derive(Clone, Debug)]
+struct ScriptValues {
+    keys: [String; 2],
+    properties: BTreeMap<String, f32>,
+}
+
+/// A property of a script on an object, set by another script after the step.
+#[derive(Clone, Debug)]
+struct PropertyWrite {
+    object: StableId,
+    key: String,
+    name: String,
+    value: f32,
+}
+
+/// The search keys of a script: its shown name and its file name without the extension.
+fn script_keys(name: &str, path: &Path) -> [String; 2] {
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    [kind_key(name), kind_key(&stem)]
 }
 
 /// The readable components an object has, with their values.
@@ -392,6 +420,8 @@ struct HostState {
     requests: Vec<Request>,
     /// Messages this call sent.
     outbox: Vec<Message>,
+    /// Script properties this call set on other objects.
+    property_writes: Vec<PropertyWrite>,
     /// The name of the message being delivered, during `bayleaf_message`.
     message: Option<String>,
     velocities: Arc<Velocities>,
@@ -418,6 +448,7 @@ impl HostState {
             position: [transform[0], transform[1], transform[2]].map(f64::from),
             requests: Vec::new(),
             outbox: Vec::new(),
+            property_writes: Vec::new(),
             message: None,
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
@@ -555,6 +586,8 @@ pub struct ScriptHost {
     state: SharedState,
     /// A loaded script reads or sets component fields, so each step takes their values along.
     reads_fields: bool,
+    /// Script properties set during the step, applied when it ends.
+    property_writes: Vec<PropertyWrite>,
 }
 
 impl Default for ScriptHost {
@@ -576,6 +609,7 @@ impl Default for ScriptHost {
             input_maps: actions::SharedInput::default(),
             state: SharedState::default(),
             reads_fields: false,
+            property_writes: Vec::new(),
         }
     }
 }
@@ -655,7 +689,7 @@ impl ScriptHost {
         state.position = read_position(scene, object);
         state.state = Arc::clone(&self.state);
         state.input_maps = Arc::clone(&self.input_maps);
-        state.world = WorldView::of(scene, self.reads_fields);
+        state.world = WorldView::of(scene, self.script_values());
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| &mut state.limits);
         let trapped = |module: &str, e: wasmi::Error| ScriptError::Trapped { module: module.to_owned(), message: e.to_string() };
@@ -687,7 +721,7 @@ impl ScriptHost {
         if let Some(start) = start {
             let result = call(&mut entry, |store| start.call(store, ()));
             self.collect(&mut entry);
-            after_call(scene, &mut entry, &mut self.requests, &mut self.messages);
+            after_call(scene, &mut entry, &mut self.requests, &mut self.messages, &mut self.property_writes);
             if let Err(error) = result {
                 entry.stopped = true;
                 self.instances.push(entry);
@@ -695,6 +729,7 @@ impl ScriptHost {
             }
         }
         self.instances.push(entry);
+        self.apply_property_writes();
         Ok(())
     }
 
@@ -703,7 +738,7 @@ impl ScriptHost {
         let mut faults = Vec::new();
         let mut logs = Vec::new();
         // Every script sees the objects as the step began.
-        let world = WorldView::of(scene, self.reads_fields);
+        let world = WorldView::of(scene, self.script_values());
         for entry in self.instances.iter_mut().filter(|i| !i.stopped) {
             if !scene.contains(entry.object) {
                 entry.stopped = true;
@@ -727,7 +762,7 @@ impl ScriptHost {
             let script = entry.script_name.clone();
             logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
             match result {
-                Ok(()) => after_call(scene, entry, &mut self.requests, &mut self.messages),
+                Ok(()) => after_call(scene, entry, &mut self.requests, &mut self.messages, &mut self.property_writes),
                 Err(error) => {
                     entry.stopped = true;
                     faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
@@ -736,7 +771,34 @@ impl ScriptHost {
         }
         self.faults.extend(faults);
         self.push_logs(logs);
+        self.apply_property_writes();
         self.deliver(scene, time, input);
+        self.apply_property_writes();
+    }
+
+    /// Each script's properties, by object, when scripts read or set component fields.
+    fn script_values(&self) -> Option<HashMap<StableId, Vec<ScriptValues>>> {
+        if !self.reads_fields {
+            return None;
+        }
+        let mut out: HashMap<StableId, Vec<ScriptValues>> = HashMap::new();
+        for entry in self.instances.iter().filter(|i| !i.stopped) {
+            let values = ScriptValues { keys: script_keys(&entry.script_name, &entry.path), properties: entry.store.data().properties.clone() };
+            out.entry(entry.object).or_default().push(values);
+        }
+        Some(out)
+    }
+
+    /// Sets the script properties scripts asked for: on every script of the object with that name
+    /// that declares the property.
+    fn apply_property_writes(&mut self) {
+        for write in std::mem::take(&mut self.property_writes) {
+            for entry in self.instances.iter_mut().filter(|i| i.object == write.object && script_keys(&i.script_name, &i.path).contains(&write.key)) {
+                if let Some(slot) = entry.store.data_mut().properties.get_mut(&write.name) {
+                    *slot = write.value;
+                }
+            }
+        }
     }
 
     /// Delivers the messages sent so far, in the order sent. Messages sent while handling one wait
@@ -746,7 +808,7 @@ impl ScriptHost {
         if messages.is_empty() {
             return;
         }
-        let world = WorldView::of(scene, self.reads_fields);
+        let world = WorldView::of(scene, self.script_values());
         let mut later = Vec::new();
         let mut faults = Vec::new();
         let mut logs = Vec::new();
@@ -775,7 +837,7 @@ impl ScriptHost {
                 let script = entry.script_name.clone();
                 logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
                 match result {
-                    Ok(()) => after_call(scene, entry, &mut self.requests, &mut later),
+                    Ok(()) => after_call(scene, entry, &mut self.requests, &mut later, &mut self.property_writes),
                     Err(error) => {
                         entry.stopped = true;
                         faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
@@ -856,7 +918,7 @@ impl ScriptHost {
         if contacts.is_empty() {
             return;
         }
-        let world = WorldView::of(scene, self.reads_fields);
+        let world = WorldView::of(scene, self.script_values());
         for (object, name, other) in contacts {
             self.messages.push(Message { to: Some(*object), name: (*name).to_owned(), value: world.handle_of(*other) as f32 });
         }
@@ -1052,7 +1114,7 @@ fn transform_from(v: &[f32; 9], position: [f64; 3]) -> Transform {
 }
 
 /// Applies what a call changed: its own transform, other objects' transforms, and its requests.
-fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Request>, messages: &mut Vec<Message>) {
+fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Request>, messages: &mut Vec<Message>, properties: &mut Vec<PropertyWrite>) {
     write_transform(scene, entry);
     let state = entry.store.data_mut();
     for (object, v, position) in state.writes.drain(..) {
@@ -1062,6 +1124,7 @@ fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Reques
     }
     requests.append(&mut state.requests);
     messages.append(&mut state.outbox);
+    properties.append(&mut state.property_writes);
 }
 
 fn write_transform(scene: &mut Scene, entry: &mut Instance) {
@@ -1361,15 +1424,26 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                 let component = read_text(&caller, c_ptr, c_len, 256).map_err(|m| fault(&mut caller, format!("component_get: {m}")))?;
                 let field = read_text(&caller, f_ptr, f_len, 256).map_err(|m| fault(&mut caller, format!("component_get: {m}")))?;
                 let world = Arc::clone(&caller.data().world);
-                let value = readable_component(&component).and_then(|name| {
-                    let (_, index) = world.object(handle)?;
-                    world.fields.get(index)?.iter().find(|(n, _)| *n == name).map(|(_, v)| v)
-                });
-                // An empty field asks only whether the object has the component.
-                let numbers = match value {
-                    Some(_) if field.is_empty() => Some([0.0; 3]),
-                    Some(v) => v.get(&field).and_then(field_numbers),
-                    None => None,
+                let numbers = match readable_component(&component) {
+                    Some(name) => {
+                        let value = world.object(handle).and_then(|(_, index)| world.fields.get(index)?.iter().find(|(n, _)| *n == name).map(|(_, v)| v));
+                        // An empty field asks only whether the object has the component.
+                        match value {
+                            Some(_) if field.is_empty() => Some([0.0; 3]),
+                            Some(v) => v.get(&field).and_then(field_numbers),
+                            None => None,
+                        }
+                    }
+                    // A script on the object, by its name: its properties are numbers.
+                    None => {
+                        let key = kind_key(&component);
+                        let script = world.object(handle).and_then(|(id, _)| world.scripts.get(&id)?.iter().find(|s| s.keys.contains(&key)));
+                        match script {
+                            Some(_) if field.is_empty() => Some([0.0; 3]),
+                            Some(s) => s.properties.get(&field).map(|v| [*v, 0.0, 0.0]),
+                            None => None,
+                        }
+                    }
                 };
                 let bytes: Vec<u8> = numbers.unwrap_or([0.0; 3]).iter().flat_map(|v| v.to_le_bytes()).collect();
                 write_guest(&mut caller, out, &bytes, "component_get")?;
@@ -1393,9 +1467,21 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                 }
                 let world = Arc::clone(&caller.data().world);
                 let Some((object, index)) = world.object(handle) else { return Ok(0) };
-                let Some(name) = readable_component(&component).filter(|n| visual::COMPONENTS.iter().any(|c| c.name == *n && c.settable())) else {
-                    return Ok(0);
+                let Some(name) = readable_component(&component) else {
+                    // A script on the object, by its name: set one of its properties after the step.
+                    let key = kind_key(&component);
+                    let declares =
+                        world.scripts.get(&object).is_some_and(|scripts| scripts.iter().any(|s| s.keys.contains(&key) && s.properties.contains_key(&field)));
+                    let state = caller.data_mut();
+                    if !declares || state.property_writes.len() >= MAX_REQUESTS_PER_CALL {
+                        return Ok(0);
+                    }
+                    state.property_writes.push(PropertyWrite { object, key, name: field, value: x });
+                    return Ok(1);
                 };
+                if !visual::COMPONENTS.iter().any(|c| c.name == name && c.settable()) {
+                    return Ok(0);
+                }
                 let settable = world
                     .fields
                     .get(index)

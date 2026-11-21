@@ -135,6 +135,10 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   Transform, Mesh, Sprite, Camera, the lights, Environment, Rigid Body, Collider, Character, Player
   Control and Game Rules, with their number, vector, colour and true/false fields. Physics reads
   Rigid Body, Collider and Character when play starts, so Set Component refuses them.
+  A script is a component too: pick it from the Scripts in the list, or drag it from the Project
+  panel onto Component, and its properties become number pins (the node keeps their names in its
+  `fields`, so the graph compiles on its own). Reads see the other script's values as the step
+  began; a set reaches it when the step ends.
 - Position Of, Set Position Of, Send Message, Walk, Jump, Add Impulse, Set Velocity and **Destroy
   Object** take an Object input. Unlinked, they use the first object named in Object Name, else
   their own default (this object, or for Send Message every object).

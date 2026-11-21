@@ -127,7 +127,8 @@ impl Object {
         abi::component_get(self.0, component, "").is_some()
     }
 
-    /// A field of one of its components (`"Point Light"`, `"intensity"`), as the step began: a
+    /// A field of one of its components (`"Point Light"`, `"intensity"`), or a property of a script on
+    /// it by the script's name (`"Bob"`, `"speed"`), as the step began: a
     /// number in the first part, true/false as 1 or 0, a vector or colour in all three.
     pub fn field(self, component: &str, field: &str) -> Option<[f32; 3]> {
         abi::component_get(self.0, component, field)

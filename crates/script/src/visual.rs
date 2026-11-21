@@ -366,7 +366,7 @@ pub const CATALOG: Catalog = Catalog {
             description: fields::GET,
             inputs: &[TARGET],
             outputs: &[],
-            settings: &[fields::COMPONENT],
+            settings: &[fields::COMPONENT, fields::FIELDS],
             unique: false,
         },
         NodeDef {
@@ -376,7 +376,7 @@ pub const CATALOG: Catalog = Catalog {
             description: fields::TRY_GET,
             inputs: &[TARGET],
             outputs: &[pin("found", "Found", Bool)],
-            settings: &[fields::COMPONENT],
+            settings: &[fields::COMPONENT, fields::FIELDS],
             unique: false,
         },
         NodeDef {
@@ -386,7 +386,7 @@ pub const CATALOG: Catalog = Catalog {
             description: fields::SET,
             inputs: &[RUN, TARGET],
             outputs: &[THEN],
-            settings: &[fields::COMPONENT],
+            settings: &[fields::COMPONENT, fields::FIELDS],
             unique: false,
         },
         action("destroySelf", "Destroy This Object", "Deletes this object and its children after this step.", &[RUN]),
@@ -586,6 +586,15 @@ enum Val {
     O(String),
 }
 
+/// What a Get, Try Get or Set Component node works on.
+struct Target {
+    /// As the host knows it: `pointLight`, or a script's name.
+    name: String,
+    label: String,
+    fields: &'static [bayleaf_graph::PinDef],
+    settable: bool,
+}
+
 struct Compiler<'g> {
     graph: &'g Graph,
     data: Vec<(u32, Vec<u8>)>,
@@ -733,6 +742,28 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     Ok(out)
 }
 
+/// A name as a label: `jumpHeight` and `jump_height` become `Jump Height`.
+fn title(name: &str) -> String {
+    let mut out = String::new();
+    let mut upper = true;
+    for c in name.chars() {
+        if c == '_' || c == ' ' {
+            upper = true;
+            continue;
+        }
+        if (upper || c.is_uppercase()) && !out.is_empty() {
+            out.push(' ');
+        }
+        if upper {
+            out.extend(c.to_uppercase())
+        } else {
+            out.push(c)
+        }
+        upper = false;
+    }
+    out
+}
+
 /// A WebAssembly f32 literal.
 fn lit(value: f32) -> String {
     format!("(f32.const {value:?})")
@@ -818,6 +849,24 @@ impl Compiler<'_> {
         self.named(node, "kind", "name a component (Point Light), a tag or a script to look for")
     }
 
+    /// The component a Get, Try Get or Set Component node names, as the host knows it: a built-in
+    /// component (`pointLight`) with its fields, or a script (by its name) with the properties the
+    /// node keeps.
+    fn component_target(&self, node: &bayleaf_graph::Node, id: u32) -> Result<Target, Problem> {
+        if let Some(c) = component_of(node) {
+            return Ok(Target { name: c.name.to_owned(), label: c.label.to_owned(), fields: c.fields(), settable: c.settable() });
+        }
+        let name = self.setting_text(id, "component", "");
+        match fields::variant(node) {
+            Some(def) if !name.trim().is_empty() => {
+                let pins = if node.kind == "setComponent" { def.inputs } else { def.outputs };
+                let skip = usize::from(node.kind != "getComponent") * if node.kind == "setComponent" { 2 } else { 1 };
+                Ok(Target { label: name.clone(), name, fields: &pins[skip..], settable: true })
+            }
+            _ => Err(Problem::on(id, "choose a component, or a script and the properties it declares")),
+        }
+    }
+
     /// Declares a global once.
     fn global(&mut self, declaration: String) {
         if !self.globals.contains(&declaration) {
@@ -878,8 +927,8 @@ impl Compiler<'_> {
                 let _ = writeln!(code, "{indent}(call $set_position_of {handle} {x} {y} {z})");
             }
             "setComponent" => {
-                let component = component_of(n).ok_or_else(|| Problem::on(next, "choose a component whose fields scripts can set"))?;
-                if !component.settable() {
+                let component = self.component_target(n, next)?;
+                if !component.settable {
                     return Err(Problem::on(
                         next,
                         format!("{} is read only in play: physics reads it when play starts; use Add Impulse, Set Velocity or Walk", component.label),
@@ -888,7 +937,7 @@ impl Compiler<'_> {
                 let handle = self.target(next, Ok("(call $self_handle)"))?;
                 let (c_at, c_len) = self.text(component.name.as_bytes());
                 // Only linked fields change; the others keep their values.
-                for field in component.fields() {
+                for field in component.fields {
                     if graph.link_into(next, field.name).is_none() {
                         continue;
                     }
@@ -1091,18 +1140,15 @@ impl Compiler<'_> {
                 Val::V([0, 1, 2].map(|i| format!("(call $t_of {handle} (i32.const {i}))")))
             }
             "getComponent" | "tryGetComponent" => {
-                let component = component_of(n).ok_or_else(|| Problem::on(node, "choose a component whose fields scripts can read"))?;
+                let component = self.component_target(n, node)?;
                 let handle = self.target(node, Ok("(call $self_handle)"))?;
                 let (c_at, c_len) = self.text(component.name.as_bytes());
                 if pin == "found" {
                     // An empty field asks whether the object has the component.
                     Val::B(format!("(call $component_get {handle} (i32.const {c_at}) (i32.const {c_len}) (i32.const 0) (i32.const 0) (i32.const 160))"))
                 } else {
-                    let field = component
-                        .fields()
-                        .iter()
-                        .find(|f| f.name == pin)
-                        .ok_or_else(|| Problem::on(node, format!("{} has no field {pin}", component.label)))?;
+                    let field =
+                        component.fields.iter().find(|f| f.name == pin).ok_or_else(|| Problem::on(node, format!("{} has no field {pin}", component.label)))?;
                     let (f_at, f_len) = self.text(field.name.as_bytes());
                     let part = |offset: u32| {
                         format!(
