@@ -24,6 +24,51 @@ impl Outcome {
 
 const AXES: [&str; 4] = ["X", "Y", "Z", "W"];
 
+/// Edits a component value. Text fields with a fixed set of allowed values (`options`) get a choice list.
+pub(crate) fn edit_component(
+    ui: &mut egui::Ui,
+    value: &mut Value,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    label: Option<egui::Id>,
+    options: &dyn Fn(&str) -> &'static [&'static str],
+) -> Outcome {
+    let Value::Object(fields) = value else {
+        return edit(ui, value, salt, label);
+    };
+    ui.push_id(salt, |ui| {
+        let mut outcome = Outcome::default();
+        egui::Grid::new("fields").num_columns(2).striped(true).show(ui, |ui| {
+            for (key, field) in fields.iter_mut() {
+                let key_label = ui.label(title_case(key));
+                let choices = options(key);
+                match field {
+                    Value::String(current) if !choices.is_empty() => {
+                        outcome.merge(choose(ui, current, choices, key, key_label.id));
+                    }
+                    _ => outcome.merge(edit(ui, field, key.as_str(), Some(key_label.id))),
+                }
+                ui.end_row();
+            }
+        });
+        outcome
+    })
+    .inner
+}
+
+fn choose(ui: &mut egui::Ui, current: &mut String, choices: &[&str], salt: &str, label: egui::Id) -> Outcome {
+    let mut changed = false;
+    let response = egui::ComboBox::from_id_salt(("choice", salt)).selected_text(title_case(current)).show_ui(ui, |ui| {
+        for choice in choices {
+            if ui.selectable_label(current == choice, title_case(choice)).clicked() && current != choice {
+                *current = (*choice).to_owned();
+                changed = true;
+            }
+        }
+    });
+    response.response.labelled_by(label);
+    Outcome { changed, ended: changed }
+}
+
 /// Edits `value` in place. `label` names the value for assistive technology.
 pub(crate) fn edit(ui: &mut egui::Ui, value: &mut Value, salt: impl std::hash::Hash + std::fmt::Debug, label: Option<egui::Id>) -> Outcome {
     ui.push_id(salt, |ui| edit_inner(ui, value, label)).inner

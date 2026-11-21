@@ -86,6 +86,38 @@ fn save_and_load_round_trip_keeps_hierarchy_order_and_values() {
 }
 
 #[test]
+fn world_matrices_compose_parent_transforms() {
+    let (mut scene, [a, child, grandchild, _]) = tree();
+    scene.set_component(a, "transform", json!({"position": [10, 0, 0], "rotation": [0, 0, 0], "scale": [2, 2, 2]})).unwrap();
+    scene.set_component(child, "transform", json!({"position": [1, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]})).unwrap();
+    let all = scene.world_matrices();
+    let from_list = all.iter().find(|(id, _)| *id == grandchild).unwrap().1;
+    let direct = scene.world_matrix(grandchild).unwrap();
+    assert!(from_list.abs_diff_eq(direct, 1e-5));
+    // The parent's scale stretches the child's offset: 10 + 2 * 1.
+    assert!((direct.w_axis.x - 12.0).abs() < 1e-5);
+    // Parents come before children.
+    let pos = |id| all.iter().position(|(o, _)| *o == id).unwrap();
+    assert!(pos(a) < pos(child) && pos(child) < pos(grandchild));
+}
+
+#[test]
+fn render_components_validate_their_ranges() {
+    let (mut scene, [a, ..]) = tree();
+    for (component, bad) in [
+        ("mesh", json!({"shape": "teapot", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.5})),
+        ("mesh", json!({"shape": "cube", "color": [2, 1, 1, 1], "metallic": 0, "roughness": 0.5})),
+        ("camera", json!({"projection": "perspective", "fov": 0, "size": 5, "near": 0.1, "far": 100})),
+        ("camera", json!({"projection": "perspective", "fov": 60, "size": 5, "near": 10, "far": 1})),
+        ("directionalLight", json!({"color": [1, 1, 1], "intensity": -1})),
+        ("sprite", json!({"color": [1, 1, 1, 1], "size": [0, 1]})),
+    ] {
+        scene.add_component(a, component).ok();
+        assert!(scene.set_component(a, component, bad.clone()).is_err(), "{component} accepted {bad}");
+    }
+}
+
+#[test]
 fn loading_rejects_broken_documents() {
     let (scene, _) = tree();
     let good = scene.to_doc();

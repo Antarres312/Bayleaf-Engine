@@ -1,0 +1,42 @@
+{
+  // F5 builds and starts the selected configuration.
+  // "cppvsdbg" needs the C/C++ extension (ms-vscode.cpptools); "lldb" needs CodeLLDB (vadimcn.vscode-lldb).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Bayleaf editor",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/bayleaf.exe",
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build: editor",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Bayleaf editor (release)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/release/bayleaf.exe",
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build: editor (release)",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Bayleaf editor (CodeLLDB)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": { "args": ["build", "-p", "bayleaf"], "filter": { "name": "bayleaf", "kind": "bin" } },
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "bayleaf-cli: list commands",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/bayleaf-cli.exe",
+      "args": ["commands"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "cargo build: cli",
+      "console": "integratedTerminal"
+    }
+  ]
+}

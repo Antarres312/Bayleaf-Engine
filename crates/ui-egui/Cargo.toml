@@ -10,7 +10,9 @@ publish = false
 [dependencies]
 bayleaf-core = { workspace = true }
 bayleaf-engine = { workspace = true }
+bayleaf-render = { workspace = true }
 egui = { workspace = true }
+egui-wgpu = { workspace = true }
 rfd = { workspace = true }
 serde_json = { workspace = true }
 

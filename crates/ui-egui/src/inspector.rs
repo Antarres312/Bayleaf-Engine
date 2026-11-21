@@ -31,7 +31,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             egui::CollapsingHeader::new(kind.label).id_salt(("component", *name)).default_open(true).show(ui, |ui| {
                 let mut edited = value.clone();
                 let outcome = if edited.is_object() || edited.is_array() {
-                    value_editor::edit(ui, &mut edited, ("value", *name), None)
+                    value_editor::edit_component(ui, &mut edited, ("value", *name), None, &|field| kind.options(field))
                 } else {
                     ui.horizontal(|ui| {
                         let label = ui.label(kind.label);

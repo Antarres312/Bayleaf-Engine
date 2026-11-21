@@ -9,8 +9,8 @@ struct App {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
-        self.editor.ui(ui);
+    fn ui(&mut self, ui: &mut eframe::egui::Ui, frame: &mut eframe::Frame) {
+        self.editor.ui(ui, frame.wgpu_render_state());
     }
 }
 

@@ -5,6 +5,7 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 
 | Label | Checked on | Result | Notes |
 |---|---|---|---|
-| (none yet) | | | |
+| Mesh, Sprite, Camera, Directional Light, Transform, Tags | not yet | Not checked yet | Generic graphics terms; run the naming.md check before a release |
+| Scene view, Hierarchy, Inspector | not yet | Not checked yet | Generic editor terms; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

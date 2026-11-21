@@ -13,6 +13,7 @@ rust-version = "1.95"
 bayleaf-core = { path = "crates/core" }
 bayleaf-ecs = { path = "crates/ecs" }
 bayleaf-scene = { path = "crates/scene" }
+bayleaf-render = { path = "crates/render" }
 bayleaf-streaming = { path = "crates/streaming" }
 bayleaf-engine = { path = "crates/engine" }
 bayleaf-ui-egui = { path = "crates/ui-egui" }
@@ -28,6 +29,12 @@ egui = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
 toml = "0.9"
 getrandom = "0.3"
+# Must match the wgpu version egui-wgpu uses.
+wgpu = "30"
+egui-wgpu = { version = "0.37", default-features = false }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "1"
+png = "0.18"
 rfd = "0.17"
 
 [workspace.lints.rust]

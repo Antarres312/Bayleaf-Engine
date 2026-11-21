@@ -112,6 +112,37 @@ fn read_only_commands_record_no_history() {
 }
 
 #[test]
+fn create_with_components_is_one_undo_step_and_fails_atomically() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let id = create(
+        &registry,
+        &mut session,
+        json!({"name": "Ball", "components": {"mesh": {"shape": "sphere", "color": [1, 0, 0, 1], "metallic": 0, "roughness": 0.5}, "tags": null}}),
+    );
+    let id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    assert_eq!(session.scene().component(id, "mesh").unwrap()["shape"], "sphere");
+    assert!(session.scene().component(id, "tags").is_ok());
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert_eq!(session.scene().object_count(), 0);
+    // An invalid component value refuses the whole creation.
+    assert!(registry.execute(&mut session, "scene.object.create", &json!({"components": {"mesh": {"shape": "teapot"}}})).is_err());
+    assert_eq!(session.scene().object_count(), 0);
+}
+
+#[test]
+fn render_refuses_bad_sizes_and_non_camera_objects_before_writing() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let id = create(&registry, &mut session, json!({}));
+    let path = std::env::temp_dir().join(format!("bayleaf-render-refused-{}.png", std::process::id()));
+    for params in [json!({"path": path, "width": 0}), json!({"path": path, "height": 100_000}), json!({"path": path, "camera": id})] {
+        assert!(registry.execute(&mut session, "scene.render", &params).is_err(), "accepted {params}");
+    }
+    assert!(!path.exists());
+}
+
+#[test]
 fn saving_clears_dirty_and_reopening_restores_the_scene() {
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();

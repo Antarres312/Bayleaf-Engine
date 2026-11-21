@@ -70,6 +70,36 @@ fn planned_move(scene: &Scene, id: StableId, action: Move) -> Option<Value> {
     }
 }
 
+/// Ready-made objects: `scene.object.create` params with their components.
+fn presets() -> Vec<(&'static str, Value)> {
+    let mesh = |name: &str, shape: &str, position: [f32; 3], scale: [f32; 3]| {
+        json!({
+            "name": name,
+            "components": {
+                "mesh": {"shape": shape, "color": [0.8, 0.8, 0.8, 1.0], "metallic": 0.0, "roughness": 0.5},
+                "transform": {"position": position, "rotation": [0.0, 0.0, 0.0], "scale": scale},
+            },
+        })
+    };
+    vec![
+        ("Cube", mesh("Cube", "cube", [0.0, 0.5, 0.0], [1.0; 3])),
+        ("Sphere", mesh("Sphere", "sphere", [0.0, 0.5, 0.0], [1.0; 3])),
+        ("Plane", mesh("Plane", "plane", [0.0, 0.0, 0.0], [10.0, 1.0, 10.0])),
+        (
+            "Sprite",
+            json!({"name": "Sprite", "components": {"sprite": null, "transform": {"position": [0.0, 0.5, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}}),
+        ),
+        (
+            "Camera",
+            json!({"name": "Camera", "components": {"camera": null, "transform": {"position": [0.0, 2.0, 6.0], "rotation": [-15.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}}),
+        ),
+        (
+            "Directional Light",
+            json!({"name": "Directional Light", "components": {"directionalLight": null, "transform": {"position": [0.0, 5.0, 0.0], "rotation": [-50.0, 30.0, 0.0], "scale": [1.0, 1.0, 1.0]}}}),
+        ),
+    ]
+}
+
 #[derive(Clone, Copy)]
 enum Move {
     Up,
@@ -86,6 +116,16 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui) {
         if ui.button(create_label).on_hover_text("Create an empty object").clicked() {
             action = Some(("scene.object.create", json!({ "parent": selected })));
         }
+        ui.menu_button("Add", |ui| {
+            for (label, params) in presets() {
+                if ui.button(label).clicked() {
+                    action = Some(("scene.object.create", params));
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text("Add a ready-made object at the root of the scene");
         if ui.add_enabled(selected.is_some(), egui::Button::new("Delete")).clicked()
             && let Some(id) = selected
         {

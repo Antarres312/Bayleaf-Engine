@@ -64,7 +64,11 @@ No crate below L6 may use egui, eframe, winit or rfd.
 2. **M1 Scene core (done, 2026-11-21):** archetype ECS with schedule, object hierarchy, `.bscene` files,
    snapshot undo/redo with merged edit gestures, editor hierarchy and inspector, `bayleaf-cli batch`.
    Still open from M1: prefabs, craft-ui theme tokens, the translation system.
-3. **M2 Render:** wgpu scene view, camera, meshes, PBR-lite materials, 2D sprites.
+3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
+   a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
+   grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with
+   click selection. Still open: shadows, textures and sprite images (wait for the asset pipeline),
+   environment lighting, gizmos for moving objects, and drawing camera and light icons in the view.
 4. **M3 Scripts:** WASM host, guest SDK, hot reload, play mode.
 5. **M4 Automation:** control channel and MCP with confined read/write roots (AA 18).
 6. **M5 Graphs:** shared graph editor, material graph, visual scripting.

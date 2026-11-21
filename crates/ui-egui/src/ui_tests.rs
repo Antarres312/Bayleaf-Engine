@@ -6,7 +6,7 @@ use egui_kittest::kittest::Queryable;
 use crate::Editor;
 
 fn harness() -> Harness<'static, Editor> {
-    let mut harness = Harness::new_ui_state(|ui, editor: &mut Editor| editor.ui(ui), Editor::default());
+    let mut harness = Harness::new_ui_state(|ui, editor: &mut Editor| editor.ui(ui, None), Editor::default());
     harness.run();
     harness
 }

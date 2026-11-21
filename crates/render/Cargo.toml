@@ -1,6 +1,6 @@
 [package]
 name = "bayleaf-render"
-description = "L3: wgpu renderer and the material graph to WGSL compiler."
+description = "L3: wgpu renderer for scenes: lit meshes, sprites, the editor grid, picking and headless images."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,16 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+bayleaf-core = { workspace = true }
+bayleaf-scene = { workspace = true }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+pollster = { workspace = true }
+png = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

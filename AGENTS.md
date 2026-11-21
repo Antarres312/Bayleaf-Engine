@@ -79,6 +79,11 @@ test in `crates/engine/src/lib.rs` in the same change.
 implements `SceneComponent` and is registered in `ComponentRegistry::builtin`. Scene files are `.bscene` JSON
 (`crates/scene/src/doc.rs`); a format change bumps `doc::VERSION`.
 
+**Rendering.** `bayleaf-render` turns a scene into a GPU-independent `Frame` (`extract`), then draws it with
+wgpu. Shaders are in `crates/render/src/shaders/`. Tests that need a GPU skip when there is no adapter;
+set `BAYLEAF_GPU_REQUIRED=1` to make them fail instead. `bayleaf-cli run --cmd scene.render` writes a PNG
+for checking a scene's look without a window.
+
 **Opt-in modules.** Each gameplay role is a cargo feature of `bayleaf-gameplay`. World streaming is the
 `streaming` feature of `bayleaf-engine`. The core must build and run without any of them.
 

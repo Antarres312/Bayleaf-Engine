@@ -19,7 +19,7 @@ pub const LAYERS: &[(&str, u8)] = &[
 ];
 
 /// UI crates that nothing below layer 6 may use.
-pub const UI_ONLY: &[&str] = &["egui", "eframe", "winit", "rfd"];
+pub const UI_ONLY: &[&str] = &["egui", "egui-wgpu", "eframe", "winit", "rfd"];
 
 pub fn layer_of(name: &str) -> Option<u8> {
     LAYERS.iter().find(|(n, _)| *n == name).map(|(_, l)| *l)

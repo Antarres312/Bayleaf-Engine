@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cargo build: editor",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["build", "-p", "bayleaf"],
+      "problemMatcher": ["$rustc"],
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "cargo build: editor (release)",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["build", "--release", "-p", "bayleaf"],
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    },
+    {
+      "label": "cargo build: cli",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["build", "-p", "bayleaf-cli"],
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    },
+    {
+      "label": "cargo test: workspace",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["test", "--workspace", "--all-features"],
+      "problemMatcher": ["$rustc"],
+      "group": { "kind": "test", "isDefault": true }
+    }
+  ]
+}

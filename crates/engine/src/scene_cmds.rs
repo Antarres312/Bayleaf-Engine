@@ -56,6 +56,18 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             run: scene_save_as,
         },
         CommandSpec {
+            id: "scene.render",
+            label: "Render Image…",
+            menu: "",
+            shortcut: "",
+            params: "{path, width?, height?, camera?, grid?}; writes a PNG. camera: an object with a camera component; \
+                     default: the first camera in the scene, else a view framing every object",
+            prompt: Prompt::None,
+            mutates: false,
+            enabled: always,
+            run: scene_render,
+        },
+        CommandSpec {
             id: "scene.objects",
             label: "List Objects",
             menu: "",
@@ -79,10 +91,10 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         },
         CommandSpec {
             id: "scene.object.create",
-            label: "Create Empty Object",
+            label: "Create Object",
             menu: "Object/Create Empty Object",
             shortcut: "Ctrl+Shift+N",
-            params: "{parent?, name?, index?}; returns {id}",
+            params: "{parent?, name?, index?, components?: {name: value or null}}; returns {id}",
             prompt: Prompt::None,
             mutates: true,
             enabled: always,
@@ -178,6 +190,9 @@ struct CreateParams {
     name: Option<String>,
     #[serde(default)]
     index: Option<usize>,
+    /// Components to add, by name; a null value keeps the component's default.
+    #[serde(default)]
+    components: std::collections::BTreeMap<String, Value>,
 }
 
 #[derive(Deserialize)]
@@ -234,6 +249,57 @@ fn scene_save_as(session: &mut Session, params: &Value) -> Result<Value, Command
     Ok(json!({ "path": p.path }))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenderParams {
+    path: PathBuf,
+    #[serde(default = "default_width")]
+    width: u32,
+    #[serde(default = "default_height")]
+    height: u32,
+    #[serde(default)]
+    camera: Option<StableId>,
+    #[serde(default)]
+    grid: bool,
+}
+
+fn default_width() -> u32 {
+    1280
+}
+
+fn default_height() -> u32 {
+    720
+}
+
+/// Largest image side `scene.render` accepts.
+const MAX_RENDER_SIDE: u32 = 8192;
+
+fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: RenderParams = parse(params)?;
+    if !(1..=MAX_RENDER_SIDE).contains(&p.width) || !(1..=MAX_RENDER_SIDE).contains(&p.height) {
+        return Err(CommandError::BadParams(format!("width and height must be between 1 and {MAX_RENDER_SIDE}")));
+    }
+    let scene = &session.scene;
+    let aspect = p.width as f32 / p.height as f32;
+    let (camera, source) = match p.camera {
+        Some(id) => {
+            (bayleaf_render::object_camera(scene, id, aspect).ok_or_else(|| CommandError::Failed(format!("object {id} has no camera component")))?, "object")
+        }
+        None => match bayleaf_render::scene_camera(scene, aspect) {
+            Some(view) => (view, "scene"),
+            None => {
+                let (center, radius) = bayleaf_render::bounds(scene).unwrap_or((bayleaf_core::math::Vec3::ZERO, 2.0));
+                (bayleaf_render::CameraView::framing(center, radius, aspect), "framing")
+            }
+        },
+    };
+    let frame = bayleaf_render::extract(scene, camera, bayleaf_render::FrameOptions { show_grid: p.grid, selected: None });
+    let gpu = bayleaf_render::HeadlessGpu::new().map_err(|e| CommandError::Failed(e.to_string()))?;
+    let image = gpu.render(&frame, p.width, p.height).map_err(|e| CommandError::Failed(e.to_string()))?;
+    image.write_png(&p.path).map_err(|e| CommandError::Failed(e.to_string()))?;
+    Ok(json!({ "path": p.path, "width": p.width, "height": p.height, "camera": source }))
+}
+
 fn tree(scene: &Scene, parent: Option<StableId>) -> Vec<Value> {
     scene.children(parent).iter().map(|id| json!({ "id": id, "name": scene.name(*id), "children": tree(scene, Some(*id)) })).collect()
 }
@@ -252,6 +318,14 @@ fn object_create(session: &mut Session, params: &Value) -> Result<Value, Command
     let id = session.scene.create_object(p.parent, p.name.as_deref().unwrap_or("Object"))?;
     if p.index.is_some() {
         session.scene.reparent(id, p.parent, p.index)?;
+    }
+    for (component, value) in p.components {
+        if session.scene.component(id, &component).is_err() {
+            session.scene.add_component(id, &component)?;
+        }
+        if !value.is_null() {
+            session.scene.set_component(id, &component, value)?;
+        }
     }
     Ok(json!({ "id": id }))
 }

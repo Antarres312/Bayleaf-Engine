@@ -8,6 +8,7 @@
 
 mod hierarchy;
 mod inspector;
+mod scene_view;
 mod value_editor;
 
 use bayleaf_core::StableId;
@@ -27,6 +28,7 @@ pub struct Editor {
     /// Bumped when an edit gesture (a drag, a text field) ends, so the next edit gets its own undo step.
     gesture: u64,
     title: String,
+    scene_view: scene_view::SceneView,
 }
 
 impl Default for Editor {
@@ -38,13 +40,15 @@ impl Default for Editor {
             selected: None,
             gesture: 0,
             title: String::new(),
+            scene_view: scene_view::SceneView::new(),
         }
     }
 }
 
 impl Editor {
-    /// Draws the editor for one frame.
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
+    /// Draws the editor for one frame. `gpu` is the window's wgpu state; without it the scene view
+    /// shows a notice instead of the scene.
+    pub fn ui(&mut self, ui: &mut egui::Ui, gpu: Option<&egui_wgpu::RenderState>) {
         self.handle_shortcuts(ui.ctx());
         egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| self.menus(ui));
@@ -60,10 +64,7 @@ impl Editor {
         });
         egui::Panel::left("hierarchy").resizable(true).default_size(240.0).show(ui, |ui| hierarchy::show(self, ui));
         egui::Panel::right("inspector").resizable(true).default_size(300.0).show(ui, |ui| inspector::show(self, ui));
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("Scene");
-            ui.label("The scene view arrives in milestone M2. Use the hierarchy and the inspector to edit the scene.");
-        });
+        egui::CentralPanel::default().show(ui, |ui| scene_view::show(self, ui, gpu));
         self.update_title(ui.ctx());
         if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
             self.selected = None;

@@ -476,6 +476,7 @@ name = "bayleaf-engine"
 version = "0.1.0"
 dependencies = [
  "bayleaf-core",
+ "bayleaf-render",
  "bayleaf-scene",
  "bayleaf-streaming",
  "serde",
@@ -494,6 +495,16 @@ version = "0.1.0"
 [[package]]
 name = "bayleaf-render"
 version = "0.1.0"
+dependencies = [
+ "bayleaf-core",
+ "bayleaf-scene",
+ "bytemuck",
+ "png",
+ "pollster 1.0.3",
+ "serde_json",
+ "thiserror 2.0.21",
+ "wgpu",
+]
 
 [[package]]
 name = "bayleaf-scene"
@@ -520,7 +531,9 @@ version = "0.1.0"
 dependencies = [
  "bayleaf-core",
  "bayleaf-engine",
+ "bayleaf-render",
  "egui",
+ "egui-wgpu",
  "egui_kittest",
  "rfd",
  "serde_json",

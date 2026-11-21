@@ -14,10 +14,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use bayleaf_core::StableId;
+use bayleaf_core::math::Mat4;
 use bayleaf_ecs::{Entity, World};
 use serde_json::Value;
 
-use components::Name;
+use components::{Name, Transform};
 use doc::{ObjectDoc, SceneDoc};
 use registry::ComponentRegistry;
 
@@ -96,6 +97,39 @@ impl Scene {
     pub fn name(&self, id: StableId) -> Option<&str> {
         let entity = *self.entities.get(&id)?;
         self.world.get::<Name>(entity).map(|n| n.0.as_str())
+    }
+
+    /// Typed read access to one component of an object.
+    pub fn get<T: bayleaf_ecs::Component>(&self, id: StableId) -> Option<&T> {
+        let entity = *self.entities.get(&id)?;
+        self.world.get::<T>(entity)
+    }
+
+    /// Local-to-world matrix of every object, parents before children in hierarchy order.
+    pub fn world_matrices(&self) -> Vec<(StableId, Mat4)> {
+        let mut out = Vec::with_capacity(self.entities.len());
+        let mut stack: Vec<(StableId, Mat4)> = self.children(None).iter().rev().map(|id| (*id, Mat4::IDENTITY)).collect();
+        while let Some((id, parent_matrix)) = stack.pop() {
+            let local = self.get::<Transform>(id).map_or(Mat4::IDENTITY, Transform::matrix);
+            let world = parent_matrix * local;
+            out.push((id, world));
+            stack.extend(self.children(Some(id)).iter().rev().map(|child| (*child, world)));
+        }
+        out
+    }
+
+    /// Local-to-world matrix of one object.
+    pub fn world_matrix(&self, id: StableId) -> Option<Mat4> {
+        if !self.contains(id) {
+            return None;
+        }
+        let mut matrix = Mat4::IDENTITY;
+        let mut current = Some(id);
+        while let Some(object) = current {
+            matrix = self.get::<Transform>(object).map_or(Mat4::IDENTITY, Transform::matrix) * matrix;
+            current = self.parent(object);
+        }
+        Some(matrix)
     }
 
     /// Creates an object with default components, appended to `parent`'s children.

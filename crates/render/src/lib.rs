@@ -1,5 +1,31 @@
-//! L3: wgpu renderer and the material graph to WGSL compiler.
+//! L3: wgpu renderer for scenes: lit meshes, unlit sprites, the editor ground grid, picking and
+//! headless images.
 //!
-//! Not implemented yet. See docs/vision.md for the milestone that fills it.
+//! [`extract`] turns a scene into a GPU-independent [`Frame`]; [`Renderer`] draws a frame into a
+//! [`RenderTarget`]. The editor shows the target's texture; [`HeadlessGpu`] reads it back as pixels.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+mod extract;
+mod gpu;
+mod headless;
+mod mesh;
+
+pub use extract::{CameraView, DrawItem, Frame, FrameOptions, LightItem, MAX_LIGHTS, Ray, bounds, extract, object_bounds, object_camera, pick, scene_camera};
+pub use gpu::{COLOR_FORMAT, RenderTarget, Renderer};
+pub use headless::{HeadlessGpu, Image};
+pub use wgpu;
+
+/// Errors from rendering. Messages are shown to the user.
+#[derive(Debug, thiserror::Error)]
+pub enum RenderError {
+    #[error("no usable graphics adapter: {0}")]
+    NoGpu(String),
+    #[error("graphics error: {0}")]
+    Gpu(String),
+    #[error("{0}")]
+    Io(String),
+}
+
+#[cfg(test)]
+mod tests;

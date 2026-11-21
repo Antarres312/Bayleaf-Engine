@@ -3,7 +3,7 @@
 use bayleaf_ecs::{Entity, World};
 use serde_json::Value;
 
-use crate::components::{Name, SceneComponent, Tags, Transform};
+use crate::components::{Camera, DirectionalLight, Mesh, Name, SceneComponent, Sprite, Tags, Transform};
 
 /// One component type known to the scene.
 #[derive(Clone, Copy)]
@@ -15,11 +15,26 @@ pub struct ComponentKind {
     set: fn(&mut World, Entity, Value) -> Result<(), String>,
     add_default: fn(&mut World, Entity) -> Result<(), String>,
     remove: fn(&mut World, Entity) -> bool,
+    options: fn(&str) -> &'static [&'static str],
 }
 
 impl ComponentKind {
     pub fn of<T: SceneComponent>() -> Self {
-        Self { name: T::NAME, label: T::LABEL, removable: T::REMOVABLE, get: get::<T>, set: set::<T>, add_default: add_default::<T>, remove: remove::<T> }
+        Self {
+            name: T::NAME,
+            label: T::LABEL,
+            removable: T::REMOVABLE,
+            get: get::<T>,
+            set: set::<T>,
+            add_default: add_default::<T>,
+            remove: remove::<T>,
+            options: T::options,
+        }
+    }
+
+    /// Allowed values of a text field, empty when any text is allowed.
+    pub fn options(&self, field: &str) -> &'static [&'static str] {
+        (self.options)(field)
     }
 
     pub(crate) fn get(&self, world: &World, entity: Entity) -> Option<Value> {
@@ -65,7 +80,17 @@ pub struct ComponentRegistry {
 
 impl ComponentRegistry {
     pub fn builtin() -> Self {
-        Self { kinds: vec![ComponentKind::of::<Name>(), ComponentKind::of::<Transform>(), ComponentKind::of::<Tags>()] }
+        Self {
+            kinds: vec![
+                ComponentKind::of::<Name>(),
+                ComponentKind::of::<Transform>(),
+                ComponentKind::of::<Mesh>(),
+                ComponentKind::of::<Sprite>(),
+                ComponentKind::of::<Camera>(),
+                ComponentKind::of::<DirectionalLight>(),
+                ComponentKind::of::<Tags>(),
+            ],
+        }
     }
 
     pub fn kinds(&self) -> &[ComponentKind] {
