@@ -321,6 +321,17 @@ fn every_node_kind_compiles_and_runs() {
     let push_me = b.node("addImpulse", json!({}));
     b.link(remove, "then", push_me, "run");
     b.link(me, "object", push_me, "target");
+    // Component fields: read this object's Transform, and set a light behind a found check.
+    let read_transform = b.node("getComponent", json!({ "component": "Transform" }));
+    let lamp = b.node("tryGetComponent", json!({ "component": "pointLight" }));
+    let lamp_gate = b.node("branch", json!({}));
+    b.link(push_me, "then", lamp_gate, "run");
+    b.link(lamp, "found", lamp_gate, "condition");
+    let brighten = b.node("setComponent", json!({ "component": "Point Light" }));
+    b.link(lamp_gate, "true", brighten, "run");
+    b.link(lamp, "intensity", brighten, "intensity");
+    b.link(read_transform, "scale", brighten, "color");
+    b.link(lamp, "shadows", brighten, "shadows");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -688,4 +699,72 @@ fn searches_find_objects_by_component_tag_and_script_in_hierarchy_order() {
     let x = |object| transform(&scene, object).position[0];
     assert!(x(lamp_b) > x(lamp_a), "the lamps line up in hierarchy order: {} then {}", x(lamp_a), x(lamp_b));
     assert!(transform(&scene, flag).position[1] > transform(&scene, crate_box).position[1], "the second goal moved, not the first");
+
+    // A search left at the Point Light the editor shows compiles as that.
+    let mut plain = Builder::new();
+    let go = plain.node("start", json!({}));
+    let counted = plain.node("countWith", json!({}));
+    let said = plain.node("log", json!({ "message": "lights" }));
+    plain.link(go, "then", said, "run");
+    plain.link(counted, "count", said, "value");
+    assert!(compile(&plain.0).is_ok(), "{:?}", compile(&plain.0).err());
+}
+
+/// A script reads a lamp's fields, asks to change some of them, and learns when an object has no
+/// such component.
+#[test]
+fn component_fields_are_read_as_pins_and_set_only_where_linked() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let lamp = b.node("findNamed", json!({ "name": "Lamp" }));
+    let light = b.node("tryGetComponent", json!({ "component": "Point Light" }));
+    b.link(lamp, "object", light, "target");
+    let log = b.node("log", json!({ "message": "intensity" }));
+    b.link(start, "then", log, "run");
+    b.link(light, "intensity", log, "value");
+    let doubled = b.node("multiply", json!({ "b": 2.0 }));
+    b.link(light, "intensity", doubled, "a");
+    let brighten = b.node("setComponent", json!({ "component": "pointLight" }));
+    b.link(log, "then", brighten, "run");
+    b.link(lamp, "object", brighten, "target");
+    b.link(doubled, "result", brighten, "intensity");
+    // This object has no light: Found is false and its fields read as zeros.
+    let mine = b.node("tryGetComponent", json!({ "component": "Point Light" }));
+    let said = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    b.link(mine, "found", said, "condition");
+    let report = b.node("log", json!({ "message": "mine" }));
+    b.link(brighten, "then", report, "run");
+    b.link(said, "result", report, "value");
+    let bytes = b.bytes();
+
+    let mut scene = Scene::new();
+    let id = scene.create_object(None, "Scripted").unwrap();
+    let lamp_id = scene.create_object(None, "Lamp").unwrap();
+    scene.add_component(lamp_id, "pointLight").unwrap();
+    scene.set_component(lamp_id, "pointLight", json!({ "color": [1, 0.5, 0], "intensity": 3, "range": 10, "shadows": false })).unwrap();
+    let script = ScriptRef { module: "lamps.bscript".into(), properties: BTreeMap::new() };
+    let mut host = ScriptHost::new();
+    host.load_bytes(id, 0, Path::new("lamps.bscript"), None, &bytes, &script, &mut scene, 0.0, &Arc::new(Input::default())).unwrap();
+
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["intensity 3", "mine 0"]);
+    let requests = host.take_requests();
+    assert_eq!(requests.len(), 1, "only the linked field is set: {requests:?}");
+    let crate::Request::SetField { object, component, field, value, .. } = &requests[0] else { panic!("{requests:?}") };
+    assert_eq!((*object, *component, field.as_str()), (lamp_id, "pointLight", "intensity"));
+    assert!(value[0] > 3.0, "the doubled intensity: {value:?}");
+
+    // A colour set from three numbers keeps its alpha; a true/false field takes whether it is not 0.
+    assert_eq!(crate::with_field(&json!([1, 1, 1, 0.5]), [0.0, 0.25, 1.0]), Some(json!([0.0, 0.25, 1.0, 0.5])));
+    assert_eq!(crate::with_field(&json!(false), [1.0, 0.0, 0.0]), Some(json!(true)));
+    assert_eq!(crate::with_field(&json!("sphere"), [1.0, 0.0, 0.0]), None, "a text field is not set");
+
+    // Physics reads its components when play starts, so setting them is refused with a reason.
+    let mut physics = Builder::new();
+    let go = physics.node("start", json!({}));
+    let heavier = physics.node("setComponent", json!({ "component": "Rigid Body" }));
+    physics.link(go, "then", heavier, "run");
+    let problems = compile(&physics.0).unwrap_err();
+    assert!(problems.iter().any(|p| p.message.contains("read only")), "{problems:?}");
 }

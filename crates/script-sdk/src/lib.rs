@@ -122,6 +122,24 @@ impl Object {
         usize::try_from(abi::count_with(kind)).unwrap_or(0)
     }
 
+    /// Whether it has a component whose fields scripts read (`Point Light`, `pointLight`).
+    pub fn has(self, component: &str) -> bool {
+        abi::component_get(self.0, component, "").is_some()
+    }
+
+    /// A field of one of its components (`"Point Light"`, `"intensity"`), as the step began: a
+    /// number in the first part, true/false as 1 or 0, a vector or colour in all three.
+    pub fn field(self, component: &str, field: &str) -> Option<[f32; 3]> {
+        abi::component_get(self.0, component, field)
+    }
+
+    /// Sets a field of one of its components after this step, the way `field` reads it. False when
+    /// it has no such field, the component is read only in play (Rigid Body, Collider, Character),
+    /// or this call asked too often.
+    pub fn set_field(self, component: &str, field: &str, value: [f32; 3]) -> bool {
+        abi::component_set(self.0, component, field, value)
+    }
+
     /// Its local transform.
     pub fn transform(self) -> Transform {
         let v = abi::transform_get_of(self.0);

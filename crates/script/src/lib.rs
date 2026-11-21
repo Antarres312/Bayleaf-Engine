@@ -140,6 +140,9 @@ pub enum Request {
     Walk { by: StableId, object: StableId, velocity: [f32; 3] },
     /// Make a character on the ground jump with an upward speed.
     Jump { by: StableId, object: StableId, speed: f32 },
+    /// Set a field of a component (`pointLight`, `intensity`): a number takes `value[0]`, true/false
+    /// whether it is not 0, a vector or colour its first parts from `value`.
+    SetField { by: StableId, object: StableId, component: &'static str, field: String, value: [f32; 3] },
 }
 
 /// Named numbers the game keeps while it plays: the game's own, each player's (a player is an
@@ -247,6 +250,9 @@ struct WorldView {
     shapes: Vec<Option<(DMat4, RayShape)>>,
     /// Each object's position in double precision, by the same index.
     positions: Vec<[f64; 3]>,
+    /// The fields of each object's readable components (`visual::COMPONENTS`), by the same index;
+    /// empty unless a loaded script reads or sets component fields.
+    fields: Vec<Vec<(&'static str, serde_json::Value)>>,
     /// What each object is, by the same index, for searches: its components' names and labels,
     /// its tags and its scripts' names, each as `kind_key` makes them.
     kinds: Vec<Vec<String>>,
@@ -255,14 +261,15 @@ struct WorldView {
 }
 
 impl WorldView {
-    fn of(scene: &Scene) -> Arc<Self> {
+    fn of(scene: &Scene, with_fields: bool) -> Arc<Self> {
         let all = scene.world_matrices();
         let objects = all.iter().map(|(id, _)| (*id, scene.name(*id).unwrap_or_default().to_owned(), read_transform(scene, *id))).collect();
         let shapes = all.iter().map(|(id, world)| ray_shape(scene, *id, *world)).collect();
         let positions = all.iter().map(|(id, _)| read_position(scene, *id)).collect();
         let players = all.iter().map(|(id, _)| *id).filter(|id| scene.get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect();
         let kinds = all.iter().map(|(id, _)| object_kinds(scene, *id)).collect();
-        Arc::new(Self { objects, shapes, positions, players, kinds })
+        let fields = if with_fields { all.iter().map(|(id, _)| object_fields(scene, *id)).collect() } else { Vec::new() };
+        Arc::new(Self { objects, shapes, positions, players, kinds, fields })
     }
 
     /// The nearest shape a ray hits within `max`, other than `skip`: its index and the distance.
@@ -306,9 +313,50 @@ impl WorldView {
     }
 }
 
+/// The readable components an object has, with their values.
+fn object_fields(scene: &Scene, id: StableId) -> Vec<(&'static str, serde_json::Value)> {
+    visual::COMPONENTS.iter().filter_map(|c| scene.component(id, c.name).ok().map(|value| (c.name, value))).collect()
+}
+
+/// The readable component a name or label means (`pointLight`, `Point Light`).
+fn readable_component(text: &str) -> Option<&'static str> {
+    let key = kind_key(text);
+    visual::COMPONENTS.iter().find(|c| kind_key(c.name) == key || kind_key(c.label) == key).map(|c| c.name)
+}
+
+/// A field's value as up to three numbers: a number, true/false as 1 or 0, or the first parts of a
+/// vector or colour. `None` for other fields.
+fn field_numbers(value: &serde_json::Value) -> Option<[f32; 3]> {
+    match value {
+        serde_json::Value::Number(n) => Some([n.as_f64()? as f32, 0.0, 0.0]),
+        serde_json::Value::Bool(b) => Some([f32::from(u8::from(*b)), 0.0, 0.0]),
+        serde_json::Value::Array(parts) if (2..=4).contains(&parts.len()) => {
+            let mut out = [0.0; 3];
+            for (slot, part) in out.iter_mut().zip(parts) {
+                *slot = part.as_f64()? as f32;
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// A field set to `numbers` the way `field_numbers` reads it, keeping its shape (a colour keeps its
+/// alpha). `None` for a field that is not a number, true/false, vector or colour.
+pub fn with_field(value: &serde_json::Value, numbers: [f32; 3]) -> Option<serde_json::Value> {
+    field_numbers(value)?;
+    Some(match value {
+        serde_json::Value::Bool(_) => serde_json::json!(numbers[0] != 0.0),
+        serde_json::Value::Array(parts) => {
+            serde_json::Value::Array(parts.iter().enumerate().map(|(i, part)| numbers.get(i).map_or_else(|| part.clone(), |n| serde_json::json!(n))).collect())
+        }
+        _ => serde_json::json!(numbers[0]),
+    })
+}
+
 /// A search key for a kind of object: lowercase, without spaces, `_` or `-`, so `pointLight`, `Point
 /// Light` and `point_light` all match.
-fn kind_key(text: &str) -> String {
+pub(crate) fn kind_key(text: &str) -> String {
     text.chars().filter(|c| !matches!(c, ' ' | '_' | '-')).flat_map(char::to_lowercase).collect()
 }
 
@@ -505,6 +553,8 @@ pub struct ScriptHost {
     grounded: Arc<HashSet<StableId>>,
     input_maps: actions::SharedInput,
     state: SharedState,
+    /// A loaded script reads or sets component fields, so each step takes their values along.
+    reads_fields: bool,
 }
 
 impl Default for ScriptHost {
@@ -525,6 +575,7 @@ impl Default for ScriptHost {
             grounded: Arc::new(HashSet::new()),
             input_maps: actions::SharedInput::default(),
             state: SharedState::default(),
+            reads_fields: false,
         }
     }
 }
@@ -599,11 +650,12 @@ impl ScriptHost {
     ) -> Result<(), ScriptError> {
         let module_name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         let module = Module::new(&self.engine, bytes).map_err(|e| ScriptError::Invalid(module_name.clone(), e.to_string()))?;
+        self.reads_fields |= module.imports().any(|i| matches!(i.name(), "component_get" | "component_set"));
         let mut state = HostState::new(object, read_transform(scene, object), script.properties.clone(), time, input);
         state.position = read_position(scene, object);
         state.state = Arc::clone(&self.state);
         state.input_maps = Arc::clone(&self.input_maps);
-        state.world = WorldView::of(scene);
+        state.world = WorldView::of(scene, self.reads_fields);
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| &mut state.limits);
         let trapped = |module: &str, e: wasmi::Error| ScriptError::Trapped { module: module.to_owned(), message: e.to_string() };
@@ -651,7 +703,7 @@ impl ScriptHost {
         let mut faults = Vec::new();
         let mut logs = Vec::new();
         // Every script sees the objects as the step began.
-        let world = WorldView::of(scene);
+        let world = WorldView::of(scene, self.reads_fields);
         for entry in self.instances.iter_mut().filter(|i| !i.stopped) {
             if !scene.contains(entry.object) {
                 entry.stopped = true;
@@ -694,7 +746,7 @@ impl ScriptHost {
         if messages.is_empty() {
             return;
         }
-        let world = WorldView::of(scene);
+        let world = WorldView::of(scene, self.reads_fields);
         let mut later = Vec::new();
         let mut faults = Vec::new();
         let mut logs = Vec::new();
@@ -804,7 +856,7 @@ impl ScriptHost {
         if contacts.is_empty() {
             return;
         }
-        let world = WorldView::of(scene);
+        let world = WorldView::of(scene, self.reads_fields);
         for (object, name, other) in contacts {
             self.messages.push(Message { to: Some(*object), name: (*name).to_owned(), value: world.handle_of(*other) as f32 });
         }
@@ -1302,6 +1354,63 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             let Ok(index) = usize::try_from(index) else { return Ok(0) };
             Ok(caller.data().world.with_kind(&kind).nth(index).unwrap_or(0))
         })?;
+        linker.func_wrap(
+            "bayleaf",
+            "component_get",
+            |mut caller: Caller<'_, HostState>, handle: i32, c_ptr: i32, c_len: i32, f_ptr: i32, f_len: i32, out: i32| -> Result<i32, wasmi::Error> {
+                let component = read_text(&caller, c_ptr, c_len, 256).map_err(|m| fault(&mut caller, format!("component_get: {m}")))?;
+                let field = read_text(&caller, f_ptr, f_len, 256).map_err(|m| fault(&mut caller, format!("component_get: {m}")))?;
+                let world = Arc::clone(&caller.data().world);
+                let value = readable_component(&component).and_then(|name| {
+                    let (_, index) = world.object(handle)?;
+                    world.fields.get(index)?.iter().find(|(n, _)| *n == name).map(|(_, v)| v)
+                });
+                // An empty field asks only whether the object has the component.
+                let numbers = match value {
+                    Some(_) if field.is_empty() => Some([0.0; 3]),
+                    Some(v) => v.get(&field).and_then(field_numbers),
+                    None => None,
+                };
+                let bytes: Vec<u8> = numbers.unwrap_or([0.0; 3]).iter().flat_map(|v| v.to_le_bytes()).collect();
+                write_guest(&mut caller, out, &bytes, "component_get")?;
+                Ok(i32::from(numbers.is_some()))
+            },
+        )?;
+        linker.func_wrap(
+            "bayleaf",
+            "component_set",
+            |mut caller: Caller<'_, HostState>, handle: i32, c_ptr: i32, c_len: i32, f_ptr: i32, f_len: i32, ptr: i32| -> Result<i32, wasmi::Error> {
+                let component = read_text(&caller, c_ptr, c_len, 256).map_err(|m| fault(&mut caller, format!("component_set: {m}")))?;
+                let field = read_text(&caller, f_ptr, f_len, 256).map_err(|m| fault(&mut caller, format!("component_set: {m}")))?;
+                let bytes = read_guest(&caller, ptr, 12, 12).map_err(|m| fault(&mut caller, format!("component_set: {m}")))?;
+                let mut value = [0.0f32; 3];
+                for (slot, chunk) in value.iter_mut().zip(bytes.as_chunks::<4>().0) {
+                    *slot = f32::from_le_bytes(*chunk);
+                }
+                let [x, y, z] = value;
+                if ![x, y, z].iter().all(|v| v.is_finite()) {
+                    return Err(fault(&mut caller, "component_set: give finite numbers".to_owned()));
+                }
+                let world = Arc::clone(&caller.data().world);
+                let Some((object, index)) = world.object(handle) else { return Ok(0) };
+                let Some(name) = readable_component(&component).filter(|n| visual::COMPONENTS.iter().any(|c| c.name == *n && c.settable())) else {
+                    return Ok(0);
+                };
+                let settable = world
+                    .fields
+                    .get(index)
+                    .and_then(|fields| fields.iter().find(|(n, _)| *n == name))
+                    .and_then(|(_, v)| v.get(&field))
+                    .is_some_and(|v| field_numbers(v).is_some());
+                let state = caller.data_mut();
+                if !settable || state.requests.len() >= MAX_REQUESTS_PER_CALL {
+                    return Ok(0);
+                }
+                let by = state.object;
+                state.requests.push(Request::SetField { by, object, component: name, field, value: [x, y, z] });
+                Ok(1)
+            },
+        )?;
         linker.func_wrap("bayleaf", "count_with", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
             let kind = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("count_with: {m}")))?;
             Ok(i32::try_from(caller.data().world.with_kind(&kind).count()).unwrap_or(i32::MAX))

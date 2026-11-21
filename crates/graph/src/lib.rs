@@ -171,11 +171,24 @@ pub struct Catalog {
     pub nodes: &'static [NodeDef],
     /// Kinds a new graph starts with, and where.
     pub starter: &'static [(&'static str, [f32; 2])],
+    /// A node's own pins when they depend on its settings (Get Component shows the fields of the
+    /// component it names); `None` for the kind's pins. See `no_variant`.
+    pub variant: fn(&Node) -> Option<&'static NodeDef>,
+}
+
+/// For catalogs whose node kinds always have the same pins.
+pub fn no_variant(_: &Node) -> Option<&'static NodeDef> {
+    None
 }
 
 impl Catalog {
     pub fn get(&self, kind: &str) -> Option<&NodeDef> {
         self.nodes.iter().find(|n| n.kind == kind)
+    }
+
+    /// The definition a node is drawn and compiled with: its variant, else its kind's.
+    pub fn def_of(&self, node: &Node) -> Option<&NodeDef> {
+        (self.variant)(node).or_else(|| self.get(&node.kind))
     }
 
     /// The catalog's description as JSON (for `graph.catalog` and agents).
@@ -569,7 +582,7 @@ impl Graph {
             if !ids.insert(node.id) {
                 return Err(GraphError::Format(format!("node id {} is used twice", node.id)));
             }
-            let def = catalog.get(&node.kind).ok_or_else(|| GraphError::UnknownKind(node.kind.clone(), catalog.domain))?;
+            let def = catalog.def_of(node).ok_or_else(|| GraphError::UnknownKind(node.kind.clone(), catalog.domain))?;
             if def.unique && self.nodes.iter().filter(|n| n.kind == node.kind).count() > 1 {
                 return Err(GraphError::Refused(format!("a graph may have only one {} node", def.label)));
             }
@@ -614,7 +627,7 @@ impl Graph {
     /// The node and its kind.
     pub fn node_def<'c>(&self, catalog: &'c Catalog, id: u32) -> Result<(&Node, &'c NodeDef), GraphError> {
         let node = self.node(id).ok_or(GraphError::NoNode(id))?;
-        let def = catalog.get(&node.kind).ok_or_else(|| GraphError::UnknownKind(node.kind.clone(), catalog.domain))?;
+        let def = catalog.def_of(node).ok_or_else(|| GraphError::UnknownKind(node.kind.clone(), catalog.domain))?;
         Ok((node, def))
     }
 
@@ -662,7 +675,14 @@ impl Graph {
         }
         check_value(def, name, &value)?;
         node.values.insert(name.to_owned(), value);
+        self.drop_dangling_links(catalog, id);
         Ok(())
+    }
+
+    /// Removes the links of `id` to pins its definition no longer has (a setting changed its pins).
+    fn drop_dangling_links(&mut self, catalog: &Catalog, id: u32) {
+        let Some(def) = self.node(id).and_then(|n| catalog.def_of(n)) else { return };
+        self.links.retain(|l| (l.from.node != id || def.output(&l.from.pin).is_some()) && (l.to.node != id || def.input(&l.to.pin).is_some()));
     }
 
     /// Joins an output to an input. A data input keeps only the newest link, and so does a flow output.
@@ -708,7 +728,7 @@ impl Graph {
         let mut ids = BTreeMap::new();
         let mut skipped = Vec::new();
         for node in &fragment.nodes {
-            let def = catalog.get(&node.kind).ok_or_else(|| GraphError::UnknownKind(node.kind.clone(), catalog.domain))?;
+            let def = catalog.def_of(node).ok_or_else(|| GraphError::UnknownKind(node.kind.clone(), catalog.domain))?;
             if def.unique && graph.nodes.iter().any(|n| n.kind == node.kind) {
                 skipped.push(def.label.to_owned());
                 continue;

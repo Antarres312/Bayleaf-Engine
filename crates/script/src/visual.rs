@@ -11,6 +11,9 @@ use bayleaf_graph::{Catalog, Graph, NodeDef, PinDef, PinDefault, PinType, Proble
 
 use PinType::{Any, Bool, Float, Flow, Vec3};
 
+mod fields;
+pub use fields::{COMPONENTS, ComponentNodes, component_of};
+
 const fn pin(name: &'static str, label: &'static str, ty: PinType) -> PinDef {
     PinDef::new(name, label, ty)
 }
@@ -65,6 +68,7 @@ pub const CATALOG: Catalog = Catalog {
     label: "Visual Script",
     extension: "bscript",
     starter: &[("start", [40.0, 40.0]), ("update", [40.0, 200.0])],
+    variant: fields::variant,
     nodes: &[
         node("start", "On Start", "Events", "Runs once when play mode starts.", &[], &[THEN]),
         node("update", "On Update", "Events", "Runs every simulation step.", &[], &[THEN, pin("dt", "Step Seconds", Float)]),
@@ -353,6 +357,36 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[RUN, TARGET],
             outputs: &[THEN],
             settings: &[],
+            unique: false,
+        },
+        NodeDef {
+            kind: "getComponent",
+            label: "Get Component",
+            category: "Find",
+            description: fields::GET,
+            inputs: &[TARGET],
+            outputs: &[],
+            settings: &[fields::COMPONENT],
+            unique: false,
+        },
+        NodeDef {
+            kind: "tryGetComponent",
+            label: "Try Get Component",
+            category: "Find",
+            description: fields::TRY_GET,
+            inputs: &[TARGET],
+            outputs: &[pin("found", "Found", Bool)],
+            settings: &[fields::COMPONENT],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setComponent",
+            label: "Set Component",
+            category: "Actions",
+            description: fields::SET,
+            inputs: &[RUN, TARGET],
+            outputs: &[THEN],
+            settings: &[fields::COMPONENT],
             unique: false,
         },
         action("destroySelf", "Destroy This Object", "Deletes this object and its children after this step.", &[RUN]),
@@ -751,9 +785,14 @@ impl Compiler<'_> {
         Ok((target, at, len))
     }
 
-    /// The text of a name setting placed in memory, or a problem when it is empty.
+    /// The text of a name setting (or its default, as the editor shows it) placed in memory, or a
+    /// problem when it is empty.
     fn named(&mut self, node: u32, setting: &str, missing: &str) -> Result<(u32, u32), Problem> {
-        let name = self.setting_text(node, setting, "");
+        let default = self.graph.node_def(&CATALOG, node).ok().and_then(|(_, def)| def.setting(setting)).map_or("", |s| match s.kind {
+            SettingKind::Text(d) | SettingKind::Name(d) => d,
+            _ => "",
+        });
+        let name = self.setting_text(node, setting, default);
         if name.trim().is_empty() {
             return Err(Problem::on(node, missing));
         }
@@ -837,6 +876,35 @@ impl Compiler<'_> {
                 let handle = self.target(next, Err("link or name the object to move"))?;
                 let [x, y, z] = vec3(self, "position")?;
                 let _ = writeln!(code, "{indent}(call $set_position_of {handle} {x} {y} {z})");
+            }
+            "setComponent" => {
+                let component = component_of(n).ok_or_else(|| Problem::on(next, "choose a component whose fields scripts can set"))?;
+                if !component.settable() {
+                    return Err(Problem::on(
+                        next,
+                        format!("{} is read only in play: physics reads it when play starts; use Add Impulse, Set Velocity or Walk", component.label),
+                    ));
+                }
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
+                let (c_at, c_len) = self.text(component.name.as_bytes());
+                // Only linked fields change; the others keep their values.
+                for field in component.fields() {
+                    if graph.link_into(next, field.name).is_none() {
+                        continue;
+                    }
+                    let value = self.input(next, field.name)?;
+                    let zero = lit(0.0);
+                    let [x, y, z] = match field.ty {
+                        Float => [as_float(next, value)?, zero.clone(), zero],
+                        Bool => [format!("(f32.convert_i32_u {})", as_bool(next, value)?), zero.clone(), zero],
+                        _ => as_vec(next, value)?,
+                    };
+                    let (f_at, f_len) = self.text(field.name.as_bytes());
+                    let _ = writeln!(
+                        code,
+                        "{indent}(drop (call $set_field {handle} (i32.const {c_at}) (i32.const {c_len}) (i32.const {f_at}) (i32.const {f_len}) {x} {y} {z}))"
+                    );
+                }
             }
             "destroyObject" => {
                 let handle = self.target(next, Ok("(call $self_handle)"))?;
@@ -1022,6 +1090,32 @@ impl Compiler<'_> {
                 let handle = self.target(node, Err("link or name the object to read"))?;
                 Val::V([0, 1, 2].map(|i| format!("(call $t_of {handle} (i32.const {i}))")))
             }
+            "getComponent" | "tryGetComponent" => {
+                let component = component_of(n).ok_or_else(|| Problem::on(node, "choose a component whose fields scripts can read"))?;
+                let handle = self.target(node, Ok("(call $self_handle)"))?;
+                let (c_at, c_len) = self.text(component.name.as_bytes());
+                if pin == "found" {
+                    // An empty field asks whether the object has the component.
+                    Val::B(format!("(call $component_get {handle} (i32.const {c_at}) (i32.const {c_len}) (i32.const 0) (i32.const 0) (i32.const 160))"))
+                } else {
+                    let field = component
+                        .fields()
+                        .iter()
+                        .find(|f| f.name == pin)
+                        .ok_or_else(|| Problem::on(node, format!("{} has no field {pin}", component.label)))?;
+                    let (f_at, f_len) = self.text(field.name.as_bytes());
+                    let part = |offset: u32| {
+                        format!(
+                            "(call $field_value {handle} (i32.const {c_at}) (i32.const {c_len}) (i32.const {f_at}) (i32.const {f_len}) (i32.const {offset}))"
+                        )
+                    };
+                    match field.ty {
+                        Float => Val::F(part(0)),
+                        Bool => Val::B(format!("(f32.ne {} (f32.const 0))", part(0))),
+                        _ => Val::V([part(0), part(4), part(8)]),
+                    }
+                }
+            }
             "thisObject" => Val::O("(call $self_handle)".to_owned()),
             "findNamed" => {
                 let (at, len) = self.named(node, "name", "name the object to find")?;
@@ -1190,6 +1284,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))
   (import "bayleaf" "find_with" (func $find_with (param i32 i32 i32) (result i32)))
   (import "bayleaf" "count_with" (func $count_with (param i32 i32) (result i32)))
+  (import "bayleaf" "component_get" (func $component_get (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "component_set" (func $component_set (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "transform_get_of" (func $transform_get_of (param i32 i32)))
   (import "bayleaf" "transform_set_of" (func $transform_set_of (param i32 i32)))
   (import "bayleaf" "position_get_of" (func $position_get_of (param i32 i32)))
@@ -1243,6 +1339,16 @@ const PRELUDE: &str = r#"(module
   (func $ray_value (param $ox f32) (param $oy f32) (param $oz f32) (param $dx f32) (param $dy f32) (param $dz f32) (param $max f32) (param $offset i32) (result f32)
     (drop (call $raycast (local.get $ox) (local.get $oy) (local.get $oz) (local.get $dx) (local.get $dy) (local.get $dz) (local.get $max) (i32.const 48)))
     (f32.load (i32.add (i32.const 48) (local.get $offset))))
+  ;; Part $offset (0, 4 or 8) of a component field of the object with handle h, read through bytes 160..172.
+  (func $field_value (param $h i32) (param $c i32) (param $cl i32) (param $f i32) (param $fl i32) (param $offset i32) (result f32)
+    (drop (call $component_get (local.get $h) (local.get $c) (local.get $cl) (local.get $f) (local.get $fl) (i32.const 160)))
+    (f32.load (i32.add (i32.const 160) (local.get $offset))))
+  ;; Asks to set a component field of the object with handle h to x, y, z (through bytes 176..188).
+  (func $set_field (param $h i32) (param $c i32) (param $cl i32) (param $f i32) (param $fl i32) (param $x f32) (param $y f32) (param $z f32) (result i32)
+    (f32.store (i32.const 176) (local.get $x))
+    (f32.store (i32.const 180) (local.get $y))
+    (f32.store (i32.const 184) (local.get $z))
+    (call $component_set (local.get $h) (local.get $c) (local.get $cl) (local.get $f) (local.get $fl) (i32.const 176)))
   ;; Sets the position of the object with handle h.
   (func $set_position_of (param $h i32) (param $x f32) (param $y f32) (param $z f32)
     (call $transform_get_of (local.get $h) (i32.const 0))

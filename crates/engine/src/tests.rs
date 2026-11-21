@@ -1432,3 +1432,28 @@ fn a_visual_scripts_menu_path_is_a_checked_field_that_undoes() {
     registry.execute(&mut session, "graph.new", &json!({"domain": "material"})).unwrap();
     assert!(registry.execute(&mut session, "graph.menu.set", &json!({"path": "Light/Flicker"})).is_err(), "materials have no menu path");
 }
+
+#[test]
+fn set_component_changes_a_field_in_play_and_stop_restores_it() {
+    use bayleaf_graph::{Graph, Link, PinRef};
+    let catalog = &bayleaf_script::visual::CATALOG;
+    let mut graph = Graph::new(catalog);
+    let update = graph.nodes.iter().find(|n| n.kind == "update").unwrap().id;
+    let set = graph.add_node(catalog, "setComponent", [0.0, 0.0]).unwrap();
+    let number = graph.add_node(catalog, "number", [0.0, 0.0]).unwrap();
+    graph.set_value(catalog, number, "value", json!(7.0)).unwrap();
+    graph.connect(catalog, Link { from: PinRef::new(update, "then"), to: PinRef::new(set, "run") }).unwrap();
+    graph.connect(catalog, Link { from: PinRef::new(number, "value"), to: PinRef::new(set, "intensity") }).unwrap();
+    let bytes = bayleaf_script::visual::compile(&graph).unwrap();
+    let (registry, mut session, id, dir) = scripted_scene("fields", &bytes);
+    registry.execute(&mut session, "scene.component.add", &json!({"id": id, "component": "pointLight"})).unwrap();
+    let object = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    let intensity = |session: &Session| session.scene().component(object, "pointLight").unwrap()["intensity"].as_f64().unwrap();
+    let before = intensity(&session);
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.1, "steps": 2})).unwrap();
+    assert!((intensity(&session) - 7.0).abs() < 1e-6, "the script set the light's intensity");
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert_eq!(intensity(&session), before, "stopping play puts the light back");
+    std::fs::remove_dir_all(&dir).ok();
+}

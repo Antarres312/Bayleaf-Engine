@@ -1375,3 +1375,21 @@ fn a_search_node_picks_a_component_from_a_list_or_takes_a_dragged_script() {
     assert_eq!(kind(&harness).as_deref(), Some("Seeker"), "a dragged script is looked for by its name");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn get_component_shows_the_chosen_components_fields_as_pins_and_drops_links_to_fields_it_loses() {
+    let mut harness = graph_harness("script");
+    let editor = harness.state_mut();
+    let get = editor.dispatch("graph.node.add", &json!({ "kind": "getComponent", "position": [40, 260] }), None).unwrap()["node"].as_u64().unwrap() as u32;
+    let log = editor.dispatch("graph.node.add", &json!({ "kind": "log", "position": [320, 260] }), None).unwrap()["node"].as_u64().unwrap() as u32;
+    editor.dispatch("graph.link.add", &json!({ "from": { "node": get, "pin": "intensity" }, "to": { "node": log, "pin": "value" } }), None).unwrap();
+    harness.run();
+    assert!(harness.query_by_label_contains(&format!("Output Intensity (Number) of Get Component {get}")).is_some(), "a Point Light's fields at first");
+    harness.get_by_label_contains(&format!("Component of node {get}:")).click();
+    harness.run();
+    harness.get_by_label("Camera").click();
+    harness.run();
+    assert!(harness.query_by_label_contains(&format!("Output Field of View (Number) of Get Component {get}")).is_some(), "the Camera's fields now");
+    assert!(harness.query_by_label_contains(&format!("Output Intensity (Number) of Get Component {get}")).is_none());
+    assert!(graph(&harness).links.is_empty(), "the link to a field the node lost is gone");
+}

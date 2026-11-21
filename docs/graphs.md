@@ -127,6 +127,14 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   ignore case, spaces, `_` and `-`. Found is false when nothing matches. Their Component, Tag or Script is
   picked from a list of components, the project's scripts and the scene's tags, or set by dragging
   a script from the Project panel onto it.
+- **Get Component** shows the fields of the component named in Component (Point Light: Color,
+  Intensity, Range, Shadows) as outputs, read from the linked object (else this object) as the step
+  began; a missing component reads as zeros. **Try Get Component** adds Found. **Set Component**
+  sets the fields that have a link, after the step; the others are left unchanged. Changing
+  Component changes the pins and drops links to fields the node no longer has. The components are
+  Transform, Mesh, Sprite, Camera, the lights, Environment, Rigid Body, Collider, Character, Player
+  Control and Game Rules, with their number, vector, colour and true/false fields. Physics reads
+  Rigid Body, Collider and Character when play starts, so Set Component refuses them.
 - Position Of, Set Position Of, Send Message, Walk, Jump, Add Impulse, Set Velocity and **Destroy
   Object** take an Object input. Unlinked, they use the first object named in Object Name, else
   their own default (this object, or for Send Message every object).

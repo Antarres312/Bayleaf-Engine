@@ -401,7 +401,7 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui, doc: &bayleaf_engine::GraphDo
 fn add_comment(editor: &mut Editor, view: &mut GraphView, graph: &Graph, catalog: &Catalog) {
     let mut bounds = Rect::NOTHING;
     for node in view.selected.iter().filter_map(|id| graph.node(*id)) {
-        if let Some(def) = catalog.get(&node.kind) {
+        if let Some(def) = catalog.def_of(node) {
             bounds = bounds.union(node_rect(node, def));
         }
     }
@@ -441,7 +441,7 @@ fn problem_strip(ui: &mut egui::Ui, graph: &Graph, catalog: &Catalog, problems: 
                 let place = problem
                     .node
                     .and_then(|id| graph.node(id))
-                    .map(|n| format!("{} {}: ", catalog.get(&n.kind).map_or(n.kind.as_str(), |d| d.label), n.id))
+                    .map(|n| format!("{} {}: ", catalog.def_of(n).map_or(n.kind.as_str(), |d| d.label), n.id))
                     .unwrap_or_default();
                 let text = format!("{place}{}", problem.message);
                 if let Some(id) = problem.node {
@@ -493,7 +493,7 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
     }
     if let Some(id) = view.focus_node
         && let Some(node) = graph.node(id)
-        && let Some(def) = catalog.get(&node.kind)
+        && let Some(def) = catalog.def_of(node)
     {
         // Bring a node that gets focus into view.
         let rect = node_rect(node, def);
@@ -517,7 +517,7 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
         // Links under the nodes.
         for link in &graph.links {
             let ends = graph.node(link.from.node).zip(graph.node(link.to.node)).and_then(|(from, to)| {
-                let (fd, td) = (catalog.get(&from.kind)?, catalog.get(&to.kind)?);
+                let (fd, td) = (catalog.def_of(from)?, catalog.def_of(to)?);
                 let ty = fd.output(&link.from.pin)?.ty;
                 Some((pin_pos(from, fd, &link.from.pin, true)?, pin_pos(to, td, &link.to.pin, false)?, ty))
             });
@@ -528,13 +528,13 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
         let mut problem_nodes: Vec<u32> = problems.iter().filter_map(|p| p.node).collect();
         problem_nodes.dedup();
         for node in &graph.nodes {
-            if let Some(def) = catalog.get(&node.kind) {
+            if let Some(def) = catalog.def_of(node) {
                 node_ui(ui, t, graph, catalog, node, def, problem_nodes.contains(&node.id), gesture, zoom, view, &mut requests, &mut hovered_pin);
             }
         }
         // The link being dragged follows the pointer.
         if let Some(drag) = &view.drag
-            && let Some(start) = graph.node(drag.pin.node).and_then(|n| pin_pos(n, catalog.get(&n.kind)?, &drag.pin.pin, drag.output))
+            && let Some(start) = graph.node(drag.pin.node).and_then(|n| pin_pos(n, catalog.def_of(n)?, &drag.pin.pin, drag.output))
             && let Some(pointer) = ui.ctx().pointer_hover_pos()
         {
             let end = to_scene * pointer;
@@ -625,7 +625,7 @@ fn zoom_keys(editor: &mut Editor, ui: &egui::Ui, graph: &Graph, catalog: &Catalo
 fn fit(graph: &Graph, catalog: &Catalog, size: Vec2) -> Rect {
     let mut bounds = Rect::NOTHING;
     for node in &graph.nodes {
-        if let Some(def) = catalog.get(&node.kind) {
+        if let Some(def) = catalog.def_of(node) {
             bounds = bounds.union(node_rect(node, def));
         }
     }
@@ -731,7 +731,7 @@ fn comment_ui(
         view.focus_comment = None;
     }
     // The nodes inside move with the box.
-    let inside: Vec<&Node> = graph.nodes.iter().filter(|n| catalog.get(&n.kind).is_some_and(|d| rect.contains_rect(node_rect(n, d)))).collect();
+    let inside: Vec<&Node> = graph.nodes.iter().filter(|n| catalog.def_of(n).is_some_and(|d| rect.contains_rect(node_rect(n, d)))).collect();
     let move_by = |delta: Vec2, requests: &mut Requests, key: Option<String>| {
         let mut moves = vec![("graph.comment.set", json!({ "comment": comment.id, "position": [rect.min.x + delta.x, rect.min.y + delta.y] }))];
         for node in &inside {
@@ -970,8 +970,12 @@ fn node_ui(
             let field =
                 Rect::from_min_max(pos2(rect.left() + rect.width() * 0.42, center.y - ROW / 2.0 + 2.0), pos2(rect.right() - 10.0, center.y + ROW / 2.0 - 2.0));
             input_editor(ui, node, def, pin, field, gesture, requests);
-        } else if matches!(pin.default, PinDefault::Implicit(_)) && !linked {
-            painter.text(pos2(rect.right() - 10.0, center.y), egui::Align2::RIGHT_CENTER, "surface", egui::FontId::proportional(12.0), t.text_muted);
+        } else if let PinDefault::Implicit(meaning) = pin.default
+            && !linked
+        {
+            // What the pin means without a link: a material's surface, or a field Set Component leaves as it is.
+            let shown = if meaning == "unchanged" { "unchanged" } else { "surface" };
+            painter.text(pos2(rect.right() - 10.0, center.y), egui::Align2::RIGHT_CENTER, shown, egui::FontId::proportional(12.0), t.text_muted);
         }
     }
     for pin in def.outputs {
@@ -1055,7 +1059,7 @@ fn pin_ui(
         match (output, graph.link_into(node.id, pin.name)) {
             (false, Some(link)) if pin.ty != PinType::Flow => {
                 let from = link.from.clone();
-                let ty = graph.node(from.node).and_then(|n| catalog.get(&n.kind)).and_then(|d| d.output(&from.pin)).map_or(pin.ty, |p| p.ty);
+                let ty = graph.node(from.node).and_then(|n| catalog.def_of(n)).and_then(|d| d.output(&from.pin)).map_or(pin.ty, |p| p.ty);
                 requests.run("graph.link.remove", json!({ "node": node.id, "pin": pin.name }));
                 view.drag = Some(PinPick { pin: from, output: true, ty });
             }
@@ -1097,7 +1101,7 @@ fn pin_hint(pin: &PinDef) -> String {
 }
 
 fn node_name(catalog: &Catalog, node: &Node) -> String {
-    format!("{} {}", catalog.get(&node.kind).map_or(node.kind.as_str(), |d| d.label), node.id)
+    format!("{} {}", catalog.def_of(node).map_or(node.kind.as_str(), |d| d.label), node.id)
 }
 
 /// The stored value of an input or setting, or its default.
@@ -1216,6 +1220,12 @@ fn setting_row(
         variable_picker(ui, lists.graph, node, ty, setting, field, requests);
         return;
     }
+    // Get, Try Get and Set Component pick a component whose fields scripts can use; the node's
+    // pins follow the choice.
+    if setting.name == "component" && matches!(node.kind.as_str(), "getComponent" | "tryGetComponent" | "setComponent") {
+        component_picker(ui, node, setting, field, requests);
+        return;
+    }
     // A search picks a component, a script or a tag, or takes a script dragged from the Project panel.
     if setting.name == "kind" && SEARCH_KINDS.contains(&node.kind.as_str()) {
         kind_picker(ui, lists.search, node, setting, field, requests);
@@ -1272,6 +1282,33 @@ fn setting_row(
                 requests.end_gesture = true;
             }
         }
+    }
+}
+
+/// The component a Get, Try Get or Set Component node reads or sets, from the components whose fields
+/// scripts can use (Set Component leaves out those physics reads only when play starts).
+fn component_picker(ui: &mut egui::Ui, node: &Node, setting: &bayleaf_engine::graph::SettingDef, field: Rect, requests: &mut Requests) {
+    let current = bayleaf_engine::script::visual::component_of(node)
+        .map_or_else(|| node.values.get(setting.name).and_then(Value::as_str).unwrap_or_default().to_owned(), |c| c.label.to_owned());
+    let setting_it = node.kind == "setComponent";
+    let mut chosen = None;
+    let response = ui.put(field, |ui: &mut egui::Ui| {
+        craft_ui::ComboBox::from_id_salt(("component", node.id))
+            .width(field.width())
+            .truncate()
+            .selected_text(current.clone())
+            .show_ui(ui, |ui| {
+                for component in bayleaf_engine::script::visual::COMPONENTS.iter().filter(|c| !setting_it || c.settable()) {
+                    if ui.selectable_label(component.label == current, component.label).clicked() && component.label != current {
+                        chosen = Some(component.label);
+                    }
+                }
+            })
+            .response
+    });
+    labelled(ui, &response, &format!("{} of node {}: {current}", setting.label, node.id));
+    if let Some(choice) = chosen {
+        requests.run("graph.node.set", json!({ "node": node.id, "name": setting.name, "value": choice }));
     }
 }
 

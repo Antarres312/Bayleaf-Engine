@@ -506,6 +506,23 @@ fn apply_requests(session: &mut Session) {
                     session.log(Level::Error, format!("[{who}] could not spawn {prefab}: {error}"));
                 }
             }
+            Request::SetField { by, object, component, field, value } => {
+                // The field keeps its shape (a colour keeps its alpha); the component checks the value.
+                let updated = session.scene.component(object, component).ok().and_then(|mut current| {
+                    let new = bayleaf_script::with_field(current.get(&field)?, value)?;
+                    current[field.as_str()] = new;
+                    Some(current)
+                });
+                let result = match updated {
+                    Some(value) => session.scene.set_component(object, component, value).map_err(|e| e.to_string()),
+                    None => Err(format!("it has no {component} field {field}")),
+                };
+                if let Err(error) = result {
+                    let who = session.scene.name(by).unwrap_or("Object").to_owned();
+                    let target = session.scene.name(object).unwrap_or("Object").to_owned();
+                    session.log(Level::Error, format!("[{who}] could not set {field} of {target}'s {component}: {error}"));
+                }
+            }
         }
     }
 }

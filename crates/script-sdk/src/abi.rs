@@ -19,6 +19,8 @@ mod raw {
         pub fn find(name_ptr: *const u8, name_len: usize) -> i32;
         pub fn find_with(kind_ptr: *const u8, kind_len: usize, index: i32) -> i32;
         pub fn count_with(kind_ptr: *const u8, kind_len: usize) -> i32;
+        pub fn component_get(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, out: *mut f32) -> i32;
+        pub fn component_set(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, value: *const f32) -> i32;
         pub fn transform_get_of(handle: i32, out: *mut f32);
         pub fn transform_set_of(handle: i32, ptr: *const f32);
         pub fn position_get_of(handle: i32, out: *mut f64);
@@ -79,6 +81,12 @@ mod raw {
         0
     }
     pub unsafe fn count_with(_: *const u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn component_get(_: i32, _: *const u8, _: usize, _: *const u8, _: usize, _: *mut f32) -> i32 {
+        0
+    }
+    pub unsafe fn component_set(_: i32, _: *const u8, _: usize, _: *const u8, _: usize, _: *const f32) -> i32 {
         0
     }
     pub unsafe fn transform_get_of(_: i32, out: *mut f32) {
@@ -213,6 +221,20 @@ pub(crate) fn find_with(kind: &str, index: i32) -> i32 {
 pub(crate) fn count_with(kind: &str) -> i32 {
     // SAFETY: the pointer and length describe `kind`; the host only reads.
     unsafe { raw::count_with(kind.as_ptr(), kind.len()) }
+}
+
+pub(crate) fn component_get(handle: i32, component: &str, field: &str) -> Option<[f32; 3]> {
+    let mut out = [0.0f32; 3];
+    // SAFETY: the pointers and lengths describe `component` and `field`, which the host only reads;
+    // `out` is 3 writable f32, exactly what the host writes.
+    let found = unsafe { raw::component_get(handle, component.as_ptr(), component.len(), field.as_ptr(), field.len(), out.as_mut_ptr()) };
+    (found != 0).then_some(out)
+}
+
+pub(crate) fn component_set(handle: i32, component: &str, field: &str, value: [f32; 3]) -> bool {
+    // SAFETY: the pointers and lengths describe `component`, `field` and the 3 f32 of `value`; the
+    // host only reads.
+    unsafe { raw::component_set(handle, component.as_ptr(), component.len(), field.as_ptr(), field.len(), value.as_ptr()) != 0 }
 }
 
 pub(crate) fn transform_get_of(handle: i32) -> [f32; 9] {
