@@ -119,24 +119,25 @@ pub(crate) const LIGHT: Tokens = Tokens {
     pin_any: Color32::from_rgb(0x7B, 0x3F, 0xC4),
 };
 
-/// Corner radius of buttons and fields.
-pub(crate) const RADIUS: u8 = 6;
+/// Corner radius of buttons and fields: nearly square, so short controls read as controls and not
+/// as rounded chips, and rows of them line up into a grid.
+pub(crate) const RADIUS: u8 = 2;
 /// Corner radius of cards and popups.
-pub(crate) const CARD_RADIUS: u8 = 8;
+pub(crate) const CARD_RADIUS: u8 = 4;
 /// Corner radius of inspector sections: small, so stacked sections stay compact.
-pub(crate) const SECTION_RADIUS: u8 = 3;
+pub(crate) const SECTION_RADIUS: u8 = 2;
 /// Height of an inspector section's title row: the 24-point minimum target size.
 pub(crate) const SECTION_TITLE: f32 = 24.0;
 /// Space between inspector sections.
 pub(crate) const SECTION_GAP: f32 = 3.0;
-/// Height of rows and controls; at least the 24-point minimum target size.
-pub(crate) const ROW_HEIGHT: f32 = 26.0;
+/// Height of rows and controls: the 24-point minimum target size, so more rows fit.
+pub(crate) const ROW_HEIGHT: f32 = 24.0;
 /// Row height in long lists (hierarchy, project files): denser than controls, so more rows fit.
 pub(crate) const LIST_ROW: f32 = 20.0;
 /// Width of the label column in the inspector.
 pub(crate) const LABEL_WIDTH: f32 = 88.0;
 /// Space between related controls.
-pub(crate) const GAP: f32 = 6.0;
+pub(crate) const GAP: f32 = 4.0;
 
 /// The tokens for the theme `ui` is drawn with.
 pub(crate) fn tokens(ui: &egui::Ui) -> &'static Tokens {
@@ -164,8 +165,19 @@ pub(crate) fn dense(ui: &mut egui::Ui) {
     // Small corners suit thin rows.
     let w = &mut ui.visuals_mut().widgets;
     for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
-        state.corner_radius = CornerRadius::same(3);
+        state.corner_radius = CornerRadius::same(RADIUS);
     }
+}
+
+/// A small flat tag beside a title or in the status bar ("Modified"): a square-cornered fill that
+/// reads as a label, not as a button.
+pub(crate) fn tag(ui: &mut egui::Ui, text: &str, fill: Color32, color: Color32) -> egui::Response {
+    egui::Frame::new()
+        .fill(fill)
+        .corner_radius(RADIUS)
+        .inner_margin(Margin::symmetric(5, 0))
+        .show(ui, |ui| ui.label(egui::RichText::new(text).small().color(color)))
+        .response
 }
 
 /// Paints zebra stripes behind `rows` into a shape slot reserved before the rows were drawn.
@@ -235,22 +247,22 @@ fn style(t: &Tokens, dark: bool) -> egui::Style {
     style.visuals = v;
 
     let s = &mut style.spacing;
-    s.item_spacing = Vec2::new(8.0, GAP);
-    s.button_padding = Vec2::new(10.0, 4.0);
+    s.item_spacing = Vec2::new(6.0, GAP);
+    s.button_padding = Vec2::new(8.0, 2.0);
     s.interact_size = Vec2::new(40.0, ROW_HEIGHT);
-    s.window_margin = Margin::same(10);
-    s.menu_margin = Margin::same(6);
+    s.window_margin = Margin::same(8);
+    s.menu_margin = Margin::same(4);
     s.indent = 14.0;
     s.icon_width = 14.0;
     s.icon_spacing = 6.0;
     s.combo_height = 240.0;
 
     style.text_styles = [
-        (TextStyle::Small, FontId::new(11.5, FontFamily::Proportional)),
-        (TextStyle::Body, FontId::new(14.0, FontFamily::Proportional)),
-        (TextStyle::Button, FontId::new(14.0, FontFamily::Proportional)),
-        (TextStyle::Heading, FontId::new(17.0, FontFamily::Proportional)),
-        (TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace)),
+        (TextStyle::Small, FontId::new(11.0, FontFamily::Proportional)),
+        (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
+        (TextStyle::Button, FontId::new(13.0, FontFamily::Proportional)),
+        (TextStyle::Heading, FontId::new(15.0, FontFamily::Proportional)),
+        (TextStyle::Monospace, FontId::new(12.5, FontFamily::Monospace)),
     ]
     .into();
     style

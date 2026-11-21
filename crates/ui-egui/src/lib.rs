@@ -154,15 +154,11 @@ impl Editor {
         egui::Panel::bottom("status_bar").frame(egui::Frame::new().fill(t.backdrop).inner_margin(egui::Margin::symmetric(10, 4))).show(ui, |ui| {
             ui.horizontal(|ui| {
                 if self.session.is_dirty() {
-                    egui::Frame::new().fill(t.surface_active).corner_radius(theme::RADIUS).inner_margin(egui::Margin::symmetric(8, 1)).show(ui, |ui| {
-                        ui.label(egui::RichText::new("Modified").small().color(t.text));
-                    });
+                    theme::tag(ui, "Modified", t.surface_active, t.text);
                 }
                 if let Some(note) = &self.automation_note {
                     // A visible sign that an agent can change the scene.
-                    egui::Frame::new().fill(t.accent).corner_radius(theme::RADIUS).inner_margin(egui::Margin::symmetric(8, 1)).show(ui, |ui| {
-                        ui.label(egui::RichText::new(format!("Agent control: {note}")).small().color(t.on_accent));
-                    });
+                    theme::tag(ui, &format!("Agent control: {note}"), t.accent, t.on_accent);
                 }
                 ui.label(egui::RichText::new(&self.status).color(t.text_muted));
             });

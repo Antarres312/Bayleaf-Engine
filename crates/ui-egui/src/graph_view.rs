@@ -316,9 +316,7 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui, doc: &bayleaf_engine::GraphDo
             ui.label(egui::RichText::new(&name).strong().color(t.text));
             ui.label(egui::RichText::new(catalog.label).small().color(t.text_muted));
             if doc.dirty {
-                egui::Frame::new().fill(t.surface_active).corner_radius(theme::RADIUS).inner_margin(egui::Margin::symmetric(6, 0)).show(ui, |ui| {
-                    ui.label(egui::RichText::new("Modified").small().color(t.text));
-                });
+                theme::tag(ui, "Modified", t.surface_active, t.text);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Close").clicked() && (!doc.dirty || crate::confirm_discard_graph()) {
