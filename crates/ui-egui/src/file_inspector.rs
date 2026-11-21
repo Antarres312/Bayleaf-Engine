@@ -142,9 +142,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
 
     // An edited Input Map is saved; its new time on disk is taken, so the edits are not read back.
     if let Some(asset) = save_input
-        && editor
-            .dispatch("input.asset.set", &serde_json::json!({ "path": file.path, "asset": { "start": asset.start, "actions": asset.actions } }), None)
-            .is_some()
+        && editor.dispatch("input.asset.set", &serde_json::json!({ "path": file.path, "asset": { "start": asset.start, "maps": asset.maps } }), None).is_some()
     {
         file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
     }

@@ -749,7 +749,8 @@ fn input_map_edits_save_when_they_read_right_explain_when_not_and_stay_inside_th
     harness.run_steps(2);
     let jump = |harness: &mut Harness<'static, Editor>| {
         let asset = harness.state_mut().dispatch("input.asset", &json!({ "path": "input/game.binput" }), None).unwrap();
-        asset["asset"]["actions"].as_array().unwrap().iter().find(|a| a["name"] == "Player/Jump").unwrap()["bindings"].clone()
+        let player = asset["asset"]["maps"].as_array().unwrap().iter().find(|m| m["name"] == "Player").unwrap().clone();
+        player["actions"].as_array().unwrap().iter().find(|a| a["name"] == "Jump").unwrap()["bindings"].clone()
     };
     let retype = |harness: &mut Harness<'static, Editor>, label: &str, text: &str| {
         harness.get_by_label(label).focus();
@@ -764,8 +765,8 @@ fn input_map_edits_save_when_they_read_right_explain_when_not_and_stay_inside_th
     assert!(harness.query_by_label_contains("Not saved").is_some(), "a bad one is explained");
     assert!(!jump(&mut harness).as_array().unwrap().iter().any(|b| b == "pad:Nope"), "and not saved");
     retype(&mut harness, "Bindings of Player/Jump", "key:J");
-    retype(&mut harness, "Name of Player/Jump", "Jump");
-    assert!(harness.query_by_label_contains("name an action map/action").is_some(), "a name without its map is explained");
+    retype(&mut harness, "Name of Player/Jump", "Jump/High");
+    assert!(harness.query_by_label_contains("letters, digits or _").is_some(), "an action name with a / is explained: the map is the section it sits in");
 
     // Every action row stays inside the Inspector: the last Remove button ends where the first does.
     let removes: Vec<egui::Rect> = harness

@@ -1278,7 +1278,7 @@ fn input_maps_answer_per_object_count_triggers_once_and_switch() {
     let dir = std::env::temp_dir().join(format!("bayleaf-input-maps-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
-    let car = json!({"start": "", "actions": [{"name": "Car/Horn", "kind": "trigger", "bindings": ["key:H"]}]});
+    let car = json!({"start": "", "maps": [{"name": "Car", "actions": [{"name": "Horn", "kind": "trigger", "bindings": ["key:H"]}]}]});
     registry.execute(&mut session, "input.asset.set", &json!({"path": "input/car.binput", "asset": car})).unwrap();
     std::fs::write(dir.join("walker.wasm"), action_reader(&[("Jump", "walkerJump")])).unwrap();
     std::fs::write(dir.join("driver.wasm"), action_reader(&[("Horn", "driverHorn"), ("Jump", "driverJump")])).unwrap();
@@ -1312,8 +1312,13 @@ fn input_maps_answer_per_object_count_triggers_once_and_switch() {
     registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
 
     // Assets are checked, and agents write them only inside their folders.
-    let bad = json!({"start": "", "actions": [{"name": "Jump", "kind": "held", "bindings": []}]});
-    assert!(registry.execute(&mut session, "input.asset.set", &json!({"path": "input/bad.binput", "asset": bad})).is_err(), "names are map/action");
+    let bad = json!({"start": "", "maps": [{"name": "Player", "actions": [{"name": "Jump/High", "kind": "held", "bindings": []}]}]});
+    assert!(registry.execute(&mut session, "input.asset.set", &json!({"path": "input/bad.binput", "asset": bad})).is_err(), "an action name is one name");
+    // A version 1 file, with its actions named map/action in one list, still reads, sorted into maps.
+    let flat = json!({"format": "bayleaf.input", "version": 1, "start": "", "actions": [{"name": "Boat/Row", "kind": "value", "bindings": ["key:R"]}]});
+    std::fs::write(dir.join("input/old.binput"), flat.to_string()).unwrap();
+    let old = registry.execute(&mut session, "input.asset", &json!({"path": "input/old.binput"})).unwrap();
+    assert_eq!((&old["asset"]["maps"][0]["name"], &old["asset"]["maps"][0]["actions"][0]["name"]), (&json!("Boat"), &json!("Row")));
     let scenes = dir.join("scenes");
     session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), std::slice::from_ref(&scenes)).unwrap()));
     assert!(registry.execute(&mut session, "input.asset.set", &json!({"path": "input/car.binput", "asset": car})).is_err());
@@ -1339,7 +1344,8 @@ fn opening_an_old_project_moves_its_inline_actions_into_an_input_map() {
     let settings = registry.execute(&mut session, "project.settings", &Value::Null).unwrap();
     assert_eq!(settings["settings"]["input"]["map"], "input/actions.binput");
     let moved = registry.execute(&mut session, "input.asset", &json!({"path": "input/actions.binput"})).unwrap();
-    assert_eq!(moved["asset"]["actions"][0]["name"], "Default/Jump", "the actions keep their bindings, in the map Default");
+    assert_eq!(moved["asset"]["maps"][0]["name"], "Default", "the actions go into the map Default");
+    assert_eq!(moved["asset"]["maps"][0]["actions"][0]["name"], "Jump", "keeping their names");
     assert!(std::fs::read_to_string(&file).unwrap().contains("\"version\": 3"));
     std::fs::remove_dir_all(&dir).ok();
 }

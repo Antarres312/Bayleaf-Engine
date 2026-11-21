@@ -72,13 +72,10 @@ impl InputSettings {
         let actions = self.actions.as_ref()?;
         let list = actions
             .iter()
-            .map(|a| crate::input_cmds::InputAction {
-                name: format!("{LEGACY_MAP}/{}", a.name),
-                kind: bayleaf_script::actions::ActionKind::Value,
-                bindings: a.bindings.clone(),
-            })
+            .map(|a| crate::input_cmds::InputAction { name: a.name.clone(), kind: bayleaf_script::actions::ActionKind::Value, bindings: a.bindings.clone() })
             .collect();
-        Some(crate::input_cmds::InputAsset::new(LEGACY_MAP, list))
+        let map = crate::input_cmds::InputMapDef { name: LEGACY_MAP.to_owned(), actions: list };
+        Some(crate::input_cmds::InputAsset::new(LEGACY_MAP, vec![map]))
     }
 }
 

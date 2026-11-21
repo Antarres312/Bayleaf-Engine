@@ -177,7 +177,7 @@ fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, files: &[String], setting
         let note = if settings.input.actions.is_some() {
             "This project's actions are still in its project file from an older version; open the project again to move them into an Input Map."
         } else {
-            "Actions are named map/action (Player/Jump); one map is active at a time. Objects can carry their own with an Input Map component."
+            "An Input Map holds maps, each with its actions; one map is active at a time. Code and visual scripts name an action map/action (Player/Jump). Objects can carry their own with an Input Map component."
         };
         ui.add(egui::Label::new(egui::RichText::new(note).small().color(t.text_muted)).wrap());
     });

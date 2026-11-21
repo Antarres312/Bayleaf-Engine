@@ -154,8 +154,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
 7. **M6 Gameplay framework** as opt-in modules (`gameplay` feature of `bayleaf-engine`). Started:
    input actions in the project settings (named actions bound to keys, mouse, gamepad buttons and
    sticks; `action` in the ABI, Action and On Action Pressed nodes, the Input Actions panel); since
-   then Input Map assets (`.binput`): actions named `map/action`, each a trigger, held or value, of
-   which one map is active at a time; Project Settings names the project's asset (project format 3;
+   then Input Map assets (`.binput`, version 2): a list of maps, each with its actions (a trigger,
+   held or value, with bindings), of which one map is active at a time, and which code and visual
+   scripts name `map/action`; Project Settings names the project's asset (project format 3;
    older projects move their actions into one when opened), and an Input Map component gives an
    object its own; `input_map_set` and the Set Input Map node switch maps, `input.asset`,
    `input.asset.set`, `input.map.set` and `input.state` serve agents, and the Inspector edits an

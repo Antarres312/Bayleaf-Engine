@@ -14,6 +14,8 @@ pub const STICK_DEAD_ZONE: f32 = 0.15;
 /// Most actions in a project, and most bindings per action.
 pub const MAX_ACTIONS: usize = 128;
 pub const MAX_BINDINGS: usize = 16;
+/// Most maps in an Input Map.
+pub const MAX_MAPS: usize = 32;
 
 /// One way to press an action.
 #[derive(Clone, Debug, PartialEq)]
@@ -114,13 +116,10 @@ fn is_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Splits `map/action` into its two names, each 1 to 64 letters, digits or `_`.
-pub fn split_name(full: &str) -> Result<(&str, &str), String> {
-    match full.split_once('/') {
-        Some((map, action)) if is_name(map) && is_name(action) => Ok((map, action)),
-        _ => Err(format!("{full:?}: name an action map/action, each 1 to 64 letters, digits or _ (Player/Jump)")),
-    }
-}
+/// An action as written: its name, its kind, and its bindings as text (`key:W`).
+pub type ActionSpec = (String, ActionKind, Vec<String>);
+/// A map as written: its name and its actions.
+pub type MapSpec = (String, Vec<ActionSpec>);
 
 /// The actions of an Input Map asset, checked and sorted into maps. One map is active at a time;
 /// `start` is the one a game starts with.
@@ -132,37 +131,49 @@ pub struct InputMaps {
 }
 
 impl InputMaps {
-    /// Maps from `map/action` names, kinds and binding texts. `start` names the first active map;
-    /// empty for the first map listed. Refuses bad names, unknown bindings, and too many of either.
-    pub fn new(list: &[(String, ActionKind, Vec<String>)], start: &str) -> Result<Self, String> {
-        if list.len() > MAX_ACTIONS {
-            return Err(format!("an input map asset may have at most {MAX_ACTIONS} actions"));
+    /// Maps, each named and holding its actions (name, kind, binding texts). `start` names the
+    /// first active map; empty for the first map. Refuses bad or repeated names, unknown bindings,
+    /// and too many of any.
+    pub fn new(list: &[MapSpec], start: &str) -> Result<Self, String> {
+        if list.len() > MAX_MAPS {
+            return Err(format!("an Input Map may have at most {MAX_MAPS} maps"));
         }
-        let mut seen = HashSet::new();
+        if list.iter().map(|(_, actions)| actions.len()).sum::<usize>() > MAX_ACTIONS {
+            return Err(format!("an Input Map may have at most {MAX_ACTIONS} actions"));
+        }
         let mut actions = Vec::new();
         let mut maps: Vec<String> = Vec::new();
-        for (full, kind, bindings) in list {
-            let (map, name) = split_name(full)?;
-            if !seen.insert(full.clone()) {
-                return Err(format!("action {full} is named twice"));
+        for (map, list) in list {
+            if !is_name(map) {
+                return Err(format!("map name {map:?} must be 1 to 64 letters, digits or _"));
             }
-            if bindings.len() > MAX_BINDINGS {
-                return Err(format!("action {full} may have at most {MAX_BINDINGS} bindings"));
+            if maps.contains(map) {
+                return Err(format!("map {map} is named twice"));
             }
-            let parsed = bindings.iter().map(|b| Binding::parse(b)).collect::<Result<Vec<_>, _>>().map_err(|e| format!("action {full}: {e}"))?;
-            if !maps.iter().any(|m| m == map) {
-                maps.push(map.to_owned());
+            maps.push(map.clone());
+            let mut seen = HashSet::new();
+            for (name, kind, bindings) in list {
+                if !is_name(name) {
+                    return Err(format!("action name {name:?} in {map} must be 1 to 64 letters, digits or _"));
+                }
+                if !seen.insert(name.clone()) {
+                    return Err(format!("action {map}/{name} is named twice"));
+                }
+                if bindings.len() > MAX_BINDINGS {
+                    return Err(format!("action {map}/{name} may have at most {MAX_BINDINGS} bindings"));
+                }
+                let parsed = bindings.iter().map(|b| Binding::parse(b)).collect::<Result<Vec<_>, _>>().map_err(|e| format!("action {map}/{name}: {e}"))?;
+                actions.push(Action { map: map.clone(), name: name.clone(), kind: *kind, bindings: parsed });
             }
-            actions.push(Action { map: map.to_owned(), name: name.to_owned(), kind: *kind, bindings: parsed });
         }
         let start = if start.is_empty() { maps.first().cloned().unwrap_or_default() } else { start.to_owned() };
         if !maps.is_empty() && !maps.contains(&start) {
-            return Err(format!("the starting map {start} has no actions; the maps are {}", maps.join(", ")));
+            return Err(format!("there is no map {start} to start with; the maps are {}", maps.join(", ")));
         }
         Ok(Self { actions, maps, start })
     }
 
-    /// The maps, in the order their first actions are listed.
+    /// The maps, in their order.
     pub fn maps(&self) -> &[String] {
         &self.maps
     }
@@ -297,10 +308,15 @@ mod tests {
         let action = |name: &str, kind, bindings: &[&str]| (name.to_owned(), kind, bindings.iter().map(|b| (*b).to_owned()).collect());
         InputMaps::new(
             &[
-                action("Player/MoveRight", ActionKind::Value, &["key:D", "axis:LeftX+"]),
-                action("Player/Jump", ActionKind::Trigger, &["key:Space", "pad:South", "mouse:Right"]),
-                action("Player/Fire", ActionKind::Held, &["key:F"]),
-                action("Menu/Confirm", ActionKind::Trigger, &["key:Space"]),
+                (
+                    "Player".to_owned(),
+                    vec![
+                        action("MoveRight", ActionKind::Value, &["key:D", "axis:LeftX+"]),
+                        action("Jump", ActionKind::Trigger, &["key:Space", "pad:South", "mouse:Right"]),
+                        action("Fire", ActionKind::Held, &["key:F"]),
+                    ],
+                ),
+                ("Menu".to_owned(), vec![action("Confirm", ActionKind::Trigger, &["key:Space"])]),
             ],
             "",
         )
@@ -346,12 +362,15 @@ mod tests {
     }
 
     #[test]
-    fn names_are_map_slash_action_unique_and_the_start_map_exists() {
-        let one = |name: &str| (name.to_owned(), ActionKind::Held, Vec::new());
-        assert!(InputMaps::new(&[one("Jump")], "").is_err(), "a map is needed");
-        assert!(InputMaps::new(&[one("Player/Jump/High")], "").is_err());
-        assert!(InputMaps::new(&[one("A/B"), one("A/B")], "").is_err(), "names are unique");
-        assert!(InputMaps::new(&[one("A/B")], "C").is_err(), "the starting map has actions");
-        assert_eq!(InputMaps::new(&[one("A/B")], "A").unwrap().start(), "A");
+    fn maps_hold_their_own_actions_names_are_unique_and_the_start_map_exists() {
+        let map = |map: &str, actions: &[&str]| (map.to_owned(), actions.iter().map(|a| ((*a).to_owned(), ActionKind::Held, Vec::new())).collect::<Vec<_>>());
+        assert!(InputMaps::new(&[map("Player", &["Jump/High"])], "").is_err(), "an action name is one name");
+        assert!(InputMaps::new(&[map("Pla yer", &["Jump"])], "").is_err());
+        assert!(InputMaps::new(&[map("A", &["B", "B"])], "").is_err(), "names are unique in a map");
+        assert!(InputMaps::new(&[map("A", &["B"]), map("A", &[])], "").is_err(), "and maps are unique");
+        let both = InputMaps::new(&[map("A", &["Jump"]), map("B", &["Jump"])], "B").unwrap();
+        assert_eq!(both.start(), "B", "two maps may each have a Jump");
+        assert!(InputMaps::new(&[map("A", &["B"])], "C").is_err(), "the starting map exists");
+        assert_eq!(InputMaps::new(&[map("A", &["B"]), map("Empty", &[])], "").unwrap().maps(), ["A", "Empty"], "a map may be empty for now");
     }
 }

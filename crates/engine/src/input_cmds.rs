@@ -1,6 +1,8 @@
-//! Input Map assets (`.binput`): a game's input actions, named `map/action`, each with a kind
-//! (trigger, held or value) and its bindings. One map is active at a time. The project's asset is
-//! chosen in Project Settings; an object can carry its own with an Input Map component.
+//! Input Map assets (`.binput`): a game's input, as a list of maps (Player, Menu…), each holding
+//! its actions: a name, a kind (trigger, held or value) and its bindings. One map is active at a
+//! time. Code and visual scripts name an action `map/action`, or just `action` in the active map.
+//! The project's asset is chosen in Project Settings; an object can carry its own with an Input
+//! Map component.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,7 +17,9 @@ use crate::{CommandError, CommandSpec, Mutates, Prompt, Session, always, parse};
 /// File extension of Input Map assets.
 pub const INPUT_EXTENSION: &str = "binput";
 const FORMAT: &str = "bayleaf.input";
-const VERSION: u32 = 1;
+/// Version 2 lists maps, each with its actions; version 1 listed actions named `map/action`.
+/// Version 1 files still read.
+const VERSION: u32 = 2;
 /// The largest Input Map file read.
 const MAX_FILE_BYTES: u64 = 1 << 20;
 
@@ -25,14 +29,22 @@ const MAX_FILE_BYTES: u64 = 1 << 20;
 pub struct InputAsset {
     pub format: String,
     pub version: u32,
-    /// The map active when play starts; empty for the first map listed.
+    /// The map active when play starts; empty for the first map.
     #[serde(default)]
     pub start: String,
+    pub maps: Vec<InputMapDef>,
+}
+
+/// One map: its name and its actions.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InputMapDef {
+    pub name: String,
     pub actions: Vec<InputAction>,
 }
 
-/// One action: `map/action`, its kind, and what presses it (`key:W`, `mouse:Left`, `pad:South`,
-/// `axis:LeftX+`).
+/// One action of a map: its name, its kind, and what presses it (`key:W`, `mouse:Left`,
+/// `pad:South`, `axis:LeftX+`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InputAction {
@@ -42,36 +54,96 @@ pub struct InputAction {
     pub bindings: Vec<String>,
 }
 
+impl InputAction {
+    pub fn new(name: &str, kind: ActionKind, bindings: &[&str]) -> Self {
+        Self { name: name.to_owned(), kind, bindings: bindings.iter().map(|b| (*b).to_owned()).collect() }
+    }
+}
+
+/// A version 1 file: actions named `map/action` in one list.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FlatAsset {
+    #[serde(default)]
+    start: String,
+    actions: Vec<InputAction>,
+}
+
 impl InputAsset {
-    pub fn new(start: &str, actions: Vec<InputAction>) -> Self {
-        Self { format: FORMAT.to_owned(), version: VERSION, start: start.to_owned(), actions }
+    pub fn new(start: &str, maps: Vec<InputMapDef>) -> Self {
+        Self { format: FORMAT.to_owned(), version: VERSION, start: start.to_owned(), maps }
     }
 
     /// The maps, checked, for play mode.
     pub fn maps(&self) -> Result<InputMaps, String> {
-        let list: Vec<(String, ActionKind, Vec<String>)> = self.actions.iter().map(|a| (a.name.clone(), a.kind, a.bindings.clone())).collect();
+        let list: Vec<bayleaf_script::actions::MapSpec> =
+            self.maps.iter().map(|m| (m.name.clone(), m.actions.iter().map(|a| (a.name.clone(), a.kind, a.bindings.clone())).collect())).collect();
         InputMaps::new(&list, &self.start)
+    }
+
+    /// How many actions all the maps hold.
+    pub fn action_count(&self) -> usize {
+        self.maps.iter().map(|m| m.actions.len()).sum()
     }
 
     /// A game's usual controls: Player (walking, jumping, firing) and Menu (moving and choosing).
     pub fn starter() -> Self {
-        let action =
-            |name: &str, kind, bindings: &[&str]| InputAction { name: name.to_owned(), kind, bindings: bindings.iter().map(|b| (*b).to_owned()).collect() };
+        let map = |name: &str, actions| InputMapDef { name: name.to_owned(), actions };
         Self::new(
             "Player",
             vec![
-                action("Player/MoveForward", ActionKind::Value, &["key:W", "key:ArrowUp", "axis:LeftY+"]),
-                action("Player/MoveBack", ActionKind::Value, &["key:S", "key:ArrowDown", "axis:LeftY-"]),
-                action("Player/MoveLeft", ActionKind::Value, &["key:A", "key:ArrowLeft", "axis:LeftX-"]),
-                action("Player/MoveRight", ActionKind::Value, &["key:D", "key:ArrowRight", "axis:LeftX+"]),
-                action("Player/Jump", ActionKind::Trigger, &["key:Space", "pad:South"]),
-                action("Player/Fire", ActionKind::Held, &["mouse:Left", "axis:RightTrigger+"]),
-                action("Menu/Up", ActionKind::Trigger, &["key:ArrowUp", "key:W", "pad:Up"]),
-                action("Menu/Down", ActionKind::Trigger, &["key:ArrowDown", "key:S", "pad:Down"]),
-                action("Menu/Confirm", ActionKind::Trigger, &["key:Enter", "key:Space", "pad:South"]),
-                action("Menu/Back", ActionKind::Trigger, &["key:Escape", "pad:East"]),
+                map(
+                    "Player",
+                    vec![
+                        InputAction::new("MoveForward", ActionKind::Value, &["key:W", "key:ArrowUp", "axis:LeftY+"]),
+                        InputAction::new("MoveBack", ActionKind::Value, &["key:S", "key:ArrowDown", "axis:LeftY-"]),
+                        InputAction::new("MoveLeft", ActionKind::Value, &["key:A", "key:ArrowLeft", "axis:LeftX-"]),
+                        InputAction::new("MoveRight", ActionKind::Value, &["key:D", "key:ArrowRight", "axis:LeftX+"]),
+                        InputAction::new("Jump", ActionKind::Trigger, &["key:Space", "pad:South"]),
+                        InputAction::new("Fire", ActionKind::Held, &["mouse:Left", "axis:RightTrigger+"]),
+                    ],
+                ),
+                map(
+                    "Menu",
+                    vec![
+                        InputAction::new("Up", ActionKind::Trigger, &["key:ArrowUp", "key:W", "pad:Up"]),
+                        InputAction::new("Down", ActionKind::Trigger, &["key:ArrowDown", "key:S", "pad:Down"]),
+                        InputAction::new("Confirm", ActionKind::Trigger, &["key:Enter", "key:Space", "pad:South"]),
+                        InputAction::new("Back", ActionKind::Trigger, &["key:Escape", "pad:East"]),
+                    ],
+                ),
             ],
         )
+    }
+
+    /// Reads the file text: version 2, or version 1 with its `map/action` names sorted into maps.
+    fn from_text(text: &str) -> Result<Self, String> {
+        let value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        if value["format"] != FORMAT {
+            return Err("not an Input Map".to_owned());
+        }
+        match value["version"].as_u64() {
+            Some(2) => serde_json::from_value(value).map_err(|e| e.to_string()),
+            Some(1) => {
+                let mut body = value;
+                if let Some(fields) = body.as_object_mut() {
+                    fields.remove("format");
+                    fields.remove("version");
+                }
+                let flat: FlatAsset = serde_json::from_value(body).map_err(|e| e.to_string())?;
+                let mut maps: Vec<InputMapDef> = Vec::new();
+                for action in flat.actions {
+                    let (map, name) = action.name.split_once('/').ok_or_else(|| format!("{:?} is not named map/action", action.name))?;
+                    let entry = InputAction { name: name.to_owned(), kind: action.kind, bindings: action.bindings.clone() };
+                    match maps.iter_mut().find(|m| m.name == map) {
+                        Some(found) => found.actions.push(entry),
+                        None => maps.push(InputMapDef { name: map.to_owned(), actions: vec![entry] }),
+                    }
+                }
+                Ok(Self::new(&flat.start, maps))
+            }
+            _ => Err(format!("not a version {VERSION} Input Map")),
+        }
     }
 
     pub fn to_text(&self) -> String {
@@ -87,11 +159,7 @@ pub fn read_asset(session: &Session, path: &Path) -> Result<InputAsset, String> 
         return Err(format!("{} is larger than {} KiB", path.display(), MAX_FILE_BYTES / 1024));
     }
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let asset: InputAsset = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    if asset.format != FORMAT || asset.version != VERSION {
-        return Err(format!("{} is not a version {VERSION} Input Map", path.display()));
-    }
-    Ok(asset)
+    InputAsset::from_text(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Reads and checks an Input Map asset, for play mode.
@@ -121,7 +189,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Read Input Map",
             menu: "",
             shortcut: "",
-            params: "{path}: a .binput file; returns {asset: {start, actions: [{name: \"map/action\", kind: \"trigger\" | \"held\" | \"value\", bindings: [key:W | mouse:Left | pad:South | axis:LeftX+]}]}, maps, problem}",
+            params: "{path}: a .binput file; returns {asset: {start, maps: [{name, actions: [{name, kind: \"trigger\" | \"held\" | \"value\", bindings: [key:W | mouse:Left | pad:South | axis:LeftX+]}]}]}, maps, problem}; scripts name an action map/action",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: always,
@@ -132,7 +200,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Change Input Map",
             menu: "",
             shortcut: "",
-            params: "{path, asset: {start, actions}}: checks the actions (names map/action, known bindings) and writes the file; play mode reads it from its next start",
+            params: "{path, asset: {start, maps: [{name, actions: [{name, kind, bindings}]}]}}: checks the maps and actions (names of letters, digits and _, unique; known bindings) and writes the file; play mode reads it from its next start",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: always,
@@ -176,7 +244,7 @@ fn input_asset(session: &mut Session, params: &Value) -> Result<Value, CommandEr
         Ok(maps) => (maps.maps().to_vec(), None),
         Err(problem) => (Vec::new(), Some(problem)),
     };
-    Ok(json!({ "asset": { "start": asset.start, "actions": asset.actions }, "maps": maps, "problem": problem }))
+    Ok(json!({ "asset": { "start": asset.start, "maps": asset.maps }, "maps": maps, "problem": problem }))
 }
 
 #[derive(Deserialize)]
@@ -184,7 +252,7 @@ fn input_asset(session: &mut Session, params: &Value) -> Result<Value, CommandEr
 struct AssetBody {
     #[serde(default)]
     start: String,
-    actions: Vec<InputAction>,
+    maps: Vec<InputMapDef>,
 }
 
 #[derive(Deserialize)]
@@ -196,7 +264,7 @@ struct SetParams {
 
 fn input_asset_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: SetParams = parse(params)?;
-    let asset = InputAsset::new(&p.asset.start, p.asset.actions);
+    let asset = InputAsset::new(&p.asset.start, p.asset.maps);
     let path = write_asset(session, &p.path, &asset)?;
     Ok(json!({ "path": path }))
 }

@@ -234,7 +234,7 @@ fn input_map(session: &Session, path: &Path) -> Info {
         Ok((asset, maps)) => {
             info.row("Maps", maps.maps().join(", "));
             info.row("Starts with", maps.start());
-            info.row("Actions", asset.actions.len());
+            info.row("Actions", asset.action_count());
         }
         Err(problem) => info.problems.push(problem),
     }
