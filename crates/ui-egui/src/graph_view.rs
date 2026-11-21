@@ -141,6 +141,7 @@ fn pin_color(t: &Tokens, ty: PinType) -> Color32 {
         PinType::Color => t.pin_color,
         PinType::Bool => t.pin_bool,
         PinType::Any => t.pin_any,
+        PinType::Object => t.pin_object,
     }
 }
 
@@ -993,6 +994,11 @@ fn pin_ui(
         // Flow pins are arrows, so they differ from data pins by shape as well as colour.
         let points = vec![center + vec2(-r, -r), center + vec2(r, 0.0), center + vec2(-r, r)];
         painter.add(egui::Shape::convex_polygon(points, if filled { color } else { t.surface }, Stroke::new(2.0, color)));
+    } else if pin.ty == PinType::Object {
+        // Object pins are diamonds.
+        let d = r + 1.0;
+        let points = vec![center + vec2(0.0, -d), center + vec2(d, 0.0), center + vec2(0.0, d), center + vec2(-d, 0.0)];
+        painter.add(egui::Shape::convex_polygon(points, if filled { color } else { t.surface }, Stroke::new(2.0, color)));
     } else {
         painter.circle(center, r, if filled { color } else { t.surface }, Stroke::new(2.0, color));
     }
@@ -1045,6 +1051,7 @@ fn pin_hint(pin: &PinDef) -> String {
         PinType::Color => "red, green and blue",
         PinType::Bool => "true or false",
         PinType::Any => "a number or a vector, by what is linked",
+        PinType::Object => "an object in the scene, or none",
     };
     format!("{}: {} ({meaning})", pin.label, pin.ty.label())
 }
@@ -1111,7 +1118,8 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
                 requests.run("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": b }));
             }
         }
-        PinType::Flow => {}
+        // An unlinked object input means the node's own choice (named in its settings, or this object).
+        PinType::Flow | PinType::Object => {}
     }
 }
 
@@ -1288,6 +1296,14 @@ fn commit(response: &egui::Response, requests: &mut Requests, edit: impl FnOnce(
     }
 }
 
+/// Height of the add-node popup's list.
+const MENU_HEIGHT: f32 = 320.0;
+
+/// One node of the add-node popup; returns whether it was chosen.
+fn node_button(ui: &mut egui::Ui, def: &NodeDef) -> bool {
+    ui.add(egui::Button::new(def.label).min_size(vec2(ui.available_width(), theme::LIST_ROW))).on_hover_text(def.description).clicked()
+}
+
 /// The searchable add-node popup.
 fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &Catalog, view: &mut GraphView) {
     let Some(mut menu) = view.add_menu.take() else { return };
@@ -1323,15 +1339,34 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
             {
                 chosen = Some(first);
             }
-            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                let mut category = "";
+            // A fixed size, so the popup does not jump or shrink while the search narrows the list.
+            egui::ScrollArea::vertical().max_height(MENU_HEIGHT).min_scrolled_height(MENU_HEIGHT).auto_shrink([false, false]).show(ui, |ui| {
+                let mut categories: Vec<&'static str> = Vec::new();
                 for def in &matches {
-                    if def.category != category {
-                        category = def.category;
-                        ui.label(egui::RichText::new(category).small().color(t.text_muted));
+                    if !categories.contains(&def.category) {
+                        categories.push(def.category);
                     }
-                    if ui.add(egui::Button::new(def.label).min_size(vec2(ui.available_width(), theme::LIST_ROW))).on_hover_text(def.description).clicked() {
-                        chosen = Some(def);
+                }
+                // While searching, or when only a few nodes fit a dragged pin, every match shows;
+                // otherwise each category opens on a click.
+                let flat = !needle.is_empty() || (menu.from.is_some() && matches.len() <= 12);
+                for category in categories {
+                    let in_category = matches.iter().filter(|d| d.category == category);
+                    if flat {
+                        ui.label(egui::RichText::new(category).small().color(t.text_muted));
+                        for def in in_category {
+                            if node_button(ui, def) {
+                                chosen = Some(def);
+                            }
+                        }
+                    } else {
+                        egui::CollapsingHeader::new(category).id_salt(("add node category", category)).default_open(false).show(ui, |ui| {
+                            for def in in_category {
+                                if node_button(ui, def) {
+                                    chosen = Some(def);
+                                }
+                            }
+                        });
                     }
                 }
                 if matches.is_empty() {

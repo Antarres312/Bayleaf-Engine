@@ -117,6 +117,15 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   given name, or of every object when no name is given. **On Message** runs when a message with its
   name arrives; its Value output is the number. Messages arrive after the step. A message sent
   while handling one arrives a step later.
+- **Object** pins (diamonds) carry an object of the scene. **This Object** is the script's own;
+  **Find Object Named** finds one by name; **Find Object With** finds one that has a component
+  (`Point Light`, `Character`), a tag, or runs a script (by its name), with Index 0 for the first in
+  hierarchy order; **Count Objects With** counts them; **For Each Object With** runs Each once per
+  such object, with the object and its index, then Then. Searches see the scene as the step began and
+  ignore case, spaces, `_` and `-`. Found is false when nothing matches.
+- Position Of, Set Position Of, Send Message, Walk, Jump, Add Impulse, Set Velocity and **Destroy
+  Object** take an Object input. Unlinked, they use the first object named in Object Name, else
+  their own default (this object, or for Send Message every object).
 - Data nodes have no side effects. They are computed where an action needs them.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a
@@ -155,7 +164,7 @@ steps. Automation file access to graphs is confined like any other file (`docs/a
 
 | Action | Mouse | Keyboard |
 |---|---|---|
-| Add a node | Right-click the canvas, or Add Node | Add Node, type to search, Enter |
+| Add a node | Right-click the canvas, or Add Node; click a category to open it | Add Node, type to search, Enter |
 | Link two pins | Drag from one pin to the other | Enter on one pin, then Enter on the other (Escape cancels) |
 | Link to a new node | Drag from a pin into empty space | |
 | Move a link | Drag it away from its input | |
@@ -179,4 +188,4 @@ other nodes use without declaring them); **New Variable…** declares a new one 
 
 Every node, pin and field has a name for screen readers that includes its links ("Input Base Color
 (Color) of Material Output 1, linked from Color 2"). Pins differ by shape as well as colour: flow
-pins are arrows.
+pins are arrows and object pins diamonds.

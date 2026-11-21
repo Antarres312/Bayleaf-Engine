@@ -292,6 +292,35 @@ fn every_node_kind_compiles_and_runs() {
     let send = b.node("sendMessage", json!({ "message": "ping", "object": "Scripted" }));
     b.link(destroy, "then", send, "run");
     b.link(read, "value", send, "value");
+    // Searches, behind the branch that stays false: every object with a Transform, one by name.
+    let each = b.node("forEachWith", json!({ "kind": "Transform" }));
+    b.link(finish, "then", each, "run");
+    let each_log = b.node("log", json!({ "message": "each" }));
+    b.link(each, "each", each_log, "run");
+    b.link(each, "index", each_log, "value");
+    let place = b.node("setPositionOf", json!({}));
+    b.link(each_log, "then", place, "run");
+    b.link(each, "object", place, "target");
+    let named = b.node("findNamed", json!({ "name": "Scripted" }));
+    let where_named = b.node("positionOf", json!({}));
+    b.link(named, "object", where_named, "target");
+    b.link(where_named, "position", place, "position");
+    let counted = b.node("countWith", json!({ "kind": "transform" }));
+    let first_with = b.node("findWith", json!({ "kind": "transform" }));
+    b.link(counted, "count", first_with, "index");
+    let any_found = b.node("and", json!({}));
+    b.link(first_with, "found", any_found, "a");
+    b.link(named, "found", any_found, "b");
+    let found_gate = b.node("branch", json!({}));
+    b.link(each, "then", found_gate, "run");
+    b.link(any_found, "result", found_gate, "condition");
+    let remove = b.node("destroyObject", json!({}));
+    b.link(found_gate, "true", remove, "run");
+    b.link(first_with, "object", remove, "target");
+    let me = b.node("thisObject", json!({}));
+    let push_me = b.node("addImpulse", json!({}));
+    b.link(remove, "then", push_me, "run");
+    b.link(me, "object", push_me, "target");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -585,4 +614,70 @@ fn declared_variables_start_at_their_values_and_undeclared_ones_at_zero() {
     let (_, _, mut host) = run(&b.bytes(), &[]);
     let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(logs, ["lives 3", "other 0"]);
+}
+
+/// A script finds the objects that have a component, a tag or a script, one by one or all at once.
+#[test]
+fn searches_find_objects_by_component_tag_and_script_in_hierarchy_order() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    // Log how many lamps there are, then line every lamp up along X by its index.
+    let count = b.node("countWith", json!({ "kind": "Point Light" }));
+    let log = b.node("log", json!({ "message": "lamps" }));
+    b.link(start, "then", log, "run");
+    b.link(count, "count", log, "value");
+    let each = b.node("forEachWith", json!({ "kind": "point_light" }));
+    b.link(log, "then", each, "run");
+    let place = b.node("setPositionOf", json!({}));
+    b.link(each, "each", place, "run");
+    b.link(each, "object", place, "target");
+    let at = b.node("vector", json!({}));
+    b.link(each, "index", at, "x");
+    b.link(at, "vector", place, "position");
+    // The second object tagged "goal" moves up; a name that finds nothing says so.
+    let goal = b.node("findWith", json!({ "kind": "Goal", "index": 1.0 }));
+    let lift = b.node("setPositionOf", json!({ "position": [0.0, 5.0, 0.0] }));
+    b.link(each, "then", lift, "run");
+    b.link(goal, "object", lift, "target");
+    let nobody = b.node("findNamed", json!({ "name": "Nobody" }));
+    let said = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    b.link(nobody, "found", said, "condition");
+    let report = b.node("log", json!({ "message": "nobody" }));
+    b.link(lift, "then", report, "run");
+    b.link(said, "result", report, "value");
+    let movers = b.node("countWith", json!({ "kind": "My Mover" }));
+    let tell = b.node("log", json!({ "message": "movers" }));
+    b.link(report, "then", tell, "run");
+    b.link(movers, "count", tell, "value");
+    let bytes = b.bytes();
+
+    let mut scene = Scene::new();
+    let id = scene.create_object(None, "Scripted").unwrap();
+    let mut make = |name: &str, component: Option<&str>, tags: &[&str]| {
+        let object = scene.create_object(None, name).unwrap();
+        if let Some(component) = component {
+            scene.add_component(object, component).unwrap();
+        }
+        if !tags.is_empty() {
+            scene.add_component(object, "tags").unwrap();
+            scene.set_component(object, "tags", json!(tags)).unwrap();
+        }
+        object
+    };
+    let lamp_a = make("Lamp A", Some("pointLight"), &[]);
+    let crate_box = make("Crate", None, &["goal"]);
+    let lamp_b = make("Lamp B", Some("pointLight"), &[]);
+    let flag = make("Flag", None, &["Goal"]);
+    let mover = make("Mover", Some("scripts"), &[]);
+    scene.set_component(mover, "scripts", json!([{ "module": "scripts/my_mover.wasm" }])).unwrap();
+    let script = ScriptRef { module: "seeker.bscript".into(), properties: BTreeMap::new() };
+    let mut host = ScriptHost::new();
+    host.load_bytes(id, 0, Path::new("seeker.bscript"), None, &bytes, &script, &mut scene, 0.0, &Arc::new(Input::default())).unwrap();
+
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["lamps 2", "nobody 0", "movers 1"]);
+    let x = |object| transform(&scene, object).position[0];
+    assert!(x(lamp_b) > x(lamp_a), "the lamps line up in hierarchy order: {} then {}", x(lamp_a), x(lamp_b));
+    assert!(transform(&scene, flag).position[1] > transform(&scene, crate_box).position[1], "the second goal moved, not the first");
 }

@@ -37,6 +37,12 @@ const STATE_NAME: SettingDef = SettingDef { name: "name", label: "Name", kind: S
 const STATE_SCOPE: SettingDef = SettingDef { name: "scope", label: "Scope", kind: SettingKind::Choice(&["Game", "Player", "This Object", "Saved"]) };
 const STATE_PLAYER: SettingDef = SettingDef { name: "player", label: "Player", kind: SettingKind::Text("") };
 const FLAG: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("done") };
+/// The object an action works on or a value is read from, from a search or This Object; when it is not
+/// linked, the node uses the object named in Object Name (or its own default).
+const TARGET: PinDef = pin("target", "Object", PinType::Object);
+const OBJECT_NAME: SettingDef = SettingDef { name: "object", label: "Object Name", kind: SettingKind::Text("") };
+/// What a search looks for: a component (Point Light, Character), a tag, or a script (by its name).
+const KIND: SettingDef = SettingDef { name: "kind", label: "Component, Tag or Script", kind: SettingKind::Text("Point Light") };
 
 const fn node(
     kind: &'static str,
@@ -76,10 +82,10 @@ pub const CATALOG: Catalog = Catalog {
             kind: "sendMessage",
             label: "Send Message",
             category: "Actions",
-            description: "Sends a message and a number to the scripts of the first object with this name, or of every object when no name is given. It arrives after this step.",
-            inputs: &[RUN, number("value", "Value", Float, 0.0)],
+            description: "Sends a message and a number to the scripts of the linked object, else the first object named in Object Name, else every object. It arrives after this step.",
+            inputs: &[RUN, TARGET, number("value", "Value", Float, 0.0)],
             outputs: &[THEN],
-            settings: &[MESSAGE, SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            settings: &[MESSAGE, OBJECT_NAME],
             unique: false,
         },
         NodeDef {
@@ -282,20 +288,20 @@ pub const CATALOG: Catalog = Catalog {
             kind: "positionOf",
             label: "Position Of",
             category: "Object",
-            description: "The position of the first object with this name (relative to its parent).",
-            inputs: &[],
+            description: "The position of the linked object, else the first object named in Object Name (relative to its parent).",
+            inputs: &[TARGET],
             outputs: &[pin("position", "Position", Vec3)],
-            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            settings: &[OBJECT_NAME],
             unique: false,
         },
         NodeDef {
             kind: "setPositionOf",
             label: "Set Position Of",
             category: "Actions",
-            description: "Moves the first object with this name to a position.",
-            inputs: &[RUN, vector("position", "Position", [0.0; 3])],
+            description: "Moves the linked object, else the first object named in Object Name, to a position.",
+            inputs: &[RUN, TARGET, vector("position", "Position", [0.0; 3])],
             outputs: &[THEN],
-            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            settings: &[OBJECT_NAME],
             unique: false,
         },
         NodeDef {
@@ -306,6 +312,57 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[RUN, vector("position", "Position", [0.0; 3])],
             outputs: &[THEN],
             settings: &[SettingDef { name: "prefab", label: "Prefab File", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        node("thisObject", "This Object", "Find", "The object this script runs on.", &[], &[pin("object", "Object", PinType::Object)]),
+        NodeDef {
+            kind: "findNamed",
+            label: "Find Object Named",
+            category: "Find",
+            description: "The first object with this name, in hierarchy order, as the step began. Found is false when there is none.",
+            inputs: &[],
+            outputs: &[pin("object", "Object", PinType::Object), pin("found", "Found", Bool)],
+            settings: &[SettingDef { name: "name", label: "Name", kind: SettingKind::Text("Player") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "findWith",
+            label: "Find Object With",
+            category: "Find",
+            description: "An object that has a component (Point Light, Character…), a tag, or runs a script (by its name), in hierarchy order as the step began: Index 0 is the first. Found is false when there is none.",
+            inputs: &[number("index", "Index", Float, 0.0)],
+            outputs: &[pin("object", "Object", PinType::Object), pin("found", "Found", Bool)],
+            settings: &[KIND],
+            unique: false,
+        },
+        NodeDef {
+            kind: "countWith",
+            label: "Count Objects With",
+            category: "Find",
+            description: "How many objects have a component (Point Light, Character…), a tag, or run a script (by its name), as the step began.",
+            inputs: &[],
+            outputs: &[pin("count", "Count", Float)],
+            settings: &[KIND],
+            unique: false,
+        },
+        NodeDef {
+            kind: "forEachWith",
+            label: "For Each Object With",
+            category: "Find",
+            description: "Runs Each once for every object that has a component, a tag, or runs a script, in hierarchy order as the step began, with that object and its index (from 0); then runs Then.",
+            inputs: &[RUN],
+            outputs: &[pin("each", "Each", Flow), pin("object", "Object", PinType::Object), pin("index", "Index", Float), THEN],
+            settings: &[KIND],
+            unique: false,
+        },
+        NodeDef {
+            kind: "destroyObject",
+            label: "Destroy Object",
+            category: "Actions",
+            description: "Deletes the linked object (else this object) and its children after this step.",
+            inputs: &[RUN, TARGET],
+            outputs: &[THEN],
+            settings: &[],
             unique: false,
         },
         action("destroySelf", "Destroy This Object", "Deletes this object and its children after this step.", &[RUN]),
@@ -366,20 +423,20 @@ pub const CATALOG: Catalog = Catalog {
             kind: "walk",
             label: "Walk",
             category: "Physics",
-            description: "Sets a character's walking velocity (this object, or the first object with this name), in world units per second, until changed.",
-            inputs: &[RUN, vector("velocity", "Velocity", [0.0; 3])],
+            description: "Sets a character's walking velocity (the linked object, else the first one named in Object Name, else this object), in world units per second, until changed.",
+            inputs: &[RUN, TARGET, vector("velocity", "Velocity", [0.0; 3])],
             outputs: &[THEN],
-            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            settings: &[OBJECT_NAME],
             unique: false,
         },
         NodeDef {
             kind: "jump",
             label: "Jump",
             category: "Physics",
-            description: "Makes a character on the ground jump with an upward speed (this object, or the first object with this name).",
-            inputs: &[RUN, number("speed", "Speed", Float, 5.0)],
+            description: "Makes a character on the ground jump with an upward speed (the linked object, else the first one named in Object Name, else this object).",
+            inputs: &[RUN, TARGET, number("speed", "Speed", Float, 5.0)],
             outputs: &[THEN],
-            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            settings: &[OBJECT_NAME],
             unique: false,
         },
         node("onGround", "On Ground", "Physics", "True while this object's character stands on something.", &[], &[pin("grounded", "On Ground", Bool)]),
@@ -387,20 +444,20 @@ pub const CATALOG: Catalog = Catalog {
             kind: "addImpulse",
             label: "Add Impulse",
             category: "Physics",
-            description: "Pushes a physics body (this object, or the first object with this name) by an impulse in world space, after this step.",
-            inputs: &[RUN, vector("impulse", "Impulse", [0.0, 5.0, 0.0])],
+            description: "Pushes a physics body (the linked object, else the first one named in Object Name, else this object) by an impulse in world space, after this step.",
+            inputs: &[RUN, TARGET, vector("impulse", "Impulse", [0.0, 5.0, 0.0])],
             outputs: &[THEN],
-            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            settings: &[OBJECT_NAME],
             unique: false,
         },
         NodeDef {
             kind: "setVelocity",
             label: "Set Velocity",
             category: "Physics",
-            description: "Sets a physics body's velocity (this object, or the first object with this name), in world units per second, after this step.",
-            inputs: &[RUN, vector("velocity", "Velocity", [0.0; 3])],
+            description: "Sets a physics body's velocity (the linked object, else the first one named in Object Name, else this object), in world units per second, after this step.",
+            inputs: &[RUN, TARGET, vector("velocity", "Velocity", [0.0; 3])],
             outputs: &[THEN],
-            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            settings: &[OBJECT_NAME],
             unique: false,
         },
         node(
@@ -501,6 +558,8 @@ enum Val {
     F(String),
     V([String; 3]),
     B(String),
+    /// An object's handle (`i32`; 0 for none).
+    O(String),
 }
 
 struct Compiler<'g> {
@@ -508,6 +567,8 @@ struct Compiler<'g> {
     data: Vec<(u32, Vec<u8>)>,
     next: u32,
     properties: Vec<(String, f32)>,
+    /// Globals actions need (the object and index of a For Each), declared once each.
+    globals: Vec<String>,
 }
 
 /// Compiles a visual script into a WebAssembly module.
@@ -528,7 +589,7 @@ pub fn compile(graph: &Graph) -> Result<Vec<u8>, Vec<Problem>> {
 /// The WebAssembly text of a visual script.
 pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     graph.check(&CATALOG).map_err(|e| vec![Problem::graph(e.to_string())])?;
-    let mut c = Compiler { graph, data: Vec::new(), next: DATA_START, properties: Vec::new() };
+    let mut c = Compiler { graph, data: Vec::new(), next: DATA_START, properties: Vec::new(), globals: Vec::new() };
     let mut problems = Vec::new();
     let mut start = String::new();
     let mut update = String::new();
@@ -624,7 +685,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     for (name, start) in named(VariableType::TrueFalse, "done") {
         let _ = writeln!(out, "  (global $flag_{name} (mut i32) (i32.const {}))", i32::from(start.as_bool().unwrap_or(false)));
     }
-    for global in &state {
+    for global in state.iter().chain(&c.globals) {
         let _ = writeln!(out, "  {global}");
     }
     let _ = writeln!(out, "  (memory (export \"memory\") {pages})");
@@ -709,6 +770,32 @@ impl Compiler<'_> {
         Ok(self.text(name.as_bytes()))
     }
 
+    /// The handle of the object a node works on: its linked Object, else the first object named in
+    /// its Object Name, else `otherwise` (WebAssembly), or the problem `otherwise` holds.
+    fn target(&mut self, node: u32, otherwise: Result<&str, &str>) -> Result<String, Problem> {
+        if self.graph.link_into(node, "target").is_some() {
+            return self.input(node, "target").and_then(|v| as_object(node, v));
+        }
+        let name = self.setting_text(node, "object", "");
+        if !name.trim().is_empty() {
+            let (at, len) = self.text(name.as_bytes());
+            return Ok(format!("(call $find (i32.const {at}) (i32.const {len}))"));
+        }
+        otherwise.map(str::to_owned).map_err(|missing| Problem::on(node, missing))
+    }
+
+    /// The Component or Script a search looks for, placed in memory.
+    fn kind(&mut self, node: u32) -> Result<(u32, u32), Problem> {
+        self.named(node, "kind", "name a component (Point Light), a tag or a script to look for")
+    }
+
+    /// Declares a global once.
+    fn global(&mut self, declaration: String) {
+        if !self.globals.contains(&declaration) {
+            self.globals.push(declaration);
+        }
+    }
+
     fn declare_property(&mut self, node: u32) -> String {
         let name = self.setting_text(node, "name", "speed");
         let default = self.setting_number(node, "default", 1.0);
@@ -757,9 +844,25 @@ impl Compiler<'_> {
                 }
             }
             "setPositionOf" => {
-                let (at, len) = self.named(next, "object", "name the object to move")?;
+                let handle = self.target(next, Err("link or name the object to move"))?;
                 let [x, y, z] = vec3(self, "position")?;
-                let _ = writeln!(code, "{indent}(call $set_position_of (call $find (i32.const {at}) (i32.const {len})) {x} {y} {z})");
+                let _ = writeln!(code, "{indent}(call $set_position_of {handle} {x} {y} {z})");
+            }
+            "destroyObject" => {
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
+                let _ = writeln!(code, "{indent}(drop (call $destroy {handle}))");
+            }
+            "forEachWith" => {
+                // The object and index live in globals, so the nodes in Each can read them.
+                let (at, len) = self.kind(next)?;
+                let (object, index) = (format!("$each_{next}"), format!("$each_index_{next}"));
+                self.global(format!("(global {object} (mut i32) (i32.const 0))"));
+                self.global(format!("(global {index} (mut i32) (i32.const 0))"));
+                let body = self.chain(next, "each", depth + 2)?;
+                let _ = writeln!(
+                    code,
+                    "{indent}(global.set {index} (i32.const 0))\n{indent}(block $done_{next} (loop $next_{next}\n{indent}  (global.set {object} (call $find_with (i32.const {at}) (i32.const {len}) (global.get {index})))\n{indent}  (br_if $done_{next} (i32.eqz (global.get {object})))\n{body}{indent}  (global.set {index} (i32.add (global.get {index}) (i32.const 1)))\n{indent}  (br $next_{next})))"
+                );
             }
             "spawn" => {
                 let prefab = self.setting_text(next, "prefab", "");
@@ -794,13 +897,7 @@ impl Compiler<'_> {
                 let _ = writeln!(code, "{indent}(drop (call $game_end {won}))");
             }
             "walk" | "jump" => {
-                let object = self.setting_text(next, "object", "");
-                let handle = if object.trim().is_empty() {
-                    "(call $self_handle)".to_owned()
-                } else {
-                    let (o_at, o_len) = self.text(object.as_bytes());
-                    format!("(call $find (i32.const {o_at}) (i32.const {o_len}))")
-                };
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
                 if n.kind == "walk" {
                     let [x, y, z] = vec3(self, "velocity")?;
                     let _ = writeln!(code, "{indent}(drop (call $character_walk {handle} {x} {y} {z}))");
@@ -811,26 +908,14 @@ impl Compiler<'_> {
             }
             "addImpulse" | "setVelocity" => {
                 let (input, call) = if n.kind == "addImpulse" { ("impulse", "$apply_impulse") } else { ("velocity", "$set_velocity") };
-                let object = self.setting_text(next, "object", "");
-                let handle = if object.trim().is_empty() {
-                    "(call $self_handle)".to_owned()
-                } else {
-                    let (o_at, o_len) = self.text(object.as_bytes());
-                    format!("(call $find (i32.const {o_at}) (i32.const {o_len}))")
-                };
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
                 let [x, y, z] = vec3(self, input)?;
                 let _ = writeln!(code, "{indent}(drop (call {call} {handle} {x} {y} {z}))");
             }
             "sendMessage" => {
                 let name = self.setting_text(next, "message", "hit");
                 let (at, len) = self.text(name.as_bytes());
-                let object = self.setting_text(next, "object", "");
-                let handle = if object.trim().is_empty() {
-                    "(i32.const -1)".to_owned()
-                } else {
-                    let (o_at, o_len) = self.text(object.as_bytes());
-                    format!("(call $find (i32.const {o_at}) (i32.const {o_len}))")
-                };
+                let handle = self.target(next, Ok("(i32.const -1)"))?;
                 let value = self.input(next, "value").and_then(|v| as_float(next, v))?;
                 let _ = writeln!(code, "{indent}(drop (call $send {handle} (i32.const {at}) (i32.const {len}) {value}))");
             }
@@ -883,6 +968,7 @@ impl Compiler<'_> {
             }
         }
         Ok(match (pin_def.default, pin_def.ty) {
+            (_, PinType::Object) => Val::O("(call $self_handle)".to_owned()),
             (PinDefault::Bool(b), _) => Val::B(format!("(i32.const {})", i32::from(b))),
             (_, Bool) => Val::B("(i32.const 0)".to_owned()),
             (PinDefault::Vec3(v) | PinDefault::Color(v), _) => Val::V(v.map(lit)),
@@ -943,9 +1029,27 @@ impl Compiler<'_> {
                 Val::B(format!("(call $mouse_down (i32.const {button}))"))
             }
             "positionOf" => {
-                let (at, len) = self.named(node, "object", "name the object to read")?;
-                Val::V([0, 1, 2].map(|i| format!("(call $t_of (call $find (i32.const {at}) (i32.const {len})) (i32.const {i}))")))
+                let handle = self.target(node, Err("link or name the object to read"))?;
+                Val::V([0, 1, 2].map(|i| format!("(call $t_of {handle} (i32.const {i}))")))
             }
+            "thisObject" => Val::O("(call $self_handle)".to_owned()),
+            "findNamed" => {
+                let (at, len) = self.named(node, "name", "name the object to find")?;
+                let found = format!("(call $find (i32.const {at}) (i32.const {len}))");
+                if pin == "found" { Val::B(format!("(i32.ne {found} (i32.const 0))")) } else { Val::O(found) }
+            }
+            "findWith" => {
+                let (at, len) = self.kind(node)?;
+                let index = self.input(node, "index").and_then(|v| as_float(node, v))?;
+                let found = format!("(call $find_with (i32.const {at}) (i32.const {len}) (i32.trunc_sat_f32_s {index}))");
+                if pin == "found" { Val::B(format!("(i32.ne {found} (i32.const 0))")) } else { Val::O(found) }
+            }
+            "countWith" => {
+                let (at, len) = self.kind(node)?;
+                Val::F(format!("(f32.convert_i32_s (call $count_with (i32.const {at}) (i32.const {len})))"))
+            }
+            "forEachWith" if pin == "object" => Val::O(format!("(global.get $each_{node})")),
+            "forEachWith" if pin == "index" => Val::F(format!("(f32.convert_i32_s (global.get $each_index_{node}))")),
             "gameValue" => {
                 let (target, at, len) = self.state_target(node)?;
                 let get = format!("(call $state_get {target} (i32.const {at}) (i32.const {len}) (i32.const 128))");
@@ -1015,7 +1119,7 @@ impl Compiler<'_> {
             "sine" => match self.input(node, "value")? {
                 Val::F(v) => Val::F(format!("(call $sin {v})")),
                 Val::V(v) => Val::V(v.map(|c| format!("(call $sin {c})"))),
-                Val::B(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
+                Val::B(_) | Val::O(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
             },
             "choose" => {
                 let condition = self.input(node, "condition").and_then(|v| as_bool(node, v))?;
@@ -1055,6 +1159,7 @@ fn as_float(node: u32, value: Val) -> Result<String, Problem> {
         Val::F(f) => Ok(f),
         Val::V(_) => Err(Problem::on(node, "this input takes a number but gets a vector; use Split Vector")),
         Val::B(_) => Err(Problem::on(node, "this input takes a number but gets true/false; use Choose")),
+        Val::O(_) => Err(Problem::on(node, "this input takes a number but gets an object; use Position Of")),
     }
 }
 
@@ -1063,6 +1168,14 @@ fn as_vec(node: u32, value: Val) -> Result<[String; 3], Problem> {
         Val::V(v) => Ok(v),
         Val::F(f) => Ok([f.clone(), f.clone(), f]),
         Val::B(_) => Err(Problem::on(node, "this input takes a vector but gets true/false")),
+        Val::O(_) => Err(Problem::on(node, "this input takes a vector but gets an object; use Position Of")),
+    }
+}
+
+fn as_object(node: u32, value: Val) -> Result<String, Problem> {
+    match value {
+        Val::O(handle) => Ok(handle),
+        _ => Err(Problem::on(node, "this input takes an object; use a Find node or This Object")),
     }
 }
 
@@ -1085,6 +1198,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "mouse_down" (func $mouse_down (param i32) (result i32)))
   (import "bayleaf" "self_handle" (func $self_handle (result i32)))
   (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))
+  (import "bayleaf" "find_with" (func $find_with (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "count_with" (func $count_with (param i32 i32) (result i32)))
   (import "bayleaf" "transform_get_of" (func $transform_get_of (param i32 i32)))
   (import "bayleaf" "transform_set_of" (func $transform_set_of (param i32 i32)))
   (import "bayleaf" "position_get_of" (func $position_get_of (param i32 i32)))

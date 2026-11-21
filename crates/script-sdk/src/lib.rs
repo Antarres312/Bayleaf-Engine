@@ -105,6 +105,23 @@ impl Object {
         Some(abi::find(name)).filter(|h| *h != 0).map(Self)
     }
 
+    /// The `index`-th object (from 0, in hierarchy order) that has a component (`Point Light`,
+    /// `pointLight`), a tag, or runs a script (by its name); case, spaces, `_` and `-` do not matter.
+    pub fn find_with(kind: &str, index: usize) -> Option<Self> {
+        let index = i32::try_from(index).ok()?;
+        Some(abi::find_with(kind, index)).filter(|h| *h != 0).map(Self)
+    }
+
+    /// Every object that has a component, a tag or a script (see `find_with`), in hierarchy order.
+    pub fn all_with(kind: &str) -> impl Iterator<Item = Self> + '_ {
+        (0..).map_while(move |index| Self::find_with(kind, index))
+    }
+
+    /// How many objects have a component, a tag or a script (see `find_with`).
+    pub fn count_with(kind: &str) -> usize {
+        usize::try_from(abi::count_with(kind)).unwrap_or(0)
+    }
+
     /// Its local transform.
     pub fn transform(self) -> Transform {
         let v = abi::transform_get_of(self.0);

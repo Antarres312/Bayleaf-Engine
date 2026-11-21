@@ -18,6 +18,7 @@ pub struct ComponentKind {
     pub listed: bool,
     /// Where Add Component lists it: folders, then its name (`Light/Point Light`); empty for the top.
     pub menu: &'static str,
+    has: fn(&World, Entity) -> bool,
     get: fn(&World, Entity) -> Option<Value>,
     set: fn(&mut World, Entity, Value) -> Result<(), String>,
     add_default: fn(&mut World, Entity) -> Result<(), String>,
@@ -33,6 +34,7 @@ impl ComponentKind {
             removable: T::REMOVABLE,
             listed: T::LISTED,
             menu: T::MENU,
+            has: has::<T>,
             get: get::<T>,
             set: set::<T>,
             add_default: add_default::<T>,
@@ -44,6 +46,10 @@ impl ComponentKind {
     /// Allowed values of a text field, empty when any text is allowed.
     pub fn options(&self, field: &str) -> &'static [&'static str] {
         (self.options)(field)
+    }
+
+    pub(crate) fn has(&self, world: &World, entity: Entity) -> bool {
+        (self.has)(world, entity)
     }
 
     pub(crate) fn get(&self, world: &World, entity: Entity) -> Option<Value> {
@@ -61,6 +67,10 @@ impl ComponentKind {
     pub(crate) fn remove(&self, world: &mut World, entity: Entity) -> bool {
         (self.remove)(world, entity)
     }
+}
+
+fn has<T: SceneComponent>(world: &World, entity: Entity) -> bool {
+    world.get::<T>(entity).is_some()
 }
 
 fn get<T: SceneComponent>(world: &World, entity: Entity) -> Option<Value> {

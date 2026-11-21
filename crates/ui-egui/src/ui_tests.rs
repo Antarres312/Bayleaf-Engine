@@ -1294,3 +1294,25 @@ fn dragging_a_script_property_from_its_default_keeps_going_and_reset_turns_on_an
     harness.run();
     assert_eq!(height(&harness), None, "reset goes back to the default");
 }
+
+#[test]
+fn the_add_node_menu_opens_categories_on_a_click_and_keeps_its_size_while_searching() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label("Add Node").click();
+    harness.run();
+    harness.run();
+    assert!(harness.query_by_label("Find Object With").is_none(), "categories start closed");
+    let before = harness.get_by_label("Search nodes").rect();
+    harness.get_by_label("Find").click();
+    harness.run();
+    assert!(harness.query_by_label("Find Object With").is_some(), "a click opens the category");
+    harness.get_by_label("Search nodes").focus();
+    harness.run();
+    harness.get_by_label("Search nodes").type_text("velo");
+    harness.run();
+    harness.run();
+    assert!(harness.query_by_label("Set Velocity").is_some(), "the search shows matches from closed categories too");
+    assert!(harness.query_by_label("Find Object With").is_none(), "and only matches");
+    let after = harness.get_by_label("Search nodes").rect();
+    assert_eq!(before.width(), after.width(), "the popup keeps its width while the list narrows");
+}

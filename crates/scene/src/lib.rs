@@ -220,6 +220,12 @@ impl Scene {
         Ok(())
     }
 
+    /// The components `id` carries, as `(name, label)` in inspector order, without reading their values.
+    pub fn component_kinds(&self, id: StableId) -> Vec<(&'static str, &'static str)> {
+        let Ok(entity) = self.entity(id) else { return Vec::new() };
+        self.registry.kinds().iter().filter(|k| k.has(&self.world, entity)).map(|k| (k.name, k.label)).collect()
+    }
+
     /// Components of `id` as `(name, value)` in inspector order.
     pub fn components(&self, id: StableId) -> Result<Vec<(&'static str, Value)>, SceneError> {
         let entity = self.entity(id)?;

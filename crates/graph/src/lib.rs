@@ -38,6 +38,8 @@ pub enum PinType {
     Bool,
     /// A number or a vector, decided by what is connected (math nodes).
     Any,
+    /// An object in the scene (visual scripts), or none.
+    Object,
 }
 
 impl PinType {
@@ -50,6 +52,7 @@ impl PinType {
             PinType::Color => "Color",
             PinType::Bool => "True/False",
             PinType::Any => "Number or Vector",
+            PinType::Object => "Object",
         }
     }
 
@@ -57,10 +60,10 @@ impl PinType {
     /// and colours; vectors and colours convert into each other. Whether an `Any` output really
     /// fits is checked when the graph is compiled.
     pub fn connects_to(self, to: PinType) -> bool {
-        use PinType::{Any, Bool, Color, Float, Flow, Vec3};
+        use PinType::{Any, Bool, Color, Float, Flow, Object, Vec3};
         match (self, to) {
-            (Flow, Flow) | (Bool, Bool) => true,
-            (Flow | Bool, _) | (_, Flow | Bool) => false,
+            (Flow, Flow) | (Bool, Bool) | (Object, Object) => true,
+            (Flow | Bool | Object, _) | (_, Flow | Bool | Object) => false,
             (Float | Vec3 | Color | Any, Float | Vec3 | Color | Any) => !(matches!(self, Vec3 | Color) && to == Float),
         }
     }
@@ -831,6 +834,7 @@ fn check_value(def: &NodeDef, name: &str, value: &Value) -> Result<(), GraphErro
         PinType::Vec3 | PinType::Color => Err(bad("three finite numbers")),
         PinType::Bool if value.is_boolean() => Ok(()),
         PinType::Bool => Err(bad("true or false")),
+        PinType::Object => Err(GraphError::Refused(format!("{} · {name} takes an object only from a link", def.label))),
     }
 }
 

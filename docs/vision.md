@@ -155,6 +155,10 @@ No crate below L6 may use egui, eframe, winit or rfd.
    `triggerExit`. Then: a panel beside a visual script's canvas for its variables (declared
    with a type and a starting value, graph format 2), properties and menu path; variable nodes pick
    their variable from a list; hovering a pin, its label or its value shows the type it carries.
+   Then: Object pins and searches (This Object, Find Object Named, Find Object With, Count Objects
+   With, For Each Object With; `find_with` and `count_with` in the ABI and the Rust SDK) by
+   component, tag or script; the actions on other objects take a linked object; Add Node lists
+   categories that open on a click.
 7. **M6 Gameplay framework** as opt-in modules (`gameplay` feature of `bayleaf-engine`). Started:
    input actions in the project settings (named actions bound to keys, mouse, gamepad buttons and
    sticks; `action` in the ABI, Action and On Action Pressed nodes, the Input Actions panel); since

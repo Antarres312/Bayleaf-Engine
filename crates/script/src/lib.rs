@@ -247,6 +247,9 @@ struct WorldView {
     shapes: Vec<Option<(DMat4, RayShape)>>,
     /// Each object's position in double precision, by the same index.
     positions: Vec<[f64; 3]>,
+    /// What each object is, by the same index, for searches: its components' names and labels,
+    /// its tags and its scripts' names, each as `kind_key` makes them.
+    kinds: Vec<Vec<String>>,
     /// Objects with Player Control, in hierarchy order.
     players: Vec<StableId>,
 }
@@ -258,7 +261,8 @@ impl WorldView {
         let shapes = all.iter().map(|(id, world)| ray_shape(scene, *id, *world)).collect();
         let positions = all.iter().map(|(id, _)| read_position(scene, *id)).collect();
         let players = all.iter().map(|(id, _)| *id).filter(|id| scene.get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect();
-        Arc::new(Self { objects, shapes, positions, players })
+        let kinds = all.iter().map(|(id, _)| object_kinds(scene, *id)).collect();
+        Arc::new(Self { objects, shapes, positions, players, kinds })
     }
 
     /// The nearest shape a ray hits within `max`, other than `skip`: its index and the distance.
@@ -280,6 +284,13 @@ impl WorldView {
         }
         best
     }
+    /// The handles of the objects that are `kind` (a component or a script, see `kind_key`), in
+    /// hierarchy order.
+    fn with_kind(&self, kind: &str) -> impl Iterator<Item = i32> + '_ {
+        let key = kind_key(kind);
+        self.kinds.iter().enumerate().filter(move |(_, kinds)| !key.is_empty() && kinds.contains(&key)).map(|(i, _)| i as i32 + 1)
+    }
+
     fn handle_of(&self, id: StableId) -> i32 {
         self.objects.iter().position(|(o, _, _)| *o == id).map_or(0, |i| i as i32 + 1)
     }
@@ -293,6 +304,32 @@ impl WorldView {
     fn get(&self, handle: i32) -> Option<&(StableId, String, [f32; 9])> {
         usize::try_from(handle).ok().and_then(|h| h.checked_sub(1)).and_then(|i| self.objects.get(i))
     }
+}
+
+/// A search key for a kind of object: lowercase, without spaces, `_` or `-`, so `pointLight`, `Point
+/// Light` and `point_light` all match.
+fn kind_key(text: &str) -> String {
+    text.chars().filter(|c| !matches!(c, ' ' | '_' | '-')).flat_map(char::to_lowercase).collect()
+}
+
+/// What an object is, for searches: its components' names and labels, its tags and its scripts' names
+/// (the name the Inspector shows and the file name without its extension).
+fn object_kinds(scene: &Scene, id: StableId) -> Vec<String> {
+    let mut kinds: Vec<String> = scene.component_kinds(id).into_iter().flat_map(|(name, label)| [kind_key(name), kind_key(label)]).collect();
+    if let Some(tags) = scene.get::<bayleaf_scene::components::Tags>(id) {
+        kinds.extend(tags.0.iter().map(|tag| kind_key(tag)));
+    }
+    if let Some(scripts) = scene.get::<bayleaf_scene::components::Scripts>(id) {
+        for script in &scripts.0 {
+            let file = script.module.rsplit(['/', '\\']).next().unwrap_or(&script.module);
+            let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+            kinds.push(kind_key(stem));
+            kinds.push(kind_key(&script.display_name()));
+        }
+    }
+    kinds.sort_unstable();
+    kinds.dedup();
+    kinds
 }
 
 /// State one instance's host functions can see.
@@ -1259,6 +1296,15 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         linker.func_wrap("bayleaf", "find", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
             let name = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("find: {m}")))?;
             Ok(caller.data().world.objects.iter().position(|(_, n, _)| *n == name).map_or(0, |i| i as i32 + 1))
+        })?;
+        linker.func_wrap("bayleaf", "find_with", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, index: i32| -> Result<i32, wasmi::Error> {
+            let kind = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("find_with: {m}")))?;
+            let Ok(index) = usize::try_from(index) else { return Ok(0) };
+            Ok(caller.data().world.with_kind(&kind).nth(index).unwrap_or(0))
+        })?;
+        linker.func_wrap("bayleaf", "count_with", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+            let kind = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("count_with: {m}")))?;
+            Ok(i32::try_from(caller.data().world.with_kind(&kind).count()).unwrap_or(i32::MAX))
         })?;
         linker.func_wrap("bayleaf", "transform_get_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32| -> Result<(), wasmi::Error> {
             let Some((object, index)) = caller.data().world.object(handle) else {

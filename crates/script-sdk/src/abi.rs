@@ -17,6 +17,8 @@ mod raw {
         pub fn mouse_down(button: i32) -> i32;
         pub fn self_handle() -> i32;
         pub fn find(name_ptr: *const u8, name_len: usize) -> i32;
+        pub fn find_with(kind_ptr: *const u8, kind_len: usize, index: i32) -> i32;
+        pub fn count_with(kind_ptr: *const u8, kind_len: usize) -> i32;
         pub fn transform_get_of(handle: i32, out: *mut f32);
         pub fn transform_set_of(handle: i32, ptr: *const f32);
         pub fn position_get_of(handle: i32, out: *mut f64);
@@ -71,6 +73,12 @@ mod raw {
         0
     }
     pub unsafe fn find(_: *const u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn find_with(_: *const u8, _: usize, _: i32) -> i32 {
+        0
+    }
+    pub unsafe fn count_with(_: *const u8, _: usize) -> i32 {
         0
     }
     pub unsafe fn transform_get_of(_: i32, out: *mut f32) {
@@ -195,6 +203,16 @@ pub(crate) fn self_handle() -> i32 {
 pub(crate) fn find(name: &str) -> i32 {
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::find(name.as_ptr(), name.len()) }
+}
+
+pub(crate) fn find_with(kind: &str, index: i32) -> i32 {
+    // SAFETY: the pointer and length describe `kind`; the host only reads.
+    unsafe { raw::find_with(kind.as_ptr(), kind.len(), index) }
+}
+
+pub(crate) fn count_with(kind: &str) -> i32 {
+    // SAFETY: the pointer and length describe `kind`; the host only reads.
+    unsafe { raw::count_with(kind.as_ptr(), kind.len()) }
 }
 
 pub(crate) fn transform_get_of(handle: i32) -> [f32; 9] {

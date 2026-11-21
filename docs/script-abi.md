@@ -31,6 +31,8 @@ so module-level state belongs to that one script slot. Any language that compile
 | `mouse_down` | `(button: i32) -> i32` | `1` while the button is held: `0` left, `1` right, `2` middle |
 | `self_handle` | `() -> i32` | the handle of this script's object |
 | `find` | `(name_ptr: i32, name_len: i32) -> i32` | the handle of the first object with that name, in hierarchy order, or `0` |
+| `find_with` | `(kind_ptr: i32, kind_len: i32, index: i32) -> i32` | the handle of the `index`-th object (from 0, in hierarchy order, as the step began) that has a component (by its name or label: `pointLight`, `Point Light`), a tag, or runs a script (by its file name without the extension, or the name the Inspector shows); case, spaces, `_` and `-` are ignored. `0` when there is none |
+| `count_with` | `(kind_ptr: i32, kind_len: i32) -> i32` | how many objects `find_with` can find for that kind |
 | `transform_get_of` | `(handle: i32, out: i32)` | like `transform_get`, for any object |
 | `transform_set_of` | `(handle: i32, ptr: i32)` | like `transform_set`, for any object; applied when the call ends |
 | `position_get_of` | `(handle: i32, out: i32)` | writes 3 little-endian `f64`: the object's local position in double precision, as this call last set it, else as the step began |
