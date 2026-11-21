@@ -2,22 +2,8 @@
 // the X axis in red and the Z axis in blue. Lines use screen-space derivatives so they stay
 // one pixel wide at any distance.
 
-const MAX_LIGHTS: u32 = 4u;
 const EXTENT: f32 = 500.0;
 
-struct Light {
-    direction: vec4<f32>,
-    radiance: vec4<f32>,
-};
-
-struct Globals {
-    view_proj: mat4x4<f32>,
-    camera_pos: vec4<f32>,
-    ambient: vec4<f32>,
-    lights: array<Light, MAX_LIGHTS>,
-};
-
-@group(0) @binding(0) var<uniform> globals: Globals;
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,

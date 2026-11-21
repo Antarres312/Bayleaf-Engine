@@ -4,26 +4,12 @@
 // Walter et al. 2007, "Microfacet Models for Refraction through Rough Surfaces", and
 // Karis 2013, "Real Shading in Unreal Engine 4" course notes.
 
-const MAX_LIGHTS: u32 = 4u;
 const PI: f32 = 3.14159265;
 // Highlight colour of selected objects (linear).
 const SELECTION: vec3<f32> = vec3<f32>(1.0, 0.45, 0.08);
 
-struct Light {
-    direction: vec4<f32>,
-    radiance: vec4<f32>,
-};
-
-struct Globals {
-    view_proj: mat4x4<f32>,
-    // xyz: camera position, w: seconds (material Time node)
-    camera_pos: vec4<f32>,
-    // rgb: ambient light, w: number of lights
-    ambient: vec4<f32>,
-    lights: array<Light, MAX_LIGHTS>,
-};
-
-@group(0) @binding(0) var<uniform> globals: Globals;
+@group(1) @binding(0) var shadow_map: texture_depth_2d;
+@group(1) @binding(1) var shadow_sampler: sampler_comparison;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -74,6 +60,26 @@ fn distribution_ggx(n_dot_h: f32, roughness: f32) -> f32 {
 
 fn geometry_schlick_ggx(n_dot_x: f32, k: f32) -> f32 {
     return n_dot_x / (n_dot_x * (1.0 - k) + k);
+}
+
+// How much of the shadow-casting light reaches a point: 1 lit, 0 in shadow. Nine taps of the
+// shadow map (percentage-closer filtering) soften the edge.
+fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
+    // Pushing the point out along the normal keeps surfaces from shadowing themselves.
+    let p = globals.light_view_proj * vec4<f32>(world_pos + n * globals.shadow.w, 1.0);
+    let ndc = p.xyz / p.w;
+    let uv = ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0) {
+        return 1.0;
+    }
+    var lit = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let offset = vec2<f32>(f32(x), f32(y)) * globals.shadow.z;
+            lit = lit + textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, ndc.z - globals.shadow.y);
+        }
+    }
+    return lit / 9.0;
 }
 
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
@@ -155,7 +161,25 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     let count = min(u32(globals.ambient.w), MAX_LIGHTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let light = globals.lights[index];
-        let l = normalize(-light.direction.xyz);
+        var l = normalize(-light.direction.xyz);
+        var falloff = 1.0;
+        if (light.direction.w > 0.5) {
+            // Point and spot lights: inverse-square falloff, windowed to reach 0 at the range
+            // (the window from Karis 2013).
+            let to_light = light.position.xyz - in.world_pos;
+            let d = length(to_light);
+            l = to_light / max(d, 1e-4);
+            let ratio = d / max(light.position.w, 1e-4);
+            let window = clamp(1.0 - ratio * ratio * ratio * ratio, 0.0, 1.0);
+            falloff = window * window / (d * d + 1.0);
+            if (light.direction.w > 1.5) {
+                let along = dot(-l, normalize(light.direction.xyz));
+                falloff = falloff * smoothstep(light.radiance.w, max(light.extra.x, light.radiance.w + 1e-4), along);
+            }
+        }
+        if (f32(index) == globals.shadow.x) {
+            falloff = falloff * shadow_factor(in.world_pos, n);
+        }
         let h = normalize(v + l);
         let n_dot_l = max(dot(n, l), 0.0);
         let n_dot_h = max(dot(n, h), 0.0);
@@ -163,7 +187,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
         let g = geometry_schlick_ggx(n_dot_v, k) * geometry_schlick_ggx(n_dot_l, k);
         let specular = distribution_ggx(n_dot_h, roughness) * g * f / (4.0 * n_dot_v * n_dot_l + 1e-4);
         let diffuse = (vec3<f32>(1.0) - f) * (1.0 - metallic) * base / PI;
-        color = color + (diffuse + specular) * light.radiance.rgb * n_dot_l;
+        color = color + (diffuse + specular) * light.radiance.rgb * n_dot_l * falloff;
     }
 
     color = color + max(s.emissive, vec3<f32>(0.0));

@@ -11,5 +11,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Agent control | not yet | Not checked yet | Status-bar label of the editor's control channel; same |
 | Graph, Material, Visual Script, Material Output, Edge Glow, Key Held, Step Seconds | not yet | Not checked yet | Graph editor and node names; same |
 | New Project, Open Project, Duplicate, Cut, Copy, Paste, Move, Rotate, Scale, Engine, Project | not yet | Not checked yet | Generic editor terms; same |
+| Prefab, Save as Prefab, Place in Scene, Apply, Revert, Unlink, Point Light, Spot Light, Camera preview | not yet | Not checked yet | Generic editor terms; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

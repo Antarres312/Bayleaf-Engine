@@ -42,6 +42,8 @@ enum Kind {
     Scene,
     /// A project file (`.bproject`).
     Project,
+    /// A prefab (`.bprefab`): objects to place in scenes.
+    Prefab,
     Script,
     /// A visual script (`.bscript`): a graph that is also a script.
     VisualScript,
@@ -56,6 +58,7 @@ impl Kind {
             Some(bayleaf_engine::scene::doc::EXTENSION) => Kind::Scene,
             Some("wasm") => Kind::Script,
             Some(bayleaf_engine::project_cmds::PROJECT_EXTENSION) => Kind::Project,
+            Some(bayleaf_engine::prefab_cmds::PREFAB_EXTENSION) => Kind::Prefab,
             Some("bscript") => Kind::VisualScript,
             Some("bmaterial") => Kind::Material,
             Some("png" | "jpg" | "jpeg" | "webp" | "ktx2") => Kind::Image,
@@ -68,6 +71,7 @@ impl Kind {
             Kind::Folder => "Folder",
             Kind::Scene => "Scene",
             Kind::Project => "Project",
+            Kind::Prefab => "Prefab",
             Kind::Script => "Script",
             Kind::VisualScript => "Visual Script",
             Kind::Material => "Material",
@@ -154,6 +158,7 @@ impl ProjectView {
 
 enum Action {
     OpenScene(PathBuf),
+    PlacePrefab(PathBuf),
     OpenGraph(PathBuf),
     AddScript(String),
     /// A new graph of this domain, saved in the open folder.
@@ -218,6 +223,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     editor.project = view;
     match outcome.action {
         Some(Action::OpenScene(path)) => editor.open_scene(&path),
+        Some(Action::PlacePrefab(path)) => editor.place_prefab(&path),
         Some(Action::OpenGraph(path)) => editor.open_graph(&path),
         Some(Action::NewGraph(domain)) => {
             let extension = if domain == "material" { "bmaterial" } else { "bscript" };
@@ -516,6 +522,7 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
             Kind::Folder => outcome.enter = Some(entry.path.clone()),
             Kind::Scene | Kind::Project => outcome.action = Some(Action::OpenScene(entry.path.clone())),
             Kind::Material | Kind::VisualScript => outcome.action = Some(Action::OpenGraph(entry.path.clone())),
+            Kind::Prefab => outcome.action = Some(Action::PlacePrefab(entry.path.clone())),
             _ => {}
         }
     }
@@ -536,6 +543,10 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
         }
         if entry.kind == Kind::Scene && ui.button("Open Scene").clicked() {
             outcome.action = Some(Action::OpenScene(entry.path.clone()));
+            ui.close();
+        }
+        if entry.kind == Kind::Prefab && ui.button("Place in Scene").on_hover_text("Adds a linked copy after the selected object").clicked() {
+            outcome.action = Some(Action::PlacePrefab(entry.path.clone()));
             ui.close();
         }
         if entry.kind == Kind::Project && ui.button("Open Project").clicked() {
@@ -582,10 +593,11 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             painter.rect_filled(tab, s * 0.04, t.warning.gamma_multiply(0.8));
             painter.rect_filled(body, s * 0.06, t.warning);
         }
-        Kind::Scene | Kind::Project => {
-            // An outlined cube seen from above and in front; filled for a project file.
-            let filled = kind == Kind::Project;
-            let color = t.brand;
+        Kind::Scene | Kind::Project | Kind::Prefab => {
+            // An outlined cube seen from above and in front; filled for a project file, in the
+            // accent colour for a prefab.
+            let filled = kind != Kind::Scene;
+            let color = if kind == Kind::Prefab { t.pin_vector } else { t.brand };
             let (top, left, right, mid, bottom, lb, rb) =
                 (at(0.5, 0.12), at(0.14, 0.32), at(0.86, 0.32), at(0.5, 0.52), at(0.5, 0.9), at(0.14, 0.7), at(0.86, 0.7));
             let side = if filled { color.gamma_multiply(0.6) } else { egui::Color32::TRANSPARENT };

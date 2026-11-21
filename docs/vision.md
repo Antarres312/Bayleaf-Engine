@@ -66,13 +66,20 @@ No crate below L6 may use egui, eframe, winit or rfd.
    Added later: projects (a folder with a `.bproject` file; `project.new` makes a starting project;
    scene paths start at the project folder), duplicate, copy and paste of objects with their children
    (`scene.object.duplicate/copy/paste`), selecting several objects, and a question before the window
-   closes with unsaved work. Still open from M1: prefabs, craft-ui theme tokens, the translation system.
+   closes with unsaved work. Prefabs: an object and its children saved as a `.bprefab` file and placed
+   as linked copies (`scene.prefab.create/place/apply/revert`); Apply updates every copy in the scene,
+   each keeping its own name and transform, and nothing updates on its own. Still open from M1:
+   prefab overrides kept per copy and nested prefabs, craft-ui theme tokens, the translation system.
 3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
    a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with
    click selection. Added later: move, rotate and scale handles in the view (for every selected object,
-   one undo step per drag) and clickable camera and light icons. Still open: shadows, textures and
-   sprite images (wait for the asset pipeline), environment lighting, point and spot lights.
+   one undo step per drag), clickable camera and light icons, point and spot lights (up to 8 lights,
+   windowed inverse-square falloff), shadows from the first directional light (one shadow map fitted to
+   the scene, 3x3 filtering), a camera preview in the scene view, and a grid that never flickers with
+   surfaces on the ground. Scene format version 4. Still open: textures and sprite images (wait for the
+   asset pipeline), environment lighting, shadows from point and spot lights, cascaded shadows for
+   large worlds.
 4. **M3 Scripts (done, 2026-11-21):** WASM host on wasmi (fuel and memory limits, faults isolated per
    script), ABI v1 (`docs/script-abi.md`), Rust SDK (`crates/script-sdk`), example scripts (`scripts/`,
    built by `cargo xtask scripts`), hot reload, play mode (`play.start/stop/pause/step/input/status`)

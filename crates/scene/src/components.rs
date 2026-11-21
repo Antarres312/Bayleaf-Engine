@@ -1,6 +1,6 @@
 ﻿//! Built-in scene components.
 //!
-//! Axis convention: right-handed, +Y up. Cameras and lights look along their local â’Z axis.
+//! Axis convention: right-handed, +Y up. Cameras and lights look along their local −Z axis.
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -160,7 +160,7 @@ pub enum Projection {
     Orthographic,
 }
 
-/// A viewpoint the scene can be rendered from. It looks along its local â’Z axis.
+/// A viewpoint the scene can be rendered from. It looks along its local −Z axis.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Camera {
@@ -203,18 +203,25 @@ impl SceneComponent for Camera {
     }
 }
 
-/// Light from a distant source, such as the sun. It shines along the object's local â’Z axis.
+/// Light from a distant source, such as the sun. It shines along the object's local −Z axis.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectionalLight {
     /// Linear RGB, each 0 to 1.
     pub color: [f32; 3],
     pub intensity: f32,
+    /// Objects block this light and cast shadows. Only the first directional light with shadows on casts them.
+    #[serde(default = "yes")]
+    pub shadows: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for DirectionalLight {
     fn default() -> Self {
-        Self { color: [1.0, 1.0, 1.0], intensity: 3.0 }
+        Self { color: [1.0, 1.0, 1.0], intensity: 3.0, shadows: true }
     }
 }
 
@@ -227,6 +234,75 @@ impl SceneComponent for DirectionalLight {
         unit_range("color", &self.color)?;
         if self.intensity.is_finite() && self.intensity >= 0.0 { Ok(()) } else { Err("intensity must be 0 or more".to_owned()) }
     }
+}
+
+/// Light from a point that shines in every direction and fades out by `range`, like a bulb.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PointLight {
+    /// Linear RGB, each 0 to 1.
+    pub color: [f32; 3],
+    pub intensity: f32,
+    /// Distance in world units at which the light has faded out.
+    pub range: f32,
+}
+
+impl Default for PointLight {
+    fn default() -> Self {
+        Self { color: [1.0, 0.95, 0.85], intensity: 8.0, range: 8.0 }
+    }
+}
+
+impl SceneComponent for PointLight {
+    const NAME: &'static str = "pointLight";
+    const LABEL: &'static str = "Point Light";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        unit_range("color", &self.color)?;
+        light_amounts(self.intensity, self.range)
+    }
+}
+
+/// Light from a point that shines in a cone along the object's local −Z axis, like a torch.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpotLight {
+    /// Linear RGB, each 0 to 1.
+    pub color: [f32; 3],
+    pub intensity: f32,
+    /// Distance in world units at which the light has faded out.
+    pub range: f32,
+    /// Full width of the cone in degrees.
+    pub angle: f32,
+    /// How much of the cone's edge fades: 0 for a hard edge, 1 for a fade from the centre.
+    pub softness: f32,
+}
+
+impl Default for SpotLight {
+    fn default() -> Self {
+        Self { color: [1.0, 1.0, 1.0], intensity: 12.0, range: 12.0, angle: 45.0, softness: 0.3 }
+    }
+}
+
+impl SceneComponent for SpotLight {
+    const NAME: &'static str = "spotLight";
+    const LABEL: &'static str = "Spot Light";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        unit_range("color", &self.color)?;
+        unit_range("softness", &[self.softness])?;
+        light_amounts(self.intensity, self.range)?;
+        if self.angle.is_finite() && (1.0..=179.0).contains(&self.angle) { Ok(()) } else { Err("angle must be between 1 and 179 degrees".to_owned()) }
+    }
+}
+
+fn light_amounts(intensity: f32, range: f32) -> Result<(), String> {
+    if !(intensity.is_finite() && intensity >= 0.0) {
+        return Err("intensity must be 0 or more".to_owned());
+    }
+    if range.is_finite() && range > 0.0 && range <= 100_000.0 { Ok(()) } else { Err("range must be more than 0 and at most 100000".to_owned()) }
 }
 
 /// An unlit flat rectangle in the object's XY plane, for 2D games and markers.
@@ -320,4 +396,28 @@ fn finite<'a>(what: &str, mut values: impl Iterator<Item = &'a f32>) -> Result<(
 
 fn unit_range(what: &str, values: &[f32]) -> Result<(), String> {
     if values.iter().all(|v| (0.0..=1.0).contains(v)) { Ok(()) } else { Err(format!("{what} values must be between 0 and 1")) }
+}
+
+/// Marks an object as a placed copy of a prefab file. The object and its children came from
+/// the file; Apply writes them back to it, Revert reads them again.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Prefab {
+    /// The `.bprefab` file, relative to the project folder (or the scene's folder outside a project).
+    pub source: String,
+}
+
+impl SceneComponent for Prefab {
+    const NAME: &'static str = "prefab";
+    const LABEL: &'static str = "Prefab";
+    const REMOVABLE: bool = true;
+    const LISTED: bool = false;
+
+    fn validate(&self) -> Result<(), String> {
+        if !self.source.is_empty() && self.source.len() <= 512 && self.source.ends_with(".bprefab") {
+            Ok(())
+        } else {
+            Err("source must be the path of a .bprefab file (at most 512 characters)".to_owned())
+        }
+    }
 }

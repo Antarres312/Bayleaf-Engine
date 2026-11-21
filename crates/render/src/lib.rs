@@ -13,7 +13,8 @@ pub mod material;
 mod mesh;
 
 pub use extract::{
-    CameraView, DrawItem, Frame, FrameOptions, LightItem, MAX_LIGHTS, Ray, bounds, extract, extract_with, object_bounds, object_camera, pick, scene_camera,
+    CameraView, DrawItem, Frame, FrameOptions, LightItem, LightKind, MAX_LIGHTS, Ray, bounds, extract, extract_with, object_bounds, object_camera, pick,
+    scene_camera,
 };
 pub use gpu::{COLOR_FORMAT, RenderTarget, Renderer};
 pub use headless::{HeadlessGpu, Image};

@@ -212,3 +212,86 @@ fn materials_change_the_drawn_colour_and_every_node_is_valid_on_the_gpu() {
     let frame = extract_with(&scene, camera, OPTIONS, &mut |_| Some(Arc::clone(&every)));
     gpu.render(&frame, 32, 32).unwrap_or_else(|e| panic!("the GPU refused the generated shader: {e}\n{}", every.surface));
 }
+
+/// A wide floor seen from above at an angle, with the given lights.
+fn floor_scene(lights: &[(&str, serde_json::Value, [f32; 3], [f32; 3])]) -> Scene {
+    let mut scene = Scene::new();
+    let floor = object(&mut scene, "mesh", json!({"shape": "plane", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.9}), [0.0; 3], [0.0; 3]);
+    scene.set_component(floor, "transform", json!({"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [20, 1, 20]})).unwrap();
+    for (component, value, position, rotation) in lights {
+        object(&mut scene, component, value.clone(), *position, *rotation);
+    }
+    scene
+}
+
+fn top_down() -> CameraView {
+    CameraView::look_at(Vec3::new(0.0, 12.0, 0.01), Vec3::ZERO, 60.0, 1.0)
+}
+
+#[test]
+fn point_and_spot_lights_fade_with_distance_and_outside_the_cone() {
+    let Some(gpu) = gpu() else { return };
+    // A point light low over the left half of the floor.
+    let scene = floor_scene(&[("pointLight", json!({"color": [1, 1, 1], "intensity": 20, "range": 6}), [-3.0, 1.0, 0.0], [0.0; 3])]);
+    let frame = extract(&scene, top_down(), OPTIONS);
+    let (near, far) = (camera_pixel(&frame.camera, Vec3::new(-3.0, 0.0, 0.0), 64), camera_pixel(&frame.camera, Vec3::new(4.5, 0.0, 0.0), 64));
+    let image = gpu.render(&frame, 64, 64).unwrap();
+    let (near, far) = (image.pixel(near.0, near.1).unwrap(), image.pixel(far.0, far.1).unwrap());
+    assert!(brightness(near) > brightness(far) + 60, "near {near:?} far {far:?}");
+
+    // A spot light straight down at the centre, 30° wide.
+    let scene = floor_scene(&[(
+        "spotLight",
+        json!({"color": [1, 1, 1], "intensity": 40, "range": 10, "angle": 30, "softness": 0.2}),
+        [0.0, 3.0, 0.0],
+        [-90.0, 0.0, 0.0],
+    )]);
+    let frame = extract(&scene, top_down(), OPTIONS);
+    let outside = camera_pixel(&frame.camera, Vec3::new(3.5, 0.0, 0.0), 64);
+    let image = gpu.render(&frame, 64, 64).unwrap();
+    let inside = image.pixel(32, 32).unwrap();
+    let outside = image.pixel(outside.0, outside.1).unwrap();
+    assert!(brightness(inside) > brightness(outside) + 60, "inside {inside:?} outside {outside:?}");
+}
+
+#[test]
+fn a_shape_casts_a_shadow_from_the_sun_unless_shadows_are_off() {
+    let Some(gpu) = gpu() else { return };
+    let sun = |shadows: bool| ("directionalLight", json!({"color": [1, 1, 1], "intensity": 1.5, "shadows": shadows}), [0.0, 5.0, 0.0], [-90.0, 0.0, 0.0]);
+    let render = |shadows: bool| {
+        let mut scene = floor_scene(&[sun(shadows)]);
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.9}), [3.0, 2.0, 0.0], [0.0; 3]);
+        // From the side, so the floor under the cube is visible.
+        let camera = CameraView::look_at(Vec3::new(3.0, 6.0, 9.0), Vec3::new(3.0, 0.0, 0.0), 50.0, 1.0);
+        let frame = extract(&scene, camera, OPTIONS);
+        let under = camera_pixel(&frame.camera, Vec3::new(3.0, 0.0, 0.3), 64);
+        let away = camera_pixel(&frame.camera, Vec3::new(-1.5, 0.0, 0.3), 64);
+        let image = gpu.render(&frame, 64, 64).unwrap();
+        (image.pixel(under.0, under.1).unwrap(), image.pixel(away.0, away.1).unwrap())
+    };
+    let (under, away) = render(true);
+    assert!(brightness(away) > brightness(under) + 80, "the floor under the cube is in shadow: under {under:?}, away {away:?}");
+    let (under, away) = render(false);
+    assert!(brightness(away).abs_diff(brightness(under)) < 30, "no shadow when shadows are off: under {under:?}, away {away:?}");
+}
+
+/// The pixel a world point lands on in a square image of `size`.
+fn camera_pixel(camera: &CameraView, point: Vec3, size: u32) -> (u32, u32) {
+    let ndc = camera.view_proj().project_point3(point);
+    let x = ((ndc.x * 0.5 + 0.5) * size as f32) as u32;
+    let y = ((0.5 - ndc.y * 0.5) * size as f32) as u32;
+    (x.min(size - 1), y.min(size - 1))
+}
+
+#[test]
+fn a_surface_on_the_ground_plane_hides_the_grid_completely() {
+    let Some(gpu) = gpu() else { return };
+    let scene = floor_scene(&[("directionalLight", json!({"color": [1, 1, 1], "intensity": 3, "shadows": false}), [0.0; 3], [-60.0, 20.0, 0.0])]);
+    // A low, grazing view, where depth fighting shows most.
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.6, 8.0), Vec3::new(0.0, 0.0, -4.0), 50.0, 1.0);
+    let with_grid = gpu.render(&extract(&scene, camera, FrameOptions { show_grid: true, ..OPTIONS }), 96, 96).unwrap();
+    let without = gpu.render(&extract(&scene, camera, OPTIONS), 96, 96).unwrap();
+    let differing =
+        with_grid.pixels.chunks(4).zip(without.pixels.chunks(4)).skip(96 * 60).filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 6)).count();
+    assert_eq!(differing, 0, "{differing} floor pixels show the grid");
+}

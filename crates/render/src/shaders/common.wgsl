@@ -1,0 +1,31 @@
+// Shared by every scene shader: the per-frame values. The renderer puts this file in front of each
+// shader, so the layout is written once.
+
+const MAX_LIGHTS: u32 = 8u;
+
+struct Light {
+    // xyz: direction the light travels (directional and spot lights); w: 0 directional, 1 point, 2 spot
+    direction: vec4<f32>,
+    // xyz: position (point and spot lights); w: range
+    position: vec4<f32>,
+    // rgb: colour times intensity; w: cosine of the spot cone's edge
+    radiance: vec4<f32>,
+    // x: cosine where the spot cone's fade starts
+    extra: vec4<f32>,
+};
+
+struct Globals {
+    view_proj: mat4x4<f32>,
+    // xyz: camera position, w: seconds (material Time node)
+    camera_pos: vec4<f32>,
+    // rgb: ambient light, w: number of lights
+    ambient: vec4<f32>,
+    // World to the shadow map of the light that casts shadows.
+    light_view_proj: mat4x4<f32>,
+    // x: index of the light that casts shadows, or -1; y: depth bias; z: one shadow-map texel in uv;
+    // w: how far to push points out along their normal before the test, in world units
+    shadow: vec4<f32>,
+    lights: array<Light, MAX_LIGHTS>,
+};
+
+@group(0) @binding(0) var<uniform> globals: Globals;

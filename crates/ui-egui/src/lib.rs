@@ -447,6 +447,36 @@ impl Editor {
         }
     }
 
+    /// Asks where to save `id` and its children as a prefab, then links `id` to the new file.
+    pub(crate) fn save_as_prefab(&mut self, id: StableId) {
+        let extension = bayleaf_engine::prefab_cmds::PREFAB_EXTENSION;
+        let base = self.session.script_dir();
+        let folder = base.join("prefabs");
+        let name = self.session.scene().name(id).unwrap_or("Prefab").to_owned();
+        let dialog = rfd::FileDialog::new()
+            .add_filter("Bayleaf prefab", &[extension])
+            .set_directory(if folder.is_dir() { &folder } else { &base })
+            .set_file_name(format!("{name}.{extension}"));
+        if let Some(path) = dialog.save_file() {
+            self.dispatch("scene.prefab.create", &json!({ "id": id, "path": path.with_extension(extension) }), None);
+        }
+    }
+
+    /// Places a linked copy of a prefab file after the selected object (or at the end) and selects it.
+    pub(crate) fn place_prefab(&mut self, path: &std::path::Path) {
+        let scene = self.session.scene();
+        let (parent, index) = match self.selected {
+            Some(id) => {
+                let parent = scene.parent(id);
+                (parent, scene.children(parent).iter().position(|c| *c == id).map(|i| i + 1))
+            }
+            None => (None, None),
+        };
+        if let Some(result) = self.dispatch("scene.prefab.place", &json!({ "path": path, "parent": parent, "index": index }), None) {
+            self.select_only(result["id"].as_str().and_then(|s| StableId::parse_hex(s).ok()));
+        }
+    }
+
     /// Stops the window from closing while there are unsaved changes, and asks what to do.
     fn guard_close(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.viewport().close_requested()) && !self.close_confirmed && self.has_unsaved_changes() {

@@ -25,6 +25,7 @@ const ROW_MENU: &[(&str, &str)] = &[
     ("Make Child of Previous", "scene.object.indent"),
     ("Move Out of Parent", "scene.object.outdent"),
     ("Duplicate", "scene.object.duplicate"),
+    ("Save as Prefab…", SAVE_PREFAB),
     ("Copy", COPY),
     ("Paste After", PASTE),
     ("Delete", "scene.object.delete"),
@@ -33,6 +34,7 @@ const ROW_MENU: &[(&str, &str)] = &[
 /// Context-menu entries handled by the editor (they use its clipboard), not engine commands.
 const COPY: &str = "editor.copy";
 const PASTE: &str = "editor.paste";
+const SAVE_PREFAB: &str = "editor.savePrefab";
 
 /// Drag-and-drop payload: the object being dragged.
 #[derive(Clone, Copy)]
@@ -103,7 +105,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 inspector::empty_state(ui, "No matches", "No object name contains the filter text.");
             }
             for id in matches {
-                draggable_row(ui, id, scene.name(id).unwrap_or("Object"), &mut state);
+                draggable_row(ui, id, scene.name(id).unwrap_or("Object"), is_prefab(scene, id), &mut state);
             }
             theme::stripes(ui, stripe_slot, state.rows.iter().map(|(_, r)| *r), full_width);
         }
@@ -131,6 +133,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     match state.command {
         Some((COPY, _)) => editor.copy_selection(false),
         Some((PASTE, _)) => editor.paste(None),
+        Some((SAVE_PREFAB, id)) => editor.save_as_prefab(id),
         Some((command, id)) => {
             editor.dispatch(command, &json!({ "id": id }), None);
         }
@@ -193,15 +196,22 @@ fn rename_field(ui: &mut egui::Ui, id: StableId, current: &str, width: f32, stat
 
 /// A row that can also be dragged with the primary button. Records its rectangle for drop targeting.
 /// The secondary button stays free for the context menu.
-fn draggable_row(ui: &mut egui::Ui, id: StableId, name: &str, state: &mut RowState) {
+fn draggable_row(ui: &mut egui::Ui, id: StableId, name: &str, prefab: bool, state: &mut RowState) {
     let width = ui.available_width();
     if state.renaming.as_ref().is_some_and(|r| r.id == id) {
         rename_field(ui, id, name, width, state);
         return;
     }
     let is_selected = state.selected == Some(id) || state.also.contains(&id);
-    let button =
-        egui::Button::selectable(is_selected, (name, egui::Atom::grow())).truncate().min_size(egui::vec2(width, LIST_ROW)).sense(egui::Sense::click_and_drag());
+    // A placed prefab says so after its name, in words, not only by colour.
+    let t = theme::tokens(ui);
+    // No empty marker on other rows: it would add a space to their accessible name.
+    let button = if prefab {
+        egui::Button::selectable(is_selected, (name, egui::Atom::grow(), egui::RichText::new("prefab").small().color(t.text_muted)))
+    } else {
+        egui::Button::selectable(is_selected, (name, egui::Atom::grow()))
+    };
+    let button = button.truncate().min_size(egui::vec2(width, LIST_ROW)).sense(egui::Sense::click_and_drag());
     let response = ui.add(button);
     let modifiers = ui.input(|i| i.modifiers);
     let adds = modifiers.command || modifiers.shift;
@@ -245,18 +255,22 @@ fn draggable_row(ui: &mut egui::Ui, id: StableId, name: &str, state: &mut RowSta
     state.rows.push((id, response.rect));
 }
 
+fn is_prefab(scene: &Scene, id: StableId) -> bool {
+    scene.get::<bayleaf_engine::scene::components::Prefab>(id).is_some()
+}
+
 fn tree(ui: &mut egui::Ui, scene: &Scene, parent: Option<StableId>, state: &mut RowState) {
     for &id in scene.children(parent) {
         let name = scene.name(id).unwrap_or("Object").to_owned();
         if scene.children(Some(id)).is_empty() {
             ui.horizontal(|ui| {
                 ui.add_space(ARROW_WIDTH);
-                draggable_row(ui, id, &name, state);
+                draggable_row(ui, id, &name, is_prefab(scene, id), state);
             });
         } else {
             let state_id = ui.make_persistent_id(("hierarchy", id.as_u128()));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true)
-                .show_header(ui, |ui| draggable_row(ui, id, &name, state))
+                .show_header(ui, |ui| draggable_row(ui, id, &name, is_prefab(scene, id), state))
                 .body(|ui| tree(ui, scene, Some(id), state));
         }
     }
@@ -390,6 +404,14 @@ fn presets() -> Vec<(&'static str, Value)> {
         (
             "Directional Light",
             json!({"name": "Directional Light", "components": {"directionalLight": null, "transform": {"position": [0.0, 5.0, 0.0], "rotation": [-50.0, 30.0, 0.0], "scale": [1.0, 1.0, 1.0]}}}),
+        ),
+        (
+            "Point Light",
+            json!({"name": "Point Light", "components": {"pointLight": null, "transform": {"position": [0.0, 2.0, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}}),
+        ),
+        (
+            "Spot Light",
+            json!({"name": "Spot Light", "components": {"spotLight": null, "transform": {"position": [0.0, 4.0, 0.0], "rotation": [-90.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}}),
         ),
     ]
 }

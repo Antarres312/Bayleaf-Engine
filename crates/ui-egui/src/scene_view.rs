@@ -67,6 +67,8 @@ struct GpuView {
     renderer: Renderer,
     target: RenderTarget,
     texture: egui::TextureId,
+    /// The selected camera's view, shown in a corner of the scene view.
+    preview: Option<(RenderTarget, egui::TextureId)>,
 }
 
 #[derive(Default)]
@@ -179,7 +181,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let gpu_view = view.gpu.get_or_insert_with(|| {
         let target = RenderTarget::new(&gpu.device, width, height);
         let texture = gpu.renderer.write().register_native_texture(&gpu.device, target.view(), bayleaf_render::wgpu::FilterMode::Linear);
-        GpuView { renderer: Renderer::new(&gpu.device), target, texture }
+        GpuView { renderer: Renderer::new(&gpu.device), target, texture, preview: None }
     });
     if gpu_view.target.size() != (width, height) {
         gpu_view.target = RenderTarget::new(&gpu.device, width, height);
@@ -211,6 +213,33 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     }
     gpu_view.renderer.render(&gpu.device, &gpu.queue, &gpu_view.target, &frame);
 
+    // What the selected camera sees, rendered small.
+    let preview_camera = editor.selected.and_then(|id| bayleaf_render::object_camera(editor.session.scene(), id, aspect));
+    let preview_size = egui::vec2((size.x * 0.28).clamp(120.0, 360.0), (size.x * 0.28).clamp(120.0, 360.0) / aspect);
+    let preview = preview_camera.map(|camera| {
+        let (pw, ph) = ((preview_size.x * ppp).round().max(1.0) as u32, (preview_size.y * ppp).round().max(1.0) as u32);
+        if gpu_view.preview.as_ref().is_none_or(|(target, _)| target.size() != (pw, ph)) {
+            let target = RenderTarget::new(&gpu.device, pw, ph);
+            let mut renderer = gpu.renderer.write();
+            let texture = match gpu_view.preview.take() {
+                Some((_, id)) => {
+                    renderer.update_egui_texture_from_wgpu_texture(&gpu.device, target.view(), bayleaf_render::wgpu::FilterMode::Linear, id);
+                    id
+                }
+                None => renderer.register_native_texture(&gpu.device, target.view(), bayleaf_render::wgpu::FilterMode::Linear),
+            };
+            gpu_view.preview = Some((target, texture));
+        }
+        let options = FrameOptions { show_grid: false, selected: None, time };
+        let preview_frame = bayleaf_render::extract_with(editor.session.scene(), camera, options, &mut |path| materials.get(&base.join(path)).ok());
+        if let Some((target, texture)) = &gpu_view.preview {
+            gpu_view.renderer.render(&gpu.device, &gpu.queue, target, &preview_frame);
+            *texture
+        } else {
+            gpu_view.texture
+        }
+    });
+
     let image = egui::Image::new(egui::load::SizedTexture::new(gpu_view.texture, size)).sense(egui::Sense::click_and_drag());
     let response = ui.add(image);
     if editor.session.is_playing() {
@@ -219,6 +248,16 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         ui.painter().rect_stroke(response.rect, 0.0, egui::Stroke::new(3.0, t.accent), egui::StrokeKind::Inside);
     }
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Scene view"));
+    // A prefab dragged from the Project panel is placed in the scene.
+    if let Some(asset) = response.dnd_release_payload::<crate::project::DraggedAsset>()
+        && asset.relative.ends_with(".bprefab")
+    {
+        let path = editor.session.script_dir().join(&asset.relative);
+        editor.place_prefab(&path);
+    }
+    if let Some(texture) = preview {
+        paint_preview(ui, texture, response.rect, preview_size);
+    }
 
     // Handles on the selected object. Not during play: play-mode changes are thrown away on stop.
     let projector = gizmo::Projector { view_proj: frame.camera.view_proj(), rect: response.rect, eye: frame.camera.position };
@@ -345,6 +384,18 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     }
 }
 
+/// The selected camera's view in the bottom-right corner, framed and labelled.
+fn paint_preview(ui: &egui::Ui, texture: egui::TextureId, view: egui::Rect, size: egui::Vec2) {
+    let t = crate::theme::tokens(ui);
+    let rect = egui::Rect::from_min_size(view.right_bottom() - size - egui::vec2(12.0, 12.0), size);
+    let painter = ui.painter_at(view);
+    painter.rect_filled(rect.expand(3.0), crate::theme::RADIUS, t.backdrop);
+    painter.image(texture, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+    let label = egui::Rect::from_min_size(rect.min, egui::vec2(112.0, 18.0));
+    painter.rect_filled(label, egui::CornerRadius { nw: 2, ne: 0, sw: 0, se: crate::theme::RADIUS }, t.backdrop);
+    painter.text(label.left_center() + egui::vec2(6.0, 0.0), egui::Align2::LEFT_CENTER, "Camera preview", egui::FontId::proportional(12.0), t.text);
+}
+
 /// How close a click must be to a camera or light icon to pick it, in points.
 const ICON_REACH: f32 = 12.0;
 
@@ -352,6 +403,8 @@ const ICON_REACH: f32 = 12.0;
 enum IconKind {
     Camera,
     Light,
+    /// Point and spot lights.
+    Bulb,
 }
 
 /// An object without a shape, drawn as an icon so it can be seen and clicked.
@@ -364,7 +417,7 @@ struct Icon {
 }
 
 fn scene_icons(editor: &Editor, projector: &gizmo::Projector) -> Vec<Icon> {
-    use bayleaf_engine::scene::components::{Camera, DirectionalLight};
+    use bayleaf_engine::scene::components::{Camera, DirectionalLight, PointLight, SpotLight};
     let scene = editor.session.scene();
     scene
         .world_matrices()
@@ -374,6 +427,8 @@ fn scene_icons(editor: &Editor, projector: &gizmo::Projector) -> Vec<Icon> {
                 IconKind::Camera
             } else if scene.get::<DirectionalLight>(id).is_some() {
                 IconKind::Light
+            } else if scene.get::<PointLight>(id).is_some() || scene.get::<SpotLight>(id).is_some() {
+                IconKind::Bulb
             } else {
                 return None;
             };
@@ -406,6 +461,11 @@ fn paint_icons(ui: &egui::Ui, icons: &[Icon], selected: Option<bayleaf_core::Sta
                 painter.rect(body, 2.0, color, edge, egui::StrokeKind::Outside);
                 let lens = vec![body.right_center(), body.right_center() + egui::vec2(7.0, -6.0), body.right_center() + egui::vec2(7.0, 6.0)];
                 painter.add(egui::Shape::convex_polygon(lens, color, edge));
+            }
+            IconKind::Bulb => {
+                // A bulb: a round glass on a small base.
+                painter.circle(c - egui::vec2(0.0, 2.0), 6.5, color, edge);
+                painter.rect(egui::Rect::from_center_size(c + egui::vec2(0.0, 6.5), egui::vec2(6.0, 4.0)), 1.0, color, edge, egui::StrokeKind::Outside);
             }
             IconKind::Light => {
                 for i in 0..8 {

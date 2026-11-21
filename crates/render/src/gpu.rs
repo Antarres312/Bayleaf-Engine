@@ -7,7 +7,7 @@ use bayleaf_scene::components::Shape;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-use crate::extract::{DrawItem, Frame, MAX_LIGHTS, normal_matrix};
+use crate::extract::{DrawItem, Frame, LightKind, MAX_LIGHTS, normal_matrix};
 use crate::material::CompiledMaterial;
 use crate::mesh::{self, Vertex};
 
@@ -20,7 +20,9 @@ const SAMPLES: u32 = 4;
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct LightRaw {
     direction: [f32; 4],
+    position: [f32; 4],
     radiance: [f32; 4],
+    extra: [f32; 4],
 }
 
 #[repr(C)]
@@ -29,8 +31,14 @@ struct Globals {
     view_proj: [[f32; 4]; 4],
     camera_pos: [f32; 4],
     ambient: [f32; 4],
+    light_view_proj: [[f32; 4]; 4],
+    shadow: [f32; 4],
     lights: [LightRaw; MAX_LIGHTS],
 }
+
+/// Size of the shadow map, in texels per side.
+const SHADOW_SIZE: u32 = 2048;
+const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -127,6 +135,9 @@ pub struct Renderer {
     meshes: Vec<(Shape, GpuMesh)>,
     instances: wgpu::Buffer,
     instance_capacity: usize,
+    shadow_view: wgpu::TextureView,
+    shadow_group: wgpu::BindGroup,
+    shadow_pipeline: wgpu::RenderPipeline,
 }
 
 impl Renderer {
@@ -151,14 +162,72 @@ impl Renderer {
             layout: &globals_layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
         });
+        // The shadow map: written by the shadow pass, read with a comparison sampler by the shapes.
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("bayleaf shadow map"),
+            size: wgpu::Extent3d { width: SHADOW_SIZE, height: SHADOW_SIZE, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SHADOW_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("bayleaf shadow sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bayleaf shadow layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
+        });
+        let shadow_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bayleaf shadow group"),
+            layout: &shadow_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&shadow_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&shadow_sampler) },
+            ],
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("bayleaf pipeline layout"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&shadow_layout)],
+            immediate_size: 0,
+        });
+        let shadow_pass_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("bayleaf shadow pass layout"),
             bind_group_layouts: &[Some(&globals_layout)],
             immediate_size: 0,
         });
+        let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bayleaf shadow shader"),
+            source: wgpu::ShaderSource::Wgsl(with_common(include_str!("shaders/shadow.wgsl")).into()),
+        });
+        let shadow_pipeline = shadow_pipeline(device, &shadow_pass_layout, &shadow_shader);
         let grid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bayleaf grid shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/grid.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(with_common(include_str!("shaders/grid.wgsl")).into()),
         });
 
         let mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -189,7 +258,20 @@ impl Renderer {
 
         let instance_capacity = 256;
         let instances = instance_buffer(device, instance_capacity);
-        Self { globals, globals_group, layout, pipelines, material_error: None, grid, meshes, instances, instance_capacity }
+        Self {
+            globals,
+            globals_group,
+            layout,
+            pipelines,
+            material_error: None,
+            grid,
+            meshes,
+            instances,
+            instance_capacity,
+            shadow_view,
+            shadow_group,
+            shadow_pipeline,
+        }
     }
 
     /// Why the GPU refused the last material shader it was given, if it refused one.
@@ -229,7 +311,8 @@ impl Renderer {
 
     /// Records and submits the commands that draw `frame` into `target`.
     pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, target: &RenderTarget, frame: &Frame) {
-        let globals = globals_for(frame);
+        let shadow = shadow_view(frame);
+        let globals = globals_for(frame, shadow);
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         for material in frame.items.iter().filter_map(|i| i.material.as_deref()) {
             self.prepare(device, material);
@@ -253,6 +336,35 @@ impl Renderer {
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("bayleaf frame") });
+        if shadow.is_some() {
+            // The opaque shapes, as seen from the light, into the shadow map.
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bayleaf shadow pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_view,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.shadow_pipeline);
+            pass.set_bind_group(0, &self.globals_group, &[]);
+            pass.set_vertex_buffer(1, self.instances.slice(..));
+            let mut start = 0usize;
+            while start < opaque.len() {
+                let first = opaque[start];
+                let run = opaque[start..].iter().take_while(|i| i.shape == first.shape).count();
+                if let Some((_, mesh)) = self.meshes.iter().find(|(s, _)| *s == first.shape) {
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, start as u32..(start + run) as u32);
+                }
+                start += run;
+            }
+        }
         {
             let c = frame.clear_color;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -276,6 +388,7 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.globals_group, &[]);
+            pass.set_bind_group(1, &self.shadow_group, &[]);
             pass.set_vertex_buffer(1, self.instances.slice(..));
 
             // Runs of opaque items that share a material and a shape are drawn as one instanced call.
@@ -311,18 +424,62 @@ impl Renderer {
     }
 }
 
-fn globals_for(frame: &Frame) -> Globals {
-    let mut lights = [LightRaw { direction: [0.0; 4], radiance: [0.0; 4] }; MAX_LIGHTS];
+fn globals_for(frame: &Frame, shadow: Option<(usize, Mat4)>) -> Globals {
+    let mut lights = [LightRaw { direction: [0.0; 4], position: [0.0; 4], radiance: [0.0; 4], extra: [0.0; 4] }; MAX_LIGHTS];
     for (slot, light) in lights.iter_mut().zip(&frame.lights) {
-        *slot = LightRaw { direction: light.direction.extend(0.0).to_array(), radiance: light.radiance.extend(0.0).to_array() };
+        let kind = match light.kind {
+            LightKind::Directional => 0.0,
+            LightKind::Point => 1.0,
+            LightKind::Spot => 2.0,
+        };
+        *slot = LightRaw {
+            direction: light.direction.extend(kind).to_array(),
+            position: light.position.extend(light.range).to_array(),
+            radiance: light.radiance.extend(light.cos_outer).to_array(),
+            extra: [light.cos_inner, 0.0, 0.0, 0.0],
+        };
     }
     let count = frame.lights.len().min(MAX_LIGHTS) as f32;
+    let (index, light_view_proj, bias, normal_offset) = match shadow {
+        Some((index, matrix)) => (index as f32, matrix, shadow_bias(matrix), shadow_texel_world(matrix) * 1.5),
+        None => (-1.0, Mat4::IDENTITY, 0.0, 0.0),
+    };
     Globals {
         view_proj: frame.camera.view_proj().to_cols_array_2d(),
         camera_pos: frame.camera.position.extend(frame.time).to_array(),
         ambient: frame.ambient.extend(count).to_array(),
+        light_view_proj: light_view_proj.to_cols_array_2d(),
+        shadow: [index, bias, 1.0 / SHADOW_SIZE as f32, normal_offset],
         lights,
     }
+}
+
+/// The light that casts shadows and the matrix from the world to its shadow map: an orthographic
+/// view along the light that covers every drawn shape.
+fn shadow_view(frame: &Frame) -> Option<(usize, Mat4)> {
+    let index = frame.lights.iter().position(|l| l.kind == LightKind::Directional && l.shadows)?;
+    let (center, radius) = crate::extract::item_bounds(frame.items.iter().filter(|i| !i.unlit))?;
+    let radius = radius.max(0.5);
+    let dir = frame.lights[index].direction.normalize_or(Vec3::NEG_Y);
+    let up = if dir.cross(Vec3::Y).length_squared() < 1e-6 { Vec3::Z } else { Vec3::Y };
+    let eye = center - dir * radius * 2.0;
+    let view = Mat4::look_at_rh(eye, center, up);
+    let proj = Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.01, radius * 4.0);
+    Some((index, proj * view))
+}
+
+/// Depth bias in shadow-map depth units: about one texel of world size, so a lit surface does not
+/// shadow itself.
+fn shadow_bias(light_view_proj: Mat4) -> f32 {
+    let z_scale = light_view_proj.z_axis.truncate().length();
+    shadow_texel_world(light_view_proj) * z_scale * 1.5
+}
+
+/// The world size of one shadow-map texel.
+fn shadow_texel_world(light_view_proj: Mat4) -> f32 {
+    // The orthographic projection maps the box width 2r to 2 in x.
+    let x_scale = light_view_proj.x_axis.truncate().length().max(1e-6);
+    2.0 / x_scale / SHADOW_SIZE as f32
 }
 
 fn shape_index(shape: Shape) -> usize {
@@ -411,7 +568,9 @@ fn grid_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &
             depth_write_enabled: Some(false),
             depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
+            // Pushed back a little, so a surface lying on the ground plane always covers the grid
+            // instead of flickering with it.
+            bias: wgpu::DepthBiasState { constant: 64, slope_scale: 2.0, clamp: 0.0 },
         }),
         multisample: wgpu::MultisampleState { count: SAMPLES, ..wgpu::MultisampleState::default() },
         fragment: Some(wgpu::FragmentState {
@@ -434,9 +593,18 @@ pub(crate) const DEFAULT_SURFACE: &str = "fn surface(s: SurfaceIn) -> Surface {
     return Surface(s.color.rgb, s.params.x, s.params.y, vec3<f32>(0.0), s.color.a);
 }";
 
+/// `shader` with the shared per-frame values in front.
+fn with_common(shader: &str) -> String {
+    format!(
+        "{}
+{shader}",
+        include_str!("shaders/common.wgsl")
+    )
+}
+
 /// The mesh shader with `surface` filled in.
 pub(crate) fn mesh_source(surface: &str) -> String {
-    include_str!("shaders/mesh.wgsl").replace("// @surface", surface)
+    with_common(&include_str!("shaders/mesh.wgsl").replace("// @surface", surface))
 }
 
 fn material_key(item: &DrawItem) -> u64 {
@@ -453,4 +621,42 @@ fn error_chain(error: &dyn std::error::Error) -> String {
         source = cause.source();
     }
     text
+}
+
+/// Depth-only pipeline for the shadow map. Back faces are kept: a closed shape's far side is
+/// what keeps light from leaking under it.
+fn shadow_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("bayleaf shadow"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &VERTEX_ATTRIBUTES,
+                }),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<InstanceRaw>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &INSTANCE_ATTRIBUTES,
+                }),
+            ],
+        },
+        primitive: wgpu::PrimitiveState { cull_mode: None, ..wgpu::PrimitiveState::default() },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: SHADOW_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: None,
+        multiview_mask: None,
+        cache: None,
+    })
 }

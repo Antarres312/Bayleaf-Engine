@@ -501,3 +501,63 @@ fn a_new_project_has_a_working_starting_scene_and_paths_start_at_its_folder() {
     assert_eq!(registry.execute(&mut session, "project.info", &Value::Null).unwrap()["mainScene"], "scenes/main.bscene");
     std::fs::remove_dir_all(&base).ok();
 }
+
+#[test]
+fn prefabs_are_placed_applied_to_every_copy_and_reverted() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-prefab-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("level.bscene")})).unwrap();
+    let crate_id = create(
+        &registry,
+        &mut session,
+        json!({"name": "Crate", "components": {"mesh": {"shape": "cube", "color": [0.5, 0.3, 0.1, 1], "metallic": 0, "roughness": 0.5}}}),
+    );
+    create(&registry, &mut session, json!({"name": "Lid", "parent": crate_id}));
+    let made = registry.execute(&mut session, "scene.prefab.create", &json!({"id": crate_id, "path": "prefabs/crate.bprefab"})).unwrap();
+    assert_eq!(made["source"], "prefabs/crate.bprefab");
+    assert!(dir.join("prefabs/crate.bprefab").is_file());
+
+    let second = registry.execute(&mut session, "scene.prefab.place", &json!({"path": "prefabs/crate.bprefab"})).unwrap()["id"].as_str().unwrap().to_owned();
+    let second_id = bayleaf_core::StableId::parse_hex(&second).unwrap();
+    registry
+        .execute(
+            &mut session,
+            "scene.component.set",
+            &json!({"id": second, "component": "transform", "value": {"position": [5, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}}),
+        )
+        .unwrap();
+    assert_eq!(session.scene().children(Some(second_id)).len(), 1, "the copy has the lid");
+
+    // Edit the first copy and apply: the second copy follows but stays where it is.
+    registry
+        .execute(
+            &mut session,
+            "scene.component.set",
+            &json!({"id": crate_id, "component": "mesh", "value": {"shape": "sphere", "color": [0.5, 0.3, 0.1, 1], "metallic": 0, "roughness": 0.5}}),
+        )
+        .unwrap();
+    create(&registry, &mut session, json!({"name": "Handle", "parent": crate_id}));
+    let steps = session.history().len();
+    assert_eq!(registry.execute(&mut session, "scene.prefab.apply", &json!({"id": crate_id})).unwrap()["updated"], 1);
+    assert_eq!(session.history().len(), steps + 1, "one undo step");
+    assert_eq!(session.scene().component(second_id, "mesh").unwrap()["shape"], "sphere");
+    assert_eq!(session.scene().children(Some(second_id)).len(), 2);
+    assert_eq!(session.scene().component(second_id, "transform").unwrap()["position"][0], 5.0, "a copy keeps its own transform");
+    assert!(session.scene().component(second_id, "prefab").is_ok(), "and its link");
+
+    // Revert throws away the copy's own changes.
+    registry
+        .execute(
+            &mut session,
+            "scene.component.set",
+            &json!({"id": second, "component": "mesh", "value": {"shape": "plane", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.5}}),
+        )
+        .unwrap();
+    registry.execute(&mut session, "scene.prefab.revert", &json!({"id": second})).unwrap();
+    assert_eq!(session.scene().component(second_id, "mesh").unwrap()["shape"], "sphere");
+    let plain = create(&registry, &mut session, json!({}));
+    assert!(registry.execute(&mut session, "scene.prefab.apply", &json!({"id": plain})).is_err(), "not a placed prefab");
+    std::fs::remove_dir_all(&dir).ok();
+}

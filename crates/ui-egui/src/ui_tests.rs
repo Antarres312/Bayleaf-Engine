@@ -465,3 +465,23 @@ fn ctrl_and_shift_clicks_select_several_objects_and_delete_removes_them_as_one_s
     harness.run();
     assert_eq!(harness.state().session.scene().children(None).len(), 4);
 }
+
+#[test]
+fn a_placed_prefab_is_marked_and_its_card_unlinks_it() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-prefab-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut harness = harness();
+    let editor = harness.state_mut();
+    editor.dispatch("scene.saveAs", &json!({ "path": dir.join("s.bscene") }), None);
+    editor.dispatch("scene.object.create", &json!({ "name": "Crate" }), None);
+    let id = editor.selected.unwrap();
+    editor.dispatch("scene.prefab.create", &json!({ "id": id, "path": "crate.bprefab" }), None);
+    harness.run();
+    assert!(harness.query_by_label_contains("Crate prefab").is_some(), "the hierarchy row says it is a prefab");
+    assert!(harness.query_by_label("Apply").is_some() && harness.query_by_label("Revert").is_some());
+    harness.get_by_label("Unlink").click();
+    harness.run();
+    assert!(harness.state().session.scene().component(id, "prefab").is_err());
+    assert!(harness.query_by_label("Apply").is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}

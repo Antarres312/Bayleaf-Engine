@@ -5,12 +5,12 @@ use bayleaf_core::math::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use bayleaf_scene::Scene;
 use std::sync::Arc;
 
-use bayleaf_scene::components::{Camera, DirectionalLight, Mesh, Projection, Shape, Sprite};
+use bayleaf_scene::components::{Camera, DirectionalLight, Mesh, PointLight, Projection, Shape, SpotLight, Sprite};
 
 use crate::material::CompiledMaterial;
 
 /// Lights beyond this count are ignored.
-pub const MAX_LIGHTS: usize = 4;
+pub const MAX_LIGHTS: usize = 8;
 
 /// Where the scene is seen from.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -94,12 +94,36 @@ impl DrawItem {
     }
 }
 
+/// What kind of source a light is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightKind {
+    Directional,
+    Point,
+    Spot,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct LightItem {
-    /// World-space direction the light travels in.
+    pub kind: LightKind,
+    /// World-space position (point and spot lights).
+    pub position: Vec3,
+    /// World-space direction the light travels in (directional and spot lights).
     pub direction: Vec3,
     /// Linear RGB times intensity.
     pub radiance: Vec3,
+    /// Distance at which a point or spot light has faded out.
+    pub range: f32,
+    /// Cosines of the spot cone's outer edge and of where its fade starts.
+    pub cos_outer: f32,
+    pub cos_inner: f32,
+    /// This light casts shadows (directional lights only, for now).
+    pub shadows: bool,
+}
+
+impl LightItem {
+    pub const fn directional(direction: Vec3, radiance: Vec3, shadows: bool) -> Self {
+        Self { kind: LightKind::Directional, position: Vec3::ZERO, direction, radiance, range: 0.0, cos_outer: -1.0, cos_inner: -1.0, shadows }
+    }
 }
 
 /// Everything one frame needs, independent of the GPU.
@@ -128,7 +152,7 @@ pub struct FrameOptions {
 }
 
 /// Light used when the scene has none, so a new scene is not black.
-const FALLBACK_LIGHT: LightItem = LightItem { direction: Vec3::new(-0.4, -1.0, -0.6), radiance: Vec3::new(2.8, 2.8, 2.8) };
+const FALLBACK_LIGHT: LightItem = LightItem::directional(Vec3::new(-0.4, -1.0, -0.6), Vec3::new(2.8, 2.8, 2.8), false);
 
 /// Collects the draw items and lights of `scene` as seen by `camera`, without materials.
 pub fn extract(scene: &Scene, camera: CameraView, options: FrameOptions) -> Frame {
@@ -166,13 +190,38 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, ma
                 material: None,
             });
         }
-        if let Some(light) = scene.get::<DirectionalLight>(id)
-            && lights.len() < MAX_LIGHTS
-        {
-            let direction = world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Y);
-            lights.push(LightItem { direction, radiance: Vec3::from(light.color) * light.intensity });
+        let direction = world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Y);
+        let position = world.w_axis.truncate();
+        if let Some(light) = scene.get::<DirectionalLight>(id) {
+            lights.push(LightItem::directional(direction, Vec3::from(light.color) * light.intensity, light.shadows));
+        }
+        if let Some(light) = scene.get::<PointLight>(id) {
+            let radiance = Vec3::from(light.color) * light.intensity;
+            lights.push(LightItem {
+                kind: LightKind::Point,
+                position,
+                direction,
+                radiance,
+                range: light.range,
+                cos_outer: -1.0,
+                cos_inner: -1.0,
+                shadows: false,
+            });
+        }
+        if let Some(light) = scene.get::<SpotLight>(id) {
+            let radiance = Vec3::from(light.color) * light.intensity;
+            let half = (light.angle * 0.5).to_radians();
+            let (cos_outer, cos_inner) = (half.cos(), (half * (1.0 - light.softness)).cos());
+            lights.push(LightItem { kind: LightKind::Spot, position, direction, radiance, range: light.range, cos_outer, cos_inner, shadows: false });
         }
     }
+    // Sun-like lights first, then the lights nearest the camera, as many as the shader takes.
+    lights.sort_by(|a, b| {
+        let rank = |l: &LightItem| if l.kind == LightKind::Directional { 0.0 } else { 1.0 + l.position.distance_squared(camera.position) };
+        rank(a).total_cmp(&rank(b))
+    });
+    lights.truncate(MAX_LIGHTS);
+    // A scene without lights gets a soft default light, so a new scene is not black.
     if lights.is_empty() {
         lights.push(FALLBACK_LIGHT);
     }
@@ -212,7 +261,7 @@ pub fn object_bounds(scene: &Scene, id: StableId) -> Option<(Vec3, f32)> {
     item_bounds(frame.items.iter().filter(|i| i.object == id)).or_else(|| scene.world_matrix(id).map(|m| (m.w_axis.truncate(), 0.5)))
 }
 
-fn item_bounds<'a>(items: impl Iterator<Item = &'a DrawItem>) -> Option<(Vec3, f32)> {
+pub(crate) fn item_bounds<'a>(items: impl Iterator<Item = &'a DrawItem>) -> Option<(Vec3, f32)> {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     let mut any = false;

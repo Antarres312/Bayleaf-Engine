@@ -9,6 +9,7 @@ mod builtin;
 pub mod confine;
 mod graph_cmds;
 mod play;
+pub mod prefab_cmds;
 pub mod project_cmds;
 mod scene_cmds;
 
@@ -319,6 +320,7 @@ impl CommandRegistry {
         commands.extend(play::commands());
         commands.extend(graph_cmds::commands());
         commands.extend(project_cmds::commands());
+        commands.extend(prefab_cmds::commands());
         Self { commands }
     }
 

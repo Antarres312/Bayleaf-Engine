@@ -9,12 +9,21 @@ use crate::theme::{self, ROW_HEIGHT};
 use crate::{Editor, project, value_editor};
 
 enum Pending {
-    Set { component: &'static str, value: Value },
+    Set {
+        component: &'static str,
+        value: Value,
+    },
     Add(&'static str),
     Remove(&'static str),
     AddScript(String),
     RemoveScript(usize),
-    ScriptProperty { index: usize, name: String, value: Option<f32> },
+    ScriptProperty {
+        index: usize,
+        name: String,
+        value: Option<f32>,
+    },
+    /// A prefab command (`scene.prefab.apply` or `scene.prefab.revert`) for this object.
+    Prefab(&'static str),
 }
 
 /// One script card's data, gathered before drawing.
@@ -75,7 +84,26 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             ui.add_space(8.0);
         }
 
-        for (name, value) in components.iter().filter(|(n, _)| *n != "name" && *n != Scripts::NAME) {
+        // A placed prefab says where it came from, and offers Apply, Revert and Unlink.
+        if let Some((_, link)) = components.iter().find(|(n, _)| *n == "prefab") {
+            let source = link["source"].as_str().unwrap_or_default().to_owned();
+            card(ui, t, "prefab card", "Prefab", Some(&source), false, |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(&source).color(t.text_muted)).truncate());
+                ui.horizontal(|ui| {
+                    if ui.button("Apply").on_hover_text("Write this object and its children to the prefab file, and update its other copies in the scene").clicked() {
+                        pending = Some(Pending::Prefab("scene.prefab.apply"));
+                    }
+                    if ui.button("Revert").on_hover_text("Throw away this copy's changes and read the prefab file again").clicked() {
+                        pending = Some(Pending::Prefab("scene.prefab.revert"));
+                    }
+                    if ui.button("Unlink").on_hover_text("Keep the objects but stop treating them as a copy of the prefab").clicked() {
+                        pending = Some(Pending::Remove("prefab"));
+                    }
+                });
+            });
+        }
+
+        for (name, value) in components.iter().filter(|(n, _)| *n != "name" && *n != Scripts::NAME && *n != "prefab") {
             let Some(kind) = kinds.iter().find(|k| k.name == *name) else { continue };
             card(ui, t, ("component card", *name), kind.label, None, kind.removable, |ui| {
                 let mut edited = value.clone();
@@ -251,6 +279,9 @@ fn script_properties(ui: &mut egui::Ui, index: usize, script: &ScriptRef, declar
 
 fn apply(editor: &mut Editor, id: bayleaf_core::StableId, pending: Option<Pending>) {
     match pending {
+        Some(Pending::Prefab(command)) => {
+            editor.dispatch(command, &json!({ "id": id }), None);
+        }
         Some(Pending::Set { component, value }) => {
             let key = format!("set:{id}:{component}:{}", editor.gesture);
             editor.dispatch("scene.component.set", &json!({ "id": id, "component": component, "value": value }), Some(&key));
