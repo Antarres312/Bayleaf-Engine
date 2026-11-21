@@ -409,7 +409,7 @@ fn buttons_at_the_end_of_inspector_rows_stay_inside_their_section() {
     harness.state_mut().dispatch("scene.object.create", &params, None);
     harness.run();
     let section_right = |harness: &Harness<'static, Editor>, title: &str| harness.get_by_label(&format!("Remove {title}")).rect().right();
-    let reset = harness.get_by_label("Reset").rect();
+    let reset = harness.get_by_label("Reset Speed").rect();
     assert!(reset.right() <= section_right(&harness, "Bob") + 0.5, "Reset ends at {} past the section edge {}", reset.right(), section_right(&harness, "Bob"));
     let edit = harness.get_by_label("Edit material").rect();
     assert!(edit.right() <= section_right(&harness, "Mesh") + 0.5, "Edit ends at {} past the section edge", edit.right());
@@ -1259,4 +1259,38 @@ fn a_file_field_takes_a_dragged_file_of_its_kind_and_refuses_others() {
     drag_entry(&mut harness, "Rock.bmaterial, Material", "Material");
     assert_eq!(material(&harness), "Rock.bmaterial", "a material dropped on the field is chosen");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn dragging_a_script_property_from_its_default_keeps_going_and_reset_turns_on_and_off() {
+    let mut harness = harness();
+    let bob = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo/scripts/bob.bscript");
+    let params = json!({ "name": "Bobber", "components": {
+        "scripts": [{ "module": bob.to_string_lossy().replace('\\', "/") }] } });
+    harness.state_mut().dispatch("scene.object.create", &params, None);
+    harness.run();
+    let height = |harness: &Harness<'static, Editor>| {
+        let id = harness.state().selected.unwrap();
+        let scripts = harness.state().session.scene().get::<bayleaf_engine::scene::components::Scripts>(id).unwrap().clone();
+        scripts.0[0].properties.get("height").copied()
+    };
+    assert!(egui_kittest::kittest::NodeT::accesskit_node(&harness.get_by_label("Reset Height")).is_disabled(), "at its default, reset is off");
+    let field = harness.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Height").rect().center();
+    harness.hover_at(field);
+    harness.drag_at(field);
+    harness.run();
+    let mut seen = Vec::new();
+    for step in 1..=6 {
+        harness.hover_at(field + egui::vec2(8.0 * step as f32, 0.0));
+        harness.run();
+        seen.push(height(&harness));
+    }
+    harness.drop_at(field + egui::vec2(48.0, 0.0));
+    harness.run();
+    let first = seen.iter().position(Option::is_some).expect("the drag changes the value");
+    assert!(seen[first] < seen[5], "the drag keeps changing it after it leaves its default: {seen:?}");
+    assert!(!egui_kittest::kittest::NodeT::accesskit_node(&harness.get_by_label("Reset Height")).is_disabled(), "away from its default, reset is on");
+    harness.get_by_label("Reset Height").click();
+    harness.run();
+    assert_eq!(height(&harness), None, "reset goes back to the default");
 }

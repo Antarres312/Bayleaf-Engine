@@ -348,29 +348,20 @@ fn edit_named_numbers(ui: &mut egui::Ui, map: &mut serde_json::Map<String, Value
     outcome
 }
 
-/// A labelled number row for a named value. Shows Reset when the value differs from its default.
-/// Returns the edit outcome and whether Reset was clicked.
-pub(crate) fn named_number(
-    ui: &mut egui::Ui,
-    name: &str,
-    value: &mut Value,
-    overridden: bool,
-    salt: impl std::hash::Hash + std::fmt::Debug,
-) -> (Outcome, bool) {
+/// A labelled number row for a named value, with a reset button that is always there and works
+/// only when the value is not its default. Returns the edit outcome and whether reset was clicked.
+pub(crate) fn named_number(ui: &mut egui::Ui, name: &str, value: &mut Value, changed: bool, salt: impl std::hash::Hash + std::fmt::Debug) -> (Outcome, bool) {
     let t = theme::tokens(ui);
     let mut reset = false;
+    let title = title_case(name);
     let outcome = ui
         .push_id(salt, |ui| {
-            row(ui, t, &title_case(name), |ui, label, _| {
-                // Reset sits at the right edge and the field takes what is left, so the row never
-                // grows past the panel.
+            row(ui, t, &title, |ui, label, _| {
+                // The reset button sits at the right edge and the field takes what is left, so the
+                // row never grows past the panel. It is always laid out, so the field keeps its place
+                // (and a drag on it keeps going) when the value first leaves its default.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if overridden
-                        && ui
-                            .add(egui::Button::new("Reset").small().min_size(egui::vec2(0.0, ROW_HEIGHT)))
-                            .on_hover_text("Go back to the script's default")
-                            .clicked()
-                    {
+                    if reset_button(ui, changed, &title).clicked() {
                         reset = true;
                     }
                     let field_width = (ui.available_width() - 1.0).max(40.0);
@@ -384,6 +375,32 @@ pub(crate) fn named_number(
         })
         .inner;
     (outcome, reset)
+}
+
+/// A square button with a circular-arrow icon that puts `name` back to its default; greyed out and
+/// inert while it already is.
+fn reset_button(ui: &mut egui::Ui, enabled: bool, name: &str) -> egui::Response {
+    let button = ui
+        .add_enabled(enabled, egui::Button::new("").min_size(egui::vec2(ROW_HEIGHT, ROW_HEIGHT)))
+        .on_hover_text("Back to the script's default")
+        .on_disabled_hover_text("This is the script's default");
+    ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(format!("Reset {name}")));
+    let t = theme::tokens(ui);
+    let color = if enabled { t.text } else { t.text_muted.gamma_multiply(0.6) };
+    // An arc of most of a circle, open at the top right, with an arrowhead at its end.
+    let center = button.rect.center();
+    let radius = ROW_HEIGHT * 0.22;
+    let (start, sweep) = (-0.25 * std::f32::consts::PI, 1.6 * std::f32::consts::PI);
+    let at = |a: f32| center + radius * egui::vec2(a.cos(), a.sin());
+    let points: Vec<egui::Pos2> = (0..=24).map(|i| at(start + sweep * i as f32 / 24.0)).collect();
+    let stroke = egui::Stroke::new(1.5, color);
+    ui.painter().add(egui::Shape::line(points, stroke));
+    let tip = at(start);
+    let along = egui::vec2(start.sin(), -start.cos()) * -1.0;
+    let out = egui::vec2(start.cos(), start.sin());
+    let size = ROW_HEIGHT * 0.14;
+    ui.painter().add(egui::Shape::convex_polygon(vec![tip + along * size, tip - out * size, tip + out * size], color, egui::Stroke::NONE));
+    button
 }
 
 #[cfg(test)]

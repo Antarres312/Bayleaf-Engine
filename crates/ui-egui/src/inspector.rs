@@ -331,16 +331,23 @@ fn script_properties(ui: &mut egui::Ui, index: usize, script: &ScriptRef, declar
         ui.label(egui::RichText::new("This script declares no properties.").color(t.text_muted));
         return outcome;
     }
-    let mut rows: Vec<(String, f32, bool)> =
-        declared.iter().map(|(name, default)| (name.clone(), *script.properties.get(name).unwrap_or(default), script.properties.contains_key(name))).collect();
+    // Each row: name, value, and whether it differs from the script's default (a value the script
+    // no longer declares has no default, so it can always be reset away).
+    let mut rows: Vec<(String, f32, bool)> = declared
+        .iter()
+        .map(|(name, default)| {
+            let set = script.properties.get(name);
+            (name.clone(), *set.unwrap_or(default), set.is_some_and(|v| v != default))
+        })
+        .collect();
     for (name, value) in &script.properties {
         if !declared.iter().any(|(d, _)| d == name) {
             rows.push((name.clone(), *value, true));
         }
     }
-    for (name, value, overridden) in rows {
+    for (name, value, changed) in rows {
         let mut field = Value::from(f64::from(value));
-        let (row_outcome, reset) = value_editor::named_number(ui, &name, &mut field, overridden, ("script property", index, name.as_str()));
+        let (row_outcome, reset) = value_editor::named_number(ui, &name, &mut field, changed, ("script property", index, name.as_str()));
         outcome.ended |= row_outcome.ended;
         if row_outcome.changed {
             let number = field.as_f64().map(|v| v as f32);
