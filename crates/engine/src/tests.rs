@@ -561,3 +561,76 @@ fn prefabs_are_placed_applied_to_every_copy_and_reverted() {
     assert!(registry.execute(&mut session, "scene.prefab.apply", &json!({"id": plain})).is_err(), "not a placed prefab");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn scripts_spawn_prefabs_and_destroy_objects_in_play_mode_and_stop_undoes_it() {
+    let module = wat::parse_str(
+        r#"(module
+            (import "bayleaf" "mouse_down" (func $mouse (param i32) (result i32)))
+            (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))
+            (import "bayleaf" "spawn" (func $spawn (param i32 i32 f32 f32 f32) (result i32)))
+            (import "bayleaf" "destroy" (func $destroy (param i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "ball.bprefab")
+            (data (i32.const 120) "Junk")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param f32)
+              (if (call $mouse (i32.const 0))
+                (then
+                  (drop (call $spawn (i32.const 100) (i32.const 12) (f32.const 0) (f32.const 5) (f32.const 0)))
+                  (drop (call $destroy (call $find (i32.const 120) (i32.const 4))))))))"#,
+    )
+    .unwrap();
+    let (registry, mut session, _, dir) = scripted_scene("spawn", &module);
+    create(&registry, &mut session, json!({"name": "Junk"}));
+    let ball = create(&registry, &mut session, json!({"name": "Ball"}));
+    registry.execute(&mut session, "scene.prefab.create", &json!({"id": ball, "path": "ball.bprefab"})).unwrap();
+    registry.execute(&mut session, "scene.object.delete", &json!({"id": ball})).unwrap();
+    registry.execute(&mut session, "scene.save", &Value::Null).unwrap();
+    let edited = session.scene().to_doc();
+    let named = |session: &Session, name: &str| session.scene().world_matrices().into_iter().filter(|(id, _)| session.scene().name(*id) == Some(name)).count();
+
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &Value::Null).unwrap();
+    assert_eq!(named(&session, "Ball"), 0, "nothing without the click");
+    registry.execute(&mut session, "play.input", &json!({"keys": [], "pointer": [0.1, 0.2], "buttons": 1})).unwrap();
+    registry.execute(&mut session, "play.step", &Value::Null).unwrap();
+    assert_eq!(named(&session, "Ball"), 1, "the click spawned a ball");
+    assert_eq!(named(&session, "Junk"), 0, "and destroyed the junk");
+    let spawned = session.scene().world_matrices().into_iter().find(|(id, _)| session.scene().name(*id) == Some("Ball")).unwrap().0;
+    assert_eq!(session.scene().component(spawned, "transform").unwrap()["position"][1], 5.0);
+    assert!(session.console().iter().all(|l| l.level != crate::Level::Error), "{:?}", session.console());
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert_eq!(session.scene().to_doc(), edited, "stop restores the scene");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_new_rust_script_builds_to_a_module_that_runs() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-rust-script-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("s.bscene")})).unwrap();
+    let made = registry.execute(&mut session, "script.new", &json!({"folder": "scripts", "name": "Turn Table"})).unwrap();
+    assert!(dir.join("scripts/turn_table/src/lib.rs").is_file());
+    assert!(registry.execute(&mut session, "script.new", &json!({"folder": "scripts", "name": "turn table"})).is_err(), "the name is taken");
+
+    // A shared build folder keeps later runs fast.
+    let target = std::env::temp_dir().join("bayleaf-script-build-cache");
+    match crate::code_scripts::build_script(&dir.join("scripts/turn_table"), &target) {
+        Ok(built) => {
+            assert_eq!(built.module, std::path::PathBuf::from(made["module"].as_str().unwrap()));
+            let id = create(&registry, &mut session, json!({"name": "Table", "components": {"scripts": [{"module": "scripts/turn_table.wasm"}]}}));
+            registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+            registry.execute(&mut session, "play.step", &json!({"seconds": 0.125})).unwrap();
+            assert!((rotation_y(&session, &id) - 45.0).abs() < 1e-3, "the template turns one turn per second");
+            registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+        }
+        Err(error) if error.contains("rustup target add") || error.contains("needs Rust") => eprintln!("skipped: {error}"),
+        Err(error) => panic!("{error}"),
+    }
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), std::slice::from_ref(&dir)).unwrap()));
+    assert!(registry.execute(&mut session, "script.build", &json!({"path": "scripts/turn_table"})).unwrap_err().to_string().contains("agents may not"));
+    std::fs::remove_dir_all(&dir).ok();
+}

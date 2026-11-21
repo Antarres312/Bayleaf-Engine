@@ -119,7 +119,7 @@ fn branch_follows_the_key_and_sine_is_accurate() {
     for (got, x) in p.iter().zip([1.0f32, 4.0, -7.0]) {
         assert!((got - x.sin()).abs() < 1e-4, "sin({x}) = {got}");
     }
-    let held = Arc::new(Input { keys: ["W".to_owned()].into_iter().collect() });
+    let held = Arc::new(Input { keys: ["W".to_owned()].into_iter().collect(), ..Input::default() });
     host.update(&mut scene, 0.1, 0.0, &held);
     let after = transform(&scene, id).position;
     assert!((after[2] - (p[2] - 1.0)).abs() < 1e-5, "W moves by the offset");
@@ -185,6 +185,24 @@ fn every_node_kind_compiles_and_runs() {
     let branch = b.node("branch", json!({}));
     b.link(update, "then", branch, "run");
     b.link(or, "result", branch, "condition");
+    // Mouse, other objects, spawning and destroying, behind a branch that stays false here.
+    let pointer = b.node("pointer", json!({}));
+    let mouse = b.node("mouseDown", json!({ "button": "Right" }));
+    let clicked = b.node("and", json!({}));
+    b.link(pointer, "inside", clicked, "a");
+    b.link(mouse, "down", clicked, "b");
+    let gate = b.node("branch", json!({}));
+    b.link(branch, "true", gate, "run");
+    b.link(clicked, "result", gate, "condition");
+    let position_of = b.node("positionOf", json!({ "object": "Scripted" }));
+    let set_of = b.node("setPositionOf", json!({ "object": "Scripted" }));
+    b.link(gate, "true", set_of, "run");
+    b.link(position_of, "position", set_of, "position");
+    let spawn = b.node("spawn", json!({ "prefab": "thing.bprefab" }));
+    b.link(set_of, "then", spawn, "run");
+    b.link(pointer, "position", spawn, "position");
+    let destroy = b.node("destroySelf", json!({}));
+    b.link(spawn, "then", destroy, "run");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -207,4 +225,29 @@ fn a_vector_into_a_number_input_is_a_problem_on_that_node() {
     let problems = compile(&b.0).unwrap_err();
     assert_eq!(problems[0].node, Some(log));
     assert!(problems[0].message.contains("Split Vector"), "{problems:?}");
+}
+
+#[test]
+fn a_click_spawns_and_names_must_be_given() {
+    let mut b = Builder::new();
+    let update = b.node("update", json!({}));
+    let mouse = b.node("mouseDown", json!({}));
+    let branch = b.node("branch", json!({}));
+    b.link(update, "then", branch, "run");
+    b.link(mouse, "down", branch, "condition");
+    let spawn = b.node("spawn", json!({ "prefab": "ball.bprefab" }));
+    b.link(branch, "true", spawn, "run");
+    let pointer = b.node("pointer", json!({}));
+    b.link(pointer, "position", spawn, "position");
+    let (mut scene, id, mut host) = run(&b.bytes(), &[]);
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input { pointer: Some([0.5, -0.25]), buttons: 1, ..Input::default() }));
+    assert_eq!(host.take_requests(), [crate::Request::Spawn { by: id, prefab: "ball.bprefab".into(), position: [0.5, -0.25, 0.0] }]);
+
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let set_of = b.node("setPositionOf", json!({}));
+    b.link(start, "then", set_of, "run");
+    let problems = compile(&b.0).unwrap_err();
+    assert_eq!(problems[0].node, Some(set_of));
+    assert!(problems[0].message.contains("name the object"));
 }

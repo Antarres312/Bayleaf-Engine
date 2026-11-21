@@ -149,7 +149,7 @@ fn key_down_sees_the_keys_held_this_frame() {
     load(&mut host, &mut scene, id, &script, &module(1, body)).unwrap();
     host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
     assert_eq!(scene.get::<Transform>(id).unwrap().position[0], 0.0);
-    let held = Arc::new(Input { keys: ["W".to_owned()].into_iter().collect() });
+    let held = Arc::new(Input { keys: ["W".to_owned()].into_iter().collect(), ..Input::default() });
     host.update(&mut scene, 0.1, 0.0, &held);
     assert_eq!(scene.get::<Transform>(id).unwrap().position[0], 1.0);
 }
@@ -222,4 +222,72 @@ fn two_scripts_on_one_object_both_run() {
     assert_eq!(host.len(), 2);
     host.update(&mut scene, 1.0, 0.0, &Arc::new(Input::default()));
     assert!((rotation_y(&scene, id) - 60.0).abs() < 1e-3, "each script turned the object 30°");
+}
+
+#[test]
+fn scripts_move_other_objects_read_the_mouse_and_ask_for_spawns_and_destroys() {
+    let text = r#"(module
+        (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))
+        (import "bayleaf" "transform_get_of" (func $get_of (param i32 i32)))
+        (import "bayleaf" "transform_set_of" (func $set_of (param i32 i32)))
+        (import "bayleaf" "mouse_down" (func $mouse (param i32) (result i32)))
+        (import "bayleaf" "pointer" (func $pointer (param i32) (result i32)))
+        (import "bayleaf" "spawn" (func $spawn (param i32 i32 f32 f32 f32) (result i32)))
+        (import "bayleaf" "destroy" (func $destroy (param i32) (result i32)))
+        (memory (export "memory") 1)
+        (data (i32.const 100) "Target")
+        (data (i32.const 120) "Junk")
+        (data (i32.const 140) "crate.bprefab")
+        (func (export "bayleaf_abi") (result i32) i32.const 1)
+        (func (export "bayleaf_update") (param $dt f32) (local $h i32)
+          (local.set $h (call $find (i32.const 100) (i32.const 6)))
+          (call $get_of (local.get $h) (i32.const 0))
+          (f32.store (i32.const 0) (f32.add (f32.load (i32.const 0)) (f32.const 1)))
+          (call $set_of (local.get $h) (i32.const 0))
+          ;; The pointer's x goes into the target's z.
+          (drop (call $pointer (i32.const 64)))
+          (call $get_of (local.get $h) (i32.const 0))
+          (f32.store (i32.const 8) (f32.load (i32.const 64)))
+          (call $set_of (local.get $h) (i32.const 0))
+          (if (call $mouse (i32.const 0))
+            (then
+              (drop (call $spawn (i32.const 140) (i32.const 13) (f32.const 1) (f32.const 2) (f32.const 3)))
+              (drop (call $destroy (call $find (i32.const 120) (i32.const 4))))))))"#;
+    let bytes = wat::parse_str(text).unwrap();
+    let (mut scene, mover, script) = setup(&[]);
+    let target = scene.create_object(None, "Target").unwrap();
+    let junk = scene.create_object(None, "Junk").unwrap();
+    let mut host = ScriptHost::new();
+    load(&mut host, &mut scene, mover, &script, &bytes).unwrap();
+
+    let idle = Arc::new(Input { pointer: Some([0.25, -0.5]), ..Input::default() });
+    host.update(&mut scene, 0.1, 0.0, &idle);
+    let t = scene.get::<Transform>(target).unwrap().clone();
+    assert_eq!(t.position[0], 1.0, "another object moved");
+    assert_eq!(t.position[2], 0.25, "the pointer was read");
+    assert!(host.take_requests().is_empty(), "nothing asked without the button");
+    assert!(host.take_faults().is_empty());
+
+    let clicking = Arc::new(Input { buttons: 1, ..Input::default() });
+    host.update(&mut scene, 0.1, 0.0, &clicking);
+    assert_eq!(
+        host.take_requests(),
+        [crate::Request::Spawn { by: mover, prefab: "crate.bprefab".into(), position: [1.0, 2.0, 3.0] }, crate::Request::Destroy(junk)]
+    );
+    assert!(scene.contains(junk), "the play loop does the destroy, not the host");
+}
+
+#[test]
+fn bad_handles_stop_the_script_with_a_reason() {
+    let text = r#"(module
+        (import "bayleaf" "transform_get_of" (func $get_of (param i32 i32)))
+        (memory (export "memory") 1)
+        (func (export "bayleaf_abi") (result i32) i32.const 1)
+        (func (export "bayleaf_update") (param f32) (call $get_of (i32.const 999) (i32.const 0))))"#;
+    let (mut scene, id, script) = setup(&[]);
+    let mut host = ScriptHost::new();
+    load(&mut host, &mut scene, id, &script, &wat::parse_str(text).unwrap()).unwrap();
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    let faults = host.take_faults();
+    assert!(faults[0].error.to_string().contains("no object with handle 999"), "{}", faults[0].error);
 }

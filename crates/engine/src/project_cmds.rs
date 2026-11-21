@@ -125,7 +125,7 @@ fn project_new(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     write("materials/ground.bmaterial", GROUND_MATERIAL)?;
     write("scripts/spin.bscript", SPIN_SCRIPT)?;
     write("assets/README.md", "Images, sounds and other files the game uses go here.\n")?;
-    write(".gitignore", "# Files the editor or build tools make again.\n/build/\n*.wasm\n")?;
+    write(".gitignore", "# Files the editor or build tools make again.\n/build/\n/.build/\n*.wasm\n")?;
     write(
         "README.md",
         &format!(

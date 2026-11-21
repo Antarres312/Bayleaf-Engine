@@ -9,6 +9,8 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Scene view, Hierarchy, Inspector | not yet | Not checked yet | Generic editor terms; same |
 | Console, Project, Play mode, Scripts | not yet | Not checked yet | Generic terms; same |
 | Image (material node), Texture Coordinates, Model | not yet | Not checked yet | Generic terms; same |
+| Pointer Position, Mouse Button Held, Position Of, Set Position Of, Spawn Prefab, Destroy This Object | not yet | Not checked yet | Visual script node names; same |
+| New Script, Build Script, Script Source | not yet | Not checked yet | Generic terms; same |
 | Agent control | not yet | Not checked yet | Status-bar label of the editor's control channel; same |
 | Graph, Material, Visual Script, Material Output, Edge Glow, Key Held, Step Seconds | not yet | Not checked yet | Graph editor and node names; same |
 | New Project, Open Project, Duplicate, Cut, Copy, Paste, Move, Rotate, Scale, Engine, Project | not yet | Not checked yet | Generic editor terms; same |

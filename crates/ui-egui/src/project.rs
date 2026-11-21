@@ -39,6 +39,8 @@ pub(crate) struct DraggedAsset {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Folder,
+    /// A script written in Rust: a folder with a Cargo.toml.
+    ScriptSource,
     Scene,
     /// A project file (`.bproject`).
     Project,
@@ -72,6 +74,7 @@ impl Kind {
     fn label(self) -> &'static str {
         match self {
             Kind::Folder => "Folder",
+            Kind::ScriptSource => "Script Source",
             Kind::Scene => "Scene",
             Kind::Project => "Project",
             Kind::Prefab => "Prefab",
@@ -118,6 +121,8 @@ pub(crate) struct ProjectView {
     selected: Option<PathBuf>,
     /// Icon size in points; 0 means the default.
     icon_size: f32,
+    /// A new file being named; nothing is written until the name is confirmed.
+    naming: Option<Naming>,
 }
 
 impl ProjectView {
@@ -151,6 +156,11 @@ impl ProjectView {
 }
 
 impl ProjectView {
+    /// Reads the folders again on the next frame (after a file was made).
+    pub(crate) fn rescan_soon(&mut self) {
+        self.scanned = None;
+    }
+
     pub(crate) fn icon(&self) -> f32 {
         if self.icon_size > 0.0 { self.icon_size } else { ICON_DEFAULT }
     }
@@ -170,13 +180,55 @@ impl ProjectView {
     }
 }
 
+/// What a new file will be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NewKind {
+    Material,
+    VisualScript,
+    RustScript,
+}
+
+impl NewKind {
+    fn label(self) -> &'static str {
+        match self {
+            NewKind::Material => "material",
+            NewKind::VisualScript => "visual script",
+            NewKind::RustScript => "script",
+        }
+    }
+
+    /// The extension the file gets, or none for a script's folder.
+    fn extension(self) -> Option<&'static str> {
+        match self {
+            NewKind::Material => Some("bmaterial"),
+            NewKind::VisualScript => Some("bscript"),
+            NewKind::RustScript => None,
+        }
+    }
+}
+
+/// A new file being named in the Project panel.
+pub(crate) struct Naming {
+    kind: NewKind,
+    folder: PathBuf,
+    text: String,
+    /// The field has had focus (and its text selected) once.
+    focused: bool,
+    /// Why the last name was refused.
+    error: Option<String>,
+}
+
 enum Action {
     OpenScene(PathBuf),
     PlacePrefab(PathBuf),
     OpenGraph(PathBuf),
     AddScript(String),
-    /// A new graph of this domain, saved in the open folder.
-    NewGraph(&'static str),
+    /// Start naming a new file of this kind in the open folder.
+    StartNew(NewKind),
+    /// Make the file being named, with this name.
+    Create(String),
+    /// Build the script crate in this folder.
+    BuildScript(PathBuf),
 }
 
 /// What the panel's parts ask for after drawing.
@@ -217,6 +269,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         });
     });
     let files_area = egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 6, ..egui::Margin::ZERO })).show(ui, |ui| {
+        naming_row(ui, &mut view, &mut outcome);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| files(ui, &view, selected_object, &mut outcome));
     });
     // Ctrl + mouse wheel over the files resizes the icons. egui reports it as a zoom gesture.
@@ -239,30 +292,109 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         Some(Action::OpenScene(path)) => editor.open_scene(&path),
         Some(Action::PlacePrefab(path)) => editor.place_prefab(&path),
         Some(Action::OpenGraph(path)) => editor.open_graph(&path),
-        Some(Action::NewGraph(domain)) => {
-            let extension = if domain == "material" { "bmaterial" } else { "bscript" };
-            let stem = if domain == "material" { "new_material" } else { "new_script" };
+        Some(Action::StartNew(kind)) => {
             // New files go into the project only, never into the engine's folder.
             let folder = if editor.project.in_project() { editor.project.current.clone() } else { editor.project.root.clone().unwrap_or_default() };
-            let path = if folder.as_os_str().is_empty() {
-                None
-            } else {
-                (1..).map(|n| folder.join(if n == 1 { format!("{stem}.{extension}") } else { format!("{stem}_{n}.{extension}") })).find(|p| !p.exists())
-            };
-            if let Some(path) = path
-                && (editor.session.graph().is_none_or(|g| !g.dirty) || crate::confirm_discard_graph())
-                && editor.dispatch("graph.new", &json!({ "domain": domain }), None).is_some()
-            {
-                editor.dispatch("graph.save", &json!({ "path": path }), None);
-                editor.project.scanned = None;
+            if !folder.as_os_str().is_empty() {
+                let text = match kind {
+                    NewKind::Material => "New Material",
+                    NewKind::VisualScript => "New Visual Script",
+                    NewKind::RustScript => "New Script",
+                };
+                editor.project.naming = Some(Naming { kind, folder, text: text.to_owned(), focused: false, error: None });
             }
         }
+        Some(Action::Create(name)) => {
+            if let Some(naming) = editor.project.naming.take() {
+                match create(editor, &naming, &name) {
+                    Ok(()) => editor.project.scanned = None,
+                    // Keep the field open with the reason, so the name can be fixed.
+                    Err(error) => editor.project.naming = Some(Naming { error: Some(error), focused: false, text: name, ..naming }),
+                }
+            }
+        }
+        Some(Action::BuildScript(dir)) => editor.build_script(&dir),
         Some(Action::AddScript(module)) => {
             if let Some(id) = editor.selected {
                 editor.dispatch("scene.script.add", &json!({ "id": id, "module": module }), None);
             }
         }
         None => {}
+    }
+}
+
+/// The name field of a new file, above the files. Enter makes the file; Escape, or clicking
+/// elsewhere, cancels and nothing is written.
+fn naming_row(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) {
+    let Some(naming) = view.naming.as_mut() else { return };
+    let t = theme::tokens(ui);
+    let mut cancel = false;
+    egui::Frame::new().fill(t.surface).corner_radius(theme::SECTION_RADIUS).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("New {}:", naming.kind.label())).color(t.text_muted));
+            let field = ui.add_sized([ui.available_width().min(260.0), LIST_ROW], egui::TextEdit::singleline(&mut naming.text).margin(egui::vec2(6.0, 1.0)));
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Name of the new {}", naming.kind.label())));
+            if !naming.focused {
+                // Focus the field with its text selected, so typing replaces it.
+                field.request_focus();
+                if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), field.id) {
+                    let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(naming.text.chars().count()));
+                    state.cursor.set_char_range(Some(all));
+                    state.store(ui.ctx(), field.id);
+                }
+                naming.focused = true;
+            } else if field.lost_focus() {
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    outcome.action = Some(Action::Create(naming.text.trim().to_owned()));
+                } else {
+                    cancel = true;
+                }
+            }
+            if let Some(extension) = naming.kind.extension() {
+                ui.label(egui::RichText::new(format!(".{extension}")).color(t.text_muted));
+            }
+            ui.label(egui::RichText::new("Enter to create, Esc to cancel").small().color(t.text_muted));
+        });
+        if let Some(error) = &naming.error {
+            ui.label(egui::RichText::new(error).color(t.error));
+        }
+    });
+    if cancel {
+        view.naming = None;
+    }
+}
+
+/// Makes the file being named. Fails with a reason when the name is not usable.
+fn create(editor: &mut Editor, naming: &Naming, name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Type a name first.".to_owned());
+    }
+    if name.chars().count() > 100 || name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()) {
+        return Err(r#"A name may have up to 100 characters and none of / \ : * ? " < > |."#.to_owned());
+    }
+    match naming.kind.extension() {
+        Some(extension) => {
+            let file = if name.to_ascii_lowercase().ends_with(&format!(".{extension}")) { name.to_owned() } else { format!("{name}.{extension}") };
+            let path = naming.folder.join(file);
+            if path.exists() {
+                return Err(format!("{} already exists.", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+            }
+            if editor.session.graph().is_some_and(|g| g.dirty) && !crate::confirm_discard_graph() {
+                return Ok(());
+            }
+            let domain = if naming.kind == NewKind::Material { "material" } else { "script" };
+            editor.dispatch("graph.new", &json!({ "domain": domain }), None).ok_or_else(|| editor.status.clone())?;
+            editor.dispatch("graph.save", &json!({ "path": path }), None).ok_or_else(|| editor.status.clone())?;
+            Ok(())
+        }
+        None => {
+            let made = editor.dispatch("script.new", &json!({ "folder": naming.folder, "name": name }), None).ok_or_else(|| editor.status.clone())?;
+            if let Some(dir) = made["path"].as_str() {
+                editor.build_script(std::path::Path::new(dir));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -312,17 +444,20 @@ fn toolbar(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) {
 
 fn create_menu(ui: &mut egui::Ui, outcome: &mut Outcome) {
     let create = ui.menu_button("+", |ui| {
-        if ui.button("New Material").on_hover_text("A material graph in this folder").clicked() {
-            outcome.action = Some(Action::NewGraph("material"));
-            ui.close();
-        }
-        if ui.button("New Visual Script").on_hover_text("A visual script in this folder").clicked() {
-            outcome.action = Some(Action::NewGraph("script"));
-            ui.close();
+        let items = [
+            (NewKind::RustScript, "New Script", "A script written in Rust, in this folder; it builds to WebAssembly"),
+            (NewKind::VisualScript, "New Visual Script", "A visual script in this folder"),
+            (NewKind::Material, "New Material", "A material graph in this folder"),
+        ];
+        for (kind, label, hint) in items {
+            if ui.button(label).on_hover_text(hint).clicked() {
+                outcome.action = Some(Action::StartNew(kind));
+                ui.close();
+            }
         }
     });
     ui.ctx().accesskit_node_builder(create.response.id, |node| node.set_label("Create file"));
-    create.response.on_hover_text("Create a material or visual script in the project");
+    create.response.on_hover_text("Create a script, visual script or material in the project");
 }
 
 /// View switch, icon size and search, laid out from the right.
@@ -533,7 +668,7 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
     }
     if response.double_clicked() {
         match entry.kind {
-            Kind::Folder => outcome.enter = Some(entry.path.clone()),
+            Kind::Folder | Kind::ScriptSource => outcome.enter = Some(entry.path.clone()),
             Kind::Scene | Kind::Project => outcome.action = Some(Action::OpenScene(entry.path.clone())),
             Kind::Material | Kind::VisualScript => outcome.action = Some(Action::OpenGraph(entry.path.clone())),
             Kind::Prefab => outcome.action = Some(Action::PlacePrefab(entry.path.clone())),
@@ -551,7 +686,11 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
         }
     }
     response.context_menu(|ui| {
-        if entry.kind == Kind::Folder && ui.button("Open Folder").clicked() {
+        if entry.kind == Kind::ScriptSource && ui.button("Build Script").on_hover_text("Build it to WebAssembly, next to its folder").clicked() {
+            outcome.action = Some(Action::BuildScript(entry.path.clone()));
+            ui.close();
+        }
+        if matches!(entry.kind, Kind::Folder | Kind::ScriptSource) && ui.button("Open Folder").clicked() {
             outcome.enter = Some(entry.path.clone());
             ui.close();
         }
@@ -629,13 +768,13 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             painter.circle(center, s * 0.36, t.surface_active, stroke(t.pin_color));
             painter.circle_filled(center + egui::vec2(-s * 0.1, -s * 0.1), s * 0.14, t.pin_color);
         }
-        Kind::Script | Kind::VisualScript | Kind::Image | Kind::Other => {
+        Kind::Script | Kind::ScriptSource | Kind::VisualScript | Kind::Image | Kind::Other => {
             // A page with a folded corner.
             let fold = s * 0.22;
             let (l, r, top, bottom) = (rect.left() + s * 0.18, rect.right() - s * 0.18, rect.top() + s * 0.08, rect.bottom() - s * 0.08);
             let page = vec![egui::pos2(l, top), egui::pos2(r - fold, top), egui::pos2(r, top + fold), egui::pos2(r, bottom), egui::pos2(l, bottom)];
             let accent = match kind {
-                Kind::Script => t.axis_z,
+                Kind::Script | Kind::ScriptSource => t.axis_z,
                 Kind::VisualScript => t.pin_any,
                 Kind::Image => t.axis_y,
                 _ => t.text_muted,
@@ -654,6 +793,9 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                 }
                 Kind::Script if s >= 24.0 => {
                     painter.text(inner.center(), egui::Align2::CENTER_CENTER, "{ }", egui::FontId::monospace(s * 0.24), accent);
+                }
+                Kind::ScriptSource if s >= 24.0 => {
+                    painter.text(inner.center(), egui::Align2::CENTER_CENTER, "rs", egui::FontId::monospace(s * 0.24), accent);
                 }
                 Kind::Image => {
                     painter.add(egui::Shape::convex_polygon(
@@ -745,7 +887,11 @@ impl ProjectView {
                         return None;
                     }
                     let path = e.path();
-                    let kind = if is_dir { Kind::Folder } else { Kind::of(&path) };
+                    let kind = match (is_dir, is_dir && path.join("Cargo.toml").is_file()) {
+                        (_, true) => Kind::ScriptSource,
+                        (true, false) => Kind::Folder,
+                        _ => Kind::of(&path),
+                    };
                     Some(Entry { path, name, kind })
                 })
                 .collect();

@@ -65,6 +65,8 @@ pub struct Editor {
     close_asked: bool,
     /// Closing was confirmed; the next close request is let through.
     close_confirmed: bool,
+    /// Script builds running in the background: the script's name and where the result arrives.
+    builds: Vec<(String, std::sync::mpsc::Receiver<Result<bayleaf_engine::code_scripts::Built, String>>)>,
 }
 
 impl Default for Editor {
@@ -92,6 +94,7 @@ impl Default for Editor {
             copy_out: None,
             close_asked: false,
             close_confirmed: false,
+            builds: Vec::new(),
         }
     }
 }
@@ -106,6 +109,7 @@ impl Editor {
         }
         let t = theme::tokens(ui);
         self.handle_shortcuts(ui.ctx());
+        self.poll_builds(ui.ctx());
         self.run_play_frame(ui.ctx());
         egui::Panel::top("menu_bar").frame(egui::Frame::new().fill(t.backdrop).inner_margin(egui::Margin::symmetric(8, 4))).show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
@@ -269,6 +273,8 @@ impl Editor {
         self.session.set_keys(keys);
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         self.session.tick(dt);
+        // The scene view sets the pointer again while it is shown; hidden, the game sees none.
+        self.session.set_pointer(None, 0);
         if !self.session.is_paused() {
             ctx.request_repaint();
         }
@@ -444,6 +450,56 @@ impl Editor {
                 result["ids"].as_array().into_iter().flatten().filter_map(|v| v.as_str().and_then(|s| StableId::parse_hex(s).ok())).collect();
             self.select_only(ids.first().copied());
             self.also_selected = ids.into_iter().skip(1).collect();
+        }
+    }
+
+    /// Builds a Rust script's crate in the background; the console reports how it went.
+    pub(crate) fn build_script(&mut self, dir: &std::path::Path) {
+        let name = dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (dir, target) = (dir.to_path_buf(), bayleaf_engine::code_scripts::target_dir_for(&self.session));
+        let spawned = std::thread::Builder::new().name("bayleaf script build".into()).spawn(move || {
+            let _ = sender.send(bayleaf_engine::code_scripts::build_script(&dir, &target));
+        });
+        match spawned {
+            Ok(_) => {
+                self.status = format!("Building {name}…");
+                self.builds.push((name, receiver));
+            }
+            Err(error) => self.status = format!("Build Script: {error}"),
+        }
+    }
+
+    /// Reports finished script builds in the console and the status bar.
+    fn poll_builds(&mut self, ctx: &egui::Context) {
+        let mut finished = Vec::new();
+        self.builds.retain(|(name, receiver)| match receiver.try_recv() {
+            Ok(result) => {
+                finished.push((name.clone(), result));
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                finished.push((name.clone(), Err("the build stopped without a result".to_owned())));
+                false
+            }
+        });
+        for (name, result) in finished {
+            match result {
+                Ok(built) => {
+                    let module = built.module.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.status = format!("Built {name}: {module} is ready to add to objects");
+                    self.session.log_line(bayleaf_engine::Level::Info, format!("Built {name} into {module}."));
+                }
+                Err(error) => {
+                    self.status = format!("{name} did not build; the console says why");
+                    self.session.log_line(bayleaf_engine::Level::Error, format!("{name}: {error}"));
+                }
+            }
+            self.project.rescan_soon();
+        }
+        if !self.builds.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
     }
 

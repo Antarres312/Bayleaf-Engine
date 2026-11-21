@@ -13,6 +13,14 @@ mod raw {
         pub fn property(key_ptr: *const u8, key_len: usize) -> f32;
         pub fn time() -> f64;
         pub fn key_down(name_ptr: *const u8, name_len: usize) -> i32;
+        pub fn pointer(out: *mut f32) -> i32;
+        pub fn mouse_down(button: i32) -> i32;
+        pub fn self_handle() -> i32;
+        pub fn find(name_ptr: *const u8, name_len: usize) -> i32;
+        pub fn transform_get_of(handle: i32, out: *mut f32);
+        pub fn transform_set_of(handle: i32, ptr: *const f32);
+        pub fn spawn(path_ptr: *const u8, path_len: usize, x: f32, y: f32, z: f32) -> i32;
+        pub fn destroy(handle: i32) -> i32;
     }
 }
 
@@ -32,6 +40,29 @@ mod raw {
         0.0
     }
     pub unsafe fn key_down(_: *const u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn pointer(_: *mut f32) -> i32 {
+        0
+    }
+    pub unsafe fn mouse_down(_: i32) -> i32 {
+        0
+    }
+    pub unsafe fn self_handle() -> i32 {
+        0
+    }
+    pub unsafe fn find(_: *const u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn transform_get_of(_: i32, out: *mut f32) {
+        // SAFETY: callers pass a pointer to 9 writable f32.
+        unsafe { std::ptr::copy_nonoverlapping([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0f32].as_ptr(), out, 9) }
+    }
+    pub unsafe fn transform_set_of(_: i32, _: *const f32) {}
+    pub unsafe fn spawn(_: *const u8, _: usize, _: f32, _: f32, _: f32) -> i32 {
+        0
+    }
+    pub unsafe fn destroy(_: i32) -> i32 {
         0
     }
 }
@@ -66,4 +97,48 @@ pub(crate) fn time() -> f64 {
 pub(crate) fn key_down(name: &str) -> bool {
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::key_down(name.as_ptr(), name.len()) != 0 }
+}
+
+pub(crate) fn pointer() -> Option<[f32; 2]> {
+    let mut xy = [0.0f32; 2];
+    // SAFETY: `xy` is 2 writable f32, exactly what the host writes.
+    let inside = unsafe { raw::pointer(xy.as_mut_ptr()) };
+    (inside != 0).then_some(xy)
+}
+
+pub(crate) fn mouse_down(button: i32) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::mouse_down(button) != 0 }
+}
+
+pub(crate) fn self_handle() -> i32 {
+    // SAFETY: no arguments; the host returns a plain number.
+    unsafe { raw::self_handle() }
+}
+
+pub(crate) fn find(name: &str) -> i32 {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::find(name.as_ptr(), name.len()) }
+}
+
+pub(crate) fn transform_get_of(handle: i32) -> [f32; 9] {
+    let mut values = [0.0f32; 9];
+    // SAFETY: `values` is 9 writable f32, exactly what the host writes.
+    unsafe { raw::transform_get_of(handle, values.as_mut_ptr()) }
+    values
+}
+
+pub(crate) fn transform_set_of(handle: i32, values: &[f32; 9]) {
+    // SAFETY: `values` is 9 readable f32, exactly what the host reads.
+    unsafe { raw::transform_set_of(handle, values.as_ptr()) }
+}
+
+pub(crate) fn spawn(prefab: &str, position: [f32; 3]) -> bool {
+    // SAFETY: the pointer and length describe `prefab`; the host only reads.
+    unsafe { raw::spawn(prefab.as_ptr(), prefab.len(), position[0], position[1], position[2]) != 0 }
+}
+
+pub(crate) fn destroy(handle: i32) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::destroy(handle) != 0 }
 }

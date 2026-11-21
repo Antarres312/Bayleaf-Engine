@@ -26,6 +26,24 @@ so module-level state belongs to that one script slot. Any language that compile
 | `property` | `(key_ptr: i32, key_len: i32) -> f32` | the property's value: the one set in the scene, else the declared default, else `NaN` |
 | `time` | `() -> f64` | seconds since play mode started |
 | `key_down` | `(name_ptr: i32, name_len: i32) -> i32` | `1` while the key is held (names like `W`, `Space`, `ArrowUp`), else `0` |
+| `pointer` | `(out: i32) -> i32` | writes 2 `f32`: the pointer over the game view, from -1 to 1 (x right, y up); returns `1` when it is over the view, else `0` (and writes zeros) |
+| `mouse_down` | `(button: i32) -> i32` | `1` while the button is held: `0` left, `1` right, `2` middle |
+| `self_handle` | `() -> i32` | the handle of this script's object |
+| `find` | `(name_ptr: i32, name_len: i32) -> i32` | the handle of the first object with that name, in hierarchy order, or `0` |
+| `transform_get_of` | `(handle: i32, out: i32)` | like `transform_get`, for any object |
+| `transform_set_of` | `(handle: i32, ptr: i32)` | like `transform_set`, for any object; applied when the call ends |
+| `spawn` | `(path_ptr: i32, path_len: i32, x: f32, y: f32, z: f32) -> i32` | asks for a copy of a `.bprefab` file (relative to the project folder) at a world position, after the step; `1` when asked, `0` when this call already asked 64 times |
+| `destroy` | `(handle: i32) -> i32` | asks to delete the object and its children after the step; `1` or `0` as for `spawn` |
+
+### Other objects
+
+A handle names an object for one step: it is the object's place in the scene as the step began,
+plus one (`0` means none). During a step every script sees the objects as they were when it began,
+except for the transforms its own call has set. Using a handle that names no object stops the
+script with a reason. Spawns and destroys happen after the step, in the order asked; a spawned
+copy's scripts start at once and run from the next step. Play mode puts everything back on stop.
+These imports came after the first ABI release; a module that uses them needs an engine that has
+them, and fails to load on an older one with a message naming the missing import.
 
 The transform is the object's local transform, relative to its parent.
 
@@ -36,6 +54,15 @@ The transform is the object's local transform, relative to its parent.
   error is reported in the console and in `play.status`. Other scripts keep running.
 - Linear memory may grow to 64 MiB.
 - Scripts reach the world only through these imports: no files, network or clock beyond `time`.
+
+## Scripts in Rust
+
+In the editor, Project panel, + > New Script makes `<name>/` in the open folder: a crate with
+`Cargo.toml` and `src/lib.rs` from a template that uses `bayleaf-script-sdk`. The editor builds it
+at once, in the background, into `<name>.wasm` beside the folder (build files go to `.build/` in the
+project); right-click the folder, Build Script, to build again. Building needs Rust and the target:
+`rustup target add wasm32-unknown-unknown`. A script that is already running reloads when its
+`.wasm` changes.
 
 ## Hot reload
 

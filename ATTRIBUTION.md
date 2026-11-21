@@ -1,6 +1,8 @@
 # Attribution
 
 Every third-party asset, vendored file or ported code is listed here, in the same change that adds it.
+Third-party Rust crates are listed with their licences in `NOTICE`, written by
+`cargo xtask licences --write`, which also checks them against the craft-contrib licence list.
 
 | Path | Source | Licence | Notes |
 |---|---|---|---|

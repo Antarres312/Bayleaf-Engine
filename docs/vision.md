@@ -91,7 +91,14 @@ No crate below L6 may use egui, eframe, winit or rfd.
    Scripts sit directly on objects, several per object, each shown as its own inspector card named after
    its module; scripts declare properties with defaults (`bayleaf_describe`), and scenes store only
    overrides (scene format version 2; version 1 files are migrated on load).
-   Still open: more input (mouse, gamepad), physics queries.
+   Added later: the mouse, other objects (find, read and set their transforms), and spawning prefabs
+   and destroying objects, in the ABI, the Rust SDK and visual scripts. Still open: gamepads, physics
+   queries, messages between scripts.
+   Scripts in Rust can be made from the Project panel (`script.new`: a crate from a template, its own
+   workspace) and built to WebAssembly there or with `script.build` (the editor builds in the
+   background; agents may not start builds, as build code could reach any file). New files are named
+   in place before anything is written; Escape cancels. `cargo xtask licences` checks dependency
+   licences and writes NOTICE.
 5. **M4 Automation (done, 2026-11-21):** confined file access for agents (`--automation-read-root`,
    `--automation-write-root`, AA 18), `bayleaf-cli mcp` (MCP over stdio, one tool per command), and an
    editor control channel (`bayleaf --control`, loopback with a token) that the MCP server can bridge to.

@@ -119,6 +119,55 @@ pub const CATALOG: Catalog = Catalog {
         node("rotation", "Rotation", "Object", "The object's rotation in degrees.", &[], &[pin("rotation", "Rotation", Vec3)]),
         node("scale", "Scale", "Object", "The object's size along X, Y and Z.", &[], &[pin("scale", "Scale", Vec3)]),
         node("time", "Time", "Inputs", "Seconds since play mode started.", &[], &[pin("seconds", "Seconds", Float)]),
+        node(
+            "pointer",
+            "Pointer Position",
+            "Inputs",
+            "Where the pointer is over the game view, from -1 to 1 (x right, y up), and whether it is over the view.",
+            &[],
+            &[pin("position", "Position", Vec3), pin("inside", "Over the View", Bool)],
+        ),
+        NodeDef {
+            kind: "mouseDown",
+            label: "Mouse Button Held",
+            category: "Inputs",
+            description: "True while the mouse button (Left, Right or Middle) is held.",
+            inputs: &[],
+            outputs: &[pin("down", "Held", Bool)],
+            settings: &[SettingDef { name: "button", label: "Button", kind: SettingKind::Name("Left") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "positionOf",
+            label: "Position Of",
+            category: "Object",
+            description: "The position of the first object with this name (relative to its parent).",
+            inputs: &[],
+            outputs: &[pin("position", "Position", Vec3)],
+            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setPositionOf",
+            label: "Set Position Of",
+            category: "Actions",
+            description: "Moves the first object with this name to a position.",
+            inputs: &[RUN, vector("position", "Position", [0.0; 3])],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "spawn",
+            label: "Spawn Prefab",
+            category: "Actions",
+            description: "Places a copy of a prefab file at a world position, after this step.",
+            inputs: &[RUN, vector("position", "Position", [0.0; 3])],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "prefab", label: "Prefab File", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        action("destroySelf", "Destroy This Object", "Deletes this object and its children after this step.", &[RUN]),
         NodeDef {
             kind: "keyDown",
             label: "Key Held",
@@ -262,6 +311,15 @@ impl Compiler<'_> {
         self.graph.value(node, name).and_then(bayleaf_graph::as_f32).unwrap_or(default)
     }
 
+    /// The text of a name setting placed in memory, or a problem when it is empty.
+    fn named(&mut self, node: u32, setting: &str, missing: &str) -> Result<(u32, u32), Problem> {
+        let name = self.setting_text(node, setting, "");
+        if name.trim().is_empty() {
+            return Err(Problem::on(node, missing));
+        }
+        Ok(self.text(name.as_bytes()))
+    }
+
     fn declare_property(&mut self, node: u32) -> String {
         let name = self.setting_text(node, "name", "speed");
         let default = self.setting_number(node, "default", 1.0);
@@ -304,6 +362,23 @@ impl Compiler<'_> {
                 };
                 let [x, y, z] = vec3(self, input)?;
                 let _ = writeln!(code, "{indent}(call {call} (i32.const {offset}) {x} {y} {z})");
+            }
+            "setPositionOf" => {
+                let (at, len) = self.named(next, "object", "name the object to move")?;
+                let [x, y, z] = vec3(self, "position")?;
+                let _ = writeln!(code, "{indent}(call $set_position_of (call $find (i32.const {at}) (i32.const {len})) {x} {y} {z})");
+            }
+            "spawn" => {
+                let prefab = self.setting_text(next, "prefab", "");
+                if !prefab.ends_with(".bprefab") {
+                    return Err(Problem::on(next, "choose a .bprefab file to spawn"));
+                }
+                let (at, len) = self.text(prefab.as_bytes());
+                let [x, y, z] = vec3(self, "position")?;
+                let _ = writeln!(code, "{indent}(drop (call $spawn (i32.const {at}) (i32.const {len}) {x} {y} {z}))");
+            }
+            "destroySelf" => {
+                let _ = writeln!(code, "{indent}(drop (call $destroy (call $self_handle)))");
             }
             "branch" => {
                 let condition = self.input(next, "condition").and_then(|v| as_bool(next, v))?;
@@ -379,6 +454,21 @@ impl Compiler<'_> {
             "rotation" => transform(3),
             "scale" => transform(6),
             "time" => Val::F("(f32.demote_f64 (call $time))".to_owned()),
+            "pointer" if pin == "inside" => Val::B("(call $pointer_inside)".to_owned()),
+            "pointer" => Val::V(["(call $pointer_x)".to_owned(), "(call $pointer_y)".to_owned(), lit(0.0)]),
+            "mouseDown" => {
+                let button = match self.setting_text(node, "button", "Left").as_str() {
+                    "Left" => 0,
+                    "Right" => 1,
+                    "Middle" => 2,
+                    _ => return Err(Problem::on(node, "the button is Left, Right or Middle")),
+                };
+                Val::B(format!("(call $mouse_down (i32.const {button}))"))
+            }
+            "positionOf" => {
+                let (at, len) = self.named(node, "object", "name the object to read")?;
+                Val::V([0, 1, 2].map(|i| format!("(call $t_of (call $find (i32.const {at}) (i32.const {len})) (i32.const {i}))")))
+            }
             "keyDown" => {
                 let key = self.setting_text(node, "key", "Space");
                 let (at, len) = self.text(key.as_bytes());
@@ -464,12 +554,35 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "property" (func $property (param i32 i32) (result f32)))
   (import "bayleaf" "time" (func $time (result f64)))
   (import "bayleaf" "key_down" (func $key_down (param i32 i32) (result i32)))
+  (import "bayleaf" "pointer" (func $pointer (param i32) (result i32)))
+  (import "bayleaf" "mouse_down" (func $mouse_down (param i32) (result i32)))
+  (import "bayleaf" "self_handle" (func $self_handle (result i32)))
+  (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))
+  (import "bayleaf" "transform_get_of" (func $transform_get_of (param i32 i32)))
+  (import "bayleaf" "transform_set_of" (func $transform_set_of (param i32 i32)))
+  (import "bayleaf" "spawn" (func $spawn (param i32 i32 f32 f32 f32) (result i32)))
+  (import "bayleaf" "destroy" (func $destroy (param i32) (result i32)))
   (global $dt (mut f32) (f32.const 0))
   (func (export "bayleaf_abi") (result i32) (i32.const 1))
   ;; Transform value i (0..8: position, rotation, scale).
   (func $t (param $i i32) (result f32)
     (call $transform_get (i32.const 0))
     (f32.load (i32.shl (local.get $i) (i32.const 2))))
+  ;; Pointer x, y (at bytes 40..48), and whether it is over the view.
+  (func $pointer_inside (result i32) (call $pointer (i32.const 40)))
+  (func $pointer_x (result f32) (drop (call $pointer (i32.const 40))) (f32.load (i32.const 40)))
+  (func $pointer_y (result f32) (drop (call $pointer (i32.const 40))) (f32.load (i32.const 44)))
+  ;; Transform value i of the object with handle h (0: none, which stops the script with a reason).
+  (func $t_of (param $h i32) (param $i i32) (result f32)
+    (call $transform_get_of (local.get $h) (i32.const 0))
+    (f32.load (i32.shl (local.get $i) (i32.const 2))))
+  ;; Sets the position of the object with handle h.
+  (func $set_position_of (param $h i32) (param $x f32) (param $y f32) (param $z f32)
+    (call $transform_get_of (local.get $h) (i32.const 0))
+    (f32.store (i32.const 0) (local.get $x))
+    (f32.store (i32.const 4) (local.get $y))
+    (f32.store (i32.const 8) (local.get $z))
+    (call $transform_set_of (local.get $h) (i32.const 0)))
   ;; Sets three transform values starting at byte offset $at.
   (func $set3 (param $at i32) (param $x f32) (param $y f32) (param $z f32)
     (call $transform_get (i32.const 0))

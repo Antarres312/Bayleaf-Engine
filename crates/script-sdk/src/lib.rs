@@ -71,6 +71,64 @@ pub fn key_down(name: &str) -> bool {
     abi::key_down(name)
 }
 
+/// Where the pointer is over the game view, from (-1, -1) at the bottom left to (1, 1) at the top
+/// right; `None` when it is outside the view.
+pub fn pointer() -> Option<[f32; 2]> {
+    abi::pointer()
+}
+
+/// A mouse button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Button {
+    Left = 0,
+    Right = 1,
+    Middle = 2,
+}
+
+/// True while the mouse button is held.
+pub fn mouse_down(button: Button) -> bool {
+    abi::mouse_down(button as i32)
+}
+
+/// Another object of the scene, as it was when the step began. Handles last for one step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Object(i32);
+
+impl Object {
+    /// The object this script is on.
+    pub fn this() -> Option<Self> {
+        Some(abi::self_handle()).filter(|h| *h != 0).map(Self)
+    }
+
+    /// The first object with this name, in hierarchy order.
+    pub fn find(name: &str) -> Option<Self> {
+        Some(abi::find(name)).filter(|h| *h != 0).map(Self)
+    }
+
+    /// Its local transform.
+    pub fn transform(self) -> Transform {
+        let v = abi::transform_get_of(self.0);
+        Transform { position: [v[0], v[1], v[2]], rotation: [v[3], v[4], v[5]], scale: [v[6], v[7], v[8]] }
+    }
+
+    /// Sets its local transform when this call ends.
+    pub fn set_transform(self, t: &Transform) {
+        let [p, r, s] = [t.position, t.rotation, t.scale];
+        abi::transform_set_of(self.0, &[p[0], p[1], p[2], r[0], r[1], r[2], s[0], s[1], s[2]]);
+    }
+
+    /// Deletes it and its children after this step. False when this call already asked too much.
+    pub fn destroy(self) -> bool {
+        abi::destroy(self.0)
+    }
+}
+
+/// Places a copy of a prefab file (a path relative to the project folder) at a world position
+/// after this step. False when this call already asked too much.
+pub fn spawn(prefab: &str, position: [f32; 3]) -> bool {
+    abi::spawn(prefab, position)
+}
+
 /// Behaviour of one scripted object. One value lives per object for the whole play session.
 pub trait Script: Default + Send + 'static {
     /// Properties the editor shows on this script, with their defaults. `property(name)` returns

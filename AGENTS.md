@@ -111,6 +111,7 @@ checked and recorded in `docs/feature-names.md`. Product copy never names or com
 - `cargo clippy -p <crate> --all-targets -- -D warnings`
 - `cargo fmt --check`
 - `cargo xtask layers`
+- A dependency change: `cargo xtask licences --write` (licences on the craft-contrib list; NOTICE up to date)
 - UI changes: the egui_kittest tests in `crates/ui-egui/src/ui_tests.rs`, with the accessibility check left on.
 
 **Known departures.** This SHOULD rule is not met yet: the translation system (AA 16; labels are plain English).

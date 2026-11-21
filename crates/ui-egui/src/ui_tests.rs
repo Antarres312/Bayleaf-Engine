@@ -503,3 +503,59 @@ fn meshes_pick_a_model_and_sprites_pick_an_image_from_the_project() {
     harness.run();
     assert!(harness.query_all_by_label_contains("Warning: cannot read").next().is_some(), "a missing image says so");
 }
+
+/// An editor whose project folder is a fresh temporary folder.
+fn project_harness(name: &str) -> (Harness<'static, Editor>, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-new-{name}-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut harness = harness();
+    harness.state_mut().dispatch("scene.saveAs", &json!({ "path": dir.join("s.bscene") }), None);
+    harness.run();
+    (harness, dir)
+}
+
+fn start_new(harness: &mut Harness<'static, Editor>, item: &str) {
+    harness.get_by_label("Create file").click();
+    harness.run();
+    harness.get_by_label(item).click();
+    harness.run();
+    harness.run();
+}
+
+#[test]
+fn a_new_file_is_named_first_and_written_only_on_enter() {
+    let (mut harness, dir) = project_harness("enter");
+    start_new(&mut harness, "New Material");
+    let field = harness.get_by_label("Name of the new material");
+    assert!(field.is_focused(), "the name field takes focus");
+    assert!(!dir.join("New Material.bmaterial").exists(), "nothing is written before the name is confirmed");
+    field.type_text("Rock");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(dir.join("Rock.bmaterial").is_file());
+    assert!(harness.query_by_label("Name of the new material").is_none());
+    assert_eq!(harness.state().session.graph().and_then(|g| g.path.clone()).and_then(|p| p.file_name().map(|n| n.to_owned())), Some("Rock.bmaterial".into()));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn escape_cancels_a_new_file_and_bad_names_are_refused_with_a_reason() {
+    let (mut harness, dir) = project_harness("escape");
+    start_new(&mut harness, "New Visual Script");
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(harness.query_by_label("Name of the new visual script").is_none(), "Escape closes the field");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "only the scene is there: nothing was written");
+
+    start_new(&mut harness, "New Visual Script");
+    harness.get_by_label("Name of the new visual script").type_text("a/b");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(harness.query_by_label_contains("none of /").is_some(), "the reason is shown");
+    assert!(harness.query_by_label("Name of the new visual script").is_some(), "and the name can be fixed");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    std::fs::remove_dir_all(&dir).ok();
+}

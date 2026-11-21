@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod builtin;
+pub mod code_scripts;
 pub mod confine;
 mod graph_cmds;
 mod play;
@@ -131,7 +132,15 @@ impl Session {
     /// Keys held down this frame, by name (see `docs/script-abi.md`).
     pub fn set_keys(&mut self, keys: std::collections::HashSet<String>) {
         if self.input.keys != keys {
-            self.input = std::sync::Arc::new(bayleaf_script::Input { keys });
+            self.input = std::sync::Arc::new(bayleaf_script::Input { keys, ..(*self.input).clone() });
+        }
+    }
+
+    /// The pointer over the game view (-1..1, +Y up; `None` outside it) and the mouse buttons held
+    /// (bit 0 left, 1 right, 2 middle), as scripts see them.
+    pub fn set_pointer(&mut self, pointer: Option<[f32; 2]>, buttons: u8) {
+        if self.input.pointer != pointer || self.input.buttons != buttons {
+            self.input = std::sync::Arc::new(bayleaf_script::Input { pointer, buttons, ..(*self.input).clone() });
         }
     }
 
@@ -153,6 +162,11 @@ impl Session {
 
     pub fn clear_console(&mut self) {
         self.console.clear();
+    }
+
+    /// Adds a line to the console.
+    pub fn log_line(&mut self, level: Level, text: String) {
+        self.log(level, text);
     }
 
     fn log(&mut self, level: Level, text: String) {
@@ -321,6 +335,7 @@ impl CommandRegistry {
         commands.extend(graph_cmds::commands());
         commands.extend(project_cmds::commands());
         commands.extend(prefab_cmds::commands());
+        commands.extend(code_scripts::commands());
         Self { commands }
     }
 

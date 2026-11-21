@@ -79,14 +79,61 @@ pub struct LogLine {
 const MAX_DESCRIPTION_BYTES: u32 = 64 * 1024;
 
 /// Per-frame input the host passes to scripts.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Input {
     /// Names of the keys held down, as in `docs/script-abi.md`.
     pub keys: HashSet<String>,
+    /// The pointer over the game view, from (-1, -1) at the bottom left to (1, 1) at the top right;
+    /// `None` when it is outside the view.
+    pub pointer: Option<[f32; 2]>,
+    /// Mouse buttons held: bit 0 left, bit 1 right, bit 2 middle.
+    pub buttons: u8,
+}
+
+/// Something a script asked for that changes which objects exist. The play loop does these
+/// after the step, in order.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Request {
+    /// Place a copy of a prefab file at a world position. `by` is the asking script's object.
+    Spawn { by: StableId, prefab: String, position: [f32; 3] },
+    /// Delete an object and its children.
+    Destroy(StableId),
+}
+
+/// Most requests one script call may make.
+const MAX_REQUESTS_PER_CALL: usize = 64;
+
+/// The objects scripts can see during one step: names and local transforms as the step began.
+/// A handle is an object's position in this list plus one; 0 means none.
+#[derive(Default)]
+struct WorldView {
+    objects: Vec<(StableId, String, [f32; 9])>,
+}
+
+impl WorldView {
+    fn of(scene: &Scene) -> Arc<Self> {
+        let objects =
+            scene.world_matrices().into_iter().map(|(id, _)| (id, scene.name(id).unwrap_or_default().to_owned(), read_transform(scene, id))).collect();
+        Arc::new(Self { objects })
+    }
+
+    fn handle_of(&self, id: StableId) -> i32 {
+        self.objects.iter().position(|(o, _, _)| *o == id).map_or(0, |i| i as i32 + 1)
+    }
+
+    fn get(&self, handle: i32) -> Option<&(StableId, String, [f32; 9])> {
+        usize::try_from(handle).ok().and_then(|h| h.checked_sub(1)).and_then(|i| self.objects.get(i))
+    }
 }
 
 /// State one instance's host functions can see.
 struct HostState {
+    /// The object this instance belongs to.
+    object: StableId,
+    world: Arc<WorldView>,
+    /// Transforms of other objects this call set, applied after it.
+    writes: Vec<(StableId, [f32; 9])>,
+    requests: Vec<Request>,
     transform: [f32; 9],
     transform_changed: bool,
     properties: BTreeMap<String, f32>,
@@ -99,8 +146,12 @@ struct HostState {
 }
 
 impl HostState {
-    fn new(transform: [f32; 9], properties: BTreeMap<String, f32>, time: f64, input: &Arc<Input>) -> Self {
+    fn new(object: StableId, transform: [f32; 9], properties: BTreeMap<String, f32>, time: f64, input: &Arc<Input>) -> Self {
         Self {
+            object,
+            world: Arc::new(WorldView::default()),
+            writes: Vec::new(),
+            requests: Vec::new(),
             transform,
             transform_changed: false,
             properties,
@@ -166,6 +217,7 @@ pub struct ScriptHost {
     instances: Vec<Instance>,
     faults: Vec<ScriptFault>,
     logs: Vec<LogLine>,
+    requests: Vec<Request>,
 }
 
 impl Default for ScriptHost {
@@ -174,7 +226,7 @@ impl Default for ScriptHost {
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         let linker = make_linker(&engine);
-        Self { engine, linker, instances: Vec::new(), faults: Vec::new(), logs: Vec::new() }
+        Self { engine, linker, instances: Vec::new(), faults: Vec::new(), logs: Vec::new(), requests: Vec::new() }
     }
 }
 
@@ -219,7 +271,7 @@ impl ScriptHost {
     /// code but `bayleaf_describe`; a module without it declares nothing.
     pub fn describe(&self, name: &str, bytes: &[u8]) -> Result<Vec<(String, f32)>, ScriptError> {
         let module = Module::new(&self.engine, bytes).map_err(|e| ScriptError::Invalid(name.to_owned(), e.to_string()))?;
-        let mut store = Store::new(&self.engine, HostState::new([0.0; 9], BTreeMap::new(), 0.0, &Arc::new(Input::default())));
+        let mut store = Store::new(&self.engine, HostState::new(StableId::from_u128(0), [0.0; 9], BTreeMap::new(), 0.0, &Arc::new(Input::default())));
         store.limiter(|state| &mut state.limits);
         store.set_fuel(FUEL_PER_CALL).map_err(|e| ScriptError::Trapped { module: name.to_owned(), message: e.to_string() })?;
         let instance =
@@ -243,7 +295,8 @@ impl ScriptHost {
     ) -> Result<(), ScriptError> {
         let module_name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         let module = Module::new(&self.engine, bytes).map_err(|e| ScriptError::Invalid(module_name.clone(), e.to_string()))?;
-        let state = HostState::new(read_transform(scene, object), script.properties.clone(), time, input);
+        let mut state = HostState::new(object, read_transform(scene, object), script.properties.clone(), time, input);
+        state.world = WorldView::of(scene);
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| &mut state.limits);
         let trapped = |module: &str, e: wasmi::Error| ScriptError::Trapped { module: module.to_owned(), message: e.to_string() };
@@ -274,7 +327,7 @@ impl ScriptHost {
         if let Some(start) = start {
             let result = call(&mut entry, |store| start.call(store, ()));
             self.collect(&mut entry);
-            write_transform(scene, &mut entry);
+            after_call(scene, &mut entry, &mut self.requests);
             if let Err(error) = result {
                 entry.stopped = true;
                 self.instances.push(entry);
@@ -289,6 +342,8 @@ impl ScriptHost {
     pub fn update(&mut self, scene: &mut Scene, dt: f32, time: f64, input: &Arc<Input>) {
         let mut faults = Vec::new();
         let mut logs = Vec::new();
+        // Every script sees the objects as the step began.
+        let world = WorldView::of(scene);
         for entry in self.instances.iter_mut().filter(|i| !i.stopped) {
             if !scene.contains(entry.object) {
                 entry.stopped = true;
@@ -301,12 +356,13 @@ impl ScriptHost {
                 state.transform_changed = false;
                 state.time = time;
                 state.input = Arc::clone(input);
+                state.world = Arc::clone(&world);
             }
             let result = call(entry, |store| update.call(store, dt));
             let script = entry.script_name.clone();
             logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
             match result {
-                Ok(()) => write_transform(scene, entry),
+                Ok(()) => after_call(scene, entry, &mut self.requests),
                 Err(error) => {
                     entry.stopped = true;
                     faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
@@ -345,6 +401,11 @@ impl ScriptHost {
         reloaded.sort();
         reloaded.dedup();
         reloaded
+    }
+
+    /// Spawns and destroys scripts asked for since the last call, in order.
+    pub fn take_requests(&mut self) -> Vec<Request> {
+        std::mem::take(&mut self.requests)
     }
 
     /// Number of loaded instances, running or stopped.
@@ -407,6 +468,18 @@ fn read_transform(scene: &Scene, object: StableId) -> [f32; 9] {
     [t.position[0], t.position[1], t.position[2], t.rotation[0], t.rotation[1], t.rotation[2], t.scale[0], t.scale[1], t.scale[2]]
 }
 
+/// Applies what a call changed: its own transform, other objects' transforms, and its requests.
+fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Request>) {
+    write_transform(scene, entry);
+    let state = entry.store.data_mut();
+    for (object, v) in state.writes.drain(..) {
+        if scene.contains(object) {
+            let _ = scene.set(object, Transform { position: [v[0], v[1], v[2]], rotation: [v[3], v[4], v[5]], scale: [v[6], v[7], v[8]] });
+        }
+    }
+    requests.append(&mut state.requests);
+}
+
 fn write_transform(scene: &mut Scene, entry: &mut Instance) {
     let state = entry.store.data_mut();
     if !state.transform_changed {
@@ -439,6 +512,13 @@ fn read_text(caller: &Caller<'_, HostState>, ptr: i32, len: i32, limit: usize) -
 }
 
 /// Records a guest error so the trap message explains it, and returns the trap.
+/// Writes `bytes` into the guest's memory at `ptr`.
+fn write_guest(caller: &mut Caller<'_, HostState>, ptr: i32, bytes: &[u8], what: &str) -> Result<(), wasmi::Error> {
+    let memory = caller.get_export("memory").and_then(wasmi::Extern::into_memory).ok_or_else(|| wasmi::Error::new("no memory"))?;
+    let at = usize::try_from(ptr).map_err(|_| fault(caller, format!("{what}: negative pointer")))?;
+    memory.write(&mut *caller, at, bytes).map_err(|_| fault(caller, format!("{what}: writing outside the script's memory")))
+}
+
 fn fault(caller: &mut Caller<'_, HostState>, message: String) -> wasmi::Error {
     caller.data_mut().fault = Some(message.clone());
     wasmi::Error::new(message)
@@ -481,6 +561,84 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         linker.func_wrap("bayleaf", "key_down", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
             let name = read_text(&caller, ptr, len, 64).map_err(|m| fault(&mut caller, format!("key_down: {m}")))?;
             Ok(i32::from(caller.data().input.keys.contains(&name)))
+        })?;
+        linker.func_wrap("bayleaf", "pointer", |mut caller: Caller<'_, HostState>, out: i32| -> Result<i32, wasmi::Error> {
+            let (xy, inside) = match caller.data().input.pointer {
+                Some(p) => (p, 1),
+                None => ([0.0; 2], 0),
+            };
+            let bytes: Vec<u8> = xy.iter().flat_map(|v| v.to_le_bytes()).collect();
+            write_guest(&mut caller, out, &bytes, "pointer")?;
+            Ok(inside)
+        })?;
+        linker.func_wrap("bayleaf", "mouse_down", |caller: Caller<'_, HostState>, button: i32| -> i32 {
+            match u32::try_from(button) {
+                Ok(b) if b < 3 => i32::from((caller.data().input.buttons >> b) & 1),
+                _ => 0,
+            }
+        })?;
+        linker.func_wrap("bayleaf", "self_handle", |caller: Caller<'_, HostState>| -> i32 {
+            let state = caller.data();
+            state.world.handle_of(state.object)
+        })?;
+        linker.func_wrap("bayleaf", "find", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+            let name = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("find: {m}")))?;
+            Ok(caller.data().world.objects.iter().position(|(_, n, _)| *n == name).map_or(0, |i| i as i32 + 1))
+        })?;
+        linker.func_wrap("bayleaf", "transform_get_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32| -> Result<(), wasmi::Error> {
+            let state = caller.data();
+            let Some((object, _, start)) = state.world.get(handle).cloned() else {
+                return Err(fault(&mut caller, format!("transform_get_of: there is no object with handle {handle}")));
+            };
+            // The latest value this call set, else the value at the start of the step.
+            let value = if object == state.object { state.transform } else { state.writes.iter().rev().find(|(o, _)| *o == object).map_or(start, |(_, v)| *v) };
+            let bytes: Vec<u8> = value.iter().flat_map(|v| v.to_le_bytes()).collect();
+            write_guest(&mut caller, out, &bytes, "transform_get_of")
+        })?;
+        linker.func_wrap("bayleaf", "transform_set_of", |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32| -> Result<(), wasmi::Error> {
+            let bytes = read_guest(&caller, ptr, 36, 36).map_err(|m| fault(&mut caller, format!("transform_set_of: {m}")))?;
+            let mut values = [0.0f32; 9];
+            for (value, chunk) in values.iter_mut().zip(bytes.as_chunks::<4>().0) {
+                *value = f32::from_le_bytes(*chunk);
+            }
+            if !values.iter().all(|v| v.is_finite()) {
+                return Err(fault(&mut caller, "transform_set_of: values must be finite numbers".to_owned()));
+            }
+            let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                return Err(fault(&mut caller, format!("transform_set_of: there is no object with handle {handle}")));
+            };
+            let state = caller.data_mut();
+            if object == state.object {
+                state.transform = values;
+                state.transform_changed = true;
+            } else {
+                state.writes.push((object, values));
+            }
+            Ok(())
+        })?;
+        linker.func_wrap("bayleaf", "spawn", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, x: f32, y: f32, z: f32| -> Result<i32, wasmi::Error> {
+            let prefab = read_text(&caller, ptr, len, 512).map_err(|m| fault(&mut caller, format!("spawn: {m}")))?;
+            if !prefab.ends_with(".bprefab") || ![x, y, z].iter().all(|v| v.is_finite()) {
+                return Err(fault(&mut caller, "spawn: give a .bprefab path and a finite position".to_owned()));
+            }
+            let state = caller.data_mut();
+            if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+                return Ok(0);
+            }
+            let by = state.object;
+            state.requests.push(Request::Spawn { by, prefab, position: [x, y, z] });
+            Ok(1)
+        })?;
+        linker.func_wrap("bayleaf", "destroy", |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, wasmi::Error> {
+            let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                return Err(fault(&mut caller, format!("destroy: there is no object with handle {handle}")));
+            };
+            let state = caller.data_mut();
+            if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+                return Ok(0);
+            }
+            state.requests.push(Request::Destroy(object));
+            Ok(1)
         })?;
         Ok(())
     })();

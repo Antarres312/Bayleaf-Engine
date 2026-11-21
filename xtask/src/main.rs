@@ -3,10 +3,13 @@
 //! - `cargo xtask layers`: checks the crate layering.
 //! - `cargo xtask scripts`: builds the example game scripts for WebAssembly and copies them into
 //!   `examples/demo/scripts/`.
+//! - `cargo xtask licences [--write]`: checks every dependency's licence against the craft-contrib
+//!   list and that NOTICE lists them all; `--write` writes NOTICE.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod layers;
+mod licences;
 
 use std::path::{Path, PathBuf};
 
@@ -19,7 +22,8 @@ fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("layers") => check_layers(&workspace_root()?),
         Some("scripts") => build_scripts(&workspace_root()?),
-        _ => bail!("usage: cargo xtask layers | scripts"),
+        Some("licences") => licences::check(&workspace_root()?, std::env::args().any(|a| a == "--write")),
+        _ => bail!("usage: cargo xtask layers | scripts | licences [--write]"),
     }
 }
 

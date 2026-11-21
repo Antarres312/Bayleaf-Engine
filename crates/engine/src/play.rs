@@ -2,7 +2,7 @@
 
 use bayleaf_scene::Scene;
 use bayleaf_scene::doc::SceneDoc;
-use bayleaf_script::{ScriptFault, ScriptHost};
+use bayleaf_script::{Request, ScriptFault, ScriptHost};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -75,7 +75,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Set Held Keys",
             menu: "",
             shortcut: "",
-            params: "{keys: [names]}; the keys scripts see as held, until the next call or the next editor frame",
+            params: "{keys: [names], pointer?: [x, y] (-1 to 1, +y up; null when outside the view), buttons?: n (bit 0 left, 1 right, 2 middle)}; what scripts see as held, until the next call or the next editor frame",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: playing,
@@ -194,6 +194,10 @@ fn step_command(session: &mut Session, params: &Value) -> Result<Value, CommandE
 #[serde(deny_unknown_fields)]
 struct InputParams {
     keys: Vec<String>,
+    #[serde(default)]
+    pointer: Option<[f32; 2]>,
+    #[serde(default)]
+    buttons: u8,
 }
 
 fn input(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
@@ -201,7 +205,11 @@ fn input(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     if p.keys.len() > 64 || p.keys.iter().any(|k| k.len() > 32) {
         return Err(CommandError::BadParams("at most 64 keys of at most 32 characters".to_owned()));
     }
+    if p.pointer.is_some_and(|[x, y]| !(x.is_finite() && y.is_finite())) {
+        return Err(CommandError::BadParams("pointer must be two finite numbers".to_owned()));
+    }
     session.set_keys(p.keys.into_iter().collect());
+    session.set_pointer(p.pointer.map(|p| p.map(|c| c.clamp(-1.0, 1.0))), p.buttons & 0b111);
     Ok(json!({}))
 }
 
@@ -229,6 +237,8 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
         let Some(play) = session.play.as_mut() else { return };
         play.time += f64::from(dt);
         play.host.update(&mut session.scene, dt, play.time, &input);
+        apply_requests(session);
+        let Some(play) = session.play.as_mut() else { return };
         play.since_reload_check += dt;
         if play.since_reload_check >= RELOAD_CHECK_INTERVAL {
             play.since_reload_check = 0.0;
@@ -255,4 +265,62 @@ fn drain(session: &mut Session) {
         let who = name(session, fault.object);
         session.log(Level::Error, format!("[{who} · {}] script stopped: {}", fault.script, fault.error));
     }
+}
+
+/// Most objects a scene may hold while scripts spawn more.
+const MAX_OBJECTS: usize = 100_000;
+
+/// Does what scripts asked for in the last step: destroys and spawns, in order.
+fn apply_requests(session: &mut Session) {
+    let Some(play) = session.play.as_mut() else { return };
+    for request in play.host.take_requests() {
+        match request {
+            Request::Destroy(object) => {
+                if session.scene.contains(object) {
+                    let _ = session.scene.delete_object(object);
+                }
+            }
+            Request::Spawn { by, prefab, position } => {
+                if let Err(error) = spawn(session, &prefab, position) {
+                    let who = session.scene.name(by).unwrap_or("Object").to_owned();
+                    session.log(Level::Error, format!("[{who}] could not spawn {prefab}: {error}"));
+                }
+            }
+        }
+    }
+}
+
+/// Places a linked copy of a prefab at a world position and starts its scripts.
+fn spawn(session: &mut Session, prefab: &str, position: [f32; 3]) -> Result<(), String> {
+    if session.scene.object_count() >= MAX_OBJECTS {
+        return Err(format!("the scene already has {MAX_OBJECTS} objects"));
+    }
+    let objects = crate::prefab_cmds::read_prefab(session, prefab).map_err(|e| e.to_string())?;
+    let id = *session.scene.import(&objects, None, None).map_err(|e| e.to_string())?.first().ok_or("the prefab is empty")?;
+    let mut transform = session.scene.get::<bayleaf_scene::components::Transform>(id).cloned().unwrap_or_default();
+    transform.position = position;
+    session.scene.set(id, transform).map_err(|e| e.to_string())?;
+    session.scene.set(id, bayleaf_scene::components::Prefab { source: prefab.to_owned() }).map_err(|e| e.to_string())?;
+    // Start the scripts of every object in the new copy.
+    let base = session.script_dir();
+    let input = std::sync::Arc::clone(&session.input);
+    let mut started = Vec::new();
+    for (object, _) in session.scene.world_matrices() {
+        if object != id && !session.scene.is_inside(object, id) {
+            continue;
+        }
+        for (index, script) in session.scene.get::<bayleaf_scene::components::Scripts>(object).map(|s| s.0.clone()).unwrap_or_default().into_iter().enumerate()
+        {
+            started.push((object, index, script));
+        }
+    }
+    for (object, index, script) in started {
+        let path = session.allowed(&base.join(&script.module), crate::confine::Access::Read).map_err(|e| e.to_string())?;
+        let Some(play) = session.play.as_mut() else { return Ok(()) };
+        if let Err(error) = play.host.load_file(object, index, &path, &script, &mut session.scene, play.time, &input) {
+            let who = session.scene.name(object).unwrap_or("Object").to_owned();
+            session.log(Level::Error, format!("[{who} · {}] {error}", script.display_name()));
+        }
+    }
+    Ok(())
 }
