@@ -174,7 +174,7 @@ fn rename_from_the_context_menu_edits_in_place_and_enter_keeps_the_new_name() {
     create_named(&mut harness, "Old");
     harness.get_by_label("Old").click_secondary();
     harness.run();
-    harness.get_by_label("Rename").click();
+    harness.query_all_by_label_contains("Rename").next().unwrap().click();
     harness.run();
     let field = harness.get_by_label("Object name");
     assert!(field.is_focused(), "the name field takes focus");
@@ -1116,5 +1116,45 @@ fn project_settings_list_their_categories_on_the_left_physics_first() {
     harness.get_by_label("Input").click();
     harness.run();
     assert!(harness.query_by_label("Edit the Input Map").is_some() && harness.query_by_label("Physics in play mode").is_none(), "Input shows its own settings");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn f2_renames_a_file_in_its_own_tile_and_a_click_on_empty_space_clears_the_selection() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-rename-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().project.current = dir.join("materials");
+    harness.run_steps(2);
+    let tile = harness.get_by_label("ground.bmaterial, Material").rect();
+    harness.get_by_label("ground.bmaterial, Material").click();
+    harness.run();
+    harness.key_press(egui::Key::F2);
+    harness.run_steps(2);
+    let field = harness.get_by_label("New name of ground.bmaterial");
+    assert!(field.is_focused() && tile.contains_rect(field.rect().shrink(1.0)), "the name is typed in the file's own tile");
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(2);
+    assert!(dir.join("materials/ground.bmaterial").is_file(), "Escape keeps the old name");
+
+    harness.get_by_label("ground.bmaterial, Material").click_secondary();
+    harness.run();
+    harness.query_all_by_label_contains("Rename").next().unwrap().click();
+    harness.run_steps(2);
+    // The name is selected without its extension, so typing replaces just the name.
+    harness.get_by_label("New name of ground.bmaterial").type_text("Grass");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+    assert!(dir.join("materials/Grass.bmaterial").is_file() && !dir.join("materials/ground.bmaterial").exists());
+
+    harness.get_by_label("Grass.bmaterial, Material").click();
+    harness.run();
+    assert!(harness.state().project.selected.is_some());
+    // The middle of the files area is empty: the few tiles sit at its top left.
+    harness.get_by_label("Folder contents").click();
+    harness.run();
+    assert!(harness.state().project.selected.is_none(), "a click on empty space clears the selection");
     std::fs::remove_dir_all(&dir).ok();
 }

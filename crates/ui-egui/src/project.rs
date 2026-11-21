@@ -135,7 +135,7 @@ pub(crate) struct ProjectView {
     /// The folder whose files are shown on the right.
     pub(crate) current: PathBuf,
     mode: ViewMode,
-    selected: Option<PathBuf>,
+    pub(crate) selected: Option<PathBuf>,
     /// Icon size in points; 0 means the default.
     icon_size: f32,
     /// A new file being named; nothing is written until the name is confirmed.
@@ -259,10 +259,18 @@ fn kind_icon(kind: AssetKind) -> Kind {
     }
 }
 
-/// A new file being named in the Project panel.
+/// What a name being typed is for.
+#[derive(Clone, Debug, PartialEq)]
+enum NameTarget {
+    /// A new asset of this kind in this folder; nothing is written before the name.
+    New { kind: AssetKind, folder: PathBuf },
+    /// A file or folder getting a new name.
+    Rename { path: PathBuf },
+}
+
+/// A name typed in place, in the file's own tile or row: a new asset's, or a renamed one's.
 pub(crate) struct Naming {
-    kind: AssetKind,
-    folder: PathBuf,
+    target: NameTarget,
     text: String,
     /// The field has had focus (and its text selected) once.
     focused: bool,
@@ -279,6 +287,10 @@ enum Action {
     StartNew(AssetKind, Option<PathBuf>),
     /// Make the file being named, with this name.
     Create(String),
+    /// Start renaming this file or folder, in its own tile or row.
+    StartRename(PathBuf),
+    /// Give the file being renamed this name.
+    RenameTo(String),
     /// Build the script crate in this folder.
     BuildScript(PathBuf),
     /// Open a file with the program the system uses for it.
@@ -301,6 +313,8 @@ struct Outcome {
     inspect: Option<PathBuf>,
     /// A file or folder has keyboard focus, so plain keys (Delete) are the panel's.
     focused: bool,
+    /// The empty space between the files was clicked: nothing stays selected.
+    deselect: bool,
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
@@ -332,10 +346,15 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             theme::stripes(ui, slot, rows.into_iter(), full_width);
         });
     });
+    // A name being typed is drawn in its own tile; it is held apart while the files are drawn.
+    let mut naming = view.naming.take();
     let files_area = egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 6, ..egui::Margin::ZERO })).show(ui, |ui| {
-        naming_row(ui, &mut view, &mut outcome);
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| files(ui, &view, selected_object, &mut outcome));
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| files(ui, &view, &mut naming, selected_object, &mut outcome));
     });
+    view.naming = naming;
+    if outcome.deselect {
+        view.selected = None;
+    }
     // Ctrl + mouse wheel over the files resizes the icons. egui reports it as a zoom gesture.
     if view.mode == ViewMode::Icons && files_area.response.contains_pointer() {
         let zoom = ui.input(|i| i.zoom_delta());
@@ -353,6 +372,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         view.selected = Some(file);
     }
     editor.project = view;
+    if outcome.deselect {
+        editor.inspected_file = None;
+    }
     if let Some(path) = outcome.inspect {
         // A clicked file takes the Inspector from the selected objects.
         editor.select_only(None);
@@ -372,7 +394,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 let text = CREATABLE.iter().find(|(k, ..)| *k == kind).map_or("New Asset", |(.., start)| start);
                 // The new name is typed where the files are shown: open the folder it goes into.
                 editor.project.current = folder.clone();
-                editor.project.naming = Some(Naming { kind, folder, text: text.to_owned(), focused: false, error: None });
+                editor.project.naming = Some(Naming { target: NameTarget::New { kind, folder }, text: text.to_owned(), focused: false, error: None });
             }
         }
         Some(Action::Create(name)) => {
@@ -384,6 +406,36 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     }
                     // Keep the field open with the reason, so the name can be fixed.
                     Err(error) => editor.project.naming = Some(Naming { error: Some(error), focused: false, text: name, ..naming }),
+                }
+            }
+        }
+        Some(Action::StartRename(path)) => {
+            // The name is typed in the file's own tile: open the folder that lists it.
+            if let Some(parent) = path.parent() {
+                editor.project.current = parent.to_path_buf();
+            }
+            editor.project.filter.clear();
+            let text = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            editor.project.selected = Some(path.clone());
+            editor.project.naming = Some(Naming { target: NameTarget::Rename { path }, text, focused: false, error: None });
+        }
+        Some(Action::RenameTo(name)) => {
+            if let Some(naming) = editor.project.naming.take()
+                && let NameTarget::Rename { path } = &naming.target
+            {
+                match editor.dispatch("asset.rename", &json!({ "path": path, "name": name }), None) {
+                    Some(renamed) => {
+                        let renamed = PathBuf::from(renamed["path"].as_str().unwrap_or_default());
+                        editor.project.scanned = None;
+                        editor.project.selected = Some(renamed.clone());
+                        if editor.inspected_file.as_ref().is_some_and(|f| f.path == *path) {
+                            editor.inspected_file = Some(crate::file_inspector::Inspected::new(renamed));
+                        }
+                    }
+                    None => {
+                        let error = editor.status.clone();
+                        editor.project.naming = Some(Naming { error: Some(error), focused: false, text: name, ..naming });
+                    }
                 }
             }
         }
@@ -463,44 +515,57 @@ fn delete_dialog(editor: &mut Editor, ctx: &egui::Context) {
     }
 }
 
-/// The name field of a new file, above the files. Enter makes the file; Escape, or clicking
-/// elsewhere, cancels and nothing is written.
-fn naming_row(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) {
-    let Some(naming) = view.naming.as_mut() else { return };
+/// The name field in a tile or row, `width` wide. It takes focus with the name selected (a file's
+/// name without its extension), so typing replaces it. Enter confirms; Escape cancels; clicking
+/// elsewhere confirms a rename and cancels a new asset, which nothing has been written for yet.
+/// Why a name was refused shows just under the field.
+fn name_field(ui: &mut egui::Ui, naming: &mut Option<Naming>, width: f32, outcome: &mut Outcome) {
+    let Some(name) = naming.as_mut() else { return };
     let t = theme::tokens(ui);
-    let mut cancel = false;
-    egui::Frame::new().fill(t.surface).corner_radius(theme::SECTION_RADIUS).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("New {}:", kind_name(naming.kind))).color(t.text_muted));
-            let field = ui.add_sized([ui.available_width().min(260.0), LIST_ROW], egui::TextEdit::singleline(&mut naming.text).margin(egui::vec2(6.0, 1.0)));
-            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Name of the new {}", kind_name(naming.kind))));
-            if !naming.focused {
-                // Focus the field with its text selected, so typing replaces it.
-                field.request_focus();
-                if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), field.id) {
-                    let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(naming.text.chars().count()));
-                    state.cursor.set_char_range(Some(all));
-                    state.store(ui.ctx(), field.id);
-                }
-                naming.focused = true;
-            } else if field.lost_focus() {
-                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    outcome.action = Some(Action::Create(naming.text.trim().to_owned()));
-                } else {
-                    cancel = true;
-                }
+    let label = match &name.target {
+        NameTarget::New { kind, .. } => format!("Name of the new {}", kind_name(*kind)),
+        NameTarget::Rename { path } => format!("New name of {}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+    };
+    let field =
+        ui.add_sized([width, LIST_ROW + 2.0], egui::TextEdit::singleline(&mut name.text).margin(egui::vec2(4.0, 1.0)).align(egui::Align2::CENTER_CENTER));
+    ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(label));
+    if let Some(error) = &name.error {
+        ui.painter().rect_stroke(field.rect, theme::RADIUS, egui::Stroke::new(1.5, t.error), egui::StrokeKind::Outside);
+        egui::Area::new(field.id.with("problem")).order(egui::Order::Foreground).fixed_pos(field.rect.left_bottom() + egui::vec2(0.0, 4.0)).show(
+            ui.ctx(),
+            |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_max_width(280.0);
+                    ui.add(egui::Label::new(egui::RichText::new(error).color(t.text)).wrap());
+                });
+            },
+        );
+    }
+    if !name.focused {
+        field.request_focus();
+        // A file's name is selected without its extension; a folder's or a new asset's whole.
+        let selected = match &name.target {
+            NameTarget::Rename { path } if path.is_file() => {
+                name.text.rfind('.').filter(|&dot| dot > 0).map_or(name.text.chars().count(), |dot| name.text[..dot].chars().count())
             }
-            if let Some(extension) = naming.kind.extension() {
-                ui.label(egui::RichText::new(format!(".{extension}")).color(t.text_muted));
-            }
-            ui.label(egui::RichText::new("Enter to create, Esc to cancel").small().color(t.text_muted));
-        });
-        if let Some(error) = &naming.error {
-            ui.label(egui::RichText::new(error).color(t.error));
+            _ => name.text.chars().count(),
+        };
+        if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), field.id) {
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(selected))));
+            state.store(ui.ctx(), field.id);
         }
-    });
-    if cancel {
-        view.naming = None;
+        name.focused = true;
+        return;
+    }
+    if !field.lost_focus() {
+        return;
+    }
+    let (enter, escape) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+    let text = name.text.trim().to_owned();
+    match (&name.target, enter, escape) {
+        (_, _, true) | (NameTarget::New { .. }, false, false) => *naming = None,
+        (NameTarget::New { .. }, true, _) => outcome.action = Some(Action::Create(text)),
+        (NameTarget::Rename { .. }, ..) => outcome.action = Some(Action::RenameTo(text)),
     }
 }
 
@@ -512,13 +577,13 @@ fn create(editor: &mut Editor, naming: &Naming, name: &str) -> Result<PathBuf, S
     if name.is_empty() {
         return Err("Type a name first.".to_owned());
     }
-    if naming.kind != AssetKind::Script && !bayleaf_engine::asset_cmds::valid_file_name(name) {
+    let NameTarget::New { kind, folder } = &naming.target else { return Err("this name is not for a new asset".to_owned()) };
+    if *kind != AssetKind::Script && !bayleaf_engine::asset_cmds::valid_file_name(name) {
         return Err(r#"A name may have up to 100 characters and none of / \ : * ? " < > |."#.to_owned());
     }
-    let made =
-        editor.dispatch("asset.create", &json!({ "kind": naming.kind, "folder": naming.folder, "name": name }), None).ok_or_else(|| editor.status.clone())?;
+    let made = editor.dispatch("asset.create", &json!({ "kind": kind, "folder": folder, "name": name }), None).ok_or_else(|| editor.status.clone())?;
     let path = PathBuf::from(made["path"].as_str().unwrap_or_default());
-    match naming.kind {
+    match kind {
         AssetKind::Material | AssetKind::VisualScript => editor.open_graph(&path),
         AssetKind::Script => editor.build_script(&path),
         // An Input Map opens in the Inspector, where its actions are edited.
@@ -696,17 +761,20 @@ fn folder_row(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
 
 /// The open folder's entries, or every file matching the search.
 /// Right-clicking the space between them opens the folder's menu.
-fn files(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, outcome: &mut Outcome) {
+fn files(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Naming>, selected_object: bool, outcome: &mut Outcome) {
     // Sensed before the files, so a file under the pointer takes the click instead.
     let background = ui.interact(ui.max_rect(), egui::Id::unique("project files background"), egui::Sense::click());
     background.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Group, true, "Folder contents"));
-    file_entries(ui, view, selected_object, outcome);
+    file_entries(ui, view, naming, selected_object, outcome);
+    if background.clicked() {
+        outcome.deselect = true;
+    }
     if !view.current.as_os_str().is_empty() {
         folder_menu(&background, view, &view.current, outcome);
     }
 }
 
-fn file_entries(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, outcome: &mut Outcome) {
+fn file_entries(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Naming>, selected_object: bool, outcome: &mut Outcome) {
     if view.current.as_os_str().is_empty() {
         inspector::empty_state(ui, "No project folder", "Open or save a scene to see its folder here. The engine's own files are under Engine, on the left.");
         return;
@@ -727,7 +795,17 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, ou
         found.dedup_by(|a, b| a.path == b.path);
         found
     };
-    if entries.is_empty() {
+    // A new asset being named shows first in the folder it goes into.
+    let new_here = match naming.as_ref().map(|n| &n.target) {
+        Some(NameTarget::New { kind, folder }) if *folder == view.current && filter.is_empty() => Some(*kind),
+        _ => None,
+    };
+    let renamed: Option<PathBuf> = match naming.as_ref().map(|n| &n.target) {
+        Some(NameTarget::Rename { path }) => Some(path.clone()),
+        _ => None,
+    };
+    let renaming = |entry: &Entry| renamed.as_ref() == Some(&entry.path);
+    if entries.is_empty() && new_here.is_none() {
         let (title, hint) = if filter.is_empty() {
             ("Empty folder", "Save files into this folder to see them here.")
         } else {
@@ -741,7 +819,14 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, ou
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                if let Some(kind) = new_here {
+                    naming_tile(ui, kind_icon(kind), view.icon(), naming, outcome);
+                }
                 for entry in entries {
+                    if renaming(entry) {
+                        naming_tile(ui, entry.kind, view.icon(), naming, outcome);
+                        continue;
+                    }
                     let response = tile(ui, entry, view.selected.as_deref() == Some(entry.path.as_path()), view.icon());
                     interact(ui, &response, view, entry, selected_object, outcome);
                 }
@@ -752,7 +837,14 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, ou
             let slot = ui.painter().add(egui::Shape::Noop);
             let full_width = ui.max_rect().x_range();
             let mut rows = Vec::new();
+            if let Some(kind) = new_here {
+                rows.push(naming_row(ui, kind_icon(kind), naming, outcome));
+            }
             for entry in entries {
+                if renaming(entry) {
+                    rows.push(naming_row(ui, entry.kind, naming, outcome));
+                    continue;
+                }
                 let response = list_row(ui, entry, view.selected.as_deref() == Some(entry.path.as_path()));
                 rows.push(response.rect);
                 interact(ui, &response, view, entry, selected_object, outcome);
@@ -760,6 +852,32 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, ou
             theme::stripes(ui, slot, rows.into_iter(), full_width);
         }
     }
+}
+
+/// A tile whose name is being typed: the icon, and the name field where the name goes.
+fn naming_tile(ui: &mut egui::Ui, kind: Kind, icon_size: f32, naming: &mut Option<Naming>, outcome: &mut Outcome) {
+    let t = theme::tokens(ui);
+    let tile_size = egui::vec2((icon_size + 36.0).max(72.0), icon_size + 38.0);
+    ui.allocate_ui_with_layout(tile_size, egui::Layout::top_down(egui::Align::Center), |ui| {
+        ui.set_min_size(tile_size);
+        ui.painter().rect_filled(ui.max_rect(), theme::RADIUS, t.surface_hover);
+        let (icon, _) = ui.allocate_exact_size(egui::vec2(icon_size, icon_size + 6.0), egui::Sense::hover());
+        paint_icon(ui.painter(), egui::Rect::from_min_size(icon.min + egui::vec2(0.0, 6.0), egui::vec2(icon_size, icon_size)), kind, t);
+        name_field(ui, naming, tile_size.x - 4.0, outcome);
+    });
+}
+
+/// A list row whose name is being typed: the icon, then the name field.
+fn naming_row(ui: &mut egui::Ui, kind: Kind, naming: &mut Option<Naming>, outcome: &mut Outcome) -> egui::Rect {
+    let t = theme::tokens(ui);
+    ui.horizontal(|ui| {
+        let (icon, _) = ui.allocate_exact_size(egui::vec2(14.0, LIST_ROW), egui::Sense::hover());
+        paint_icon(ui.painter(), egui::Rect::from_center_size(icon.center(), egui::vec2(14.0, 14.0)), kind, t);
+        let width = ui.available_width().min(320.0);
+        name_field(ui, naming, width, outcome);
+    })
+    .response
+    .rect
 }
 
 /// One file or folder in the icon view: drawn icon, name below.
@@ -835,6 +953,9 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
     if response.has_focus() && view.is_in_project(&entry.path) && ui.input(|i| i.key_pressed(egui::Key::Delete)) {
         outcome.action = Some(Action::AskDelete(entry.path.clone()));
     }
+    if response.has_focus() && view.is_in_project(&entry.path) && ui.input(|i| i.key_pressed(egui::Key::F2)) {
+        outcome.action = Some(Action::StartRename(entry.path.clone()));
+    }
     if response.double_clicked() {
         outcome.action = default_action(entry);
         if entry.kind == Kind::Folder {
@@ -906,6 +1027,10 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
         }
         if view.is_in_project(&entry.path) {
             ui.separator();
+            if ui.add(egui::Button::new("Rename").shortcut_text("F2")).clicked() {
+                outcome.action = Some(Action::StartRename(entry.path.clone()));
+                ui.close();
+            }
             if ui.button("Delete…").on_hover_text("Move it to the Recycle Bin (Delete)").clicked() {
                 outcome.action = Some(Action::AskDelete(entry.path.clone()));
                 ui.close();

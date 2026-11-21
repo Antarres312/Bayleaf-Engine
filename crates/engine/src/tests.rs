@@ -1343,3 +1343,38 @@ fn opening_an_old_project_moves_its_inline_actions_into_an_input_map() {
     assert!(std::fs::read_to_string(&file).unwrap().contains("\"version\": 3"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn asset_rename_keeps_extensions_moves_script_crates_and_follows_open_files() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-asset-rename-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let rename = |session: &mut Session, path: &str, name: &str| registry.execute(session, "asset.rename", &json!({"path": path, "name": name}));
+
+    registry.execute(&mut session, "graph.open", &json!({"path": dir.join("materials/ground.bmaterial")})).unwrap();
+    let renamed = rename(&mut session, "materials/ground.bmaterial", "Grass").unwrap();
+    assert!(renamed["path"].as_str().unwrap().ends_with("Grass.bmaterial"), "the extension stays: {renamed}");
+    assert!(dir.join("materials/Grass.bmaterial").is_file() && !dir.join("materials/ground.bmaterial").exists());
+    let open = registry.execute(&mut session, "graph.get", &Value::Null).unwrap();
+    assert!(open["path"].as_str().unwrap().ends_with("Grass.bmaterial"), "the open graph follows its file");
+
+    registry.execute(&mut session, "script.new", &json!({"folder": "scripts", "name": "Mover"})).unwrap();
+    std::fs::write(dir.join("scripts/mover.wasm"), b"\0asm").unwrap();
+    rename(&mut session, "scripts/mover", "Door Opener").unwrap();
+    assert!(dir.join("scripts/door_opener/src/lib.rs").is_file() && dir.join("scripts/door_opener.wasm").is_file(), "the folder and its module move");
+    let crate_manifest: toml_edit::DocumentMut = std::fs::read_to_string(dir.join("scripts/door_opener/Cargo.toml")).unwrap().parse().unwrap();
+    assert_eq!(crate_manifest["package"]["name"].as_str(), Some("door_opener"));
+    let workspace: toml_edit::DocumentMut = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap().parse().unwrap();
+    assert_eq!(workspace["workspace"]["members"].as_array().unwrap().iter().filter_map(|m| m.as_str()).collect::<Vec<_>>(), ["scripts/door_opener"]);
+
+    assert!(rename(&mut session, "scripts/spin.bscript", "door_opener.wasm").is_ok(), "a different extension is kept as part of the name");
+    assert!(rename(&mut session, "materials/Grass.bmaterial", "a/b").is_err());
+    std::fs::write(dir.join("materials/Rock.bmaterial"), "{}").unwrap();
+    assert!(rename(&mut session, "materials/Grass.bmaterial", "Rock").is_err(), "never over another file");
+    let scenes = dir.join("scenes");
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), std::slice::from_ref(&scenes)).unwrap()));
+    assert!(rename(&mut session, "materials/Grass.bmaterial", "Moss").is_err(), "agents rename only inside their folders");
+    std::fs::remove_dir_all(&dir).ok();
+}

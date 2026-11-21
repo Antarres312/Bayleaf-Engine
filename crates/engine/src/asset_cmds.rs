@@ -36,7 +36,83 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             enabled: always,
             run: asset_delete,
         },
+        CommandSpec {
+            id: "asset.rename",
+            label: "Rename Asset",
+            menu: "",
+            shortcut: "",
+            params: "{path, name}: renames a file or folder of the project (relative to the project folder or absolute); a file keeps its extension when the name leaves it out; a Rust script's folder renames its crate, its built module and its workspace entry too. Never over another file. Returns {path}",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: asset_rename,
+        },
     ]
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenameParams {
+    path: PathBuf,
+    name: String,
+}
+
+fn asset_rename(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: RenameParams = parse(params)?;
+    let path = session.allowed(&session.script_dir().join(&p.path), Access::Write)?;
+    if !path.exists() {
+        return Err(CommandError::BadParams(format!("{} does not exist", path.display())));
+    }
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if let Some(project) = session.project_dir()
+        && canonical(project).starts_with(canonical(&path))
+    {
+        return Err(CommandError::BadParams("the project folder itself, or a folder holding it, is not renamed here".to_owned()));
+    }
+    let name = p.name.trim();
+    let renamed = if path.join("Cargo.toml").is_file() {
+        // A Rust script: its crate, module and workspace entry follow the folder.
+        let parent = path.parent().unwrap_or(&path);
+        if let Some(new_name) = crate::code_scripts::crate_name(name) {
+            session.allowed(&parent.join(&new_name), Access::Write)?;
+        }
+        let renamed = crate::code_scripts::rename_script(&path, name).map_err(CommandError::BadParams)?;
+        if let Some(manifest) = session.project_dir().map(|p| p.join(crate::code_scripts::WORKSPACE_MANIFEST)).filter(|m| m.is_file()) {
+            crate::code_scripts::move_workspace_member(&manifest, &path, &renamed).map_err(CommandError::Failed)?;
+        }
+        renamed
+    } else {
+        if !valid_file_name(name) {
+            return Err(CommandError::BadParams(r#"a name has 1 to 100 characters and none of / \ : * ? " < > |"#.to_owned()));
+        }
+        let extension = if path.is_file() { path.extension().map(|e| e.to_string_lossy().into_owned()) } else { None };
+        let file = match extension {
+            Some(e) if !name.to_ascii_lowercase().ends_with(&format!(".{}", e.to_ascii_lowercase())) => format!("{name}.{e}"),
+            _ => name.to_owned(),
+        };
+        let renamed = path.with_file_name(file);
+        if renamed == path {
+            return Ok(json!({ "path": path }));
+        }
+        // A name that differs only in case is a rename on any file system; anything else must be new.
+        if renamed.exists() && !canonical(&renamed).eq(&canonical(&path)) {
+            return Err(CommandError::Failed(format!("{} already exists; pick another name", renamed.display())));
+        }
+        let renamed = session.allowed(&renamed, Access::Write)?;
+        std::fs::rename(&path, &renamed).map_err(|e| CommandError::Failed(format!("cannot rename {}: {e}", path.display())))?;
+        renamed
+    };
+    // The open scene and graph follow their files.
+    let follow = |open: &Path| open.strip_prefix(&path).ok().map(|rest| if rest.as_os_str().is_empty() { renamed.clone() } else { renamed.join(rest) });
+    if let Some(scene) = session.scene_path.clone().and_then(|s| follow(&s)) {
+        session.set_scene_path(Some(scene));
+    }
+    if let Some(doc) = session.graph.as_mut()
+        && let Some(moved) = doc.path.as_deref().and_then(follow)
+    {
+        doc.path = Some(moved);
+    }
+    Ok(json!({ "path": renamed }))
 }
 
 #[derive(Deserialize)]

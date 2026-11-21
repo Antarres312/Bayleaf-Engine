@@ -139,6 +139,42 @@ pub fn leave_workspace(manifest: &Path, removed: &Path) -> Result<(), String> {
     std::fs::write(manifest, doc.to_string()).map_err(|e| format!("cannot write {}: {e}", manifest.display()))
 }
 
+/// Moves the workspace member at `old` to `new` in `manifest`, keeping the rest of the file.
+pub fn move_workspace_member(manifest: &Path, old: &Path, new: &Path) -> Result<(), String> {
+    let root = manifest.parent().ok_or("the workspace manifest has no folder")?;
+    let relative = |path: &Path| path.strip_prefix(root).ok().map(|r| r.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"));
+    let (Some(old), Some(new)) = (relative(old), relative(new)) else { return Ok(()) };
+    let text = std::fs::read_to_string(manifest).map_err(|e| format!("cannot read {}: {e}", manifest.display()))?;
+    let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else { return Ok(()) };
+    let Some(members) = doc.get_mut("workspace").and_then(|w| w.get_mut("members")).and_then(toml_edit::Item::as_array_mut) else { return Ok(()) };
+    let Some(index) = members.iter().position(|m| m.as_str() == Some(old.as_str())) else { return Ok(()) };
+    members.replace(index, new.as_str());
+    std::fs::write(manifest, doc.to_string()).map_err(|e| format!("cannot write {}: {e}", manifest.display()))
+}
+
+/// Renames a script crate: its folder, its package name, and its built module beside it. `name`
+/// becomes the crate name (`Door Opener` → `door_opener`).
+pub fn rename_script(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    let crate_name = crate_name(name).ok_or("a script name needs letters or digits, may not start with a digit, and has at most 64 characters")?;
+    let parent = dir.parent().ok_or("the script has no folder around it")?;
+    let new_dir = parent.join(&crate_name);
+    if new_dir.exists() || parent.join(format!("{crate_name}.wasm")).exists() {
+        return Err(format!("{} already exists; pick another name", new_dir.display()));
+    }
+    let manifest = dir.join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).map_err(|e| format!("cannot read {}: {e}", manifest.display()))?;
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{} does not read as TOML: {e}", manifest.display()))?;
+    let package = doc.get_mut("package").and_then(toml_edit::Item::as_table_mut).ok_or("the script's Cargo.toml has no [package]")?;
+    package.insert("name", toml_edit::value(crate_name.as_str()));
+    std::fs::write(&manifest, doc.to_string()).map_err(|e| format!("cannot write {}: {e}", manifest.display()))?;
+    std::fs::rename(dir, &new_dir).map_err(|e| format!("cannot rename {}: {e}", dir.display()))?;
+    let old_module = dir.with_extension("wasm");
+    if old_module.is_file() {
+        std::fs::rename(&old_module, new_dir.with_extension("wasm")).map_err(|e| format!("cannot rename {}: {e}", old_module.display()))?;
+    }
+    Ok(new_dir)
+}
+
 /// Adds the crate at `member` to the workspace `manifest`, making the workspace when the project
 /// has none. An existing manifest keeps its own entries, formatting and comments; one that is not
 /// a workspace is refused rather than changed.
