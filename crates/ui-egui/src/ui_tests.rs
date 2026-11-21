@@ -1352,3 +1352,26 @@ fn the_menu_path_is_typed_in_the_script_panel_and_kept_while_it_does_not_read_ri
     assert_eq!(graph(&harness).menu, "Light/Flicker", "what is typed is kept and set once it reads right");
     assert!(harness.query_by_label_contains("Not set:").is_none());
 }
+
+#[test]
+fn a_search_node_picks_a_component_from_a_list_or_takes_a_dragged_script() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-search-kind-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    let editor = harness.state_mut();
+    editor.dispatch("project.new", &json!({ "path": dir }), None);
+    editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
+    editor.dispatch("graph.save", &json!({ "path": dir.join("seeker.bscript") }), None);
+    let node = editor.dispatch("graph.node.add", &json!({ "kind": "findWith", "position": [40, 220] }), None).unwrap()["node"].as_u64().unwrap() as u32;
+    editor.project.rescan_soon();
+    harness.run_steps(2);
+    let kind = |harness: &Harness<'static, Editor>| graph(harness).value(node, "kind").and_then(|v| v.as_str()).map(str::to_owned);
+    harness.get_by_label_contains(&format!("Component, Tag or Script of node {node}:")).click();
+    harness.run();
+    harness.get_by_label("Mesh").click();
+    harness.run();
+    assert_eq!(kind(&harness).as_deref(), Some("Mesh"), "a component chosen from the list");
+    drag_entry(&mut harness, "seeker, Visual Script", &format!("Component, Tag or Script of node {node}: Mesh"));
+    assert_eq!(kind(&harness).as_deref(), Some("Seeker"), "a dragged script is looked for by its name");
+    std::fs::remove_dir_all(&dir).ok();
+}

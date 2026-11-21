@@ -124,7 +124,9 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   (`Point Light`, `Character`), a tag, or runs a script (by its name), with Index 0 for the first in
   hierarchy order; **Count Objects With** counts them; **For Each Object With** runs Each once per
   such object, with the object and its index, then Then. Searches see the scene as the step began and
-  ignore case, spaces, `_` and `-`. Found is false when nothing matches.
+  ignore case, spaces, `_` and `-`. Found is false when nothing matches. Their Component, Tag or Script is
+  picked from a list of components, the project's scripts and the scene's tags, or set by dragging
+  a script from the Project panel onto it.
 - Position Of, Set Position Of, Send Message, Walk, Jump, Add Impulse, Set Velocity and **Destroy
   Object** take an Object input. Unlinked, they use the first object named in Object Name, else
   their own default (this object, or for Send Message every object).

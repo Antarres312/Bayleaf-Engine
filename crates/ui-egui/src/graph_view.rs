@@ -74,6 +74,43 @@ pub(crate) struct GraphView {
     show_preview: bool,
     /// The material preview's renderer, kept when another graph opens.
     preview: Option<Preview>,
+    /// What a search node can look for, gathered each frame while a script graph is shown.
+    search: SearchChoices,
+}
+
+/// The components, project scripts and scene tags a Find Object With, Count Objects With or For
+/// Each Object With node can name.
+#[derive(Default)]
+struct SearchChoices {
+    components: Vec<&'static str>,
+    scripts: Vec<String>,
+    tags: Vec<String>,
+}
+
+/// The node kinds that search by a component, a tag or a script, in their `kind` setting.
+const SEARCH_KINDS: [&str; 3] = ["findWith", "countWith", "forEachWith"];
+
+/// The name a search uses for a script file: the name the Inspector shows for it.
+fn script_name(module: &str) -> String {
+    bayleaf_engine::scene::components::ScriptRef { module: module.to_owned(), properties: Default::default() }.display_name()
+}
+
+impl SearchChoices {
+    fn gather(editor: &Editor) -> Self {
+        let scene = editor.session.scene();
+        let components = scene.registry().kinds().iter().filter(|k| k.listed).map(|k| k.label).collect();
+        let mut scripts: Vec<String> = editor.project.script_files().iter().map(|m| script_name(m)).collect();
+        scripts.dedup();
+        let mut tags: Vec<String> = scene
+            .world_matrices()
+            .iter()
+            .filter_map(|(id, _)| scene.get::<bayleaf_engine::scene::components::Tags>(*id))
+            .flat_map(|tags| tags.0.iter().cloned())
+            .collect();
+        tags.sort_unstable();
+        tags.dedup();
+        Self { components, scripts, tags }
+    }
 }
 
 impl Default for GraphView {
@@ -92,6 +129,7 @@ impl Default for GraphView {
             focus_comment: None,
             show_preview: true,
             preview: None,
+            search: SearchChoices::default(),
         }
     }
 }
@@ -164,6 +202,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
         view.editing_comment = None;
     }
     view.selected.retain(|id| doc.graph.node(*id).is_some());
+    view.search =
+        if doc.graph.nodes.iter().any(|n| SEARCH_KINDS.contains(&n.kind.as_str())) { SearchChoices::gather(editor) } else { SearchChoices::default() };
     let problems = bayleaf_engine::problems(&doc.graph);
 
     toolbar(editor, ui, &doc, catalog, &mut view);
@@ -916,7 +956,7 @@ fn node_ui(
     let mut y = rect.top() + TITLE + 3.0;
     for setting in def.settings {
         let row = Rect::from_min_size(pos2(rect.left() + 10.0, y), vec2(rect.width() - 20.0, ROW));
-        setting_row(ui, graph, node, setting, row, gesture, requests);
+        setting_row(ui, &Lists { graph, search: &view.search }, node, setting, row, gesture, requests);
         y += ROW;
     }
     for pin in def.inputs {
@@ -1147,7 +1187,21 @@ fn vec3_editor(ui: &mut egui::Ui, rect: Rect, v: &mut [f32; 3], name: &str, hint
     }
 }
 
-fn setting_row(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayleaf_engine::graph::SettingDef, row: Rect, gesture: u64, requests: &mut Requests) {
+/// What a node's settings choose from: the graph (its variables) and what searches can name.
+struct Lists<'a> {
+    graph: &'a Graph,
+    search: &'a SearchChoices,
+}
+
+fn setting_row(
+    ui: &mut egui::Ui,
+    lists: &Lists<'_>,
+    node: &Node,
+    setting: &bayleaf_engine::graph::SettingDef,
+    row: Rect,
+    gesture: u64,
+    requests: &mut Requests,
+) {
     let t = theme::tokens(ui);
     let label_width = row.width() * 0.36;
     ui.painter().text(pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, setting.label, egui::FontId::proportional(13.0), t.text_muted);
@@ -1159,7 +1213,12 @@ fn setting_row(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayleaf_
         && let Some(ty) =
             bayleaf_engine::graph::VariableType::ALL.into_iter().find(|ty| bayleaf_engine::script::visual::variable_kinds(*ty).contains(&node.kind.as_str()))
     {
-        variable_picker(ui, graph, node, ty, setting, field, requests);
+        variable_picker(ui, lists.graph, node, ty, setting, field, requests);
+        return;
+    }
+    // A search picks a component, a script or a tag, or takes a script dragged from the Project panel.
+    if setting.name == "kind" && SEARCH_KINDS.contains(&node.kind.as_str()) {
+        kind_picker(ui, lists.search, node, setting, field, requests);
         return;
     }
     match setting.kind {
@@ -1213,6 +1272,47 @@ fn setting_row(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayleaf_
                 requests.end_gesture = true;
             }
         }
+    }
+}
+
+/// What a search node looks for: a list of components, the project's scripts and the scene's tags.
+/// A script dragged from the Project panel onto it is chosen by its name.
+fn kind_picker(ui: &mut egui::Ui, search: &SearchChoices, node: &Node, setting: &bayleaf_engine::graph::SettingDef, field: Rect, requests: &mut Requests) {
+    let default = match setting.kind {
+        SettingKind::Text(default) => default,
+        _ => "",
+    };
+    let current = node.values.get(setting.name).and_then(Value::as_str).unwrap_or(default).to_owned();
+    let mut chosen = None;
+    let response = ui.put(field, |ui: &mut egui::Ui| {
+        let t = theme::tokens(ui);
+        craft_ui::ComboBox::from_id_salt(("search kind", node.id))
+            .width(field.width())
+            .truncate()
+            .selected_text(current.clone())
+            .show_ui(ui, |ui| {
+                let groups: [(&str, Vec<&str>); 3] = [
+                    ("Components", search.components.clone()),
+                    ("Scripts", search.scripts.iter().map(String::as_str).collect()),
+                    ("Tags", search.tags.iter().map(String::as_str).collect()),
+                ];
+                for (heading, choices) in groups.iter().filter(|(_, c)| !c.is_empty()) {
+                    ui.label(egui::RichText::new(*heading).small().color(t.text_muted));
+                    for choice in choices {
+                        if ui.selectable_label(*choice == current, *choice).clicked() && *choice != current {
+                            chosen = Some((*choice).to_owned());
+                        }
+                    }
+                }
+            })
+            .response
+    });
+    labelled(ui, &response, &format!("{} of node {}: {current}", setting.label, node.id));
+    if let Some(module) = crate::value_editor::file_drop(ui, &response, |path| path.ends_with(".bscript") || path.ends_with(".wasm")) {
+        chosen = Some(script_name(&module));
+    }
+    if let Some(choice) = chosen {
+        requests.run("graph.node.set", json!({ "node": node.id, "name": setting.name, "value": choice }));
     }
 }
 
