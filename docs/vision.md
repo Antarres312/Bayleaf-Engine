@@ -73,7 +73,12 @@ No crate below L6 may use egui, eframe, winit or rfd.
    the scene opens; prefabs may hold copies of other prefabs, which follow their own files (scene
    format version 7). Still open from M1: the translation system. Later the
    editor took craft-ui (widget-state colours, sections, combo boxes, the font stack) and with it the
-   suite's egui and winit forks; its theme tokens stay its own, as in every Craft app.
+   suite's egui and winit forks; its theme tokens stay its own, as in every Craft app. Then: narrow
+   panels put an inspector value under its label instead of past the panel's edge; the Project panel's
+   context menus (on files, folders and the space between them) create folders, scenes, materials,
+   visual scripts and Rust scripts (`asset.create`), open files with the system's program and show
+   them in the file manager; double-click opens a file with its own tool (the editor's, or the
+   system's for images, models and text); selected objects are outlined instead of tinted.
 3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
    a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with
@@ -109,8 +114,10 @@ No crate below L6 may use egui, eframe, winit or rfd.
    (`send`, delivered after the step to one object or every object); gamepads (the first connected
    one, read with gilrs in the editor and the player); raycasts against mesh shapes and sprites
    (`raycast`, the Raycast node). Physics: see M7. Still open: raycasts against a model's exact shape.
-   Scripts in Rust can be made from the Project panel (`script.new`: a crate from a template, its own
-   workspace) and built to WebAssembly there or with `script.build` (the editor builds in the
+   Scripts in Rust can be made from the Project panel (`script.new`: a crate from a template; in a
+   project every script crate joins one Cargo workspace in the project folder, so scripts share a
+   Cargo.lock, a build folder and their dependencies, while each still builds to its own module;
+   outside a project a script is a workspace of its own) and built to WebAssembly there or with `script.build` (the editor builds in the
    background; agents may not start builds, as build code could reach any file). New files are named
    in place before anything is written; Escape cancels. `cargo xtask licences` checks dependency
    licences and writes NOTICE.

@@ -15,6 +15,8 @@ use crate::mesh::{self, Vertex};
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SAMPLES: u32 = 4;
+/// The selection mask: one channel, set where a selected shape is.
+const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -88,6 +90,8 @@ pub struct RenderTarget {
     color_view: wgpu::TextureView,
     msaa_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
+    /// Where the selected shapes are, for their outline.
+    mask_view: wgpu::TextureView,
 }
 
 impl RenderTarget {
@@ -117,7 +121,9 @@ impl RenderTarget {
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
         let msaa_view = msaa.create_view(&wgpu::TextureViewDescriptor::default());
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { width, height, color, color_view, msaa_view, depth_view }
+        let mask = texture("bayleaf selection mask", MASK_FORMAT, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
+        let mask_view = mask.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { width, height, color, color_view, msaa_view, depth_view, mask_view }
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -156,6 +162,10 @@ pub struct Renderer {
     shadow_group: wgpu::BindGroup,
     shadow_pipeline: wgpu::RenderPipeline,
     texture_layout: wgpu::BindGroupLayout,
+    /// Selection outline: the selected shapes into the mask, then the band around it.
+    mask_pipeline: wgpu::RenderPipeline,
+    outline_pipeline: wgpu::RenderPipeline,
+    outline_layout: wgpu::BindGroupLayout,
     texture_sampler: wgpu::Sampler,
     /// Uploaded images by id; 0 is a white pixel.
     textures: HashMap<u64, (wgpu::Texture, wgpu::TextureView)>,
@@ -328,6 +338,7 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(with_common(include_str!("shaders/sky.wgsl")).into()),
         });
         let sky = sky_pipeline(device, &layout, &sky_shader);
+        let (mask_pipeline, outline_pipeline, outline_layout) = outline_pipelines(device, &globals_layout);
 
         let meshes = Shape::ALL
             .iter()
@@ -365,6 +376,9 @@ impl Renderer {
             shadow_face_group,
             shadow_group,
             shadow_pipeline,
+            mask_pipeline,
+            outline_pipeline,
+            outline_layout,
             texture_layout,
             texture_sampler,
             textures: HashMap::new(),
@@ -588,8 +602,154 @@ impl Renderer {
                 }
             }
         }
+        let selected: Vec<(u32, &DrawItem)> = ordered
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| frame.selected == Some(i.object) || frame.highlighted.contains(&i.object))
+            .map(|(index, i)| (index as u32, *i))
+            .collect();
+        if !selected.is_empty() {
+            self.outline(device, &mut encoder, target, &selected);
+        }
         queue.submit([encoder.finish()]);
     }
+
+    /// Outlines the selected shapes: draws them into the target's mask, then paints a band around
+    /// the mask over the finished picture. `selected` holds each item's instance index.
+    fn outline(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, target: &RenderTarget, selected: &[(u32, &DrawItem)]) {
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bayleaf selection mask pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target.mask_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.mask_pipeline);
+            pass.set_bind_group(0, &self.globals_group, &[]);
+            pass.set_vertex_buffer(1, self.instances.slice(..));
+            for (index, item) in selected {
+                if let Some(mesh) = self.gpu_mesh(item) {
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(indices(item, mesh), 0, *index..index + 1);
+                }
+            }
+        }
+        let mask = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bayleaf selection mask group"),
+            layout: &self.outline_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&target.mask_view) }],
+        });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("bayleaf outline pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target.color_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.outline_pipeline);
+        pass.set_bind_group(0, &self.globals_group, &[]);
+        pass.set_bind_group(1, &mask, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
+/// The selection outline's two pipelines (the selected shapes into the mask; the band around it)
+/// and the layout of the mask's bind group.
+fn outline_pipelines(device: &wgpu::Device, globals_layout: &wgpu::BindGroupLayout) -> (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("bayleaf outline shader"),
+        source: wgpu::ShaderSource::Wgsl(with_common(include_str!("shaders/outline.wgsl")).into()),
+    });
+    let mask_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("bayleaf selection mask layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }],
+    });
+    let layout = |label, groups: &[Option<&wgpu::BindGroupLayout>]| {
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some(label), bind_group_layouts: groups, immediate_size: 0 })
+    };
+    let mask_pass_layout = layout("bayleaf selection mask pass layout", &[Some(globals_layout)]);
+    let outline_pass_layout = layout("bayleaf outline pass layout", &[Some(globals_layout), Some(&mask_layout)]);
+    let mask = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("bayleaf selection mask"),
+        layout: Some(&mask_pass_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_mask"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &VERTEX_ATTRIBUTES,
+                }),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<InstanceRaw>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &INSTANCE_ATTRIBUTES,
+                }),
+            ],
+        },
+        primitive: wgpu::PrimitiveState { cull_mode: None, ..wgpu::PrimitiveState::default() },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_mask"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState { format: MASK_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    let outline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("bayleaf outline"),
+        layout: Some(&outline_pass_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_screen"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_outline"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: COLOR_FORMAT,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    });
+    (mask, outline, mask_layout)
 }
 
 /// The indices an item draws: its part of the mesh, or all of it.

@@ -43,6 +43,8 @@ ron = "0.12"
 egui = { version = "0.37", default-features = false }
 egui_kittest = "0.37"
 toml = "0.9"
+# Edits a project's script workspace manifest, keeping its formatting and comments.
+toml_edit = "0.25"
 getrandom = "0.3"
 # Pure-Rust WebAssembly interpreter: runs inside the web build too, with fuel metering.
 wasmi = "2"

@@ -71,7 +71,7 @@ struct NewParams {
     name: String,
 }
 
-fn script_new(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+pub(crate) fn script_new(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: NewParams = parse(params)?;
     let name = crate_name(&p.name).ok_or_else(|| {
         CommandError::BadParams("a script name needs letters or digits, may not start with a digit, and has at most 64 characters".to_owned())
@@ -83,9 +83,21 @@ fn script_new(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     }
     let sdk = sdk_dir().ok_or_else(|| CommandError::Failed("the script SDK (crates/script-sdk) is not found; set BAYLEAF_SDK_DIR to its folder".to_owned()))?;
     let sdk = sdk.to_string_lossy().replace('\\', "/");
-    let manifest = format!(
-        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nbayleaf-script-sdk = {{ path = \"{sdk}\" }}\n\n# A workspace of its own, so it never joins a workspace in a folder above it.\n[workspace]\n\n[profile.release]\nopt-level = \"s\"\nlto = true\ncodegen-units = 1\npanic = \"abort\"\nstrip = true\n"
-    );
+    // In a project the script joins the project's workspace (one Cargo.lock, one build folder,
+    // dependencies built once); elsewhere, or when the workspace may not be written, it stands alone.
+    let workspace = session
+        .project_dir()
+        .map(|p| p.join(WORKSPACE_MANIFEST))
+        .filter(|m| session.allowed(m, Access::Write).is_ok() && dir.starts_with(m.parent().unwrap_or(m)));
+    let package = format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n");
+    let manifest = match &workspace {
+        Some(_) => format!(
+            "{package}[dependencies]\n# Versions and build settings are the project's: see the Cargo.toml in the project folder.\nbayleaf-script-sdk = {{ workspace = true }}\n"
+        ),
+        None => format!(
+            "{package}[dependencies]\nbayleaf-script-sdk = {{ path = \"{sdk}\" }}\n\n# A workspace of its own, so it never joins a workspace in a folder above it.\n[workspace]\n\n{RELEASE_PROFILE}"
+        ),
+    };
     let ty = type_name(&name);
     let title = p.name.trim();
     let source = format!(
@@ -94,7 +106,54 @@ fn script_new(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     std::fs::create_dir_all(dir.join("src")).map_err(|e| CommandError::Failed(format!("cannot make {}: {e}", dir.display())))?;
     std::fs::write(dir.join("Cargo.toml"), manifest).map_err(|e| CommandError::Failed(e.to_string()))?;
     std::fs::write(dir.join("src").join("lib.rs"), source).map_err(|e| CommandError::Failed(e.to_string()))?;
-    Ok(json!({ "path": dir, "module": folder.join(format!("{name}.wasm")) }))
+    // The crate is complete before the workspace lists it; a workspace that cannot take it leaves nothing behind.
+    if let Some(workspace) = &workspace
+        && let Err(error) = join_workspace(workspace, &dir, &sdk)
+    {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(CommandError::Failed(error));
+    }
+    Ok(json!({ "path": dir, "module": folder.join(format!("{name}.wasm")), "workspace": workspace }))
+}
+
+/// The project's Rust script workspace, in the project folder.
+pub const WORKSPACE_MANIFEST: &str = "Cargo.toml";
+
+/// Small, fast WebAssembly modules for scripts.
+const RELEASE_PROFILE: &str = "[profile.release]\nopt-level = \"s\"\nlto = true\ncodegen-units = 1\npanic = \"abort\"\nstrip = true\n";
+
+/// Adds the crate at `member` to the workspace `manifest`, making the workspace when the project
+/// has none. An existing manifest keeps its own entries, formatting and comments; one that is not
+/// a workspace is refused rather than changed.
+pub fn join_workspace(manifest: &Path, member: &Path, sdk: &str) -> Result<(), String> {
+    let root = manifest.parent().ok_or("the workspace manifest has no folder")?;
+    let relative = member.strip_prefix(root).map_err(|_| format!("{} is outside the project folder", member.display()))?;
+    let relative = relative.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+    let text = match std::fs::read_to_string(manifest) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => format!(
+            "# The project's Rust scripts: one crate each, built together, so they share one Cargo.lock,\n# one build folder and their dependencies. The editor adds each new script to `members`.\n[workspace]\nresolver = \"3\"\nmembers = []\n\n[workspace.dependencies]\nbayleaf-script-sdk = {{ path = \"{sdk}\" }}\n\n{RELEASE_PROFILE}"
+        ),
+        Err(e) => return Err(format!("cannot read {}: {e}", manifest.display())),
+    };
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{} does not read as TOML: {e}", manifest.display()))?;
+    let workspace = doc
+        .get_mut("workspace")
+        .and_then(toml_edit::Item::as_table_mut)
+        .ok_or_else(|| format!("{} is not a Cargo workspace, so the script cannot join it", manifest.display()))?;
+    let members = workspace.entry("members").or_insert_with(|| toml_edit::value(toml_edit::Array::new()));
+    let members = members.as_array_mut().ok_or("the workspace's members are not a list")?;
+    if !members.iter().any(|m| m.as_str() == Some(relative.as_str())) {
+        members.push(relative.as_str());
+    }
+    let dependencies =
+        workspace.entry("dependencies").or_insert_with(toml_edit::table).as_table_like_mut().ok_or("the workspace's dependencies are not a table")?;
+    if !dependencies.contains_key("bayleaf-script-sdk") {
+        let mut sdk_table = toml_edit::InlineTable::new();
+        sdk_table.insert("path", sdk.into());
+        dependencies.insert("bayleaf-script-sdk", toml_edit::value(sdk_table));
+    }
+    std::fs::write(manifest, doc.to_string()).map_err(|e| format!("cannot write {}: {e}", manifest.display()))
 }
 
 /// What a build made.

@@ -5,8 +5,6 @@
 // Karis 2013, "Real Shading in Unreal Engine 4" course notes.
 
 const PI: f32 = 3.14159265;
-// Highlight colour of selected objects (linear).
-const SELECTION: vec3<f32> = vec3<f32>(1.0, 0.45, 0.08);
 
 @group(1) @binding(0) var shadow_map: texture_depth_2d_array;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
@@ -33,7 +31,7 @@ struct InstanceIn {
     @location(7) normal_1: vec4<f32>,
     @location(8) normal_2: vec4<f32>,
     @location(9) color: vec4<f32>,
-    // x: metallic, y: roughness, z: selected, w: unlit
+    // x: metallic, y: roughness, z: selected (outlined in its own pass), w: unlit
     @location(10) params: vec4<f32>,
 };
 
@@ -213,7 +211,6 @@ fn bl_checker(p: vec3<f32>) -> f32 {
 
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let selected = in.params.z > 0.5;
     var n = normalize(in.normal);
     if (!front) {
         n = -n;
@@ -224,11 +221,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     let s = surface(SurfaceIn(in.world_pos, n, v, in.color, in.params, globals.camera_pos.w, in.uv));
     if (in.params.w > 0.5) {
         // Sprites: their colour times their image, without light.
-        var unlit = fogged(s.base, in.world_pos);
-        if (selected) {
-            unlit = mix(unlit, SELECTION, 0.25);
-        }
-        return vec4<f32>(unlit, s.alpha);
+        return vec4<f32>(fogged(s.base, in.world_pos), s.alpha);
     }
 
     // Shadows test the geometric normal; light uses the shading normal.
@@ -291,10 +284,5 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     }
 
     color = fogged(color + max(s.emissive, vec3<f32>(0.0)), in.world_pos);
-    if (selected) {
-        // A light tint plus a glow toward grazing angles, so the surface keeps its own colour.
-        let rim = pow(1.0 - n_dot_v, 4.0);
-        color = mix(color, SELECTION, 0.06) + SELECTION * rim * 0.9;
-    }
     return vec4<f32>(color, alpha);
 }

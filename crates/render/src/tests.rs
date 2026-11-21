@@ -699,3 +699,21 @@ fn a_scene_1000_km_from_the_centre_looks_as_it_does_at_the_centre() {
     let differing = (0..48).flat_map(|y| (0..48).map(move |x| (x, y))).filter(|(x, y)| near.pixel(*x, *y) != far.pixel(*x, *y)).count();
     assert!(differing < 10, "{differing} pixels differ between the centre and 1000 km out");
 }
+
+#[test]
+fn a_selected_shape_keeps_its_colours_and_gets_an_outline_around_it() {
+    let Some(gpu) = gpu() else { return };
+    let mut scene = Scene::new();
+    let cube = mesh(&mut scene, "cube", [0.0, 0.0, 0.0]);
+    object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3}), [0.0; 3], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 50.0, 1.0);
+    let plain = gpu.render(&extract(&scene, camera, OPTIONS), 64, 64).unwrap();
+    let selected = gpu.render(&extract(&scene, camera, FrameOptions { selected: Some(cube), ..OPTIONS }), 64, 64).unwrap();
+    assert_eq!(selected.pixel(32, 32), plain.pixel(32, 32), "the surface is not tinted");
+    // The cube's left edge on the middle row, then a pixel just outside it.
+    let background = plain.pixel(1, 32).unwrap();
+    let edge = (0..32).find(|x| plain.pixel(*x, 32) != Some(background)).unwrap();
+    let outside = selected.pixel(edge - 2, 32).unwrap();
+    assert_eq!(plain.pixel(edge - 2, 32), Some(background), "outside the cube there is background");
+    assert!(outside[0] > outside[2] + 80, "a selected shape has an orange band around it: {outside:?}");
+}

@@ -22,5 +22,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | On Key Pressed, On Timer, Vector Variable, True/False Variable, Gamepad Stick, Gamepad Trigger, Gamepad Button Held, Raycast, Hit Point, Hit Distance, Parts, Rigid Body, Collider, Trigger, Add Impulse, Set Velocity, Velocity, Project Settings, Physics in play mode, Gravity, Earth Gravity, Precision, Single, Double, Character, Walk, Jump, On Ground, Colliders (scene view switch), Input Actions, Action, On Action Pressed, Add Action, Player Control, Follow | not yet | Not checked yet | Visual script node names and Inspector rows; same |
 | Game Rules, Player Start, Player Prefab, Respawn, Respawn Height, Time Limit, Time Up, Game Value, Set Game Value, Change Game Value, End Game, Is Set, Game State | not yet | Not checked yet | Generic game terms; same |
 | Game (tab), State, Saved, Saved Values, Clear Saved Values, This Object, Game won, Game lost | not yet | Not checked yet | Generic game terms; same |
+| Create (menu), Folder Contents, Rust Script, Open with System App, Show in File Explorer, Refresh | not yet | Not checked yet | Generic file terms; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

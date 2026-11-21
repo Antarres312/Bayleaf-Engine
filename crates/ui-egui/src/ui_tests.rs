@@ -521,7 +521,7 @@ fn project_harness(name: &str) -> (Harness<'static, Editor>, std::path::PathBuf)
 }
 
 fn start_new(harness: &mut Harness<'static, Editor>, item: &str) {
-    harness.get_by_label("Create file").click();
+    harness.get_by_label("Create asset").click();
     harness.run();
     harness.get_by_label(item).click();
     harness.run();
@@ -832,5 +832,94 @@ fn with_a_gpu_the_game_tab_draws_the_game_through_the_scene_camera() {
     keep_for_review(&playing, "editor-game");
     // The starter scene's sky, ground and light: a drawn game, not an empty canvas.
     assert!(colours_in(&playing, view) > 12, "the Game view shows the scene through its camera");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_narrow_inspector_keeps_every_control_inside_its_panel() {
+    // A small window leaves the Inspector about 230 points wide.
+    let mut harness = Harness::builder().with_size(egui::vec2(980.0, 760.0)).build_ui_state(|ui, editor: &mut Editor| editor.ui(ui, None), Editor::default());
+    harness.run();
+    let dir = std::env::temp_dir().join(format!("bayleaf-narrow-inspector-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    let ground = {
+        let scene = harness.state().session.scene();
+        scene.world_matrices().into_iter().map(|(id, _)| id).find(|id| scene.name(*id) == Some("Ground")).unwrap()
+    };
+    harness.state_mut().select_only(Some(ground));
+    harness.run();
+    // The name field spans the panel: nothing below it may reach past its right edge.
+    let name = harness.get_by_label("Name").rect();
+    let field = harness.query_all(egui_kittest::kittest::By::new().predicate(|n| n.label().as_deref() == Some("Name"))).last().unwrap().rect();
+    let edge = field.right().max(name.right());
+    let overflowing: Vec<String> = harness
+        .query_all(egui_kittest::kittest::By::new().predicate(|_| true))
+        .filter(|n| egui_kittest::kittest::NodeT::accesskit_node(n).bounding_box().is_some())
+        .filter(|n| {
+            let r = n.rect();
+            r.left() >= name.left() - 1.0 && r.top() > field.bottom() && r.width() > 0.0 && r.right() > edge + 1.0
+        })
+        .map(|n| format!("{:?} {:?}", egui_kittest::kittest::NodeT::accesskit_node(&n).label(), n.rect()))
+        .collect();
+    assert!(overflowing.is_empty(), "inspector controls past the panel's edge ({edge}): {overflowing:#?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_folder_menu_creates_a_named_material_and_opens_it() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-create-menu-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().project.current = dir.join("materials");
+    harness.run_steps(2);
+    harness.get_by_label("Folder contents").click_secondary();
+    harness.run();
+    harness.get_by_label("Create").click();
+    harness.run();
+    harness.get_by_label("New Material").click();
+    harness.run_steps(2);
+    let field = harness.get_by_label("Name of the new material");
+    field.focus();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.get_by_label("Name of the new material").type_text("Rock");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(3);
+    let made = dir.join("materials").join("Rock.bmaterial");
+    assert!(made.is_file(), "the material is written once it has a name");
+    let open = harness.state().session.graph().and_then(|g| g.path.clone());
+    assert_eq!(open.map(|p| p.file_name().map(|n| n.to_owned())), Some(made.file_name().map(|n| n.to_owned())), "and opens in the graph editor");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn inspector_lists_sit_beside_their_labels_not_over_them() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-inspector-labels-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    let cube = {
+        let scene = harness.state().session.scene();
+        scene.world_matrices().into_iter().map(|(id, _)| id).find(|id| scene.name(*id) == Some("Cube")).unwrap()
+    };
+    harness.state_mut().select_only(Some(cube));
+    harness.run();
+    for label in ["Shape", "Material", "Model"] {
+        let at = harness
+            .query_all(egui_kittest::kittest::By::new().predicate(move |n| n.role() == egui::accesskit::Role::Label && n.value().as_deref() == Some(label)))
+            .next()
+            .unwrap_or_else(|| panic!("no {label} label"))
+            .rect();
+        let row = |r: egui::Rect| r.top() < at.bottom() && r.bottom() > at.top();
+        let lists: Vec<egui::Rect> = harness
+            .query_all(egui_kittest::kittest::By::new().predicate(|n| n.role() == egui::accesskit::Role::ComboBox))
+            .map(|n| n.rect())
+            .filter(|r| row(*r))
+            .collect();
+        assert!(!lists.is_empty(), "{label} has a list on its row");
+        assert!(lists.iter().all(|r| r.left() >= at.right()), "{label}'s list starts after the label: {at:?} {lists:?}");
+    }
     std::fs::remove_dir_all(&dir).ok();
 }

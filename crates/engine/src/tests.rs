@@ -1143,3 +1143,75 @@ fn saved_values_last_between_plays_and_stay_inside_the_confinement() {
     assert!(registry.execute(&mut session, "game.saved.clear", &Value::Null).is_err(), "clearing is refused too");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn asset_create_makes_each_kind_that_opens_and_never_writes_over_a_file() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-asset-create-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let create = |session: &mut Session, kind: &str, folder: &str, name: &str| {
+        registry.execute(session, "asset.create", &json!({"kind": kind, "folder": folder, "name": name}))
+    };
+
+    let folder = create(&mut session, "folder", "assets", "Levels").unwrap();
+    assert!(std::path::Path::new(folder["path"].as_str().unwrap()).is_dir());
+    let scene = create(&mut session, "scene", "assets/Levels", "Level 1").unwrap();
+    let scene = std::path::PathBuf::from(scene["path"].as_str().unwrap());
+    assert!(bayleaf_scene::Scene::load(&scene).unwrap().object_count() > 0, "a new scene has a camera and a light to start from");
+    for (kind, name) in [("material", "Rock"), ("visualScript", "Door")] {
+        let made = create(&mut session, kind, "assets/Levels", name).unwrap();
+        registry.execute(&mut session, "graph.open", &json!({"path": made["path"]})).unwrap();
+    }
+    assert!(create(&mut session, "scene", "assets/Levels", "Level 1.bscene").is_err(), "an existing file is never written over");
+    assert!(create(&mut session, "folder", "assets", "a/b").is_err(), "a name is one file, not a path");
+    assert!(create(&mut session, "folder", "missing", "X").is_err(), "the folder must exist");
+
+    // Agents create only inside their write folders.
+    let scenes = dir.join("scenes");
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), std::slice::from_ref(&scenes)).unwrap()));
+    assert!(create(&mut session, "material", "assets", "Outside").is_err());
+    assert!(!dir.join("assets/Outside.bmaterial").exists());
+    assert!(create(&mut session, "scene", "scenes", "Inside").is_ok());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn rust_scripts_in_a_project_share_one_workspace_and_build() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-script-workspace-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    for name in ["Turn Table", "Door Opener"] {
+        let made = registry.execute(&mut session, "script.new", &json!({"folder": "scripts", "name": name})).unwrap();
+        assert!(made["workspace"].is_string(), "a project's script joins its workspace");
+    }
+    let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+    let workspace: toml_edit::DocumentMut = manifest.parse().unwrap();
+    let members: Vec<&str> = workspace["workspace"]["members"].as_array().unwrap().iter().filter_map(|m| m.as_str()).collect();
+    assert_eq!(members, ["scripts/turn_table", "scripts/door_opener"]);
+    let script: toml_edit::DocumentMut = std::fs::read_to_string(dir.join("scripts/door_opener/Cargo.toml")).unwrap().parse().unwrap();
+    assert!(script.get("workspace").is_none() && script.get("profile").is_none(), "settings live in the workspace, once");
+
+    // A Cargo.toml that is no workspace is left alone, and the script is not made.
+    let other = std::env::temp_dir().join(format!("bayleaf-script-no-workspace-{}", std::process::id()));
+    std::fs::remove_dir_all(&other).ok();
+    let mut elsewhere = Session::default();
+    registry.execute(&mut elsewhere, "project.new", &json!({"path": other})).unwrap();
+    std::fs::write(other.join("Cargo.toml"), "[package]\nname = \"game\"\n").unwrap();
+    assert!(registry.execute(&mut elsewhere, "script.new", &json!({"folder": "scripts", "name": "Mover"})).is_err());
+    assert!(!other.join("scripts/mover").exists(), "nothing is left behind");
+    assert_eq!(std::fs::read_to_string(other.join("Cargo.toml")).unwrap(), "[package]\nname = \"game\"\n");
+    std::fs::remove_dir_all(&other).ok();
+
+    // A member builds on its own, with the workspace's settings.
+    let target = std::env::temp_dir().join("bayleaf-script-build-cache");
+    match crate::code_scripts::build_script(&dir.join("scripts/turn_table"), &target) {
+        Ok(built) => assert!(built.module.is_file()),
+        Err(error) if error.contains("rustup target add") || error.contains("needs Rust") => eprintln!("skipped: {error}"),
+        Err(error) => panic!("{error}"),
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

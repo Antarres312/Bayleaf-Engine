@@ -367,10 +367,10 @@ fn file_row(
 ) -> Option<String> {
     let files = &field.files;
     let mut chosen = None;
-    ui.horizontal(|ui| {
-        let label = ui.add_sized([theme::LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(egui::RichText::new(field.label).color(t.text_muted)).truncate());
-        // Edit sits at the right edge and the list takes what is left.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    crate::value_editor::row(ui, t, field.label, |ui, label, width| {
+        // Edit sits at the right edge and the list takes what is left of the value's own rect; a
+        // long file name is cut short with an ellipsis (hover shows it all), never over the label.
+        ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if field.editable && !current.is_empty() {
                 let edit = ui.add(egui::Button::new("Edit").min_size(egui::vec2(0.0, ROW_HEIGHT)));
                 ui.ctx().accesskit_node_builder(edit.id, |node| node.set_label(format!("Edit {}", field.label.to_lowercase())));
@@ -380,7 +380,8 @@ fn file_row(
             }
             let shown = if current.is_empty() { field.none.to_owned() } else { current.to_owned() };
             craft_ui::ComboBox::from_id_salt((field.component, field.field))
-                .width((ui.available_width() - 1.0).max(60.0))
+                .width((ui.available_width() - 1.0).max(16.0))
+                .truncate()
                 .selected_text(egui::RichText::new(shown).color(t.text))
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(current.is_empty(), field.none).clicked() {
@@ -396,7 +397,7 @@ fn file_row(
                     }
                 })
                 .response
-                .labelled_by(label.id);
+                .labelled_by(label);
         });
     });
     if let Some(problem) = &field.problem {

@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use bayleaf_engine::asset_cmds::AssetKind;
 use serde_json::json;
 
 use crate::theme::{self, LIST_ROW, Tokens};
@@ -116,7 +117,7 @@ pub(crate) struct ProjectView {
     truncated: bool,
     filter: String,
     /// The folder whose files are shown on the right.
-    current: PathBuf,
+    pub(crate) current: PathBuf,
     mode: ViewMode,
     selected: Option<PathBuf>,
     /// Icon size in points; 0 means the default.
@@ -184,38 +185,47 @@ impl ProjectView {
     fn in_project(&self) -> bool {
         self.root.as_deref().is_some_and(|r| !self.current.as_os_str().is_empty() && self.current.starts_with(r))
     }
-}
 
-/// What a new file will be.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NewKind {
-    Material,
-    VisualScript,
-    RustScript,
-}
-
-impl NewKind {
-    fn label(self) -> &'static str {
-        match self {
-            NewKind::Material => "material",
-            NewKind::VisualScript => "visual script",
-            NewKind::RustScript => "script",
-        }
+    /// Whether `path` is inside the project folder (new assets go only there).
+    fn is_in_project(&self, path: &Path) -> bool {
+        self.root.as_deref().is_some_and(|r| !path.as_os_str().is_empty() && path.starts_with(r))
     }
+}
 
-    /// The extension the file gets, or none for a script's folder.
-    fn extension(self) -> Option<&'static str> {
-        match self {
-            NewKind::Material => Some("bmaterial"),
-            NewKind::VisualScript => Some("bscript"),
-            NewKind::RustScript => None,
-        }
+/// What the Create panel offers: the kind, its name, what it is, and the name a new one starts with.
+const CREATABLE: [(AssetKind, &str, &str, &str); 5] = [
+    (AssetKind::Folder, "Folder", "A folder to sort files into", "New Folder"),
+    (AssetKind::Scene, "Scene", "A level or screen, with a camera and a light", "New Scene"),
+    (AssetKind::Material, "Material", "How a surface looks, as a graph", "New Material"),
+    (AssetKind::VisualScript, "Visual Script", "Behaviour as a graph of nodes", "New Visual Script"),
+    (AssetKind::Script, "Rust Script", "Behaviour in Rust, built to WebAssembly", "New Script"),
+];
+
+/// The lowercase name of a kind, for "New …" prompts.
+fn kind_name(kind: AssetKind) -> &'static str {
+    match kind {
+        AssetKind::Folder => "folder",
+        AssetKind::Scene => "scene",
+        AssetKind::Material => "material",
+        AssetKind::VisualScript => "visual script",
+        AssetKind::Script => "script",
+    }
+}
+
+/// The icon a kind of new asset shows.
+fn kind_icon(kind: AssetKind) -> Kind {
+    match kind {
+        AssetKind::Folder => Kind::Folder,
+        AssetKind::Scene => Kind::Scene,
+        AssetKind::Material => Kind::Material,
+        AssetKind::VisualScript => Kind::VisualScript,
+        AssetKind::Script => Kind::ScriptSource,
     }
 }
 
 /// A new file being named in the Project panel.
 pub(crate) struct Naming {
-    kind: NewKind,
+    kind: AssetKind,
     folder: PathBuf,
     text: String,
     /// The field has had focus (and its text selected) once.
@@ -229,12 +239,18 @@ enum Action {
     PlacePrefab(PathBuf),
     OpenGraph(PathBuf),
     AddScript(String),
-    /// Start naming a new file of this kind in the open folder.
-    StartNew(NewKind),
+    /// Start naming a new asset of this kind, in this folder or else the open one.
+    StartNew(AssetKind, Option<PathBuf>),
     /// Make the file being named, with this name.
     Create(String),
     /// Build the script crate in this folder.
     BuildScript(PathBuf),
+    /// Open a file with the program the system uses for it.
+    OpenExternal(PathBuf),
+    /// Show a file or folder in the system's file manager.
+    Reveal(PathBuf),
+    /// Read the folders again now.
+    Refresh,
 }
 
 /// What the panel's parts ask for after drawing.
@@ -305,27 +321,42 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         Some(Action::OpenScene(path)) => editor.open_scene(&path),
         Some(Action::PlacePrefab(path)) => editor.place_prefab(&path),
         Some(Action::OpenGraph(path)) => editor.open_graph(&path),
-        Some(Action::StartNew(kind)) => {
+        Some(Action::StartNew(kind, folder)) => {
             // New files go into the project only, never into the engine's folder.
-            let folder = if editor.project.in_project() { editor.project.current.clone() } else { editor.project.root.clone().unwrap_or_default() };
+            let project = &editor.project;
+            let folder = folder
+                .filter(|f| project.is_in_project(f))
+                .unwrap_or_else(|| if project.in_project() { project.current.clone() } else { project.root.clone().unwrap_or_default() });
             if !folder.as_os_str().is_empty() {
-                let text = match kind {
-                    NewKind::Material => "New Material",
-                    NewKind::VisualScript => "New Visual Script",
-                    NewKind::RustScript => "New Script",
-                };
+                let text = CREATABLE.iter().find(|(k, ..)| *k == kind).map_or("New Asset", |(.., start)| start);
+                // The new name is typed where the files are shown: open the folder it goes into.
+                editor.project.current = folder.clone();
                 editor.project.naming = Some(Naming { kind, folder, text: text.to_owned(), focused: false, error: None });
             }
         }
         Some(Action::Create(name)) => {
             if let Some(naming) = editor.project.naming.take() {
                 match create(editor, &naming, &name) {
-                    Ok(()) => editor.project.scanned = None,
+                    Ok(made) => {
+                        editor.project.scanned = None;
+                        editor.project.selected = Some(made);
+                    }
                     // Keep the field open with the reason, so the name can be fixed.
                     Err(error) => editor.project.naming = Some(Naming { error: Some(error), focused: false, text: name, ..naming }),
                 }
             }
         }
+        Some(Action::OpenExternal(path)) => {
+            if let Err(error) = system_open(&path, false) {
+                editor.status = format!("Could not open {}: {error}", path.display());
+            }
+        }
+        Some(Action::Reveal(path)) => {
+            if let Err(error) = system_open(&path, true) {
+                editor.status = format!("Could not show {}: {error}", path.display());
+            }
+        }
+        Some(Action::Refresh) => editor.project.scanned = None,
         Some(Action::BuildScript(dir)) => editor.build_script(&dir),
         Some(Action::AddScript(module)) => {
             if let Some(id) = editor.selected {
@@ -344,9 +375,9 @@ fn naming_row(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) 
     let mut cancel = false;
     egui::Frame::new().fill(t.surface).corner_radius(theme::SECTION_RADIUS).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("New {}:", naming.kind.label())).color(t.text_muted));
+            ui.label(egui::RichText::new(format!("New {}:", kind_name(naming.kind))).color(t.text_muted));
             let field = ui.add_sized([ui.available_width().min(260.0), LIST_ROW], egui::TextEdit::singleline(&mut naming.text).margin(egui::vec2(6.0, 1.0)));
-            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Name of the new {}", naming.kind.label())));
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Name of the new {}", kind_name(naming.kind))));
             if !naming.focused {
                 // Focus the field with its text selected, so typing replaces it.
                 field.request_focus();
@@ -377,38 +408,26 @@ fn naming_row(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) 
     }
 }
 
-/// Makes the file being named. Fails with a reason when the name is not usable.
-fn create(editor: &mut Editor, naming: &Naming, name: &str) -> Result<(), String> {
+/// Makes the asset being named, through `asset.create`, and opens what has an editor here: a
+/// graph in the graph editor; a Rust script starts building. Returns the new file or folder, or
+/// why it was not made.
+fn create(editor: &mut Editor, naming: &Naming, name: &str) -> Result<PathBuf, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("Type a name first.".to_owned());
     }
-    if name.chars().count() > 100 || name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()) {
+    if naming.kind != AssetKind::Script && !bayleaf_engine::asset_cmds::valid_file_name(name) {
         return Err(r#"A name may have up to 100 characters and none of / \ : * ? " < > |."#.to_owned());
     }
-    match naming.kind.extension() {
-        Some(extension) => {
-            let file = if name.to_ascii_lowercase().ends_with(&format!(".{extension}")) { name.to_owned() } else { format!("{name}.{extension}") };
-            let path = naming.folder.join(file);
-            if path.exists() {
-                return Err(format!("{} already exists.", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
-            }
-            if editor.session.graph().is_some_and(|g| g.dirty) && !crate::confirm_discard_graph() {
-                return Ok(());
-            }
-            let domain = if naming.kind == NewKind::Material { "material" } else { "script" };
-            editor.dispatch("graph.new", &json!({ "domain": domain }), None).ok_or_else(|| editor.status.clone())?;
-            editor.dispatch("graph.save", &json!({ "path": path }), None).ok_or_else(|| editor.status.clone())?;
-            Ok(())
-        }
-        None => {
-            let made = editor.dispatch("script.new", &json!({ "folder": naming.folder, "name": name }), None).ok_or_else(|| editor.status.clone())?;
-            if let Some(dir) = made["path"].as_str() {
-                editor.build_script(std::path::Path::new(dir));
-            }
-            Ok(())
-        }
+    let made =
+        editor.dispatch("asset.create", &json!({ "kind": naming.kind, "folder": naming.folder, "name": name }), None).ok_or_else(|| editor.status.clone())?;
+    let path = PathBuf::from(made["path"].as_str().unwrap_or_default());
+    match naming.kind {
+        AssetKind::Material | AssetKind::VisualScript => editor.open_graph(&path),
+        AssetKind::Script => editor.build_script(&path),
+        AssetKind::Folder | AssetKind::Scene => {}
     }
+    Ok(path)
 }
 
 /// Breadcrumbs to the open folder on the left; view switch and a compact search on the right.
@@ -456,21 +475,36 @@ fn toolbar(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) {
 }
 
 fn create_menu(ui: &mut egui::Ui, outcome: &mut Outcome) {
-    let create = ui.menu_button("+", |ui| {
-        let items = [
-            (NewKind::RustScript, "New Script", "A script written in Rust, in this folder; it builds to WebAssembly"),
-            (NewKind::VisualScript, "New Visual Script", "A visual script in this folder"),
-            (NewKind::Material, "New Material", "A material graph in this folder"),
-        ];
-        for (kind, label, hint) in items {
-            if ui.button(label).on_hover_text(hint).clicked() {
-                outcome.action = Some(Action::StartNew(kind));
-                ui.close();
-            }
+    let create = ui.menu_button("+", |ui| create_panel(ui, None, outcome));
+    ui.ctx().accesskit_node_builder(create.response.id, |node| node.set_label("Create asset"));
+    create.response.on_hover_text("Create a folder, scene, material or script in the open folder");
+}
+
+/// The kinds of asset that can be made, each with its icon and what it is. Choosing one starts
+/// naming it in `folder` (the open folder when `None`); nothing is written before the name.
+fn create_panel(ui: &mut egui::Ui, folder: Option<&Path>, outcome: &mut Outcome) {
+    let t = theme::tokens(ui);
+    // A fixed width: rows that grow would take all the room a menu offers.
+    const WIDTH: f32 = 300.0;
+    ui.set_width(WIDTH);
+    ui.label(egui::RichText::new("Create").small().color(t.text_muted));
+    for (kind, title, what, _) in CREATABLE {
+        let icon = egui::Atom::paint(egui::vec2(22.0, 22.0), move |ui, args| paint_icon(ui.painter(), args.rect, kind_icon(kind), t));
+        let mut job = egui::text::LayoutJob::default();
+        job.append(title, 0.0, egui::TextFormat::simple(egui::TextStyle::Body.resolve(ui.style()), t.text));
+        job.append("\n", 0.0, egui::TextFormat::default());
+        job.append(what, 0.0, egui::TextFormat::simple(egui::TextStyle::Small.resolve(ui.style()), t.text_muted));
+        let button = ui.add(egui::Button::new((icon, job, egui::Atom::grow())).frame_when_inactive(false).min_size(egui::vec2(WIDTH, 36.0)));
+        // The name says what is made; the description follows.
+        ui.ctx().accesskit_node_builder(button.id, |node| {
+            node.set_label(format!("New {title}"));
+            node.set_description(what.to_owned());
+        });
+        if button.clicked() {
+            outcome.action = Some(Action::StartNew(kind, folder.map(Path::to_path_buf)));
+            ui.close();
         }
-    });
-    ui.ctx().accesskit_node_builder(create.response.id, |node| node.set_label("Create file"));
-    create.response.on_hover_text("Create a script, visual script or material in the project");
+    }
 }
 
 /// View switch, icon size and search, laid out from the right.
@@ -511,6 +545,7 @@ fn top_folders(ui: &mut egui::Ui, view: &ProjectView, rows: &mut Vec<egui::Rect>
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, open || view.current.starts_with(&dir) && !dir.as_os_str().is_empty())
             .show_header(ui, |ui| {
                 let response = folder_row(ui, name, at_top).on_hover_text(hover);
+                folder_menu(&response, view, &dir, outcome);
                 if response.clicked() {
                     outcome.enter = Some(dir.clone());
                 }
@@ -535,6 +570,8 @@ fn folder_tree(ui: &mut egui::Ui, view: &ProjectView, dir: &Path, rows: &mut Vec
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, open_by_default)
                 .show_header(ui, |ui| {
                     let response = folder_row(ui, &entry.name, is_current);
+                    folder_menu(&response, view, &entry.path, outcome);
+                    folder_menu(&response, view, &entry.path, outcome);
                     if response.clicked() {
                         outcome.enter = Some(entry.path.clone());
                     }
@@ -560,7 +597,18 @@ fn folder_row(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
 }
 
 /// The open folder's entries, or every file matching the search.
+/// Right-clicking the space between them opens the folder's menu.
 fn files(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, outcome: &mut Outcome) {
+    // Sensed before the files, so a file under the pointer takes the click instead.
+    let background = ui.interact(ui.max_rect(), egui::Id::unique("project files background"), egui::Sense::click());
+    background.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Group, true, "Folder contents"));
+    file_entries(ui, view, selected_object, outcome);
+    if !view.current.as_os_str().is_empty() {
+        folder_menu(&background, view, &view.current, outcome);
+    }
+}
+
+fn file_entries(ui: &mut egui::Ui, view: &ProjectView, selected_object: bool, outcome: &mut Outcome) {
     if view.current.as_os_str().is_empty() {
         inspector::empty_state(ui, "No project folder", "Open or save a scene to see its folder here. The engine's own files are under Engine, on the left.");
         return;
@@ -683,12 +731,9 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
         outcome.inspect = Some(entry.path.clone());
     }
     if response.double_clicked() {
-        match entry.kind {
-            Kind::Folder | Kind::ScriptSource => outcome.enter = Some(entry.path.clone()),
-            Kind::Scene | Kind::Project => outcome.action = Some(Action::OpenScene(entry.path.clone())),
-            Kind::Material | Kind::VisualScript => outcome.action = Some(Action::OpenGraph(entry.path.clone())),
-            Kind::Prefab => outcome.action = Some(Action::PlacePrefab(entry.path.clone())),
-            _ => {}
+        outcome.action = default_action(entry);
+        if entry.kind == Kind::Folder {
+            outcome.enter = Some(entry.path.clone());
         }
     }
     if entry.kind != Kind::Folder {
@@ -733,11 +778,103 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
                 ui.close();
             }
         }
+        if entry.kind != Kind::Folder && ui.button("Open with System App").on_hover_text("Open it with the program your system uses for it").clicked() {
+            outcome.action = Some(Action::OpenExternal(source_file(entry).unwrap_or_else(|| entry.path.clone())));
+            ui.close();
+        }
+        if ui.button("Show in File Explorer").clicked() {
+            outcome.action = Some(Action::Reveal(entry.path.clone()));
+            ui.close();
+        }
         if ui.button("Copy Relative Path").clicked() {
             ui.ctx().copy_text(relative.clone());
             ui.close();
         }
+        if entry.kind == Kind::Folder && view.is_in_project(&entry.path) {
+            ui.separator();
+            ui.menu_button("Create", |ui| create_panel(ui, Some(&entry.path), outcome));
+        }
     });
+}
+
+/// A folder's context menu: create in it (inside the project), show it in the system's file
+/// manager, and read the folders again.
+fn folder_menu(response: &egui::Response, view: &ProjectView, folder: &Path, outcome: &mut Outcome) {
+    response.context_menu(|ui| {
+        if view.is_in_project(folder) {
+            ui.menu_button("Create", |ui| create_panel(ui, Some(folder), outcome));
+            ui.separator();
+        }
+        if ui.button("Show in File Explorer").clicked() {
+            outcome.action = Some(Action::Reveal(folder.to_path_buf()));
+            ui.close();
+        }
+        if ui.button("Refresh").on_hover_text("Read the folders again now").clicked() {
+            outcome.action = Some(Action::Refresh);
+            ui.close();
+        }
+    });
+}
+
+/// What double-clicking a file does: the editor's own tool for what it has one for, else the
+/// program the system uses for it. Folders open in the panel instead.
+fn default_action(entry: &Entry) -> Option<Action> {
+    let path = entry.path.clone();
+    match entry.kind {
+        Kind::Folder => None,
+        Kind::Scene | Kind::Project => Some(Action::OpenScene(path)),
+        Kind::Material | Kind::VisualScript => Some(Action::OpenGraph(path)),
+        Kind::Prefab => Some(Action::PlacePrefab(path)),
+        // A Rust script: its source, in the code editor.
+        Kind::ScriptSource | Kind::Script => source_file(entry).map(Action::OpenExternal),
+        Kind::Model | Kind::Image | Kind::Other => Some(Action::OpenExternal(path)),
+    }
+}
+
+/// The source file of a Rust script: `src/lib.rs` of its crate folder, which sits beside a built
+/// `.wasm` under the same name.
+fn source_file(entry: &Entry) -> Option<PathBuf> {
+    let crate_dir = match entry.kind {
+        Kind::ScriptSource => entry.path.clone(),
+        Kind::Script => entry.path.with_extension(""),
+        _ => return None,
+    };
+    let source = crate_dir.join("src").join("lib.rs");
+    source.is_file().then_some(source)
+}
+
+/// Opens `path` with the program the system uses for it, or with `reveal`, shows it in the
+/// system's file manager.
+fn system_open(path: &Path, reveal: bool) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer");
+        if reveal {
+            command.arg(format!("/select,{}", path.display()));
+        } else {
+            command.arg(path);
+        }
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        if reveal {
+            command.arg("-R");
+        }
+        command.arg(path);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(if reveal { path.parent().unwrap_or(path) } else { path });
+        command
+    };
+    #[cfg(any(target_os = "windows", unix))]
+    return command.spawn().map(|_| ());
+    #[cfg(not(any(target_os = "windows", unix)))]
+    return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "opening files with other programs is not supported here"));
 }
 
 fn drag_ghost(ui: &egui::Ui, name: &str, pointer: egui::Pos2) {
@@ -880,7 +1017,9 @@ impl ProjectView {
         for top in [root.clone(), self.engine.clone()].into_iter().flatten() {
             self.scan(&top);
         }
-        if self.root != root {
+        // A new project folder (another scene opened) keeps the open folder when it is still listed,
+        // so opening a file never jumps back to the top.
+        if self.root != root && !self.tree.contains_key(&self.current) {
             self.current = root.clone().unwrap_or_default();
             self.selected = None;
         }
@@ -947,6 +1086,27 @@ mod tests {
         assert_eq!(view.tree[&dir.join("scripts")][0].kind, Kind::Script);
         assert_eq!(view.current, dir, "a new project opens at its root");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn opening_another_project_keeps_an_open_folder_that_is_still_listed() {
+        let base = std::env::temp_dir().join(format!("bayleaf-keep-folder-{}", std::process::id()));
+        let (first, second, engine) = (base.join("first"), base.join("second"), base.join("engine"));
+        for dir in [&first, &second, &engine.join("examples")] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let mut view = ProjectView { engine: Some(engine.clone()), ..ProjectView::default() };
+        view.rescan(Some(first.clone()));
+        view.current = engine.join("examples");
+        // A scene opened from the engine's examples: the project changes, the open folder stays.
+        view.rescan(Some(second.clone()));
+        assert_eq!(view.current, engine.join("examples"));
+        // A folder that is no longer listed goes back to the new project's top.
+        view.current = first.clone();
+        view.rescan(Some(second.clone()));
+        view.rescan(Some(base.join("missing")));
+        assert_eq!(view.current, base.join("missing"));
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

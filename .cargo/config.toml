@@ -1,2 +1,8 @@
 [alias]
 xtask = "run --quiet --package xtask --"
+
+[env]
+# The craft-fonts checkout whose faces the editor embeds (crates/ui-egui/build.rs), next to this
+# repository by default. Without it the build warns and the editor uses egui's faces and the
+# installed fonts. Set CRAFT_FONTS_DIR yourself to use another checkout.
+CRAFT_FONTS_DIR = { value = "../craft-fonts", relative = true, force = false }

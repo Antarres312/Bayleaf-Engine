@@ -54,13 +54,32 @@ pub(crate) fn edit_fields(ui: &mut egui::Ui, value: &mut Value, salt: &str, opti
     outcome
 }
 
-/// One labelled row. The closure gets the label's id and the width left for the value.
-fn row(ui: &mut egui::Ui, t: &Tokens, label: &str, body: impl FnOnce(&mut egui::Ui, egui::Id, f32) -> Outcome) -> Outcome {
+/// The least width a value gets beside its label; in a narrower panel it goes under the label.
+const MIN_BESIDE: f32 = 150.0;
+
+/// One labelled row. The closure gets the label's id and the width left for the value. In a
+/// narrow panel the label takes a line of its own and the value the full width under it, so
+/// nothing runs past the panel's edge.
+pub(crate) fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, body: impl FnOnce(&mut egui::Ui, egui::Id, f32) -> R) -> R {
+    let text = egui::RichText::new(label).color(t.text_muted);
+    if ui.available_width() < LABEL_WIDTH + GAP + MIN_BESIDE {
+        return ui
+            .vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let label = ui.add(egui::Label::new(text).truncate());
+                ui.horizontal(|ui| {
+                    ui.set_min_height(ROW_HEIGHT);
+                    let width = (ui.available_width() - 1.0).max(16.0);
+                    body(ui, label.id, width)
+                })
+                .inner
+            })
+            .inner;
+    }
     ui.horizontal(|ui| {
         ui.set_min_height(ROW_HEIGHT);
-        let label = ui.add_sized([LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(egui::RichText::new(label).color(t.text_muted)).truncate());
-        // Whatever is left after the label; the floor only applies to extremely narrow panels.
-        let width = (ui.available_width() - 1.0).max(40.0);
+        let label = ui.add_sized([LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(text).truncate());
+        let width = (ui.available_width() - 1.0).max(16.0);
         body(ui, label.id, width)
     })
     .inner
@@ -120,6 +139,10 @@ fn edit_number(ui: &mut egui::Ui, n: &mut Number, label: egui::Id, width: f32) -
             w.inactive.weak_bg_fill = t.field;
             w.hovered.weak_bg_fill = t.field_hover;
             w.active.weak_bg_fill = t.field;
+            // Exactly `width` wide: egui's least control width and the button padding would
+            // otherwise widen a narrow field past its row.
+            ui.spacing_mut().interact_size.x = 0.0;
+            ui.spacing_mut().button_padding.x = 3.0;
             ui.add_sized([width, ROW_HEIGHT], drag)
         })
         .inner
@@ -142,7 +165,7 @@ fn edit_vector(ui: &mut egui::Ui, items: &mut [Value], width: f32) -> Outcome {
     // Row: [label s field] s [label s field] ... — exactly `width` wide, never wider.
     ui.spacing_mut().item_spacing.x = GAP / 2.0;
     let spacing = GAP / 2.0;
-    let field_width = ((width - count * AXIS_LABEL_WIDTH - (2.0 * count - 1.0) * spacing - 1.0) / count).max(24.0);
+    let field_width = ((width - count * AXIS_LABEL_WIDTH - (2.0 * count - 1.0) * spacing - 1.0) / count).max(16.0);
     let mut outcome = Outcome::default();
     for ((item, axis), color) in items.iter_mut().zip(AXES).zip(colors) {
         let axis_label = ui.add_sized([AXIS_LABEL_WIDTH, ROW_HEIGHT], egui::Label::new(egui::RichText::new(axis).color(color).strong()));
@@ -194,7 +217,7 @@ fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: 
 
 fn choose(ui: &mut egui::Ui, current: &mut String, choices: &[&str], salt: &str, label: egui::Id, width: f32) -> Outcome {
     let mut changed = false;
-    let response = craft_ui::ComboBox::from_id_salt(("choice", salt)).width(width).selected_text(title_case(current)).show_ui(ui, |ui| {
+    let response = craft_ui::ComboBox::from_id_salt(("choice", salt)).width(width).truncate().selected_text(title_case(current)).show_ui(ui, |ui| {
         for choice in choices {
             if ui.selectable_label(current == choice, title_case(choice)).clicked() && current != choice {
                 *current = (*choice).to_owned();
