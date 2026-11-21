@@ -121,6 +121,13 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             variable_set,
         ),
         spec("graph.variable.remove", "Remove Variable", "{name}: its nodes keep working, starting from zero", Mutates::Graph, variable_remove),
+        spec(
+            "graph.menu.set",
+            "Set Menu Path",
+            "{path}: where Add Component lists the visual script (Light/Flicker); empty for under Scripts",
+            Mutates::Graph,
+            menu_set,
+        ),
     ]
 }
 
@@ -128,7 +135,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
 fn open_script(session: &mut Session) -> Result<&mut Graph, CommandError> {
     let (graph, catalog) = open(session)?;
     if catalog.domain != bayleaf_script::visual::CATALOG.domain {
-        return Err(CommandError::Failed("only visual scripts have variables".to_owned()));
+        return Err(CommandError::Failed("only visual scripts have variables and a menu path".to_owned()));
     }
     Ok(graph)
 }
@@ -177,6 +184,19 @@ fn variable_remove(session: &mut Session, params: &Value) -> Result<Value, Comma
     let p: VariableNameParams = parse(params)?;
     open_script(session)?.remove_variable(&p.name).map_err(failed)?;
     Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MenuParams {
+    path: String,
+}
+
+fn menu_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: MenuParams = parse(params)?;
+    let path = if p.path.trim().is_empty() { String::new() } else { bayleaf_script::menu_path(&p.path).map_err(CommandError::BadParams)? };
+    open_script(session)?.menu = path.clone();
+    Ok(json!({ "path": path }))
 }
 
 #[derive(Deserialize)]

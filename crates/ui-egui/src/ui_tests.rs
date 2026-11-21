@@ -254,8 +254,7 @@ fn add_component_menu_lists_components_and_scripts_in_folders_by_their_menu_path
     // A visual script that puts itself under Light.
     let editor = harness.state_mut();
     editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
-    let node = editor.dispatch("graph.node.add", &json!({ "kind": "menuPath", "position": [0, 0] }), None).unwrap();
-    editor.dispatch("graph.node.set", &json!({ "node": node["node"], "name": "path", "value": "Light/Flicker" }), None);
+    editor.dispatch("graph.menu.set", &json!({ "path": "Light/Flicker" }), None).unwrap();
     editor.dispatch("graph.save", &json!({ "path": dir.join("scripts").join("flicker.bscript") }), None);
     editor.project.rescan_soon();
     create_named(&mut harness, "Actor");
@@ -1337,4 +1336,19 @@ fn the_project_panel_hides_file_extensions_until_the_preference_is_turned_off() 
     assert_eq!(settings["settings"]["editor"]["hideExtensions"], false, "the preference is kept in the project file");
     assert!(harness.query_by_label("notes.md, File").is_some(), "names show their extensions again");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_menu_path_is_typed_in_the_script_panel_and_kept_while_it_does_not_read_right_yet() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label("Menu path in Add Component").focus();
+    harness.run();
+    harness.get_by_label("Menu path in Add Component").type_text("Light/");
+    harness.run();
+    assert_eq!(graph(&harness).menu, "", "a trailing / is not a path yet");
+    assert!(harness.query_by_label_contains("Not set:").is_some(), "the reason shows under the field");
+    harness.get_by_label("Menu path in Add Component").type_text("Flicker");
+    harness.run();
+    assert_eq!(graph(&harness).menu, "Light/Flicker", "what is typed is kept and set once it reads right");
+    assert!(harness.query_by_label_contains("Not set:").is_none());
 }

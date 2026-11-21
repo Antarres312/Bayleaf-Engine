@@ -153,8 +153,12 @@ fn preferences_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut Proj
     theme::headed(t, "Project Panel").show(ui, |ui| {
         ui.checkbox(&mut settings.editor.hide_extensions, "Hide file extensions");
         ui.add(
-            egui::Label::new(egui::RichText::new("Show names without .bmaterial, .png and the like; the kind of each file still shows, and renaming keeps the extension.").small().color(t.text_muted))
-                .wrap(),
+            egui::Label::new(
+                egui::RichText::new("Show names without .bmaterial, .png and the like; the kind of each file still shows, and renaming keeps the extension.")
+                    .small()
+                    .color(t.text_muted),
+            )
+            .wrap(),
         );
     });
 }

@@ -951,13 +951,10 @@ fn list_row(ui: &mut egui::Ui, entry: &Entry, selected: bool, hide: bool) -> egu
     let kind = entry.kind;
     // The icon is an atom of the button, so it takes its own space before the name.
     let icon = egui::Atom::paint(egui::vec2(14.0, 14.0), move |ui, args| paint_icon(ui.painter(), args.rect, kind, t));
-    let button = egui::Button::selectable(
-        selected,
-        (icon, name, egui::Atom::grow(), egui::RichText::new(entry.kind.label()).small().color(t.text_muted)),
-    )
-    .truncate()
-    .min_size(egui::vec2(width, LIST_ROW))
-    .sense(egui::Sense::click_and_drag());
+    let button = egui::Button::selectable(selected, (icon, name, egui::Atom::grow(), egui::RichText::new(entry.kind.label()).small().color(t.text_muted)))
+        .truncate()
+        .min_size(egui::vec2(width, LIST_ROW))
+        .sense(egui::Sense::click_and_drag());
     let response = ui.add(button);
     ui.ctx().accesskit_node_builder(response.id, |node| node.set_label(format!("{name}, {}", entry.kind.label())));
     response.on_hover_text(&entry.name)

@@ -1348,7 +1348,7 @@ fn opening_an_old_project_moves_its_inline_actions_into_an_input_map() {
     let moved = registry.execute(&mut session, "input.asset", &json!({"path": "input/actions.binput"})).unwrap();
     assert_eq!(moved["asset"]["maps"][0]["name"], "Default", "the actions go into the map Default");
     assert_eq!(moved["asset"]["maps"][0]["actions"][0]["name"], "Jump", "keeping their names");
-    assert!(std::fs::read_to_string(&file).unwrap().contains("\"version\": 3"));
+    assert!(std::fs::read_to_string(&file).unwrap().contains("\"version\": 4"), "written at the current project version");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1415,4 +1415,20 @@ fn visual_script_variables_are_declared_renamed_with_their_nodes_undone_and_save
 
     registry.execute(&mut session, "graph.new", &json!({"domain": "material"})).unwrap();
     assert!(registry.execute(&mut session, "graph.variable.add", &json!({"name": "x", "type": "number"})).is_err(), "materials have no variables");
+}
+
+#[test]
+fn a_visual_scripts_menu_path_is_a_checked_field_that_undoes() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
+    let set = registry.execute(&mut session, "graph.menu.set", &json!({"path": " Light / Flicker "})).unwrap();
+    assert_eq!(set["path"], "Light/Flicker", "parts are trimmed");
+    let menu = |session: &mut Session| registry.execute(session, "graph.get", &Value::Null).unwrap()["graph"]["menu"].clone();
+    assert_eq!(menu(&mut session), "Light/Flicker");
+    assert!(registry.execute(&mut session, "graph.menu.set", &json!({"path": "Light//Flicker"})).is_err(), "an empty part is refused");
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert_eq!(menu(&mut session), Value::Null, "undo takes the path away again");
+    registry.execute(&mut session, "graph.new", &json!({"domain": "material"})).unwrap();
+    assert!(registry.execute(&mut session, "graph.menu.set", &json!({"path": "Light/Flicker"})).is_err(), "materials have no menu path");
 }

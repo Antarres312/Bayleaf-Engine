@@ -37,7 +37,7 @@ Pretty JSON:
 ```json
 {
   "format": "bayleaf.graph",
-  "version": 2,
+  "version": 3,
   "domain": "material",
   "nodes": [
     { "id": 1, "kind": "output", "position": [360, 40], "values": { "roughness": 0.3 } },
@@ -57,6 +57,10 @@ the field out. Limit: 500 comments.
 A visual script may also have `variables`: each with a `name`, a `type` (`number`, `vector` or
 `trueFalse`) and a `start` value that fits the type. A graph without them leaves the field out.
 Limit: 256 variables. Version 1 files, which have no variables, still open.
+
+A visual script may also have a `menu`: where Add Component lists it, folders then its name
+(`Light/Flicker`, 1 to 4 parts); without it the script is under Scripts. Version 2 files kept it in a
+Menu Path node; opening one moves the node's path into `menu`.
 
 ## Materials
 
@@ -94,8 +98,6 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   when it goes down. Name it `Jump` for the active map or `Player/Jump`; only the active map's
   actions read. **Set Input Map** makes another map active, in the project's Input Map or this
   object's own. Prefer actions to keys, so players can rebind them.
-- **Menu Path** says where Add Component lists the script (`Light/Flicker`); without it the script
-  is under Scripts.
 - **On Key Pressed** runs once when its key goes down; **On Timer** runs every given number of
   seconds of play.
 - **Walk**, **Jump** and **On Ground** steer an object with a Character: it walks at the given velocity
@@ -156,6 +158,7 @@ graph with every node kind and runs it.
 | `graph.variable.add` | `{name, type, start?}`: declares a visual script variable | yes |
 | `graph.variable.set` | `{name, rename?, start?}`; a rename renames it on its nodes too | yes |
 | `graph.variable.remove` | `{name}`; its nodes keep the name and start from zero | yes |
+| `graph.menu.set` | `{path}`: a visual script's menu path; empty puts it under Scripts | yes |
 
 Graph edits share the undo history with scene edits. Opening or closing a graph drops that graph's
 steps. Automation file access to graphs is confined like any other file (`docs/automation.md`).
@@ -182,8 +185,8 @@ steps. Automation file access to graphs is confined like any other file (`docs/a
 A visual script has a panel left of its canvas. **Variables** lists the script's variables: rename
 one (its nodes follow), set where it **Starts at**, place a node that reads it (**Get**) or sets it
 (**Set**), remove it, or **Add Variable** of a type. **Properties** lists the Property nodes with
-their defaults (**Add Property** places another), and **Script** shows the Menu Path or offers **Set
-Menu Path**. On a variable node, Name is a list of the script's variables of that type (and names
+their defaults (**Add Property** places another), and **Script** has the **Menu path** field,
+which keeps what is typed and says why while it does not read right yet. On a variable node, Name is a list of the script's variables of that type (and names
 other nodes use without declaring them); **New Variable…** declares a new one and picks it.
 
 Every node, pin and field has a name for screen readers that includes its links ("Input Base Color

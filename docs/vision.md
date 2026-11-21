@@ -86,7 +86,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
    module onto an object in the hierarchy, the scene view or the Inspector (built first when it has no
    module yet); File > Open Recent lists the last 10 projects. Then: Add Component lists built-in
    components and scripts in folders by their menu paths (`Light/Point Light`); a script names its
-   own (`menu` in `bayleaf_describe`, `Script::MENU`, the Menu Path node). Every field that picks a file
+   own (`menu` in `bayleaf_describe`, `Script::MENU`, a visual script's menu path field; graph format 3). Every field that picks a file
    (Material, Model, Image, an Input Map, Player Prefab) also takes a file of its kind dragged from
    the Project panel, and refuses others. Project Settings has Preferences (project format
    4, `settings.editor`): the Project panel hides file extensions unless it is turned off; renaming

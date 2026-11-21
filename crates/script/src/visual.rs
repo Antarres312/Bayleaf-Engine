@@ -240,16 +240,6 @@ pub const CATALOG: Catalog = Catalog {
             &[pin("x", "X", Float), pin("y", "Y", Float), pin("z", "Z", Float)],
         ),
         NodeDef {
-            kind: "menuPath",
-            label: "Menu Path",
-            category: "Values",
-            description: "Where Add Component lists this script: folders, then its name (Light/Flicker). Without it the script is under Scripts.",
-            inputs: &[],
-            outputs: &[],
-            settings: &[SettingDef { name: "path", label: "Path", kind: SettingKind::Text("Scripts/My Script") }],
-            unique: true,
-        },
-        NodeDef {
             kind: "property",
             label: "Property",
             category: "Values",
@@ -652,10 +642,10 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         return Err(problems);
     }
     let mut description = serde_json::json!({ "properties": c.properties.iter().map(|(n, v)| serde_json::json!([n, v])).collect::<Vec<_>>() });
-    if let Some(node) = graph.nodes.iter().find(|n| n.kind == "menuPath") {
-        match crate::menu_path(&c.setting_text(node.id, "path", "Scripts/My Script")) {
+    if !graph.menu.trim().is_empty() {
+        match crate::menu_path(&graph.menu) {
             Ok(path) => description["menu"] = serde_json::json!(path),
-            Err(problem) => return Err(vec![Problem::on(node.id, problem)]),
+            Err(problem) => return Err(vec![Problem::graph(format!("menu path: {problem}"))]),
         }
     }
     let description = description.to_string();

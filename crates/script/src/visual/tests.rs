@@ -281,7 +281,7 @@ fn every_node_kind_compiles_and_runs() {
     let more = b.node("changeGameValue", json!({}));
     b.link(keep_score, "then", more, "run");
     let to_menu = b.node("setInputMap", json!({ "map": "Menu", "scope": "This Object" }));
-    b.node("menuPath", json!({ "path": "Tests/Every Node" }));
+    b.0.menu = "Tests/Every Node".to_owned();
     b.link(more, "then", to_menu, "run");
     let finish = b.node("endGame", json!({}));
     b.link(to_menu, "then", finish, "run");
@@ -586,16 +586,24 @@ fn game_values_reach_this_player_a_named_player_or_the_first_and_never_a_missing
 }
 
 #[test]
-fn a_menu_path_node_tells_where_add_component_lists_the_script() {
+fn the_menu_path_tells_where_add_component_lists_the_script_and_old_menu_nodes_move_into_it() {
     let mut b = spinner();
-    b.node("menuPath", json!({ "path": " Light / Flicker " }));
+    b.0.menu = " Light / Flicker ".to_owned();
     let described = ScriptHost::new().describe_all("flicker.bscript", &b.bytes()).unwrap();
     assert_eq!(described.menu.as_deref(), Some("Light/Flicker"), "parts are trimmed");
-    assert_eq!(ScriptHost::new().describe_all("spin.bscript", &spinner().bytes()).unwrap().menu, None, "no node, no path");
+    assert_eq!(ScriptHost::new().describe_all("spin.bscript", &spinner().bytes()).unwrap().menu, None, "no path, under Scripts");
 
     let mut bad = spinner();
-    bad.node("menuPath", json!({ "path": "Light//Flicker" }));
+    bad.0.menu = "Light//Flicker".to_owned();
     assert!(compile(&bad.0).is_err(), "an empty part is refused");
+
+    // A version 2 file kept the path in a Menu Path node; reading it moves the path into the field.
+    let mut old = serde_json::to_value(&spinner().0).unwrap();
+    old["version"] = json!(2);
+    old["nodes"].as_array_mut().unwrap().push(json!({ "id": 99, "kind": "menuPath", "position": [0, 0], "values": { "path": "Light/Old" } }));
+    let read = Graph::from_json(&old.to_string(), &CATALOG).unwrap();
+    assert_eq!(read.menu, "Light/Old");
+    assert!(read.nodes.iter().all(|n| n.kind != "menuPath"), "the old node is gone");
 }
 
 #[test]

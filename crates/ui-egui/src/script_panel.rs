@@ -15,6 +15,8 @@ use crate::theme::{self, ROW_HEIGHT, Tokens};
 #[derive(Default)]
 pub(crate) struct ScriptPanel {
     renaming: HashMap<String, String>,
+    /// The menu path as typed while its field has focus, and why it was refused, if it was.
+    menu: Option<(String, Option<String>)>,
 }
 
 /// Draws the panel; `at` is where new nodes go on the canvas.
@@ -26,7 +28,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, at: [f
         ui.add_space(theme::SECTION_GAP);
         properties(editor, ui, t, graph, at);
         ui.add_space(theme::SECTION_GAP);
-        script(editor, ui, t, graph, at);
+        script(editor, ui, t, graph, panel);
     });
 }
 
@@ -171,23 +173,28 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
     });
 }
 
-/// Where Add Component lists the script: its Menu Path node.
-fn script(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at: [f32; 2]) {
-    theme::headed(t, "Script").show(ui, |ui| match graph.nodes.iter().find(|n| n.kind == "menuPath") {
-        Some(node) => {
-            let mut path = node.values.get("path").and_then(Value::as_str).unwrap_or("Scripts/My Script").to_owned();
-            ui.label(egui::RichText::new("Menu path in Add Component").small().color(t.text_muted));
-            let field = ui.add_sized([ui.available_width(), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(&mut path));
-            ui.ctx().accesskit_node_builder(field.id, |n| n.set_label("Menu path in Add Component"));
-            if field.changed() {
-                let key = format!("menu path {} {}", node.id, editor.gesture);
-                editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "path", "value": path }), Some(&key));
-            }
+/// Where Add Component lists the script: a path typed here (`graph.menu.set`). What is typed stays
+/// while the field has focus, even when it does not read right yet (a trailing `/`).
+fn script(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, panel: &mut ScriptPanel) {
+    theme::headed(t, "Script").show(ui, |ui| {
+        ui.label(egui::RichText::new("Menu path").small().color(t.text_muted));
+        let (text, problem) = panel.menu.get_or_insert_with(|| (graph.menu.clone(), None));
+        let field = ui
+            .add_sized([ui.available_width(), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(text).hint_text("Scripts/My Script"))
+            .on_hover_text("Folders, then the name: Light/Flicker. Empty: under Scripts.");
+        ui.ctx().accesskit_node_builder(field.id, |n| n.set_label("Menu path in Add Component"));
+        if field.changed() {
+            let key = format!("menu path {}", editor.gesture);
+            *problem = match editor.dispatch("graph.menu.set", &json!({ "path": text.as_str() }), Some(&key)) {
+                Some(_) => None,
+                None => Some(editor.status.clone()),
+            };
         }
-        None => {
-            if ui.button("Set Menu Path").on_hover_text("Choose where Add Component lists this script (Light/Flicker)").clicked() {
-                editor.dispatch("graph.node.add", &json!({ "kind": "menuPath", "position": at }), None);
-            }
+        if let Some(problem) = problem {
+            ui.add(egui::Label::new(egui::RichText::new(format!("Not set: {problem}")).small().color(t.text)).wrap());
+        }
+        if !field.has_focus() && !field.changed() {
+            panel.menu = None;
         }
     });
 }

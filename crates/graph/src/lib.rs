@@ -15,8 +15,13 @@ use serde_json::Value;
 
 /// `format` field of graph files.
 pub const FORMAT: &str = "bayleaf.graph";
-/// Current graph file version. Version 2 added declared `variables`; version 1 files still read.
-pub const VERSION: u32 = 2;
+/// Current graph file version. Version 2 added declared `variables`; version 3 moved a visual script's
+/// Menu Path node into `menu`. Older files still read (a Menu Path node becomes `menu`).
+pub const VERSION: u32 = 3;
+/// The node kind versions before 3 kept a visual script's menu path in, as its `path` value.
+const OLD_MENU_NODE: &str = "menuPath";
+/// Longest `menu`, in characters.
+pub const MAX_MENU: usize = 256;
 /// Most nodes in one graph.
 pub const MAX_NODES: usize = 2000;
 /// Most links in one graph.
@@ -305,6 +310,9 @@ pub struct Graph {
     /// Variables a visual script declares, with what they start at.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variables: Vec<Variable>,
+    /// Where Add Component lists a visual script (`Light/Flicker`); empty for under Scripts.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub menu: String,
 }
 
 /// What a variable holds.
@@ -440,6 +448,7 @@ impl Graph {
             links: Vec::new(),
             comments: Vec::new(),
             variables: Vec::new(),
+            menu: String::new(),
         }
     }
 
@@ -497,9 +506,29 @@ impl Graph {
 
     /// Parses and checks a graph file of `catalog`'s domain.
     pub fn from_json(text: &str, catalog: &Catalog) -> Result<Self, GraphError> {
-        let graph: Graph = serde_json::from_str(text).map_err(|e| GraphError::Format(e.to_string()))?;
+        let mut graph: Graph = serde_json::from_str(text).map_err(|e| GraphError::Format(e.to_string()))?;
+        graph.upgrade();
         graph.check(catalog)?;
         Ok(graph)
+    }
+
+    /// Moves what older versions kept elsewhere into its current place: a Menu Path node (before
+    /// version 3) becomes `menu`.
+    fn upgrade(&mut self) {
+        if self.version >= 3 {
+            return;
+        }
+        let old: Vec<u32> = self.nodes.iter().filter(|n| n.kind == OLD_MENU_NODE).map(|n| n.id).collect();
+        for id in &old {
+            if self.menu.is_empty()
+                && let Some(path) = self.value(*id, "path").and_then(Value::as_str)
+            {
+                self.menu = path.to_owned();
+            }
+        }
+        self.nodes.retain(|n| !old.contains(&n.id));
+        self.links.retain(|l| !old.contains(&l.from.node) && !old.contains(&l.to.node));
+        self.version = VERSION;
     }
 
     pub fn to_json(&self) -> String {
@@ -513,6 +542,9 @@ impl Graph {
         }
         if !(1..=VERSION).contains(&self.version) {
             return Err(GraphError::Format(format!("graph version {} is not supported (this engine reads versions 1 to {VERSION})", self.version)));
+        }
+        if self.menu.chars().count() > MAX_MENU {
+            return Err(GraphError::Format(format!("the menu path is at most {MAX_MENU} characters")));
         }
         if self.variables.len() > MAX_VARIABLES {
             return Err(GraphError::Format(format!("a graph declares at most {MAX_VARIABLES} variables")));
