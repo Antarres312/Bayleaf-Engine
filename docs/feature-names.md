@@ -25,5 +25,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Create (menu), Folder Contents, Rust Script, Open with System App, Show in File Explorer, Refresh | not yet | Not checked yet | Generic file terms; same |
 | Delete, Move to Recycle Bin, Source (Markdown), Open Recent, Clear Recent | not yet | Not checked yet | Generic file terms; same |
 | Input Map, Trigger, Held, Value, Starts with, Set Input Map, Menu Path, Rendering, Light, Physics, Gameplay, Input (Add Component folders) | not yet | Not checked yet | Generic terms; same |
+| Variables, Starts at, Get, Set, Add Variable, Properties, Add Property, Script, Set Menu Path, New Variable, Choose a variable | not yet | Not checked yet | Generic terms in the visual script panel; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

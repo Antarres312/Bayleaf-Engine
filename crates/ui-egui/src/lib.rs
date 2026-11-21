@@ -23,6 +23,7 @@ mod project;
 mod project_settings;
 mod scene_view;
 mod script_info;
+mod script_panel;
 mod theme;
 mod value_editor;
 

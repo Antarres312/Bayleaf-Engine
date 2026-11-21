@@ -15,8 +15,8 @@ use serde_json::Value;
 
 /// `format` field of graph files.
 pub const FORMAT: &str = "bayleaf.graph";
-/// Current graph file version.
-pub const VERSION: u32 = 1;
+/// Current graph file version. Version 2 added declared `variables`; version 1 files still read.
+pub const VERSION: u32 = 2;
 /// Most nodes in one graph.
 pub const MAX_NODES: usize = 2000;
 /// Most links in one graph.
@@ -299,12 +299,145 @@ pub struct Graph {
     pub links: Vec<Link>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<Comment>,
+    /// Variables a visual script declares, with what they start at.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variables: Vec<Variable>,
+}
+
+/// What a variable holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VariableType {
+    Number,
+    Vector,
+    TrueFalse,
+}
+
+impl VariableType {
+    pub const ALL: [VariableType; 3] = [VariableType::Number, VariableType::Vector, VariableType::TrueFalse];
+
+    /// English name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            VariableType::Number => "Number",
+            VariableType::Vector => "Vector",
+            VariableType::TrueFalse => "True/False",
+        }
+    }
+
+    /// What a new variable of this type starts at.
+    pub fn zero(self) -> Value {
+        match self {
+            VariableType::Number => Value::from(0.0),
+            VariableType::Vector => serde_json::json!([0.0, 0.0, 0.0]),
+            VariableType::TrueFalse => Value::Bool(false),
+        }
+    }
+
+    /// Whether `value` fits this type: a finite number, three finite numbers, or true or false.
+    pub fn fits(self, value: &Value) -> bool {
+        let number = |v: &Value| v.as_f64().is_some_and(|f| f.is_finite() && f.abs() < f64::from(f32::MAX));
+        match self {
+            VariableType::Number => number(value),
+            VariableType::Vector => value.as_array().is_some_and(|a| a.len() == 3 && a.iter().all(number)),
+            VariableType::TrueFalse => value.is_boolean(),
+        }
+    }
+}
+
+/// A variable a visual script declares: its name, what it holds, and what it starts at.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Variable {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: VariableType,
+    pub start: Value,
+}
+
+/// Most variables a graph declares.
+pub const MAX_VARIABLES: usize = 256;
+
+/// A variable name: 1 to 64 letters, digits or `_`.
+pub fn check_variable_name(name: &str) -> Result<(), String> {
+    if !name.is_empty() && name.len() <= 64 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Ok(())
+    } else {
+        Err(format!("variable name {name:?} must be 1 to 64 letters, digits or _"))
+    }
+}
+
+impl Graph {
+    pub fn variable(&self, name: &str) -> Option<&Variable> {
+        self.variables.iter().find(|v| v.name == name)
+    }
+
+    /// Declares a variable; `start` defaults to the type's zero.
+    pub fn add_variable(&mut self, name: &str, ty: VariableType, start: Option<Value>) -> Result<(), GraphError> {
+        check_variable_name(name).map_err(GraphError::Refused)?;
+        if self.variable(name).is_some() {
+            return Err(GraphError::Refused(format!("there is already a variable {name}")));
+        }
+        if self.variables.len() >= MAX_VARIABLES {
+            return Err(GraphError::Refused(format!("a graph declares at most {MAX_VARIABLES} variables")));
+        }
+        let start = start.unwrap_or_else(|| ty.zero());
+        if !ty.fits(&start) {
+            return Err(GraphError::Refused(format!("a {} variable cannot start at {start}", ty.label())));
+        }
+        self.variables.push(Variable { name: name.to_owned(), ty, start });
+        Ok(())
+    }
+
+    /// Changes a variable's start value, or renames it; nodes of `kinds` that name it by their
+    /// `name` setting follow the new name.
+    pub fn set_variable(&mut self, name: &str, rename: Option<&str>, start: Option<Value>, kinds: &[&str]) -> Result<(), GraphError> {
+        let index = self.variables.iter().position(|v| v.name == name).ok_or_else(|| GraphError::Refused(format!("there is no variable {name}")))?;
+        if let Some(start) = start {
+            let ty = self.variables[index].ty;
+            if !ty.fits(&start) {
+                return Err(GraphError::Refused(format!("a {} variable cannot start at {start}", ty.label())));
+            }
+            self.variables[index].start = start;
+        }
+        if let Some(new) = rename.filter(|n| *n != name) {
+            check_variable_name(new).map_err(GraphError::Refused)?;
+            if self.variable(new).is_some() {
+                return Err(GraphError::Refused(format!("there is already a variable {new}")));
+            }
+            self.variables[index].name = new.to_owned();
+            for node in self.nodes.iter_mut().filter(|n| kinds.contains(&n.kind.as_str())) {
+                if node.values.get("name").and_then(Value::as_str) == Some(name) {
+                    node.values.insert("name".to_owned(), Value::from(new));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Takes a declaration away; nodes naming it keep working, starting from the type's zero.
+    pub fn remove_variable(&mut self, name: &str) -> Result<(), GraphError> {
+        let before = self.variables.len();
+        self.variables.retain(|v| v.name != name);
+        if self.variables.len() == before {
+            return Err(GraphError::Refused(format!("there is no variable {name}")));
+        }
+        Ok(())
+    }
 }
 
 impl Graph {
     /// An empty graph of `catalog`'s domain.
     pub fn empty(catalog: &Catalog) -> Self {
-        Self { format: FORMAT.to_owned(), version: VERSION, domain: catalog.domain.to_owned(), nodes: Vec::new(), links: Vec::new(), comments: Vec::new() }
+        Self {
+            format: FORMAT.to_owned(),
+            version: VERSION,
+            domain: catalog.domain.to_owned(),
+            nodes: Vec::new(),
+            links: Vec::new(),
+            comments: Vec::new(),
+            variables: Vec::new(),
+        }
     }
 
     pub fn comment(&self, id: u32) -> Option<&Comment> {
@@ -375,8 +508,20 @@ impl Graph {
         if self.format != FORMAT {
             return Err(GraphError::Format(format!("format must be \"{FORMAT}\"")));
         }
-        if self.version != VERSION {
-            return Err(GraphError::Format(format!("graph version {} is not supported (this engine reads version {VERSION})", self.version)));
+        if !(1..=VERSION).contains(&self.version) {
+            return Err(GraphError::Format(format!("graph version {} is not supported (this engine reads versions 1 to {VERSION})", self.version)));
+        }
+        if self.variables.len() > MAX_VARIABLES {
+            return Err(GraphError::Format(format!("a graph declares at most {MAX_VARIABLES} variables")));
+        }
+        for (index, variable) in self.variables.iter().enumerate() {
+            check_variable_name(&variable.name).map_err(GraphError::Format)?;
+            if !variable.ty.fits(&variable.start) {
+                return Err(GraphError::Format(format!("variable {} starts at a value that is not a {}", variable.name, variable.ty.label())));
+            }
+            if self.variables[..index].iter().any(|v| v.name == variable.name) {
+                return Err(GraphError::Format(format!("variable {} is declared twice", variable.name)));
+            }
         }
         if self.domain != catalog.domain {
             return Err(GraphError::Format(format!("this is a {} graph, not a {} graph", self.domain, catalog.domain)));

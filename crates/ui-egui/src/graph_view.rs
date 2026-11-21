@@ -51,6 +51,8 @@ struct AddMenu {
 pub(crate) struct GraphView {
     /// The part of the canvas in view.
     pub(crate) scene_rect: Rect,
+    /// The visual script's panel of variables, properties and menu path.
+    script_panel: crate::script_panel::ScriptPanel,
     /// The selected nodes; Ctrl + click adds or takes one out.
     selected: Vec<u32>,
     /// A link being dragged with the mouse.
@@ -78,6 +80,7 @@ impl Default for GraphView {
     fn default() -> Self {
         Self {
             scene_rect: Rect::NOTHING,
+            script_panel: crate::script_panel::ScriptPanel::default(),
             selected: Vec::new(),
             drag: None,
             picked: None,
@@ -171,6 +174,18 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
             problem_strip(ui, &doc.graph, catalog, &problems, &mut view);
         },
     );
+    // A visual script's variables, properties and menu path, beside its graph.
+    if catalog.domain == bayleaf_engine::script::visual::CATALOG.domain {
+        egui::Panel::left("script panel")
+            .resizable(true)
+            .default_size(230.0)
+            .min_size(160.0)
+            .frame(egui::Frame::new().fill(t.panel).inner_margin(egui::Margin::symmetric(6, 2)))
+            .show(ui, |ui| {
+                let center = if view.scene_rect.is_finite() && view.scene_rect.is_positive() { view.scene_rect.center() } else { egui::pos2(0.0, 0.0) };
+                crate::script_panel::show(editor, ui, &doc.graph, [center.x, center.y], &mut view.script_panel);
+            });
+    }
     let canvas_rect = egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(t.backdrop))
         .show(ui, |ui| {
@@ -902,7 +917,7 @@ fn node_ui(
     let mut y = rect.top() + TITLE + 3.0;
     for setting in def.settings {
         let row = Rect::from_min_size(pos2(rect.left() + 10.0, y), vec2(rect.width() - 20.0, ROW));
-        setting_row(ui, t, node, setting, row, gesture, requests);
+        setting_row(ui, graph, node, setting, row, gesture, requests);
         y += ROW;
     }
     for pin in def.inputs {
@@ -1126,12 +1141,21 @@ fn vec3_editor(ui: &mut egui::Ui, rect: Rect, v: &mut [f32; 3], name: &str, hint
     }
 }
 
-fn setting_row(ui: &mut egui::Ui, t: &Tokens, node: &Node, setting: &bayleaf_engine::graph::SettingDef, row: Rect, gesture: u64, requests: &mut Requests) {
+fn setting_row(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayleaf_engine::graph::SettingDef, row: Rect, gesture: u64, requests: &mut Requests) {
+    let t = theme::tokens(ui);
     let label_width = row.width() * 0.36;
     ui.painter().text(pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, setting.label, egui::FontId::proportional(13.0), t.text_muted);
     let field = Rect::from_min_max(pos2(row.left() + label_width, row.top() + 2.0), pos2(row.right(), row.bottom() - 2.0));
     let key = format!("graph set {} {} {gesture}", node.id, setting.name);
     let name = format!("{} of node {}", setting.label, node.id);
+    // A variable node picks its variable from the script's own, of its type.
+    if setting.name == "name"
+        && let Some(ty) =
+            bayleaf_engine::graph::VariableType::ALL.into_iter().find(|ty| bayleaf_engine::script::visual::variable_kinds(*ty).contains(&node.kind.as_str()))
+    {
+        variable_picker(ui, graph, node, ty, setting, field, requests);
+        return;
+    }
     match setting.kind {
         SettingKind::Float(default) => {
             let mut v = bayleaf_engine::graph::as_f32(&value_or(node, setting.name, json!(default))).unwrap_or(default);
@@ -1184,6 +1208,59 @@ fn setting_row(ui: &mut egui::Ui, t: &Tokens, node: &Node, setting: &bayleaf_eng
             }
         }
     }
+}
+
+/// The variable a variable node reads or sets: one of the script's variables of its type (and any
+/// name other nodes of that type use without a declaration), or a new one.
+fn variable_picker(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    node: &Node,
+    ty: bayleaf_engine::graph::VariableType,
+    setting: &bayleaf_engine::graph::SettingDef,
+    field: Rect,
+    requests: &mut Requests,
+) {
+    let default = match setting.kind {
+        bayleaf_engine::graph::SettingKind::Name(default) => default,
+        _ => "",
+    };
+    let kinds = bayleaf_engine::script::visual::variable_kinds(ty);
+    let current = node.values.get("name").and_then(Value::as_str).unwrap_or(default).to_owned();
+    let mut names: Vec<String> = graph.variables.iter().filter(|v| v.ty == ty).map(|v| v.name.clone()).collect();
+    for other in graph.nodes.iter().filter(|n| kinds.contains(&n.kind.as_str())) {
+        if let Some(used) = other.values.get("name").and_then(Value::as_str).or(Some(default))
+            && !names.iter().any(|n| n == used)
+        {
+            names.push(used.to_owned());
+        }
+    }
+    let shown = if current.is_empty() { "Choose a variable".to_owned() } else { current.clone() };
+    let response = ui.put(field, |ui: &mut egui::Ui| {
+        craft_ui::ComboBox::from_id_salt(("variable", node.id))
+            .width(field.width())
+            .truncate()
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for choice in &names {
+                    if ui.selectable_label(*choice == current, choice).clicked() && *choice != current {
+                        requests.run("graph.node.set", json!({ "node": node.id, "name": "name", "value": choice }));
+                    }
+                }
+                if !names.is_empty() {
+                    ui.separator();
+                }
+                if ui.button("New Variable…").on_hover_text(format!("Declare a new {} variable for this node", ty.label())).clicked() {
+                    let stem = kinds[0];
+                    let fresh =
+                        (1..).map(|n| format!("{stem}{n}")).find(|n| graph.variable(n).is_none() && !names.contains(n)).unwrap_or_else(|| stem.to_owned());
+                    requests.run("graph.variable.add", json!({ "name": fresh, "type": ty }));
+                    requests.run("graph.node.set", json!({ "node": node.id, "name": "name", "value": fresh }));
+                }
+            })
+            .response
+    });
+    labelled(ui, &response, &format!("{} of node {}: {current}", setting.label, node.id));
 }
 
 fn labelled(ui: &egui::Ui, response: &egui::Response, name: &str) {

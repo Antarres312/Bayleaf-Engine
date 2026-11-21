@@ -568,3 +568,21 @@ fn a_menu_path_node_tells_where_add_component_lists_the_script() {
     bad.node("menuPath", json!({ "path": "Light//Flicker" }));
     assert!(compile(&bad.0).is_err(), "an empty part is refused");
 }
+
+#[test]
+fn declared_variables_start_at_their_values_and_undeclared_ones_at_zero() {
+    let mut b = Builder::new();
+    b.0.add_variable("lives", bayleaf_graph::VariableType::Number, Some(json!(3.0))).unwrap();
+    let start = b.node("start", json!({}));
+    let lives = b.node("variable", json!({ "name": "lives" }));
+    let other = b.node("variable", json!({ "name": "unnamed" }));
+    let say_lives = b.node("log", json!({ "message": "lives" }));
+    let say_other = b.node("log", json!({ "message": "other" }));
+    b.link(start, "then", say_lives, "run");
+    b.link(lives, "value", say_lives, "value");
+    b.link(say_lives, "then", say_other, "run");
+    b.link(other, "value", say_other, "value");
+    let (_, _, mut host) = run(&b.bytes(), &[]);
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["lives 3", "other 0"]);
+}

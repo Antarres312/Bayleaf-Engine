@@ -1384,3 +1384,33 @@ fn asset_rename_keeps_extensions_moves_script_crates_and_follows_open_files() {
     assert!(rename(&mut session, "materials/Grass.bmaterial", "Moss").is_err(), "agents rename only inside their folders");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn visual_script_variables_are_declared_renamed_with_their_nodes_undone_and_saved() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
+    registry.execute(&mut session, "graph.variable.add", &json!({"name": "lives", "type": "number", "start": 3})).unwrap();
+    let node = registry.execute(&mut session, "graph.node.add", &json!({"kind": "setVariable", "position": [0, 0]})).unwrap()["node"].clone();
+    registry.execute(&mut session, "graph.node.set", &json!({"node": node, "name": "name", "value": "lives"})).unwrap();
+    assert!(registry.execute(&mut session, "graph.variable.add", &json!({"name": "lives", "type": "vector"})).is_err(), "names are unique");
+    assert!(registry.execute(&mut session, "graph.variable.add", &json!({"name": "on", "type": "trueFalse", "start": 2})).is_err(), "the start fits the type");
+
+    registry.execute(&mut session, "graph.variable.set", &json!({"name": "lives", "rename": "hearts", "start": 5})).unwrap();
+    let graph = registry.execute(&mut session, "graph.get", &Value::Null).unwrap()["graph"].clone();
+    assert_eq!(graph["variables"][0], json!({"name": "hearts", "type": "number", "start": 5}));
+    let set_node = graph["nodes"].as_array().unwrap().iter().find(|n| n["kind"] == "setVariable").unwrap();
+    assert_eq!(set_node["values"]["name"], "hearts", "its nodes follow the new name");
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert_eq!(registry.execute(&mut session, "graph.get", &Value::Null).unwrap()["graph"]["variables"][0]["name"], "lives", "undo brings the old name back");
+
+    let path = std::env::temp_dir().join(format!("bayleaf-variables-{}.bscript", std::process::id()));
+    registry.execute(&mut session, "graph.save", &json!({"path": path})).unwrap();
+    registry.execute(&mut session, "graph.open", &json!({"path": path})).unwrap();
+    assert_eq!(registry.execute(&mut session, "graph.get", &Value::Null).unwrap()["graph"]["variables"][0]["start"], 3, "variables are saved with the graph");
+    registry.execute(&mut session, "graph.variable.remove", &json!({"name": "lives"})).unwrap();
+    std::fs::remove_file(&path).ok();
+
+    registry.execute(&mut session, "graph.new", &json!({"domain": "material"})).unwrap();
+    assert!(registry.execute(&mut session, "graph.variable.add", &json!({"name": "x", "type": "number"})).is_err(), "materials have no variables");
+}

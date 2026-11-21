@@ -630,6 +630,9 @@ fn graph_nodes_copy_paste_and_duplicate_with_their_links_and_ctrl_click_selects_
     assert_eq!(harness.state().session.scene().object_count(), 0, "Ctrl+D did not duplicate scene objects");
 
     // Ctrl + click adds the Log node to the selection; copying both keeps the link between them.
+    // Fit All first: the duplicate moved the view, and the script panel may cover a node.
+    harness.get_by_label("Fit All").click();
+    harness.run();
     harness.get_by_label_contains("On Start node 1").click();
     harness.run();
     harness.get_by_label_contains(&format!("Log node {log}")).click_modifiers(egui::Modifiers::COMMAND);
@@ -1175,4 +1178,40 @@ fn hovering_a_pin_its_label_or_its_value_shows_the_type_it_carries() {
         harness.hover_at(egui::pos2(1.0, 1.0));
         harness.run_steps(5);
     }
+}
+
+#[test]
+fn the_script_panel_declares_variables_and_their_nodes_pick_one_from_a_list() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label("Add Variable").click();
+    harness.run();
+    harness.get_by_label("Number").click();
+    harness.run();
+    assert!(graph(&harness).variable("number").is_some(), "the menu declares a number variable");
+    harness.get_by_label("Set number").click();
+    harness.run();
+    let set = graph(&harness).nodes.iter().find(|n| n.kind == "setVariable").map(|n| n.id).expect("Set places a node");
+    assert_eq!(graph(&harness).value(set, "name").and_then(|v| v.as_str()), Some("number"));
+    // Renaming the variable in the panel renames it on its nodes.
+    harness.get_by_label("Name of variable number").focus();
+    harness.run();
+    harness.get_by_label("Name of variable number").type_text("s");
+    harness.run();
+    harness.key_press(egui::Key::Tab);
+    harness.run();
+    assert!(graph(&harness).variable("numbers").is_some());
+    assert_eq!(graph(&harness).value(set, "name").and_then(|v| v.as_str()), Some("numbers"), "the node follows the rename");
+    // The node's name is a list of the script's variables, with a way to declare another.
+    harness.get_by_label(&format!("Name of node {set}: numbers")).click();
+    harness.run();
+    harness.get_by_label("New Variable\u{2026}").click();
+    harness.run();
+    let fresh = graph(&harness).value(set, "name").and_then(|v| v.as_str()).map(str::to_owned).expect("a name");
+    assert_ne!(fresh, "numbers");
+    assert!(graph(&harness).variable(&fresh).is_some(), "the new name is declared");
+    harness.get_by_label(&format!("Name of node {set}: {fresh}")).click();
+    harness.run();
+    harness.get_by_label("numbers").click();
+    harness.run();
+    assert_eq!(graph(&harness).value(set, "name").and_then(|v| v.as_str()), Some("numbers"), "choosing from the list sets it");
 }

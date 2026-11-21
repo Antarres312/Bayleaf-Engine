@@ -106,7 +106,77 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         ),
         spec("graph.comment.set", "Edit Comment", "{comment, text?, position?, size?}", Mutates::Graph, comment_set),
         spec("graph.comment.remove", "Remove Comment", "{comment}: the nodes in it stay", Mutates::Graph, comment_remove),
+        spec(
+            "graph.variable.add",
+            "Add Variable",
+            "{name, type: \"number\" | \"vector\" | \"trueFalse\", start?}: declares a variable of a visual script, starting at start (else zero)",
+            Mutates::Graph,
+            variable_add,
+        ),
+        spec(
+            "graph.variable.set",
+            "Change Variable",
+            "{name, rename?, start?}: a new start value, or a new name that the variable's nodes follow",
+            Mutates::Graph,
+            variable_set,
+        ),
+        spec("graph.variable.remove", "Remove Variable", "{name}: its nodes keep working, starting from zero", Mutates::Graph, variable_remove),
     ]
+}
+
+/// The open graph, when it is a visual script: only scripts have variables.
+fn open_script(session: &mut Session) -> Result<&mut Graph, CommandError> {
+    let (graph, catalog) = open(session)?;
+    if catalog.domain != bayleaf_script::visual::CATALOG.domain {
+        return Err(CommandError::Failed("only visual scripts have variables".to_owned()));
+    }
+    Ok(graph)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VariableAddParams {
+    name: String,
+    #[serde(rename = "type")]
+    ty: bayleaf_graph::VariableType,
+    #[serde(default)]
+    start: Option<Value>,
+}
+
+fn variable_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: VariableAddParams = parse(params)?;
+    open_script(session)?.add_variable(&p.name, p.ty, p.start).map_err(failed)?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VariableSetParams {
+    name: String,
+    #[serde(default)]
+    rename: Option<String>,
+    #[serde(default)]
+    start: Option<Value>,
+}
+
+fn variable_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: VariableSetParams = parse(params)?;
+    let graph = open_script(session)?;
+    let ty = graph.variable(&p.name).map(|v| v.ty).ok_or_else(|| CommandError::BadParams(format!("there is no variable {}", p.name)))?;
+    graph.set_variable(&p.name, p.rename.as_deref(), p.start, &bayleaf_script::visual::variable_kinds(ty)).map_err(failed)?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VariableNameParams {
+    name: String,
+}
+
+fn variable_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: VariableNameParams = parse(params)?;
+    open_script(session)?.remove_variable(&p.name).map_err(failed)?;
+    Ok(json!({}))
 }
 
 #[derive(Deserialize)]

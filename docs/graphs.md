@@ -37,7 +37,7 @@ Pretty JSON:
 ```json
 {
   "format": "bayleaf.graph",
-  "version": 1,
+  "version": 2,
   "domain": "material",
   "nodes": [
     { "id": 1, "kind": "output", "position": [360, 40], "values": { "roughness": 0.3 } },
@@ -53,6 +53,10 @@ A graph may also have `comments`: boxes on the canvas with a note, drawn behind 
 not change what the graph compiles to. Each has an `id`, `text` (at most 2000 characters), a
 `position` (its top-left corner) and a `size` of at least 120 × 60. A graph without comments leaves
 the field out. Limit: 500 comments.
+
+A visual script may also have `variables`: each with a `name`, a `type` (`number`, `vector` or
+`trueFalse`) and a `start` value that fits the type. A graph without them leaves the field out.
+Limit: 256 variables. Version 1 files, which have no variables, still open.
 
 ## Materials
 
@@ -81,8 +85,9 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
 - **Property** nodes declare numbers that the Inspector shows per object, with a default.
 - **Set Variable** keeps a number under a name and **Variable** reads it; **Set Vector Variable**
   and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False
-  Variable** for true or false. Each script on each object has its own variables; numbers and vectors
-  start at 0, true/false at false.
+  Variable** for true or false. Each script on each object has its own variables. A variable declared
+  in the script's Variables panel starts at its **Starts at** value; one only named on nodes starts at
+  0 (0, 0, 0 for a vector, false for true/false).
 - **Action** gives an input action's value by its kind (a trigger 1 in the step it goes down, held 1
   while down, value how far it is pressed) and whether it is down; **On Action Pressed** runs once
   when it goes down. Name it `Jump` for the active map or `Player/Jump`; only the active map's
@@ -138,6 +143,9 @@ graph with every node kind and runs it.
 | `graph.comment.add` | `{position, size?, text?}`, returns `{comment}` | yes |
 | `graph.comment.set` | `{comment, text?, position?, size?}` | yes |
 | `graph.comment.remove` | `{comment}`; the nodes in it stay | yes |
+| `graph.variable.add` | `{name, type, start?}`: declares a visual script variable | yes |
+| `graph.variable.set` | `{name, rename?, start?}`; a rename renames it on its nodes too | yes |
+| `graph.variable.remove` | `{name}`; its nodes keep the name and start from zero | yes |
 
 Graph edits share the undo history with scene edits. Opening or closing a graph drops that graph's
 steps. Automation file access to graphs is confined like any other file (`docs/automation.md`).
@@ -160,6 +168,13 @@ steps. Automation file access to graphs is confined like any other file (`docs/a
 | Resize a comment | Drag its bottom-right corner | Tab to its title, then Ctrl + arrow keys |
 | Edit or delete a comment | Double-click its title; right-click it | Enter; Delete |
 | Pan and zoom | Drag the background; the mouse wheel | Ctrl + Plus, Minus; Ctrl + 0 or Fit All shows every node |
+
+A visual script has a panel left of its canvas. **Variables** lists the script's variables: rename
+one (its nodes follow), set where it **Starts at**, place a node that reads it (**Get**) or sets it
+(**Set**), remove it, or **Add Variable** of a type. **Properties** lists the Property nodes with
+their defaults (**Add Property** places another), and **Script** shows the Menu Path or offers **Set
+Menu Path**. On a variable node, Name is a list of the script's variables of that type (and names
+other nodes use without declaring them); **New Variable…** declares a new one and picks it.
 
 Every node, pin and field has a name for screen readers that includes its links ("Input Base Color
 (Color) of Material Output 1, linked from Color 2"). Pins differ by shape as well as colour: flow

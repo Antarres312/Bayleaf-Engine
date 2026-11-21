@@ -7,7 +7,7 @@
 
 use std::fmt::Write as _;
 
-use bayleaf_graph::{Catalog, Graph, NodeDef, PinDef, PinDefault, PinType, Problem, SettingDef, SettingKind};
+use bayleaf_graph::{Catalog, Graph, NodeDef, PinDef, PinDefault, PinType, Problem, SettingDef, SettingKind, VariableType};
 
 use PinType::{Any, Bool, Float, Flow, Vec3};
 
@@ -126,7 +126,7 @@ pub const CATALOG: Catalog = Catalog {
             kind: "setVectorVariable",
             label: "Set Vector Variable",
             category: "Variables",
-            description: "Keeps a vector under a name, for this script on this object. Every vector variable starts at 0, 0, 0.",
+            description: "Keeps a vector under a name, for this script on this object. It starts where the Variables panel says, or at 0, 0, 0.",
             inputs: &[RUN, vector("value", "Value", [0.0; 3])],
             outputs: &[THEN],
             settings: &[VECTOR_VARIABLE],
@@ -146,7 +146,7 @@ pub const CATALOG: Catalog = Catalog {
             kind: "setFlag",
             label: "Set True/False Variable",
             category: "Variables",
-            description: "Keeps true or false under a name, for this script on this object. Every one starts false.",
+            description: "Keeps true or false under a name, for this script on this object. It starts as the Variables panel says, or false.",
             inputs: &[RUN, PinDef::with("value", "Value", Bool, PinDefault::Bool(false))],
             outputs: &[THEN],
             settings: &[FLAG],
@@ -166,7 +166,7 @@ pub const CATALOG: Catalog = Catalog {
             kind: "setVariable",
             label: "Set Variable",
             category: "Variables",
-            description: "Keeps a number under a name, for this script on this object. Every variable starts at 0.",
+            description: "Keeps a number under a name, for this script on this object. It starts where the Variables panel says, or at 0.",
             inputs: &[RUN, number("value", "Value", Float, 0.0)],
             outputs: &[THEN],
             settings: &[VARIABLE],
@@ -511,6 +511,15 @@ struct Compiler<'g> {
 }
 
 /// Compiles a visual script into a WebAssembly module.
+/// The node kinds that read and set a variable of `ty`, by their `name` setting: the Get node first.
+pub fn variable_kinds(ty: VariableType) -> [&'static str; 2] {
+    match ty {
+        VariableType::Number => ["variable", "setVariable"],
+        VariableType::Vector => ["vectorVariable", "setVectorVariable"],
+        VariableType::TrueFalse => ["flag", "setFlag"],
+    }
+}
+
 pub fn compile(graph: &Graph) -> Result<Vec<u8>, Vec<Problem>> {
     let text = to_wat(graph)?;
     wat::parse_str(&text).map_err(|e| vec![Problem::graph(format!("internal compiler error: {e}"))])
@@ -595,21 +604,25 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     let mut out = String::new();
     out.push_str(PRELUDE);
     // One global per variable name; names are letters, digits and _, so they are valid identifiers.
-    let variables: std::collections::BTreeSet<String> =
-        graph.nodes.iter().filter(|n| n.kind == "variable" || n.kind == "setVariable").map(|n| c.setting_text(n.id, "name", "count")).collect();
-    for name in &variables {
-        let _ = writeln!(out, "  (global $var_{name} (mut f32) (f32.const 0))");
-    }
-    let named = |kinds: [&str; 2], default: &str| -> std::collections::BTreeSet<String> {
-        graph.nodes.iter().filter(|n| kinds.contains(&n.kind.as_str())).map(|n| c.setting_text(n.id, "name", default)).collect()
+    // Declared variables start at their values; names nodes use without a declaration start at zero.
+    let named = |ty: VariableType, default: &str| -> std::collections::BTreeMap<String, serde_json::Value> {
+        let kinds = variable_kinds(ty);
+        let mut names: std::collections::BTreeMap<String, serde_json::Value> =
+            graph.nodes.iter().filter(|n| kinds.contains(&n.kind.as_str())).map(|n| (c.setting_text(n.id, "name", default), ty.zero())).collect();
+        names.extend(graph.variables.iter().filter(|v| v.ty == ty).map(|v| (v.name.clone(), v.start.clone())));
+        names
     };
-    for name in named(["vectorVariable", "setVectorVariable"], "target") {
-        for axis in ["x", "y", "z"] {
-            let _ = writeln!(out, "  (global $vec_{name}_{axis} (mut f32) (f32.const 0))");
+    let number = |v: &serde_json::Value| v.as_f64().unwrap_or(0.0) as f32;
+    for (name, start) in named(VariableType::Number, "count") {
+        let _ = writeln!(out, "  (global $var_{name} (mut f32) (f32.const {:?}))", number(&start));
+    }
+    for (name, start) in named(VariableType::Vector, "target") {
+        for (index, axis) in ["x", "y", "z"].into_iter().enumerate() {
+            let _ = writeln!(out, "  (global $vec_{name}_{axis} (mut f32) (f32.const {:?}))", number(&start[index]));
         }
     }
-    for name in named(["flag", "setFlag"], "done") {
-        let _ = writeln!(out, "  (global $flag_{name} (mut i32) (i32.const 0))");
+    for (name, start) in named(VariableType::TrueFalse, "done") {
+        let _ = writeln!(out, "  (global $flag_{name} (mut i32) (i32.const {}))", i32::from(start.as_bool().unwrap_or(false)));
     }
     for global in &state {
         let _ = writeln!(out, "  {global}");

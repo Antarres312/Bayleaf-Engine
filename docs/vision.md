@@ -150,7 +150,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    a material preview on a sphere; variables and On Message / Send Message in visual scripts.
    Then: vector and true/false variables, On Key Pressed, On Timer and gamepad nodes; physics
    contacts reach visual scripts as On Message with `collision`, `collisionEnd`, `triggerEnter` and
-   `triggerExit`.
+   `triggerExit`. Then: a panel beside a visual script's canvas for its variables (declared
+   with a type and a starting value, graph format 2), properties and menu path; variable nodes pick
+   their variable from a list; hovering a pin, its label or its value shows the type it carries.
 7. **M6 Gameplay framework** as opt-in modules (`gameplay` feature of `bayleaf-engine`). Started:
    input actions in the project settings (named actions bound to keys, mouse, gamepad buttons and
    sticks; `action` in the ABI, Action and On Action Pressed nodes, the Input Actions panel); since
