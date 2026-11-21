@@ -18,6 +18,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("bayleaf-automation", 6),
     ("bayleaf", 7),
     ("bayleaf-cli", 7),
+    ("bayleaf-player", 7),
 ];
 
 /// UI crates that nothing below layer 6 may use.

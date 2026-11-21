@@ -49,6 +49,11 @@ Pretty JSON:
 
 Limits: 2000 nodes, 8000 links, text values of 256 characters.
 
+A graph may also have `comments`: boxes on the canvas with a note, drawn behind the nodes. They do
+not change what the graph compiles to. Each has an `id`, `text` (at most 2000 characters), a
+`position` (its top-left corner) and a `size` of at least 120 × 60. A graph without comments leaves
+the field out. Limit: 500 comments.
+
 ## Materials
 
 A mesh uses a material when its `material` field names a `.bmaterial` file, relative to the project folder (or, for a scene outside any project, the scene's
@@ -59,7 +64,9 @@ The **Image** node reads a PNG file (relative to the project folder) by the surf
 coordinates; **Texture Coordinates** gives them as a vector, to scale or move them. A material may
 use up to 4 images.
 
-While a material is open in the graph editor, the scene view shows its unsaved changes. A material
+While a material is open in the graph editor, the scene view shows its unsaved changes, and a
+preview in the canvas corner shows it on a sphere (Hide puts it away; Show Preview in the toolbar
+brings it back). A material
 that does not load or compile is reported in the Inspector, and `scene.render` lists it in
 `warnings`. Its meshes are drawn with their own colour, metallic and roughness.
 
@@ -72,6 +79,12 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   **Step Seconds** output is the step length.
 - **Branch** continues with True or False.
 - **Property** nodes declare numbers that the Inspector shows per object, with a default.
+- **Set Variable** keeps a number under a name and **Variable** reads it. Each script on each object
+  has its own variables, and every variable starts at 0.
+- **Send Message** sends a message name and a number to the scripts of the first object with the
+  given name, or of every object when no name is given. **On Message** runs when a message with its
+  name arrives; its Value output is the number. Messages arrive after the step. A message sent
+  while handling one arrives a step later.
 - Data nodes have no side effects. They are computed where an action needs them.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a
@@ -93,6 +106,12 @@ graph with every node kind and runs it.
 | `graph.node.set` | `{node, name, value}` (`null` restores the default) | yes |
 | `graph.link.add` | `{from: {node, pin}, to: {node, pin}}` | yes |
 | `graph.link.remove` | `{node, pin}`: every link at that pin | yes |
+| `graph.node.copy` | `{nodes: [id]}`, returns `{text}`: the nodes and the links between them | no |
+| `graph.node.paste` | `{text, offset?}`, returns `{nodes, skipped}`: copies with new ids; a node a graph may have only once is skipped | yes |
+| `graph.node.duplicate` | `{nodes: [id]}`, returns `{nodes, skipped}` | yes |
+| `graph.comment.add` | `{position, size?, text?}`, returns `{comment}` | yes |
+| `graph.comment.set` | `{comment, text?, position?, size?}` | yes |
+| `graph.comment.remove` | `{comment}`; the nodes in it stay | yes |
 
 Graph edits share the undo history with scene edits. Opening or closing a graph drops that graph's
 steps. Automation file access to graphs is confined like any other file (`docs/automation.md`).
@@ -108,7 +127,13 @@ steps. Automation file access to graphs is confined like any other file (`docs/a
 | Remove links | Right-click a pin, Remove Links | |
 | Move a node | Drag its title | Tab to its title, then the arrow keys (Shift: finer) |
 | Delete a node | Right-click its title, Delete Node | Tab to its title, then Delete |
-| Pan and zoom | Drag the background; Ctrl + wheel | |
+| Select several nodes | Ctrl + click their titles | |
+| Copy, cut, paste, duplicate | Right-click a title, Copy or Duplicate | Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+D |
+| Add a comment | Add Comment (around the selected nodes) | Add Comment, type the text, Enter |
+| Move a comment and its nodes | Drag its title | Tab to its title, then the arrow keys |
+| Resize a comment | Drag its bottom-right corner | Tab to its title, then Ctrl + arrow keys |
+| Edit or delete a comment | Double-click its title; right-click it | Enter; Delete |
+| Pan and zoom | Drag the background; Ctrl + wheel | Ctrl + Plus, Minus; Ctrl + 0 or Fit All shows every node |
 
 Every node, pin and field has a name for screen readers that includes its links ("Input Base Color
 (Color) of Material Output 1, linked from Color 2"). Pins differ by shape as well as colour: flow

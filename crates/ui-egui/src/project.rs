@@ -237,6 +237,8 @@ struct Outcome {
     action: Option<Action>,
     enter: Option<PathBuf>,
     select: Option<PathBuf>,
+    /// A file clicked (not only pressed to drag): the Inspector shows it.
+    inspect: Option<PathBuf>,
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
@@ -288,6 +290,11 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         view.selected = Some(file);
     }
     editor.project = view;
+    if let Some(path) = outcome.inspect {
+        // A clicked file takes the Inspector from the selected objects.
+        editor.select_only(None);
+        editor.inspected_file = Some(crate::file_inspector::Inspected::new(path));
+    }
     match outcome.action {
         Some(Action::OpenScene(path)) => editor.open_scene(&path),
         Some(Action::PlacePrefab(path)) => editor.place_prefab(&path),
@@ -665,6 +672,9 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
     };
     if response.clicked() || (response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_pressed())) {
         outcome.select = Some(entry.path.clone());
+    }
+    if response.clicked() {
+        outcome.inspect = Some(entry.path.clone());
     }
     if response.double_clicked() {
         match entry.kind {

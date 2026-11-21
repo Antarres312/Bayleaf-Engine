@@ -5,6 +5,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod asset_info;
 mod builtin;
 pub mod code_scripts;
 pub mod confine;
@@ -336,6 +337,7 @@ impl CommandRegistry {
         commands.extend(project_cmds::commands());
         commands.extend(prefab_cmds::commands());
         commands.extend(code_scripts::commands());
+        commands.extend(asset_info::commands());
         Self { commands }
     }
 

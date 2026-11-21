@@ -167,7 +167,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     let k = r * r / 8.0;
 
     // Hemisphere ambient, brighter from above. Metals reflect it tinted by their own colour.
-    let ambient = mix(globals.ambient.rgb * 0.35, globals.ambient.rgb, n.y * 0.5 + 0.5);
+    let ambient = mix(globals.ambient_ground.rgb, globals.ambient.rgb, n.y * 0.5 + 0.5);
     let ambient_f = fresnel_schlick(n_dot_v, f0);
     var color = ambient * ((vec3<f32>(1.0) - ambient_f) * (1.0 - metallic) * base + ambient_f);
     let count = min(u32(globals.ambient.w), MAX_LIGHTS);

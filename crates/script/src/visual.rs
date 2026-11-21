@@ -26,6 +26,8 @@ const fn vector(name: &'static str, label: &'static str, value: [f32; 3]) -> Pin
 const RUN: PinDef = pin("run", "Run", Flow);
 const THEN: PinDef = pin("then", "Then", Flow);
 const MATH_OUT: &[PinDef] = &[pin("result", "Result", Any)];
+const MESSAGE: SettingDef = SettingDef { name: "message", label: "Message", kind: SettingKind::Name("hit") };
+const VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("count") };
 
 const fn node(
     kind: &'static str,
@@ -51,6 +53,46 @@ pub const CATALOG: Catalog = Catalog {
     nodes: &[
         node("start", "On Start", "Events", "Runs once when play mode starts.", &[], &[THEN]),
         node("update", "On Update", "Events", "Runs every simulation step.", &[], &[THEN, pin("dt", "Step Seconds", Float)]),
+        NodeDef {
+            kind: "message",
+            label: "On Message",
+            category: "Events",
+            description: "Runs when a script sends this message to this object, or to every object. Value is the number sent with it.",
+            inputs: &[],
+            outputs: &[THEN, pin("value", "Value", Float)],
+            settings: &[MESSAGE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "sendMessage",
+            label: "Send Message",
+            category: "Actions",
+            description: "Sends a message and a number to the scripts of the first object with this name, or of every object when no name is given. It arrives after this step.",
+            inputs: &[RUN, number("value", "Value", Float, 0.0)],
+            outputs: &[THEN],
+            settings: &[MESSAGE, SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setVariable",
+            label: "Set Variable",
+            category: "Variables",
+            description: "Keeps a number under a name, for this script on this object. Every variable starts at 0.",
+            inputs: &[RUN, number("value", "Value", Float, 0.0)],
+            outputs: &[THEN],
+            settings: &[VARIABLE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "variable",
+            label: "Variable",
+            category: "Variables",
+            description: "The number Set Variable last kept under this name, or 0.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", Float)],
+            settings: &[VARIABLE],
+            unique: false,
+        },
         NodeDef {
             kind: "log",
             label: "Log",
@@ -240,15 +282,22 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     let mut problems = Vec::new();
     let mut start = String::new();
     let mut update = String::new();
-    let mut events: Vec<&bayleaf_graph::Node> = graph.nodes.iter().filter(|n| n.kind == "start" || n.kind == "update").collect();
+    let mut message = String::new();
+    let mut events: Vec<&bayleaf_graph::Node> = graph.nodes.iter().filter(|n| matches!(n.kind.as_str(), "start" | "update" | "message")).collect();
     events.sort_by_key(|n| n.id);
     for event in events {
-        match c.chain(event.id, "then", 0) {
+        match c.chain(event.id, "then", 1) {
             Ok(code) if event.kind == "start" => start.push_str(&code),
-            Ok(code) => update.push_str(&code),
+            Ok(code) if event.kind == "update" => update.push_str(&code),
+            Ok(code) => {
+                // Each On Message runs only for its own message name.
+                let name = c.setting_text(event.id, "message", "hit");
+                let (at, len) = c.text(name.as_bytes());
+                let _ = writeln!(message, "    (if (call $message_is (i32.const {at}) (i32.const {len}))\n      (then\n{code}      ))");
+            }
             Err(p) => problems.push(p),
         }
-        if start.len() + update.len() > MAX_TEXT {
+        if start.len() + update.len() + message.len() > MAX_TEXT {
             return Err(vec![Problem::graph("the script is too large; reuse fewer shared chains")]);
         }
     }
@@ -265,6 +314,12 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
 
     let mut out = String::new();
     out.push_str(PRELUDE);
+    // One global per variable name; names are letters, digits and _, so they are valid identifiers.
+    let variables: std::collections::BTreeSet<String> =
+        graph.nodes.iter().filter(|n| n.kind == "variable" || n.kind == "setVariable").map(|n| c.setting_text(n.id, "name", "count")).collect();
+    for name in &variables {
+        let _ = writeln!(out, "  (global $var_{name} (mut f32) (f32.const 0))");
+    }
     let _ = writeln!(out, "  (memory (export \"memory\") {pages})");
     for (at, bytes) in &c.data {
         let mut escaped = String::with_capacity(bytes.len() * 3);
@@ -279,6 +334,9 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     );
     let _ = writeln!(out, "  (func (export \"bayleaf_start\")\n{start}  )");
     let _ = writeln!(out, "  (func (export \"bayleaf_update\") (param $dt f32)\n    (global.set $dt (local.get $dt))\n{update}  )");
+    if graph.nodes.iter().any(|n| n.kind == "message") {
+        let _ = writeln!(out, "  (func (export \"bayleaf_message\") (param $value f32)\n    (global.set $message (local.get $value))\n{message}  )");
+    }
     out.push_str(")\n");
     Ok(out)
 }
@@ -380,6 +438,24 @@ impl Compiler<'_> {
             "destroySelf" => {
                 let _ = writeln!(code, "{indent}(drop (call $destroy (call $self_handle)))");
             }
+            "sendMessage" => {
+                let name = self.setting_text(next, "message", "hit");
+                let (at, len) = self.text(name.as_bytes());
+                let object = self.setting_text(next, "object", "");
+                let handle = if object.trim().is_empty() {
+                    "(i32.const -1)".to_owned()
+                } else {
+                    let (o_at, o_len) = self.text(object.as_bytes());
+                    format!("(call $find (i32.const {o_at}) (i32.const {o_len}))")
+                };
+                let value = self.input(next, "value").and_then(|v| as_float(next, v))?;
+                let _ = writeln!(code, "{indent}(drop (call $send {handle} (i32.const {at}) (i32.const {len}) {value}))");
+            }
+            "setVariable" => {
+                let name = self.setting_text(next, "name", "count");
+                let value = self.input(next, "value").and_then(|v| as_float(next, v))?;
+                let _ = writeln!(code, "{indent}(global.set $var_{name} {value})");
+            }
             "branch" => {
                 let condition = self.input(next, "condition").and_then(|v| as_bool(next, v))?;
                 let yes = self.chain(next, "true", depth + 1)?;
@@ -430,6 +506,8 @@ impl Compiler<'_> {
         let transform = |base: u32| Val::V([0, 1, 2].map(|i| format!("(call $t (i32.const {}))", base + i)));
         Ok(match n.kind.as_str() {
             "update" if pin == "dt" => Val::F("(global.get $dt)".to_owned()),
+            "message" if pin == "value" => Val::F("(global.get $message)".to_owned()),
+            "variable" => Val::F(format!("(global.get $var_{})", self.setting_text(node, "name", "count"))),
             "number" => Val::F(lit(self.setting_number(node, "value", 1.0))),
             "vector" => {
                 let x = self.input(node, "x").and_then(|v| as_float(node, v))?;
@@ -562,7 +640,10 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "transform_set_of" (func $transform_set_of (param i32 i32)))
   (import "bayleaf" "spawn" (func $spawn (param i32 i32 f32 f32 f32) (result i32)))
   (import "bayleaf" "destroy" (func $destroy (param i32) (result i32)))
+  (import "bayleaf" "send" (func $send (param i32 i32 i32 f32) (result i32)))
+  (import "bayleaf" "message_is" (func $message_is (param i32 i32) (result i32)))
   (global $dt (mut f32) (f32.const 0))
+  (global $message (mut f32) (f32.const 0))
   (func (export "bayleaf_abi") (result i32) (i32.const 1))
   ;; Transform value i (0..8: position, rotation, scale).
   (func $t (param $i i32) (result f32)

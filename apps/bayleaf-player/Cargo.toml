@@ -1,0 +1,20 @@
+[package]
+name = "bayleaf-player"
+description = "Bayleaf Engine player: runs a project's game in a window, without the editor."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bayleaf-core = { workspace = true }
+bayleaf-engine = { workspace = true }
+bayleaf-ui-egui = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+eframe = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

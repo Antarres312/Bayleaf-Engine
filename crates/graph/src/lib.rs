@@ -229,6 +229,8 @@ pub struct Node {
 pub enum GraphError {
     #[error("there is no node {0}")]
     NoNode(u32),
+    #[error("there is no comment {0}")]
+    NoComment(u32),
     #[error("there is no node kind \"{0}\" in {1} graphs")]
     UnknownKind(String, &'static str),
     #[error("{node} has no {side} \"{pin}\"")]
@@ -237,6 +239,50 @@ pub enum GraphError {
     Refused(String),
     #[error("not a graph file: {0}")]
     Format(String),
+}
+
+/// `format` of copied nodes on the clipboard.
+pub const FRAGMENT_FORMAT: &str = "bayleaf.nodes";
+
+/// Copied nodes and the links between them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fragment {
+    pub format: String,
+    pub domain: String,
+    pub nodes: Vec<Node>,
+    #[serde(default)]
+    pub links: Vec<Link>,
+}
+
+/// What a paste added.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pasted {
+    /// The new nodes.
+    pub ids: Vec<u32>,
+    /// Nodes left out because the graph may have only one of them (their labels).
+    pub skipped: Vec<String>,
+}
+
+/// Most comments in one graph.
+pub const MAX_COMMENTS: usize = 500;
+/// Most characters in one comment.
+pub const MAX_COMMENT_TEXT: usize = 2000;
+/// Smallest comment box, in canvas units.
+pub const MIN_COMMENT_SIZE: [f32; 2] = [120.0, 60.0];
+/// Size of a new comment box when none is given.
+pub const COMMENT_SIZE: [f32; 2] = [400.0, 240.0];
+
+/// A note on the canvas: a titled box drawn behind the nodes it groups. It does not change what
+/// the graph compiles to.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Comment {
+    pub id: u32,
+    pub text: String,
+    /// Top-left corner on the canvas.
+    pub position: [f32; 2],
+    pub size: [f32; 2],
 }
 
 /// A graph of one domain.
@@ -249,12 +295,56 @@ pub struct Graph {
     pub nodes: Vec<Node>,
     #[serde(default)]
     pub links: Vec<Link>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<Comment>,
 }
 
 impl Graph {
     /// An empty graph of `catalog`'s domain.
     pub fn empty(catalog: &Catalog) -> Self {
-        Self { format: FORMAT.to_owned(), version: VERSION, domain: catalog.domain.to_owned(), nodes: Vec::new(), links: Vec::new() }
+        Self { format: FORMAT.to_owned(), version: VERSION, domain: catalog.domain.to_owned(), nodes: Vec::new(), links: Vec::new(), comments: Vec::new() }
+    }
+
+    pub fn comment(&self, id: u32) -> Option<&Comment> {
+        self.comments.iter().find(|c| c.id == id)
+    }
+
+    /// Adds a comment box and returns its id.
+    pub fn add_comment(&mut self, text: &str, position: [f32; 2], size: [f32; 2]) -> Result<u32, GraphError> {
+        if self.comments.len() >= MAX_COMMENTS {
+            return Err(GraphError::Refused(format!("a graph may have at most {MAX_COMMENTS} comments")));
+        }
+        check_comment_text(text)?;
+        let id = self.comments.iter().map(|c| c.id).max().map_or(1, |m| m.saturating_add(1));
+        self.comments.push(Comment { id, text: text.to_owned(), position: clamp_position(position)?, size: clamp_size(size)? });
+        Ok(id)
+    }
+
+    /// Changes a comment's text, place or size; `None` keeps that part.
+    pub fn edit_comment(&mut self, id: u32, text: Option<&str>, position: Option<[f32; 2]>, size: Option<[f32; 2]>) -> Result<(), GraphError> {
+        if let Some(text) = text {
+            check_comment_text(text)?;
+        }
+        let position = position.map(clamp_position).transpose()?;
+        let size = size.map(clamp_size).transpose()?;
+        let comment = self.comments.iter_mut().find(|c| c.id == id).ok_or(GraphError::NoComment(id))?;
+        if let Some(text) = text {
+            text.clone_into(&mut comment.text);
+        }
+        if let Some(position) = position {
+            comment.position = position;
+        }
+        if let Some(size) = size {
+            comment.size = size;
+        }
+        Ok(())
+    }
+
+    /// Removes a comment box; the nodes in it stay.
+    pub fn remove_comment(&mut self, id: u32) -> Result<(), GraphError> {
+        let before = self.comments.len();
+        self.comments.retain(|c| c.id != id);
+        if self.comments.len() == before { Err(GraphError::NoComment(id)) } else { Ok(()) }
     }
 
     /// A new graph with the catalog's starter nodes.
@@ -306,6 +396,21 @@ impl Graph {
             }
             for (name, value) in &node.values {
                 check_value(def, name, value)?;
+            }
+        }
+        if self.comments.len() > MAX_COMMENTS {
+            return Err(GraphError::Format(format!("a graph may have at most {MAX_COMMENTS} comments")));
+        }
+        let mut comment_ids = HashSet::new();
+        for comment in &self.comments {
+            if !comment_ids.insert(comment.id) {
+                return Err(GraphError::Format(format!("comment id {} is used twice", comment.id)));
+            }
+            check_comment_text(&comment.text)?;
+            let finite = |v: &[f32; 2]| v.iter().all(|c| c.is_finite() && c.abs() <= MAX_COORD);
+            let big_enough = comment.size[0] >= MIN_COMMENT_SIZE[0] && comment.size[1] >= MIN_COMMENT_SIZE[1];
+            if !finite(&comment.position) || !finite(&comment.size) || !big_enough {
+                return Err(GraphError::Format(format!("comment {} has an invalid position or size", comment.id)));
             }
         }
         let mut seen = Graph { links: Vec::new(), ..self.clone() };
@@ -400,6 +505,48 @@ impl Graph {
         before - self.links.len()
     }
 
+    /// Nodes `ids` and the links between them, for the clipboard. Links to nodes outside are left out.
+    pub fn copy(&self, ids: &[u32]) -> Fragment {
+        let nodes: Vec<Node> = self.nodes.iter().filter(|n| ids.contains(&n.id)).cloned().collect();
+        let links = self.links.iter().filter(|l| ids.contains(&l.from.node) && ids.contains(&l.to.node)).cloned().collect();
+        Fragment { format: FRAGMENT_FORMAT.to_owned(), domain: self.domain.clone(), nodes, links }
+    }
+
+    /// Adds copies of `fragment`'s nodes, moved by `offset`, with new ids and the links between
+    /// them. A node that may appear only once and is already here is left out. All or nothing:
+    /// on an error the graph is unchanged. Returns the new ids, in the fragment's order.
+    pub fn paste(&mut self, catalog: &Catalog, fragment: &Fragment, offset: [f32; 2]) -> Result<Pasted, GraphError> {
+        if fragment.format != FRAGMENT_FORMAT {
+            return Err(GraphError::Format(format!("the clipboard does not hold {FRAGMENT_FORMAT} nodes")));
+        }
+        if fragment.domain != self.domain {
+            return Err(GraphError::Refused(format!("these are {} nodes; they cannot go into a {} graph", fragment.domain, self.domain)));
+        }
+        let mut graph = self.clone();
+        let mut ids = BTreeMap::new();
+        let mut skipped = Vec::new();
+        for node in &fragment.nodes {
+            let def = catalog.get(&node.kind).ok_or_else(|| GraphError::UnknownKind(node.kind.clone(), catalog.domain))?;
+            if def.unique && graph.nodes.iter().any(|n| n.kind == node.kind) {
+                skipped.push(def.label.to_owned());
+                continue;
+            }
+            let position = [node.position[0] + offset[0], node.position[1] + offset[1]];
+            let id = graph.add_node(catalog, &node.kind, position)?;
+            for (name, value) in &node.values {
+                graph.set_value(catalog, id, name, value.clone())?;
+            }
+            ids.insert(node.id, id);
+        }
+        for link in &fragment.links {
+            if let (Some(from), Some(to)) = (ids.get(&link.from.node), ids.get(&link.to.node)) {
+                graph.connect(catalog, Link { from: PinRef::new(*from, &link.from.pin), to: PinRef::new(*to, &link.to.pin) })?;
+            }
+        }
+        *self = graph;
+        Ok(Pasted { ids: fragment.nodes.iter().filter_map(|n| ids.get(&n.id).copied()).collect(), skipped })
+    }
+
     /// The link into an input pin, if any (for flow inputs, the first one).
     pub fn link_into(&self, node: u32, pin: &str) -> Option<&Link> {
         self.links.iter().find(|l| l.to.node == node && l.to.pin == pin)
@@ -483,6 +630,22 @@ fn clamp_position(position: [f32; 2]) -> Result<[f32; 2], GraphError> {
         Ok(position.map(|c| c.clamp(-MAX_COORD, MAX_COORD)))
     } else {
         Err(GraphError::Refused("positions must be finite numbers".to_owned()))
+    }
+}
+
+fn check_comment_text(text: &str) -> Result<(), GraphError> {
+    if text.chars().count() > MAX_COMMENT_TEXT {
+        return Err(GraphError::Refused(format!("a comment may have at most {MAX_COMMENT_TEXT} characters")));
+    }
+    Ok(())
+}
+
+/// A comment size, at least the smallest box.
+fn clamp_size(size: [f32; 2]) -> Result<[f32; 2], GraphError> {
+    if size.iter().all(|c| c.is_finite()) {
+        Ok([size[0].clamp(MIN_COMMENT_SIZE[0], MAX_COORD), size[1].clamp(MIN_COMMENT_SIZE[1], MAX_COORD)])
+    } else {
+        Err(GraphError::Refused("sizes must be finite numbers".to_owned()))
     }
 }
 

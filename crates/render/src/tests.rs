@@ -226,6 +226,13 @@ fn materials_change_the_drawn_colour_and_every_node_is_valid_on_the_gpu() {
     // The light adds a white highlight; the emission makes red dominate.
     assert!(r > 200 && r > g + 100 && r > b + 100, "expected red, got {:?}", [r, g, b]);
 
+    // The graph editor's preview shows the material on a sphere in front of the sky.
+    let preview = gpu.render(&crate::material_preview(Arc::clone(&red), Vec::new(), 1.0, 0.0), 64, 64).unwrap();
+    let [r, g, b, _] = preview.pixel(32, 32).unwrap();
+    assert!(r > g + 100 && r > b + 100, "the sphere shows the material: {:?}", [r, g, b]);
+    let [r, _, b, _] = preview.pixel(2, 2).unwrap();
+    assert!(b > r, "the corner shows the sky");
+
     let every = Arc::new(compile(&every_node_material()).unwrap());
     let frame = extract_with(&scene, camera, OPTIONS, &mut Materials(None, Arc::clone(&every)));
     gpu.render(&frame, 32, 32).unwrap_or_else(|e| panic!("the GPU refused the generated shader: {e}\n{}", every.surface));
@@ -422,4 +429,27 @@ fn meshes_draw_their_model_and_are_picked_by_its_box() {
     let frame = extract_with(&scene, camera, OPTIONS, &mut assets);
     assert_eq!(pick(&frame, Vec2::new(0.45, 0.0)), Some(wall), "picked by the model's box, past the unit cube");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_environment_draws_a_sky_above_the_ground_and_lights_shapes_from_it() {
+    let Some(gpu) = gpu() else { return };
+    let mut scene = Scene::new();
+    mesh(&mut scene, "sphere", [0.0, 0.0, 0.0]);
+    let env = json!({"skyColor": [0.1, 0.3, 0.9], "horizonColor": [0.7, 0.75, 0.8], "groundColor": [0.4, 0.25, 0.1], "ambient": 2.0, "showSky": true});
+    let holder = object(&mut scene, "environment", env.clone(), [0.0; 3], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, 70.0, 1.0);
+    let image = gpu.render(&extract(&scene, camera, OPTIONS), 64, 64).unwrap();
+    let (top, bottom) = (image.pixel(32, 1).unwrap(), image.pixel(32, 62).unwrap());
+    assert!(top[2] > top[0] + 40, "the sky above is blue: {top:?}");
+    assert!(bottom[0] > bottom[2] + 40, "below the horizon is the ground colour: {bottom:?}");
+    // Shapes take the sky's light from above and the ground's from below.
+    let (upper, lower) = (image.pixel(32, 20).unwrap(), image.pixel(32, 44).unwrap());
+    assert!(i32::from(upper[2]) - i32::from(upper[0]) > i32::from(lower[2]) - i32::from(lower[0]), "top {upper:?} is bluer than bottom {lower:?}");
+
+    let mut hidden = env;
+    hidden["showSky"] = json!(false);
+    scene.set_component(holder, "environment", hidden).unwrap();
+    let image = gpu.render(&extract(&scene, camera, OPTIONS), 64, 64).unwrap();
+    assert_eq!(image.pixel(32, 1), image.pixel(32, 62), "without the sky the background is one colour");
 }

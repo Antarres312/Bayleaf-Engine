@@ -3,7 +3,7 @@
 use bayleaf_ecs::{Entity, World};
 use serde_json::Value;
 
-use crate::components::{Camera, DirectionalLight, Mesh, Name, PointLight, Prefab, SceneComponent, Scripts, SpotLight, Sprite, Tags, Transform};
+use crate::components::{Camera, DirectionalLight, Environment, Mesh, Name, PointLight, Prefab, SceneComponent, Scripts, SpotLight, Sprite, Tags, Transform};
 
 /// One component type known to the scene.
 #[derive(Clone, Copy)]
@@ -93,6 +93,7 @@ impl ComponentRegistry {
                 ComponentKind::of::<DirectionalLight>(),
                 ComponentKind::of::<PointLight>(),
                 ComponentKind::of::<SpotLight>(),
+                ComponentKind::of::<Environment>(),
                 ComponentKind::of::<Scripts>(),
                 ComponentKind::of::<Tags>(),
                 ComponentKind::of::<Prefab>(),

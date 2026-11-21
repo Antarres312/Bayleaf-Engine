@@ -102,6 +102,21 @@ pub enum Request {
 
 /// Most requests one script call may make.
 const MAX_REQUESTS_PER_CALL: usize = 64;
+/// Most messages one script call may send.
+const MAX_MESSAGES_PER_CALL: usize = 64;
+/// Longest message name, in bytes.
+pub const MAX_MESSAGE_NAME: usize = 64;
+/// `send`'s handle for every object.
+pub const EVERY_OBJECT: i32 = -1;
+
+/// A message one script sent, delivered after the step to the scripts of `to` (`None`: every
+/// object) that export `bayleaf_message`.
+#[derive(Clone, Debug, PartialEq)]
+struct Message {
+    to: Option<StableId>,
+    name: String,
+    value: f32,
+}
 
 /// The objects scripts can see during one step: names and local transforms as the step began.
 /// A handle is an object's position in this list plus one; 0 means none.
@@ -134,6 +149,10 @@ struct HostState {
     /// Transforms of other objects this call set, applied after it.
     writes: Vec<(StableId, [f32; 9])>,
     requests: Vec<Request>,
+    /// Messages this call sent.
+    outbox: Vec<Message>,
+    /// The name of the message being delivered, during `bayleaf_message`.
+    message: Option<String>,
     transform: [f32; 9],
     transform_changed: bool,
     properties: BTreeMap<String, f32>,
@@ -152,6 +171,8 @@ impl HostState {
             world: Arc::new(WorldView::default()),
             writes: Vec::new(),
             requests: Vec::new(),
+            outbox: Vec::new(),
+            message: None,
             transform,
             transform_changed: false,
             properties,
@@ -206,6 +227,8 @@ struct Instance {
     modified: Option<SystemTime>,
     store: Store<HostState>,
     update: Option<TypedFunc<f32, ()>>,
+    /// `bayleaf_message(value)`, if the module takes messages.
+    on_message: Option<TypedFunc<f32, ()>>,
     /// Stopped after an error; it no longer runs.
     stopped: bool,
 }
@@ -218,6 +241,8 @@ pub struct ScriptHost {
     faults: Vec<ScriptFault>,
     logs: Vec<LogLine>,
     requests: Vec<Request>,
+    /// Messages sent and not yet delivered.
+    messages: Vec<Message>,
 }
 
 impl Default for ScriptHost {
@@ -226,7 +251,7 @@ impl Default for ScriptHost {
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         let linker = make_linker(&engine);
-        Self { engine, linker, instances: Vec::new(), faults: Vec::new(), logs: Vec::new(), requests: Vec::new() }
+        Self { engine, linker, instances: Vec::new(), faults: Vec::new(), logs: Vec::new(), requests: Vec::new(), messages: Vec::new() }
     }
 }
 
@@ -318,16 +343,17 @@ impl ScriptHost {
         properties.extend(script.properties.iter().map(|(k, v)| (k.clone(), *v)));
         store.data_mut().properties = properties;
         let update = instance.get_typed_func::<f32, ()>(&store, "bayleaf_update").ok();
+        let on_message = instance.get_typed_func::<f32, ()>(&store, "bayleaf_message").ok();
         let start = instance.get_typed_func::<(), ()>(&store, "bayleaf_start").ok();
 
         // Replace an earlier instance in the same slot (hot reload).
         self.instances.retain(|i| !(i.object == object && i.index == index));
         let script_name = script.display_name();
-        let mut entry = Instance { object, index, script_name, path: path.to_path_buf(), module_name, modified, store, update, stopped: false };
+        let mut entry = Instance { object, index, script_name, path: path.to_path_buf(), module_name, modified, store, update, on_message, stopped: false };
         if let Some(start) = start {
             let result = call(&mut entry, |store| start.call(store, ()));
             self.collect(&mut entry);
-            after_call(scene, &mut entry, &mut self.requests);
+            after_call(scene, &mut entry, &mut self.requests, &mut self.messages);
             if let Err(error) = result {
                 entry.stopped = true;
                 self.instances.push(entry);
@@ -362,13 +388,58 @@ impl ScriptHost {
             let script = entry.script_name.clone();
             logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
             match result {
-                Ok(()) => after_call(scene, entry, &mut self.requests),
+                Ok(()) => after_call(scene, entry, &mut self.requests, &mut self.messages),
                 Err(error) => {
                     entry.stopped = true;
                     faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
                 }
             }
         }
+        self.faults.extend(faults);
+        self.push_logs(logs);
+        self.deliver(scene, time, input);
+    }
+
+    /// Delivers the messages sent so far, in the order sent. Messages sent while handling one wait
+    /// for the next step, so two scripts answering each other cannot run forever.
+    fn deliver(&mut self, scene: &mut Scene, time: f64, input: &Arc<Input>) {
+        let messages = std::mem::take(&mut self.messages);
+        if messages.is_empty() {
+            return;
+        }
+        let world = WorldView::of(scene);
+        let mut later = Vec::new();
+        let mut faults = Vec::new();
+        let mut logs = Vec::new();
+        for message in messages {
+            for entry in self.instances.iter_mut().filter(|i| !i.stopped && message.to.is_none_or(|to| to == i.object)) {
+                let Some(on_message) = entry.on_message else { continue };
+                if !scene.contains(entry.object) {
+                    continue;
+                }
+                {
+                    let state = entry.store.data_mut();
+                    state.transform = read_transform(scene, entry.object);
+                    state.transform_changed = false;
+                    state.time = time;
+                    state.input = Arc::clone(input);
+                    state.world = Arc::clone(&world);
+                    state.message = Some(message.name.clone());
+                }
+                let result = call(entry, |store| on_message.call(store, message.value));
+                entry.store.data_mut().message = None;
+                let script = entry.script_name.clone();
+                logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
+                match result {
+                    Ok(()) => after_call(scene, entry, &mut self.requests, &mut later),
+                    Err(error) => {
+                        entry.stopped = true;
+                        faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
+                    }
+                }
+            }
+        }
+        self.messages = later;
         self.faults.extend(faults);
         self.push_logs(logs);
     }
@@ -469,7 +540,7 @@ fn read_transform(scene: &Scene, object: StableId) -> [f32; 9] {
 }
 
 /// Applies what a call changed: its own transform, other objects' transforms, and its requests.
-fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Request>) {
+fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Request>, messages: &mut Vec<Message>) {
     write_transform(scene, entry);
     let state = entry.store.data_mut();
     for (object, v) in state.writes.drain(..) {
@@ -478,6 +549,7 @@ fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Reques
         }
     }
     requests.append(&mut state.requests);
+    messages.append(&mut state.outbox);
 }
 
 fn write_transform(scene: &mut Scene, entry: &mut Instance) {
@@ -639,6 +711,37 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             }
             state.requests.push(Request::Destroy(object));
             Ok(1)
+        })?;
+        linker.func_wrap("bayleaf", "send", |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32, len: i32, value: f32| -> Result<i32, wasmi::Error> {
+            let name = read_text(&caller, ptr, len, MAX_MESSAGE_NAME).map_err(|m| fault(&mut caller, format!("send: {m}")))?;
+            if name.is_empty() || !value.is_finite() {
+                return Err(fault(&mut caller, "send: give a message name and a finite number".to_owned()));
+            }
+            let to = if handle == EVERY_OBJECT {
+                None
+            } else {
+                let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                    return Err(fault(&mut caller, format!("send: there is no object with handle {handle}")));
+                };
+                Some(object)
+            };
+            let state = caller.data_mut();
+            if state.outbox.len() >= MAX_MESSAGES_PER_CALL {
+                return Ok(0);
+            }
+            state.outbox.push(Message { to, name, value });
+            Ok(1)
+        })?;
+        linker.func_wrap("bayleaf", "message_is", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+            let name = read_guest(&caller, ptr, len, 4096).map_err(|m| fault(&mut caller, format!("message_is: {m}")))?;
+            Ok(i32::from(caller.data().message.as_ref().is_some_and(|m| m.as_bytes() == name)))
+        })?;
+        linker.func_wrap("bayleaf", "message_name", |mut caller: Caller<'_, HostState>, out: i32, cap: i32| -> Result<i32, wasmi::Error> {
+            let Some(name) = caller.data().message.clone() else { return Ok(0) };
+            let room = usize::try_from(cap).map_err(|_| fault(&mut caller, "message_name: negative length".to_owned()))?;
+            let bytes = &name.as_bytes()[..name.len().min(room)];
+            write_guest(&mut caller, out, bytes, "message_name")?;
+            Ok(name.len() as i32)
         })?;
         Ok(())
     })();

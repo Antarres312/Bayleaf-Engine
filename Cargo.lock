@@ -520,6 +520,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bayleaf-player"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bayleaf-core",
+ "bayleaf-engine",
+ "bayleaf-ui-egui",
+ "clap",
+ "eframe",
+ "serde_json",
+]
+
+[[package]]
 name = "bayleaf-render"
 version = "0.1.0"
 dependencies = [

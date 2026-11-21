@@ -34,6 +34,12 @@ struct ScriptCard {
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
+    if editor.selected.is_some() {
+        editor.inspected_file = None;
+    } else if editor.inspected_file.is_some() {
+        crate::file_inspector::show(editor, ui);
+        return;
+    }
     let t = theme::tokens(ui);
     let Some(id) = editor.selected else {
         empty_state(ui, "Nothing selected", "Select an object in the hierarchy or click it in the scene view.");

@@ -5,7 +5,7 @@ use bayleaf_core::math::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use bayleaf_scene::Scene;
 use std::sync::Arc;
 
-use bayleaf_scene::components::{Camera, DirectionalLight, Mesh, PointLight, Projection, Shape, SpotLight, Sprite};
+use bayleaf_scene::components::{Camera, DirectionalLight, Environment, Mesh, PointLight, Projection, Shape, SpotLight, Sprite};
 
 use bayleaf_assets::{Image, MeshData};
 
@@ -207,14 +207,33 @@ impl LightItem {
     }
 }
 
+/// A sky: colours straight up, at the horizon and below it, in linear RGB.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sky {
+    pub zenith: Vec3,
+    pub horizon: Vec3,
+    pub ground: Vec3,
+}
+
+/// Ambient light and background for a scene without an environment.
+const DEFAULT_AMBIENT: Vec3 = Vec3::new(0.22, 0.24, 0.28);
+const DEFAULT_CLEAR: Vec4 = Vec4::new(0.035, 0.04, 0.05, 1.0);
+/// Ambient light from an environment's colours at strength 1.
+const ENVIRONMENT_AMBIENT: f32 = 0.5;
+
 /// Everything one frame needs, independent of the GPU.
 #[derive(Clone, Debug)]
 pub struct Frame {
     pub camera: CameraView,
     pub items: Vec<DrawItem>,
     pub lights: Vec<LightItem>,
+    /// Light from above (the sky) that every shape gets.
     pub ambient: Vec3,
+    /// Light from below (the ground).
+    pub ambient_ground: Vec3,
     pub clear_color: Vec4,
+    /// The sky drawn behind the scene, if the scene has one.
+    pub sky: Option<Sky>,
     pub show_grid: bool,
     pub selected: Option<StableId>,
     /// More selected objects, highlighted like `selected`.
@@ -244,7 +263,11 @@ pub fn extract(scene: &Scene, camera: CameraView, options: FrameOptions) -> Fram
 pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, assets: &mut dyn AssetSource) -> Frame {
     let mut items = Vec::new();
     let mut lights = Vec::new();
+    let mut environment: Option<&Environment> = None;
     for (id, world) in scene.world_matrices() {
+        if environment.is_none() {
+            environment = scene.get::<Environment>(id);
+        }
         if let Some(mesh) = scene.get::<Mesh>(id) {
             let material = if mesh.material.is_empty() { None } else { assets.material(&mesh.material) };
             items.push(DrawItem {
@@ -310,16 +333,62 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
     if lights.is_empty() {
         lights.push(FALLBACK_LIGHT);
     }
+    let (ambient, ambient_ground, clear_color, sky) = match environment {
+        Some(env) => environment_light(env),
+        None => (DEFAULT_AMBIENT, DEFAULT_AMBIENT * 0.35, DEFAULT_CLEAR, None),
+    };
     Frame {
         camera,
         items,
         lights,
-        ambient: Vec3::new(0.22, 0.24, 0.28),
-        clear_color: Vec4::new(0.035, 0.04, 0.05, 1.0),
+        ambient,
+        ambient_ground,
+        clear_color,
+        sky,
         show_grid: options.show_grid,
         selected: options.selected,
         highlighted: Vec::new(),
         time: options.time,
+    }
+}
+
+/// Ambient light from above and below, the background colour and the sky of an environment.
+fn environment_light(env: &Environment) -> (Vec3, Vec3, Vec4, Option<Sky>) {
+    let (zenith, horizon, ground) = (Vec3::from(env.sky_color), Vec3::from(env.horizon_color), Vec3::from(env.ground_color));
+    let strength = env.ambient * ENVIRONMENT_AMBIENT;
+    let sky = env.show_sky.then_some(Sky { zenith, horizon, ground });
+    ((zenith + horizon) * 0.5 * strength, ground * strength, horizon.extend(1.0), sky)
+}
+
+/// A frame that shows `material` on a sphere under the default sky and a sun from the upper
+/// left, for the graph editor's preview. `textures` are its images by slot.
+pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Arc<Image>>>, aspect: f32, time: f32) -> Frame {
+    let (ambient, ambient_ground, clear_color, sky) = environment_light(&Environment::default());
+    let sun = LightItem::directional(Vec3::new(-0.5, -0.7, -0.6).normalize(), Vec3::splat(3.0), false);
+    let sphere = DrawItem {
+        object: StableId::from_u128(0),
+        shape: Shape::Sphere,
+        model: Mat4::IDENTITY,
+        color: Vec4::ONE,
+        metallic: 0.0,
+        roughness: 0.5,
+        unlit: false,
+        material: Some(material),
+        mesh: None,
+        textures,
+    };
+    Frame {
+        camera: CameraView::look_at(Vec3::new(0.0, 0.3, 1.9), Vec3::ZERO, 36.0, aspect),
+        items: vec![sphere],
+        lights: vec![sun],
+        ambient,
+        ambient_ground,
+        clear_color,
+        sky,
+        show_grid: false,
+        selected: None,
+        highlighted: Vec::new(),
+        time,
     }
 }
 

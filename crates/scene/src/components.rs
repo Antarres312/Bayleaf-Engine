@@ -238,6 +238,43 @@ impl SceneComponent for DirectionalLight {
     }
 }
 
+/// The world around the scene: a sky that fades from the horizon up to the top and down to the
+/// ground, and the soft light that sky and ground give to every shape. The first object with one,
+/// in hierarchy order, sets it for the scene.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Environment {
+    /// Linear RGB straight up, each 0 to 1.
+    pub sky_color: [f32; 3],
+    /// Linear RGB at the horizon.
+    pub horizon_color: [f32; 3],
+    /// Linear RGB below the horizon.
+    pub ground_color: [f32; 3],
+    /// How strongly the sky and ground light shapes, 0 to 4.
+    pub ambient: f32,
+    /// Draw the sky behind the scene; off, the background is the horizon colour and only the light remains.
+    pub show_sky: bool,
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        Self { sky_color: [0.18, 0.36, 0.72], horizon_color: [0.62, 0.72, 0.82], ground_color: [0.22, 0.2, 0.18], ambient: 1.0, show_sky: true }
+    }
+}
+
+impl SceneComponent for Environment {
+    const NAME: &'static str = "environment";
+    const LABEL: &'static str = "Environment";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        unit_range("skyColor", &self.sky_color)?;
+        unit_range("horizonColor", &self.horizon_color)?;
+        unit_range("groundColor", &self.ground_color)?;
+        if (0.0..=4.0).contains(&self.ambient) { Ok(()) } else { Err("ambient must be between 0 and 4".to_owned()) }
+    }
+}
+
 /// Light from a point that shines in every direction and fades out by `range`, like a bulb.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

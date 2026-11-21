@@ -121,6 +121,24 @@ impl Object {
     pub fn destroy(self) -> bool {
         abi::destroy(self.0)
     }
+
+    /// Sends a message and a number to its scripts ([`Script::message`]), after this step.
+    /// False when this call already sent too many.
+    pub fn send(self, message: &str, value: f32) -> bool {
+        abi::send(self.0, message, value)
+    }
+}
+
+/// Sends a message and a number to the scripts of every object, after this step. False when
+/// this call already sent too many.
+pub fn send_to_all(message: &str, value: f32) -> bool {
+    abi::send(-1, message, value)
+}
+
+/// The name of the message being delivered (used by [`script!`]).
+#[doc(hidden)]
+pub fn message_name() -> String {
+    abi::message_name()
 }
 
 /// Places a copy of a prefab file (a path relative to the project folder) at a world position
@@ -140,6 +158,10 @@ pub trait Script: Default + Send + 'static {
     /// Runs every simulation step; `dt` is the step length in seconds.
     fn update(&mut self, dt: f32) {
         let _ = dt;
+    }
+    /// Runs when a script sends a message to this object or to every object.
+    fn message(&mut self, name: &str, value: f32) {
+        let _ = (name, value);
     }
 }
 
@@ -173,6 +195,13 @@ macro_rules! script {
             let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
             let script = state.get_or_insert_with(<$ty as ::core::default::Default>::default);
             $crate::Script::update(script, dt);
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn bayleaf_message(value: f32) {
+            let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
+            let script = state.get_or_insert_with(<$ty as ::core::default::Default>::default);
+            $crate::Script::message(script, &$crate::message_name(), value);
         }
     };
 }

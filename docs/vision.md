@@ -78,12 +78,15 @@ No crate below L6 may use egui, eframe, winit or rfd.
    windowed inverse-square falloff), shadows from the first directional light (one shadow map fitted to
    the scene, 3x3 filtering), a camera preview in the scene view, and a grid that never flickers with
    surfaces on the ground. Scene format version 4. Still open: textures and sprite images (wait for the
-   asset pipeline), environment lighting, shadows from point and spot lights, cascaded shadows for
+   asset pipeline), shadows from point and spot lights, cascaded shadows for
    large worlds.
    Added later: PNG images on sprites and in materials (Image and Texture Coordinates nodes, up to 4
    images per material), glTF 2.0 models on meshes (`.glb`, or `.gltf` with its buffers beside it),
    read by `bayleaf-assets` with size limits. Scene format version 5. Still open: JPEG and other image
    formats, mipmaps, model materials and textures from the glTF file, skinned and animated models.
+   Added later: an Environment component (sky colours above, at and below the horizon, and the light
+   they give to shapes from above and below; scene format version 6). Still open: image-based
+   lighting and reflections, fog.
 4. **M3 Scripts (done, 2026-11-21):** WASM host on wasmi (fuel and memory limits, faults isolated per
    script), ABI v1 (`docs/script-abi.md`), Rust SDK (`crates/script-sdk`), example scripts (`scripts/`,
    built by `cargo xtask scripts`), hot reload, play mode (`play.start/stop/pause/step/input/status`)
@@ -92,13 +95,18 @@ No crate below L6 may use egui, eframe, winit or rfd.
    its module; scripts declare properties with defaults (`bayleaf_describe`), and scenes store only
    overrides (scene format version 2; version 1 files are migrated on load).
    Added later: the mouse, other objects (find, read and set their transforms), and spawning prefabs
-   and destroying objects, in the ABI, the Rust SDK and visual scripts. Still open: gamepads, physics
-   queries, messages between scripts.
+   and destroying objects, in the ABI, the Rust SDK and visual scripts; messages between scripts
+   (`send`, delivered after the step to one object or every object). Still open: gamepads, physics
+   queries.
    Scripts in Rust can be made from the Project panel (`script.new`: a crate from a template, its own
    workspace) and built to WebAssembly there or with `script.build` (the editor builds in the
    background; agents may not start builds, as build code could reach any file). New files are named
    in place before anything is written; Escape cancels. `cargo xtask licences` checks dependency
    licences and writes NOTICE.
+   The Inspector shows a file clicked in the Project panel: what it is and holds (`asset.info`: image
+   size, model vertices, scene objects, graph nodes and problems, script properties), an image
+   preview, the start of a text file, and the action that fits it. `bayleaf-player` runs a project's
+   game in a window of its own, from its first camera, with no editor around it.
 5. **M4 Automation (done, 2026-11-21):** confined file access for agents (`--automation-read-root`,
    `--automation-write-root`, AA 18), `bayleaf-cli mcp` (MCP over stdio, one tool per command), and an
    editor control channel (`bayleaf --control`, loopback with a token) that the MCP server can bridge to.
@@ -108,8 +116,12 @@ No crate below L6 may use egui, eframe, winit or rfd.
    to WGSL (`.bmaterial`, picked per mesh, live preview while editing, animated with Time); visual
    scripts that compile to WebAssembly with the script ABI (`.bscript`, with properties, branching
    and keys); `graph.*` commands sharing the undo history. Scene format version 3 (`mesh.material`).
-   See `docs/graphs.md`. Still open: textures in materials, variables and events beyond start and
-   update in visual scripts, comments and groups on the canvas, copy and paste of nodes.
+   See `docs/graphs.md`.
+   Added later: selecting several nodes (Ctrl + click), copy, cut, paste and duplicate of nodes with
+   the links between them (`graph.node.copy/paste/duplicate`), and zoom keys (Ctrl + Plus, Minus, 0);
+   images in materials; comment boxes on the canvas (`graph.comment.*`) that move the nodes inside;
+   a material preview on a sphere; variables and On Message / Send Message in visual scripts.
+   Still open: other variable types than numbers, events beyond start, update and messages.
 7. **M6 Gameplay framework** as opt-in modules.
 8. **M7 Streaming** (optional crate), physics and audio integrations.
 

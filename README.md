@@ -19,6 +19,7 @@ cargo xtask scripts                                 # build the example scripts 
 cargo run -p bayleaf -- examples/demo/demo.bscene   # editor with the demo; Play, then WASD/Space
 cargo run -p bayleaf          # editor
 cargo run -p bayleaf -- path/to/Game.bproject   # editor with a project; File > New Project makes one
+cargo run -p bayleaf-player -- path/to/Game.bproject   # play the game in its own window (F11: full screen)
 cargo run -p bayleaf-cli -- commands
 cargo xtask layers
 ```

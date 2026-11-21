@@ -175,10 +175,10 @@ fn project_info(session: &mut Session, params: &Value) -> Result<Value, CommandE
     Ok(json!({ "path": dir, "name": project.name, "mainScene": project.main_scene }))
 }
 
-/// The starting scene: a camera, a light, a checkered ground and a spinning cube.
+/// The starting scene: a camera, the sun and sky, a checkered ground and a spinning cube.
 const MAIN_SCENE: &str = r#"{
   "format": "bayleaf.scene",
-  "version": 3,
+  "version": 6,
   "objects": [
     {
       "id": "0b1f6e3a8c2d4e5f9a7b6c5d4e3f2a10",
@@ -195,6 +195,7 @@ const MAIN_SCENE: &str = r#"{
       "components": {
         "name": "Sun",
         "directionalLight": { "color": [1.0, 0.96, 0.9], "intensity": 3.0 },
+        "environment": { "skyColor": [0.18, 0.36, 0.72], "horizonColor": [0.62, 0.72, 0.82], "groundColor": [0.22, 0.2, 0.18], "ambient": 1.0, "showSky": true },
         "transform": { "position": [0.0, 5.0, 0.0], "rotation": [-50.0, 30.0, 0.0], "scale": [1.0, 1.0, 1.0] }
       }
     },

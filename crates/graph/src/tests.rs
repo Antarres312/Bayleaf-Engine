@@ -138,3 +138,24 @@ fn files_round_trip_and_broken_files_are_refused() {
     assert!(Graph::from_json(&value.to_string(), &CATALOG).is_err());
     assert!(Graph::from_json("{", &CATALOG).is_err());
 }
+
+#[test]
+fn comments_keep_their_limits_and_survive_a_file_round_trip() {
+    let mut graph = Graph::empty(&CATALOG);
+    let id = graph.add_comment("Movement", [10.0, 20.0], [1.0, 1.0]).unwrap();
+    let small = graph.comment(id).unwrap().size;
+    assert!(small[0] >= MIN_COMMENT_SIZE[0] && small[1] >= MIN_COMMENT_SIZE[1], "a tiny box grows to the smallest size");
+    let long = "x".repeat(MAX_COMMENT_TEXT + 1);
+    assert!(graph.edit_comment(id, Some(&long), None, None).is_err());
+    assert!(graph.edit_comment(id, None, Some([f32::NAN, 0.0]), None).is_err());
+    assert_eq!(graph.comment(id).unwrap().text, "Movement", "a refused edit changes nothing");
+    graph.edit_comment(id, Some("Jumping"), Some([5.0, 5.0]), None).unwrap();
+
+    let loaded = Graph::from_json(&graph.to_json(), &CATALOG).unwrap();
+    assert_eq!(loaded.comments, graph.comments);
+    let mut bad: serde_json::Value = serde_json::from_str(&graph.to_json()).unwrap();
+    bad["comments"][0]["size"] = json!([1.0, 1.0]);
+    assert!(Graph::from_json(&bad.to_string(), &CATALOG).is_err(), "a file with a box below the smallest size is refused");
+    graph.remove_comment(id).unwrap();
+    assert!(graph.remove_comment(id).is_err());
+}

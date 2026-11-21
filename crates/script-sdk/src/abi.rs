@@ -21,6 +21,8 @@ mod raw {
         pub fn transform_set_of(handle: i32, ptr: *const f32);
         pub fn spawn(path_ptr: *const u8, path_len: usize, x: f32, y: f32, z: f32) -> i32;
         pub fn destroy(handle: i32) -> i32;
+        pub fn send(handle: i32, name_ptr: *const u8, name_len: usize, value: f32) -> i32;
+        pub fn message_name(out: *mut u8, cap: usize) -> i32;
     }
 }
 
@@ -63,6 +65,12 @@ mod raw {
         0
     }
     pub unsafe fn destroy(_: i32) -> i32 {
+        0
+    }
+    pub unsafe fn send(_: i32, _: *const u8, _: usize, _: f32) -> i32 {
+        0
+    }
+    pub unsafe fn message_name(_: *mut u8, _: usize) -> i32 {
         0
     }
 }
@@ -141,4 +149,18 @@ pub(crate) fn spawn(prefab: &str, position: [f32; 3]) -> bool {
 pub(crate) fn destroy(handle: i32) -> bool {
     // SAFETY: a plain number in and out.
     unsafe { raw::destroy(handle) != 0 }
+}
+
+pub(crate) fn send(handle: i32, name: &str, value: f32) -> bool {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::send(handle, name.as_ptr(), name.len(), value) != 0 }
+}
+
+/// The name of the message being delivered, or an empty string outside `bayleaf_message`.
+pub(crate) fn message_name() -> String {
+    let mut buffer = [0u8; 64];
+    // SAFETY: `buffer` is 64 writable bytes and the host writes at most `cap` of them.
+    let len = unsafe { raw::message_name(buffer.as_mut_ptr(), buffer.len()) };
+    let len = usize::try_from(len).unwrap_or(0).min(buffer.len());
+    String::from_utf8_lossy(&buffer[..len]).into_owned()
 }

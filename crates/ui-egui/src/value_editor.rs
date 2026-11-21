@@ -206,9 +206,9 @@ fn choose(ui: &mut egui::Ui, current: &mut String, choices: &[&str], salt: &str,
     Outcome { changed, ended: changed }
 }
 
-/// A field named `color` with 3 or 4 numbers between 0 and 1 (linear RGB or RGBA).
+/// A field named `color` or `…Color` with 3 or 4 numbers between 0 and 1 (linear RGB or RGBA).
 fn is_color(key: &str, value: &Value) -> bool {
-    key == "color"
+    (key == "color" || key.ends_with("Color"))
         && matches!(value, Value::Array(items) if (3..=4).contains(&items.len()) && items.iter().all(|v| v.as_f64().is_some_and(|x| (0.0..=1.0).contains(&x))))
 }
 

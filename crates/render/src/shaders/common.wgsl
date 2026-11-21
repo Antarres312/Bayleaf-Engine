@@ -25,6 +25,14 @@ struct Globals {
     // x: index of the light that casts shadows, or -1; y: depth bias; z: one shadow-map texel in uv;
     // w: how far to push points out along their normal before the test, in world units
     shadow: vec4<f32>,
+    // rgb: ambient light from below
+    ambient_ground: vec4<f32>,
+    // Clip space back to the world, for the sky's view directions.
+    inv_view_proj: mat4x4<f32>,
+    // Sky colours (rgb) straight up, at the horizon and below it.
+    sky_zenith: vec4<f32>,
+    sky_horizon: vec4<f32>,
+    sky_ground: vec4<f32>,
     lights: array<Light, MAX_LIGHTS>,
 };
 

@@ -60,7 +60,11 @@ fn has_graph(session: &Session) -> Result<(), String> {
 
 fn spec(id: &'static str, label: &'static str, params: &'static str, mutates: Mutates, run: crate::RunFn) -> CommandSpec {
     let enabled: crate::EnabledFn =
-        if id.starts_with("graph.node.") || id.starts_with("graph.link.") || matches!(id, "graph.save" | "graph.close") { has_graph } else { always };
+        if id.starts_with("graph.node.") || id.starts_with("graph.link.") || id.starts_with("graph.comment.") || matches!(id, "graph.save" | "graph.close") {
+            has_graph
+        } else {
+            always
+        };
     CommandSpec { id, label, menu: "", shortcut: "", params, prompt: Prompt::None, mutates, enabled, run }
 }
 
@@ -76,9 +80,85 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec("graph.node.remove", "Remove Node", "{node}", Mutates::Graph, node_remove),
         spec("graph.node.move", "Move Node", "{node, position: [x, y]}", Mutates::Graph, node_move),
         spec("graph.node.set", "Set Node Value", "{node, name, value} (null restores the default)", Mutates::Graph, node_set),
+        spec("graph.node.copy", "Copy Nodes", "{nodes: [id]}: returns {text}, the nodes and the links between them as clipboard text", Mutates::No, node_copy),
+        spec(
+            "graph.node.paste",
+            "Paste Nodes",
+            "{text, offset?: [x, y]}: adds copies of copied nodes with new ids; returns {nodes, skipped}",
+            Mutates::Graph,
+            node_paste,
+        ),
+        spec(
+            "graph.node.duplicate",
+            "Duplicate Nodes",
+            "{nodes: [id]}: adds copies beside them, linked as the originals are to each other; returns {nodes, skipped}",
+            Mutates::Graph,
+            node_duplicate,
+        ),
         spec("graph.link.add", "Link Pins", "{from: {node, pin}, to: {node, pin}}", Mutates::Graph, link_add),
         spec("graph.link.remove", "Unlink Pin", "{node, pin}: removes every link at that pin", Mutates::Graph, link_remove),
+        spec(
+            "graph.comment.add",
+            "Add Comment",
+            "{position: [x, y], size?: [w, h], text?}: a box behind nodes, with a note; returns {comment}",
+            Mutates::Graph,
+            comment_add,
+        ),
+        spec("graph.comment.set", "Edit Comment", "{comment, text?, position?, size?}", Mutates::Graph, comment_set),
+        spec("graph.comment.remove", "Remove Comment", "{comment}: the nodes in it stay", Mutates::Graph, comment_remove),
     ]
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommentAddParams {
+    position: [f32; 2],
+    #[serde(default)]
+    size: Option<[f32; 2]>,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+fn comment_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: CommentAddParams = parse(params)?;
+    let (graph, _) = open(session)?;
+    let id = graph.add_comment(p.text.as_deref().unwrap_or("Comment"), p.position, p.size.unwrap_or(bayleaf_graph::COMMENT_SIZE)).map_err(failed)?;
+    Ok(json!({ "comment": id }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommentSetParams {
+    comment: u32,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    position: Option<[f32; 2]>,
+    #[serde(default)]
+    size: Option<[f32; 2]>,
+}
+
+fn comment_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: CommentSetParams = parse(params)?;
+    if p.text.is_none() && p.position.is_none() && p.size.is_none() {
+        return Err(CommandError::BadParams("give text, position or size".to_owned()));
+    }
+    let (graph, _) = open(session)?;
+    graph.edit_comment(p.comment, p.text.as_deref(), p.position, p.size).map_err(failed)?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommentParams {
+    comment: u32,
+}
+
+fn comment_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: CommentParams = parse(params)?;
+    let (graph, _) = open(session)?;
+    graph.remove_comment(p.comment).map_err(failed)?;
+    Ok(json!({}))
 }
 
 #[derive(Deserialize)]
@@ -259,4 +339,61 @@ fn link_remove(session: &mut Session, params: &Value) -> Result<Value, CommandEr
         0 => Err(CommandError::Failed(format!("node {} pin \"{}\" has no links", p.node, p.pin))),
         removed => Ok(json!({ "removed": removed })),
     }
+}
+
+/// Where pasted and duplicated nodes go, from the originals: down and to the right.
+const DUPLICATE_OFFSET: [f32; 2] = [40.0, 40.0];
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NodesParams {
+    nodes: Vec<u32>,
+}
+
+/// The ids in `ids` that are not nodes of `graph`, refused so a typo does not copy nothing quietly.
+fn known(graph: &Graph, ids: &[u32]) -> Result<(), CommandError> {
+    match ids.iter().find(|id| graph.node(**id).is_none()) {
+        Some(id) => Err(CommandError::Failed(format!("there is no node {id}"))),
+        None if ids.is_empty() => Err(CommandError::BadParams("name at least one node".to_owned())),
+        None => Ok(()),
+    }
+}
+
+fn node_copy(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: NodesParams = parse(params)?;
+    let (graph, _) = open(session)?;
+    known(graph, &p.nodes)?;
+    let text = serde_json::to_string(&graph.copy(&p.nodes)).map_err(|e| CommandError::Failed(e.to_string()))?;
+    Ok(json!({ "text": text }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PasteParams {
+    text: String,
+    #[serde(default)]
+    offset: Option<[f32; 2]>,
+}
+
+fn node_paste(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: PasteParams = parse(params)?;
+    let fragment: bayleaf_graph::Fragment = serde_json::from_str(&p.text).map_err(|e| CommandError::BadParams(format!("the text is not copied nodes: {e}")))?;
+    let (graph, catalog) = open(session)?;
+    let pasted = graph.paste(catalog, &fragment, p.offset.unwrap_or(DUPLICATE_OFFSET)).map_err(failed)?;
+    if pasted.ids.is_empty() {
+        return Err(CommandError::Failed(format!("nothing to paste: a graph has only one {}", pasted.skipped.join(", "))));
+    }
+    Ok(json!({ "nodes": pasted.ids, "skipped": pasted.skipped }))
+}
+
+fn node_duplicate(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: NodesParams = parse(params)?;
+    let (graph, catalog) = open(session)?;
+    known(graph, &p.nodes)?;
+    let fragment = graph.copy(&p.nodes);
+    let pasted = graph.paste(catalog, &fragment, DUPLICATE_OFFSET).map_err(failed)?;
+    if pasted.ids.is_empty() {
+        return Err(CommandError::Failed(format!("nothing to duplicate: a graph has only one {}", pasted.skipped.join(", "))));
+    }
+    Ok(json!({ "nodes": pasted.ids, "skipped": pasted.skipped }))
 }

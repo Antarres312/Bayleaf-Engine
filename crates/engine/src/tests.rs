@@ -634,3 +634,70 @@ fn a_new_rust_script_builds_to_a_module_that_runs() {
     assert!(registry.execute(&mut session, "script.build", &json!({"path": "scripts/turn_table"})).unwrap_err().to_string().contains("agents may not"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn file_info_describes_project_files_and_stays_inside_the_roots() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-file-info-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let info = |session: &mut Session, path: &str| registry.execute(session, "asset.info", &json!({ "path": path })).unwrap();
+    let row = |info: &Value, label: &str| info["rows"].as_array().unwrap().iter().find(|r| r[0] == label).map(|r| r[1].as_str().unwrap().to_owned());
+
+    let scene = info(&mut session, "scenes/main.bscene");
+    assert_eq!(scene["kind"], "Scene");
+    assert_eq!(row(&scene, "Objects").as_deref(), Some("4"));
+    let script = info(&mut session, "scripts/spin.bscript");
+    assert_eq!(script["kind"], "Visual Script");
+    assert!(script["problems"].as_array().unwrap().is_empty(), "{script}");
+    assert!(row(&script, "Properties").unwrap().contains("speed"), "the declared property is listed");
+
+    // A long text file is cut, and never inside a character.
+    let long = "ż".repeat(crate::asset_info::TEXT_PREVIEW_BYTES);
+    std::fs::write(dir.join("notes.txt"), &long).unwrap();
+    let text = info(&mut session, "notes.txt")["text"].as_str().unwrap().to_owned();
+    assert!(text.len() < long.len() && text.ends_with('…'));
+
+    let broken = info(&mut session, "missing.png");
+    assert!(!broken["problems"].as_array().unwrap().is_empty());
+
+    let inside = dir.join("scenes");
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&inside), std::slice::from_ref(&inside)).unwrap()));
+    assert!(registry.execute(&mut session, "asset.info", &json!({"path": dir.join("README.md")})).is_err(), "outside the read roots");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn copied_nodes_paste_with_new_ids_and_their_links_and_one_of_a_kind_nodes_stay_single() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "graph.new", &json!({"domain": "material"})).unwrap();
+    let output = u64::from(session.graph().unwrap().graph.nodes[0].id);
+    let color = node(&registry, &mut session, "color");
+    let blend = node(&registry, &mut session, "blend");
+    registry.execute(&mut session, "graph.node.set", &json!({"node": color, "name": "color", "value": [0.1, 0.2, 0.3]})).unwrap();
+    registry.execute(&mut session, "graph.link.add", &pins(color, "color", blend, "a")).unwrap();
+    registry.execute(&mut session, "graph.link.add", &pins(blend, "result", output, "baseColor")).unwrap();
+
+    let text = registry.execute(&mut session, "graph.node.copy", &json!({"nodes": [color, blend, output]})).unwrap()["text"].as_str().unwrap().to_owned();
+    let pasted = registry.execute(&mut session, "graph.node.paste", &json!({"text": text})).unwrap();
+    assert_eq!(pasted["skipped"], json!(["Material Output"]), "the output node may appear once");
+    let new: Vec<u32> = pasted["nodes"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
+    let graph = &session.graph().unwrap().graph;
+    assert_eq!(graph.nodes.len(), 5);
+    assert!(new.iter().all(|id| ![color, blend, output].contains(&u64::from(*id))), "copies get new ids");
+    assert!(graph.links.iter().any(|l| l.from.node == new[0] && l.to.node == new[1]), "the link between the copies is copied");
+    assert_eq!(graph.links.iter().filter(|l| l.to.node == output as u32).count(), 1, "links to nodes left out are not");
+    assert_eq!(graph.value(new[0], "color"), graph.value(color as u32, "color"), "values come along");
+
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert_eq!(session.graph().unwrap().graph.nodes.len(), 3, "a paste is one undo step");
+    let duplicated = registry.execute(&mut session, "graph.node.duplicate", &json!({"nodes": [blend]})).unwrap();
+    assert_eq!(duplicated["nodes"].as_array().unwrap().len(), 1);
+    assert!(registry.execute(&mut session, "graph.node.duplicate", &json!({"nodes": [output]})).is_err(), "nothing to duplicate");
+
+    registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
+    let refused = registry.execute(&mut session, "graph.node.paste", &json!({"text": text})).unwrap_err();
+    assert!(refused.to_string().contains("material nodes"), "{refused}");
+}

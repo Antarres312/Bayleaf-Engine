@@ -15,5 +15,8 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Graph, Material, Visual Script, Material Output, Edge Glow, Key Held, Step Seconds | not yet | Not checked yet | Graph editor and node names; same |
 | New Project, Open Project, Duplicate, Cut, Copy, Paste, Move, Rotate, Scale, Engine, Project | not yet | Not checked yet | Generic editor terms; same |
 | Prefab, Save as Prefab, Place in Scene, Apply, Revert, Unlink, Point Light, Spot Light, Camera preview | not yet | Not checked yet | Generic editor terms; same |
+| Environment, Sky Color, Horizon Color, Ground Color, Ambient, Show Sky | not yet | Not checked yet | Generic graphics terms; same |
+| Bayleaf Player, File Info, Fit All, Copy Nodes, Paste Nodes, Duplicate Nodes | not yet | Not checked yet | Generic terms; the player is named after the engine; same |
+| Comment, Add Comment, Edit Comment, Preview, On Message, Send Message, Variable, Set Variable | not yet | Not checked yet | Graph editor and node names; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

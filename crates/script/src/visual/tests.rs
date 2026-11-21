@@ -203,6 +203,15 @@ fn every_node_kind_compiles_and_runs() {
     b.link(pointer, "position", spawn, "position");
     let destroy = b.node("destroySelf", json!({}));
     b.link(spawn, "then", destroy, "run");
+    // Variables and messages: On Message keeps the value; a send happens behind the false branch.
+    let on_message = b.node("message", json!({ "message": "ping" }));
+    let keep = b.node("setVariable", json!({ "name": "pings" }));
+    b.link(on_message, "then", keep, "run");
+    b.link(on_message, "value", keep, "value");
+    let read = b.node("variable", json!({ "name": "pings" }));
+    let send = b.node("sendMessage", json!({ "message": "ping", "object": "Scripted" }));
+    b.link(destroy, "then", send, "run");
+    b.link(read, "value", send, "value");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -210,6 +219,51 @@ fn every_node_kind_compiles_and_runs() {
     host.update(&mut scene, 0.1, 1.0, &Arc::new(Input::default()));
     assert!(host.take_faults().is_empty());
     assert_eq!(host.take_logs()[0].text, "Hello 0");
+}
+
+/// Two objects: "Sender" sends `ping` with its counter to "Receiver" on each step, and "Receiver"
+/// moves to the number it gets.
+#[test]
+fn messages_reach_the_named_object_after_the_step_and_variables_keep_numbers() {
+    let mut sender = Builder::new();
+    let update = sender.node("update", json!({}));
+    let count = sender.node("variable", json!({ "name": "count" }));
+    let plus = sender.node("add", json!({ "b": 1.0 }));
+    sender.link(count, "value", plus, "a");
+    let keep = sender.node("setVariable", json!({ "name": "count" }));
+    sender.link(update, "then", keep, "run");
+    sender.link(plus, "result", keep, "value");
+    let send = sender.node("sendMessage", json!({ "message": "ping", "object": "Receiver" }));
+    sender.link(keep, "then", send, "run");
+    let again = sender.node("variable", json!({ "name": "count" }));
+    sender.link(again, "value", send, "value");
+
+    let mut receiver = Builder::new();
+    let on_ping = receiver.node("message", json!({ "message": "ping" }));
+    let to = receiver.node("vector", json!({}));
+    receiver.link(on_ping, "value", to, "x");
+    let place = receiver.node("setPosition", json!({}));
+    receiver.link(on_ping, "then", place, "run");
+    receiver.link(to, "vector", place, "position");
+    let on_other = receiver.node("message", json!({ "message": "other" }));
+    let log = receiver.node("log", json!({ "message": "other" }));
+    receiver.link(on_other, "then", log, "run");
+
+    let mut scene = Scene::new();
+    let a = scene.create_object(None, "Sender").unwrap();
+    let b = scene.create_object(None, "Receiver").unwrap();
+    let script = ScriptRef { module: "x.bscript".into(), properties: BTreeMap::new() };
+    let input = Arc::new(Input::default());
+    let mut host = ScriptHost::new();
+    host.load_bytes(a, 0, Path::new("sender.bscript"), None, &sender.bytes(), &script, &mut scene, 0.0, &input).unwrap();
+    host.load_bytes(b, 0, Path::new("receiver.bscript"), None, &receiver.bytes(), &script, &mut scene, 0.0, &input).unwrap();
+    for _ in 0..3 {
+        host.update(&mut scene, 0.1, 0.0, &input);
+    }
+    assert!(host.take_faults().is_empty());
+    assert_eq!(transform(&scene, b).position[0], 3.0, "the third ping carries the counter 3");
+    assert_eq!(transform(&scene, a).position[0], 0.0, "the sender did not get its own message");
+    assert!(host.take_logs().is_empty(), "On Message runs only for its own name");
 }
 
 #[test]

@@ -559,3 +559,125 @@ fn escape_cancels_a_new_file_and_bad_names_are_refused_with_a_reason() {
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn clicking_a_file_shows_it_in_the_inspector_until_an_object_is_selected() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-file-card-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("notes.md"), "Remember the lighthouse.\n").unwrap();
+    let mut harness = harness();
+    harness.state_mut().dispatch("scene.saveAs", &json!({ "path": dir.join("s.bscene") }), None);
+    harness.run();
+    create_named(&mut harness, "Keeper");
+    assert!(harness.query_by_label("Transform").is_some(), "the object's components show first");
+
+    harness.get_by_label("notes.md, File").click();
+    harness.run();
+    assert!(harness.state().selected.is_none(), "a clicked file takes the Inspector from the objects");
+    assert!(harness.query_by_label_contains("Remember the lighthouse").is_some(), "the start of a text file is shown");
+    assert!(harness.query_by_label("Transform").is_none());
+
+    harness.get_by_label("Keeper").click();
+    harness.run();
+    assert!(harness.query_by_label("Transform").is_some(), "selecting an object shows it again");
+    assert!(harness.query_by_label_contains("Remember the lighthouse").is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn graph_nodes_copy_paste_and_duplicate_with_their_links_and_ctrl_click_selects_several() {
+    let mut harness = graph_harness("script");
+    let editor = harness.state_mut();
+    let log = editor.dispatch("graph.node.add", &json!({ "kind": "log", "position": [300, 40] }), None).unwrap()["node"].as_u64().unwrap();
+    editor.dispatch("graph.link.add", &json!({ "from": { "node": 1, "pin": "then" }, "to": { "node": log, "pin": "run" } }), None);
+    harness.run();
+    let count = graph(&harness).nodes.len();
+
+    // Ctrl+D on a focused node adds a copy beside it.
+    harness.get_by_label_contains(&format!("Log node {log}")).focus();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::D);
+    harness.run();
+    assert_eq!(graph(&harness).nodes.len(), count + 1);
+    assert_eq!(harness.state().session.scene().object_count(), 0, "Ctrl+D did not duplicate scene objects");
+
+    // Ctrl + click adds the Log node to the selection; copying both keeps the link between them.
+    harness.get_by_label_contains("On Start node 1").click();
+    harness.run();
+    harness.get_by_label_contains(&format!("Log node {log}")).click_modifiers(egui::Modifiers::COMMAND);
+    harness.run();
+    harness.get_by_label_contains("On Start node 1").focus();
+    harness.run();
+    harness.event(egui::Event::Copy);
+    harness.run();
+    let text = harness.state().clipboard.clone().unwrap();
+    assert!(text.contains(bayleaf_engine::graph::FRAGMENT_FORMAT), "{text}");
+    harness.event(egui::Event::Paste(text));
+    harness.run();
+    let pasted = graph(&harness);
+    assert_eq!(pasted.nodes.len(), count + 3, "both copied nodes are added");
+    assert_eq!(pasted.links.len(), 2, "with a link between the copies");
+}
+
+#[test]
+fn ctrl_plus_and_minus_zoom_the_graph_and_not_the_whole_editor() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label_contains("On Start node 1").focus();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Minus);
+    harness.run();
+    let out: f32 = harness.state().status.trim_start_matches("Graph zoom ").trim_end_matches('%').parse().unwrap();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Equals);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Equals);
+    harness.run();
+    let r#in: f32 = harness.state().status.trim_start_matches("Graph zoom ").trim_end_matches('%').parse().unwrap();
+    assert!(r#in > out, "{out}% then {in}%");
+    assert_eq!(harness.ctx.zoom_factor(), 1.0, "the editor's own scale is unchanged");
+}
+
+#[test]
+fn a_comment_wraps_the_selected_nodes_takes_typed_text_and_moves_them_by_keyboard() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label_contains("On Start node 1").click();
+    harness.run();
+    harness.get_by_label("Add Comment").click();
+    harness.run();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.get_by_label("Comment text").type_text("Movement");
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    let before = graph(&harness);
+    assert_eq!(before.comments.len(), 1);
+    assert_eq!(before.comments[0].text, "Movement");
+    let (comment, start) = (&before.comments[0], before.node(1).unwrap());
+    assert!(comment.position[0] < start.position[0] && comment.position[1] < start.position[1], "the box is around the node");
+
+    harness.get_by_label("Comment: Movement").focus();
+    harness.run();
+    harness.key_press(egui::Key::ArrowRight);
+    harness.run();
+    let after = graph(&harness);
+    assert!(after.comments[0].position[0] > comment.position[0], "the box moved");
+    assert!(after.node(1).unwrap().position[0] > start.position[0], "and the node inside moved with it");
+    assert!(after.node(2).unwrap().position == before.node(2).unwrap().position, "a node outside stayed");
+
+    harness.key_press(egui::Key::Delete);
+    harness.run();
+    let removed = graph(&harness);
+    assert!(removed.comments.is_empty());
+    assert_eq!(removed.nodes.len(), before.nodes.len(), "removing a comment keeps its nodes");
+}
+
+#[test]
+fn a_material_graph_shows_a_preview_that_can_be_hidden() {
+    let mut harness = graph_harness("material");
+    assert!(harness.query_by_label_contains("Material preview").is_some());
+    harness.get_by_label("Hide material preview").click();
+    harness.run();
+    assert!(harness.query_by_label_contains("Material preview").is_none());
+    harness.get_by_label("Show Preview").click();
+    harness.run();
+    assert!(harness.query_by_label_contains("Material preview").is_some());
+}

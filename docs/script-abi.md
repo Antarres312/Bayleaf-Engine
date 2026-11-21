@@ -14,6 +14,7 @@ so module-level state belongs to that one script slot. Any language that compile
 | `bayleaf_abi` | `() -> i32` | yes | at load; must return `1` |
 | `bayleaf_start` | `() -> ()` | no | once, when play mode starts or after a hot reload |
 | `bayleaf_update` | `(dt: f32) -> ()` | no | every simulation step; `dt` is in seconds |
+| `bayleaf_message` | `(value: f32) -> ()` | no | for each message sent to this object or to every object, after the step; `message_name` or `message_is` tell which |
 | `bayleaf_describe` | `() -> i64` | no | when the editor or play mode loads the module; returns `(ptr << 32) \| len` of UTF-8 JSON `{"properties": [["speed", 90.0], ...]}`: the properties the editor shows, with defaults, at most 64 KiB |
 
 ## Imports (module `bayleaf`, the host provides)
@@ -34,6 +35,17 @@ so module-level state belongs to that one script slot. Any language that compile
 | `transform_set_of` | `(handle: i32, ptr: i32)` | like `transform_set`, for any object; applied when the call ends |
 | `spawn` | `(path_ptr: i32, path_len: i32, x: f32, y: f32, z: f32) -> i32` | asks for a copy of a `.bprefab` file (relative to the project folder) at a world position, after the step; `1` when asked, `0` when this call already asked 64 times |
 | `destroy` | `(handle: i32) -> i32` | asks to delete the object and its children after the step; `1` or `0` as for `spawn` |
+| `send` | `(handle: i32, name_ptr: i32, name_len: i32, value: f32) -> i32` | sends a message (a name of 1 to 64 bytes and a finite number) to the scripts of the object, or of every object when `handle` is `-1`; `1` when sent, `0` when this call already sent 64 |
+| `message_is` | `(name_ptr: i32, name_len: i32) -> i32` | during `bayleaf_message`, `1` when the message has this name, else `0` |
+| `message_name` | `(out: i32, cap: i32) -> i32` | during `bayleaf_message`, writes up to `cap` bytes of the message's name and returns its full length; `0` outside it |
+
+### Messages
+
+Messages are delivered after every script's update in the step, in the order sent. Each script of
+the target object that exports `bayleaf_message` gets the call, with the same limits as any other
+call. A message sent while handling one is delivered after the next step, so scripts that answer
+each other cannot run forever. Messages sent from `bayleaf_start` arrive after the first step. The
+Rust SDK calls `Script::message(name, value)`; `Object::send` and `send_to_all` send.
 
 ### Other objects
 

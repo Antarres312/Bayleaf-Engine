@@ -9,6 +9,7 @@
 pub mod brand;
 mod console;
 mod dock;
+mod file_inspector;
 mod gizmo;
 mod graph_view;
 mod hierarchy;
@@ -67,6 +68,8 @@ pub struct Editor {
     close_confirmed: bool,
     /// Script builds running in the background: the script's name and where the result arrives.
     builds: Vec<(String, std::sync::mpsc::Receiver<Result<bayleaf_engine::code_scripts::Built, String>>)>,
+    /// The file clicked in the Project panel, shown in the Inspector while no object is selected.
+    inspected_file: Option<file_inspector::Inspected>,
 }
 
 impl Default for Editor {
@@ -95,6 +98,7 @@ impl Default for Editor {
             close_asked: false,
             close_confirmed: false,
             builds: Vec::new(),
+            inspected_file: None,
         }
     }
 }
@@ -638,19 +642,23 @@ impl Editor {
             self.renaming = Some(hierarchy::Rename { id, text: String::new(), focused: false });
         }
         // Ctrl+C, Ctrl+X and Ctrl+V arrive as clipboard events, not as keys.
-        if !graph_keys {
-            let (copy, cut, paste) = ctx.input(|i| {
-                let mut found = (false, false, None);
-                for event in &i.events {
-                    match event {
-                        egui::Event::Copy => found.0 = true,
-                        egui::Event::Cut => found.1 = true,
-                        egui::Event::Paste(text) => found.2 = Some(text.clone()),
-                        _ => {}
-                    }
+        let (copy, cut, paste) = ctx.input(|i| {
+            let mut found = (false, false, None);
+            for event in &i.events {
+                match event {
+                    egui::Event::Copy => found.0 = true,
+                    egui::Event::Cut => found.1 = true,
+                    egui::Event::Paste(text) => found.2 = Some(text.clone()),
+                    _ => {}
                 }
-                found
-            });
+            }
+            found
+        });
+        // While a graph node has focus, the clipboard keys and Ctrl+D act on the graph's nodes.
+        if graph_keys {
+            let duplicate = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::D));
+            graph_view::clipboard_keys(self, copy, cut, paste, duplicate);
+        } else {
             if copy || cut {
                 self.copy_selection(cut);
             }

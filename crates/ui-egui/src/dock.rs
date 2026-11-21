@@ -172,7 +172,7 @@ impl TabViewer for Panels<'_> {
             Panel::Inspector => inspector::show(self.editor, ui),
             Panel::Console => console::show(self.editor, ui),
             Panel::Project => project::show(self.editor, ui),
-            Panel::Graph => graph_view::show(self.editor, ui),
+            Panel::Graph => graph_view::show(self.editor, ui, self.gpu),
         }
     }
 

@@ -33,6 +33,11 @@ struct Globals {
     ambient: [f32; 4],
     light_view_proj: [[f32; 4]; 4],
     shadow: [f32; 4],
+    ambient_ground: [f32; 4],
+    inv_view_proj: [[f32; 4]; 4],
+    sky_zenith: [f32; 4],
+    sky_horizon: [f32; 4],
+    sky_ground: [f32; 4],
     lights: [LightRaw; MAX_LIGHTS],
 }
 
@@ -132,6 +137,7 @@ pub struct Renderer {
     /// Why the last refused material shader was refused.
     material_error: Option<String>,
     grid: wgpu::RenderPipeline,
+    sky: wgpu::RenderPipeline,
     meshes: Vec<(Shape, GpuMesh)>,
     instances: wgpu::Buffer,
     instance_capacity: usize,
@@ -268,6 +274,11 @@ impl Renderer {
         let mut pipelines = HashMap::new();
         pipelines.insert(0, Some((mesh_pipeline(device, &layout, &mesh_shader, false), mesh_pipeline(device, &layout, &mesh_shader, true))));
         let grid = grid_pipeline(device, &layout, &grid_shader);
+        let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("bayleaf sky shader"),
+            source: wgpu::ShaderSource::Wgsl(with_common(include_str!("shaders/sky.wgsl")).into()),
+        });
+        let sky = sky_pipeline(device, &layout, &sky_shader);
 
         let meshes = Shape::ALL
             .iter()
@@ -296,6 +307,7 @@ impl Renderer {
             pipelines,
             material_error: None,
             grid,
+            sky,
             meshes,
             instances,
             instance_capacity,
@@ -477,6 +489,10 @@ impl Renderer {
             if let Some(group) = self.texture_groups.get(&[0; 4]) {
                 pass.set_bind_group(2, group, &[]);
             }
+            if frame.sky.is_some() {
+                pass.set_pipeline(&self.sky);
+                pass.draw(0..3, 0..1);
+            }
             // Runs of opaque items that share a material, a mesh and images are drawn as one instanced call.
             let mut start = 0usize;
             while start < opaque.len() {
@@ -531,6 +547,7 @@ fn globals_for(frame: &Frame, shadow: Option<(usize, Mat4)>) -> Globals {
         };
     }
     let count = frame.lights.len().min(MAX_LIGHTS) as f32;
+    let sky = frame.sky.unwrap_or(crate::extract::Sky { zenith: Vec3::ZERO, horizon: Vec3::ZERO, ground: Vec3::ZERO });
     let (index, light_view_proj, bias, normal_offset) = match shadow {
         Some((index, matrix)) => (index as f32, matrix, shadow_bias(matrix), shadow_texel_world(matrix) * 1.5),
         None => (-1.0, Mat4::IDENTITY, 0.0, 0.0),
@@ -541,6 +558,11 @@ fn globals_for(frame: &Frame, shadow: Option<(usize, Mat4)>) -> Globals {
         ambient: frame.ambient.extend(count).to_array(),
         light_view_proj: light_view_proj.to_cols_array_2d(),
         shadow: [index, bias, 1.0 / SHADOW_SIZE as f32, normal_offset],
+        ambient_ground: frame.ambient_ground.extend(0.0).to_array(),
+        inv_view_proj: frame.camera.view_proj().inverse().to_cols_array_2d(),
+        sky_zenith: sky.zenith.extend(0.0).to_array(),
+        sky_horizon: sky.horizon.extend(0.0).to_array(),
+        sky_ground: sky.ground.extend(0.0).to_array(),
         lights,
     }
 }
@@ -824,4 +846,35 @@ fn texture_key(item: &DrawItem) -> [u64; 4] {
         *slot = image.as_ref().map_or(0, |i| i.id);
     }
     key
+}
+
+/// The sky: drawn first, behind everything, without touching the depth buffer.
+fn sky_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("bayleaf sky"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState { cull_mode: None, ..wgpu::PrimitiveState::default() },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState { count: SAMPLES, ..wgpu::MultisampleState::default() },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState { format: COLOR_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }

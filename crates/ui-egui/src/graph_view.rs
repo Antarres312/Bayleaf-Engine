@@ -2,9 +2,13 @@
 //!
 //! Every change goes through the `graph.*` commands. Mouse: drag a node's title to move it, drag
 //! from a pin to another pin to link them (or into empty space to add a linked node), right-click
-//! the canvas to add a node, drag the background to pan, Ctrl + wheel to zoom. Keyboard: Tab moves
+//! the canvas to add a node, drag the background to pan, Ctrl + wheel to zoom, Ctrl + click to select
+//! several. Keyboard: Ctrl + Plus, Minus and 0 zoom in, out and to every node; Ctrl+C, Ctrl+V and
+//! Ctrl+D copy, paste and duplicate the selected nodes; Tab moves
 //! between nodes, pins and fields; arrows move the focused node; Delete removes it; Enter on a pin
-//! starts a link and Enter on a second pin completes it (Escape cancels).
+//! starts a link and Enter on a second pin completes it (Escape cancels). Comment boxes sit behind
+//! the nodes: their title moves them with the nodes inside (arrows), Ctrl + arrows resize, Enter
+//! edits the text. A material graph shows a preview of the material on a sphere.
 
 use bayleaf_engine::graph::{Catalog, Graph, Node, NodeDef, PinDef, PinDefault, PinRef, PinType, Problem, SettingKind};
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
@@ -47,7 +51,8 @@ struct AddMenu {
 pub(crate) struct GraphView {
     /// The part of the canvas in view.
     scene_rect: Rect,
-    selected: Option<u32>,
+    /// The selected nodes; Ctrl + click adds or takes one out.
+    selected: Vec<u32>,
     /// A link being dragged with the mouse.
     drag: Option<PinPick>,
     /// A link started from the keyboard, waiting for its second pin.
@@ -59,13 +64,51 @@ pub(crate) struct GraphView {
     shown: Option<(String, Option<std::path::PathBuf>)>,
     /// A node or pin had keyboard focus last frame; plain keys (Delete, arrows) then belong to the graph.
     pub focused: bool,
+    /// A comment whose text is being typed, and the text so far.
+    editing_comment: Option<(u32, String)>,
+    /// Gives a comment's title keyboard focus next frame.
+    focus_comment: Option<u32>,
+    /// Shows the material preview in the canvas corner.
+    show_preview: bool,
+    /// The material preview's renderer, kept when another graph opens.
+    preview: Option<Preview>,
 }
 
 impl Default for GraphView {
     fn default() -> Self {
-        Self { scene_rect: Rect::NOTHING, selected: None, drag: None, picked: None, add_menu: None, focus_node: None, shown: None, focused: false }
+        Self {
+            scene_rect: Rect::NOTHING,
+            selected: Vec::new(),
+            drag: None,
+            picked: None,
+            add_menu: None,
+            focus_node: None,
+            shown: None,
+            focused: false,
+            editing_comment: None,
+            focus_comment: None,
+            show_preview: true,
+            preview: None,
+        }
     }
 }
+
+/// A material shown on a sphere, drawn on the GPU into a texture.
+struct Preview {
+    renderer: bayleaf_render::Renderer,
+    target: bayleaf_render::RenderTarget,
+    texture: egui::TextureId,
+    /// The graph last compiled, and the result (`None`: it does not compile).
+    compiled: Option<(Graph, Option<std::sync::Arc<bayleaf_render::CompiledMaterial>>)>,
+    started: std::time::Instant,
+}
+
+/// Size of the material preview, in points.
+const PREVIEW_SIZE: f32 = 160.0;
+/// Room around nodes in a comment made around them.
+const COMMENT_PADDING: f32 = 30.0;
+/// Size of a comment's corner handle.
+const COMMENT_HANDLE: f32 = 16.0;
 
 /// Height of a node of kind `def`.
 fn node_height(def: &NodeDef) -> f32 {
@@ -98,7 +141,7 @@ fn pin_color(t: &Tokens, ty: PinType) -> Color32 {
     }
 }
 
-pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
+pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgpu::RenderState>) {
     let Some(doc) = editor.session.graph().cloned() else {
         empty_state(editor, ui);
         return;
@@ -110,11 +153,13 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let mut view = std::mem::take(&mut editor.graph_view);
     let key = (doc.graph.domain.clone(), doc.path.clone());
     if view.shown.as_ref() != Some(&key) {
-        view = GraphView { shown: Some(key), ..GraphView::default() };
+        let (preview, show_preview) = (view.preview.take(), view.show_preview);
+        view = GraphView { shown: Some(key), preview, show_preview, ..GraphView::default() };
     }
-    if view.selected.is_some_and(|id| doc.graph.node(id).is_none()) {
-        view.selected = None;
+    if view.editing_comment.as_ref().is_some_and(|(id, _)| doc.graph.comment(*id).is_none()) {
+        view.editing_comment = None;
     }
+    view.selected.retain(|id| doc.graph.node(*id).is_some());
     let problems = bayleaf_engine::problems(&doc.graph);
 
     toolbar(editor, ui, &doc, catalog, &mut view);
@@ -126,11 +171,95 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             problem_strip(ui, &doc.graph, catalog, &problems, &mut view);
         },
     );
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(t.backdrop)).show(ui, |ui| {
-        canvas(editor, ui, &doc.graph, catalog, &problems, &mut view);
-    });
+    let canvas_rect = egui::CentralPanel::default()
+        .frame(egui::Frame::new().fill(t.backdrop))
+        .show(ui, |ui| {
+            canvas(editor, ui, &doc.graph, catalog, &problems, &mut view);
+        })
+        .response
+        .rect;
+    if catalog.domain == bayleaf_render::material::CATALOG.domain && view.show_preview {
+        material_preview(editor, ui, &doc.graph, gpu, &mut view, canvas_rect);
+    }
     add_menu(editor, ui.ctx(), &doc.graph, catalog, &mut view);
     editor.graph_view = view;
+}
+
+/// The open material on a sphere, in the canvas's top-right corner. It follows unsaved changes.
+fn material_preview(editor: &mut Editor, ui: &egui::Ui, graph: &Graph, gpu: Option<&egui_wgpu::RenderState>, view: &mut GraphView, canvas: Rect) {
+    let t = theme::tokens(ui);
+    let size = vec2(PREVIEW_SIZE, PREVIEW_SIZE);
+    if canvas.width() < size.x * 2.0 || canvas.height() < size.y + 40.0 {
+        return;
+    }
+    let ppp = ui.ctx().pixels_per_point();
+    let pixels = (PREVIEW_SIZE * ppp).round().max(1.0) as u32;
+    let mut texture = None;
+    let mut message = None;
+    if let Some(gpu) = gpu {
+        let preview = view.preview.get_or_insert_with(|| {
+            let target = bayleaf_render::RenderTarget::new(&gpu.device, pixels, pixels);
+            let texture = gpu.renderer.write().register_native_texture(&gpu.device, target.view(), bayleaf_render::wgpu::FilterMode::Linear);
+            Preview { renderer: bayleaf_render::Renderer::new(&gpu.device), target, texture, compiled: None, started: std::time::Instant::now() }
+        });
+        if preview.target.size() != (pixels, pixels) {
+            preview.target = bayleaf_render::RenderTarget::new(&gpu.device, pixels, pixels);
+            gpu.renderer.write().update_egui_texture_from_wgpu_texture(
+                &gpu.device,
+                preview.target.view(),
+                bayleaf_render::wgpu::FilterMode::Linear,
+                preview.texture,
+            );
+        }
+        if preview.compiled.as_ref().is_none_or(|(g, _)| g != graph) {
+            preview.compiled = Some((graph.clone(), bayleaf_render::material::compile(graph).ok().map(std::sync::Arc::new)));
+        }
+        match preview.compiled.as_ref().and_then(|(_, m)| m.clone()) {
+            Some(material) => {
+                let base = editor.session.script_dir();
+                let cache = &mut editor.scene_view.assets;
+                let textures = material.textures.iter().map(|path| cache.image(&base.join(path)).ok()).collect();
+                if material.animated {
+                    ui.ctx().request_repaint();
+                }
+                let frame = bayleaf_render::material_preview(material, textures, 1.0, preview.started.elapsed().as_secs_f32());
+                preview.renderer.render(&gpu.device, &gpu.queue, &preview.target, &frame);
+                texture = Some(preview.texture);
+            }
+            None => message = Some("Does not compile yet"),
+        }
+    } else {
+        message = Some("Needs the GPU renderer");
+    }
+    let at = pos2(canvas.right() - size.x - 10.0, canvas.top() + 10.0);
+    egui::Area::new(egui::Id::unique("graph material preview")).order(egui::Order::Middle).fixed_pos(at).show(ui.ctx(), |ui| {
+        egui::Frame::new().fill(t.panel).corner_radius(theme::CARD_RADIUS).inner_margin(4.0).show(ui, |ui| {
+            ui.set_width(size.x);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Preview").small().color(t.text_muted));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let hide = ui.add(egui::Button::new(egui::RichText::new("Hide").small()).frame(false));
+                    ui.ctx().accesskit_node_builder(hide.id, |node| node.set_label("Hide material preview"));
+                    if hide.on_hover_text("Show it again from the toolbar").clicked() {
+                        view.show_preview = false;
+                    }
+                });
+            });
+            match texture {
+                Some(texture) => {
+                    let image = ui.add(egui::Image::new(egui::load::SizedTexture::new(texture, size)).corner_radius(theme::RADIUS));
+                    image.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, "Material preview: the material on a sphere"));
+                }
+                None => {
+                    let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+                    ui.painter().rect_filled(rect, theme::RADIUS, t.surface);
+                    let text = message.unwrap_or_default();
+                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(12.0), t.text_muted);
+                    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, format!("Material preview: {text}")));
+                }
+            }
+        });
+    });
 }
 
 /// Shown when no graph is open.
@@ -191,6 +320,19 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui, doc: &bayleaf_engine::GraphDo
                         save_as(editor, catalog);
                     }
                 }
+                if ui.button("Fit All").on_hover_text("Show every node (Ctrl+0)").clicked() {
+                    // The canvas fits the view to the nodes when it has none.
+                    view.scene_rect = Rect::NOTHING;
+                }
+                if catalog.domain == bayleaf_render::material::CATALOG.domain
+                    && !view.show_preview
+                    && ui.button("Show Preview").on_hover_text("Show the material on a sphere").clicked()
+                {
+                    view.show_preview = true;
+                }
+                if ui.button("Add Comment").on_hover_text("A box with a note, around the selected nodes").clicked() {
+                    add_comment(editor, view, &doc.graph, catalog);
+                }
                 if ui.button("Add Node").clicked() {
                     let at = if view.scene_rect.is_finite() && view.scene_rect.is_positive() { view.scene_rect.center() } else { pos2(0.0, 0.0) };
                     view.add_menu =
@@ -199,6 +341,30 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui, doc: &bayleaf_engine::GraphDo
             });
         });
     });
+}
+
+/// Adds a comment around the selected nodes, or in the middle of the view, and starts typing its text.
+fn add_comment(editor: &mut Editor, view: &mut GraphView, graph: &Graph, catalog: &Catalog) {
+    let mut bounds = Rect::NOTHING;
+    for node in view.selected.iter().filter_map(|id| graph.node(*id)) {
+        if let Some(def) = catalog.get(&node.kind) {
+            bounds = bounds.union(node_rect(node, def));
+        }
+    }
+    let rect = if bounds.is_positive() {
+        let mut rect = bounds.expand(COMMENT_PADDING);
+        rect.min.y -= TITLE;
+        rect
+    } else {
+        let [w, h] = bayleaf_engine::graph::COMMENT_SIZE;
+        let center = if view.scene_rect.is_positive() { view.scene_rect.center() } else { pos2(0.0, 0.0) };
+        Rect::from_center_size(center, vec2(w, h))
+    };
+    let params = json!({ "position": [rect.min.x, rect.min.y], "size": [rect.width(), rect.height()], "text": "Comment" });
+    if let Some(id) = editor.dispatch("graph.comment.add", &params, None).and_then(|r| r["comment"].as_u64()).and_then(|v| u32::try_from(v).ok()) {
+        view.editing_comment = Some((id, "Comment".to_owned()));
+        view.focus_comment = Some(id);
+    }
 }
 
 fn save_as(editor: &mut Editor, catalog: &Catalog) {
@@ -226,7 +392,7 @@ fn problem_strip(ui: &mut egui::Ui, graph: &Graph, catalog: &Catalog, problems: 
                 let text = format!("{place}{}", problem.message);
                 if let Some(id) = problem.node {
                     if ui.link(egui::RichText::new(text).color(t.text)).on_hover_text("Show this node").clicked() {
-                        view.selected = Some(id);
+                        view.selected = vec![id];
                         view.focus_node = Some(id);
                     }
                 } else {
@@ -250,6 +416,8 @@ struct Requests {
     commands: Vec<(&'static str, Value, Option<String>)>,
     /// Ends the current edit gesture, so the next edit gets its own undo step.
     end_gesture: bool,
+    /// Copy (false) or duplicate (true) the selected nodes, from a node's menu.
+    clipboard: Option<bool>,
 }
 
 impl Requests {
@@ -279,13 +447,18 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
             view.scene_rect = view.scene_rect.translate(rect.center() - view.scene_rect.center());
         }
     }
+    zoom_keys(editor, ui, graph, catalog, view);
     view.focused = false;
     let mut hovered_pin: Option<PinPick> = None;
     let mut scene_rect = view.scene_rect;
-    let response = egui::Scene::new().zoom_range(0.25..=2.0).show(ui, &mut scene_rect, |ui| {
+    let response = egui::Scene::new().zoom_range(ZOOM_RANGE).show(ui, &mut scene_rect, |ui| {
         let to_scene = ui.ctx().layer_transform_from_global(ui.layer_id()).unwrap_or_default();
         let zoom = 1.0 / to_scene.scaling.max(1e-3);
         paint_dots(ui, t, zoom);
+        // Comments under everything, so the nodes in them stay on top.
+        for comment in &graph.comments {
+            comment_ui(ui, t, graph, catalog, comment, gesture, zoom, view, &mut requests);
+        }
         // Links under the nodes.
         for link in &graph.links {
             let ends = graph.node(link.from.node).zip(graph.node(link.to.node)).and_then(|(from, to)| {
@@ -336,7 +509,7 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
         }
     }
     if canvas_response.clicked() {
-        view.selected = None;
+        view.selected.clear();
         view.picked = None;
     }
     if canvas_response.secondary_clicked()
@@ -354,9 +527,43 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
     for (id, params, key) in requests.commands {
         editor.dispatch(id, &params, key.as_deref());
     }
+    match requests.clipboard {
+        Some(false) => copy_nodes(editor, view),
+        Some(true) => duplicate_nodes(editor, view),
+        None => {}
+    }
     if let Some(picked) = &view.picked {
         editor.status = format!("Linking from pin {}: press Enter on the pin to link to, or Escape to cancel", picked.pin.pin);
     }
+}
+
+/// Closest and farthest canvas zoom.
+const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.25..=2.0;
+/// One keyboard zoom step.
+const ZOOM_STEP: f32 = 1.25;
+
+/// Ctrl + Plus and Ctrl + Minus zoom the canvas around its centre and Ctrl + 0 shows every node,
+/// while a node has focus or the pointer is over the canvas. They are taken before egui's own
+/// keys, which would scale the whole editor.
+fn zoom_keys(editor: &mut Editor, ui: &egui::Ui, graph: &Graph, catalog: &Catalog, view: &mut GraphView) {
+    let area = ui.available_rect_before_wrap();
+    if !(view.focused || ui.rect_contains_pointer(area)) || !view.scene_rect.is_positive() {
+        return;
+    }
+    use egui::gui_zoom::kb_shortcuts::{ZOOM_IN, ZOOM_IN_SECONDARY, ZOOM_OUT, ZOOM_RESET};
+    let (zoom_in, zoom_out, reset) = ui
+        .input_mut(|i| (i.consume_shortcut(&ZOOM_IN) | i.consume_shortcut(&ZOOM_IN_SECONDARY), i.consume_shortcut(&ZOOM_OUT), i.consume_shortcut(&ZOOM_RESET)));
+    if reset {
+        view.scene_rect = fit(graph, catalog, area.size());
+    } else if zoom_in || zoom_out {
+        let current = area.width() / view.scene_rect.width();
+        let wanted = if zoom_in { current * ZOOM_STEP } else { current / ZOOM_STEP };
+        let zoom = wanted.clamp(*ZOOM_RANGE.start(), *ZOOM_RANGE.end());
+        view.scene_rect = Rect::from_center_size(view.scene_rect.center(), area.size() / zoom);
+    } else {
+        return;
+    }
+    editor.status = format!("Graph zoom {:.0}%", area.width() / view.scene_rect.width() * 100.0);
 }
 
 /// A view that shows every node, or the area around the origin for an empty graph.
@@ -406,6 +613,164 @@ fn link_pins(a: &PinPick, b: &PinPick, requests: &mut Requests) {
     requests.run("graph.link.add", json!({ "from": from, "to": to }));
 }
 
+/// One comment box: its title moves it with the nodes inside, its corner resizes it. Keyboard: Tab
+/// to the title, arrows move, Ctrl + arrows resize, Enter edits the text, Delete removes it.
+#[allow(clippy::too_many_arguments)]
+fn comment_ui(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    graph: &Graph,
+    catalog: &Catalog,
+    comment: &bayleaf_engine::graph::Comment,
+    gesture: u64,
+    zoom: f32,
+    view: &mut GraphView,
+    requests: &mut Requests,
+) {
+    let rect = Rect::from_min_size(pos2(comment.position[0], comment.position[1]), vec2(comment.size[0], comment.size[1]));
+    let painter = ui.painter().clone();
+    painter.rect_filled(rect, theme::CARD_RADIUS, t.panel);
+    let title_rect = Rect::from_min_size(rect.min, vec2(rect.width(), TITLE));
+    painter.rect_filled(title_rect, egui::CornerRadius { nw: theme::CARD_RADIUS, ne: theme::CARD_RADIUS, sw: 0, se: 0 }, t.surface_hover);
+    let id = ui.scope_id().with(("graph comment", comment.id));
+    let first_line = comment.text.lines().next().unwrap_or_default().to_owned();
+    let name = if first_line.is_empty() { "Comment".to_owned() } else { format!("Comment: {first_line}") };
+
+    // Typing the text.
+    if let Some((editing, mut text)) = view.editing_comment.clone()
+        && editing == comment.id
+    {
+        let field = title_rect.shrink2(vec2(6.0, 3.0));
+        let response = ui.put(field, egui::TextEdit::singleline(&mut text).id(id.with("text")).char_limit(bayleaf_engine::graph::MAX_COMMENT_TEXT));
+        labelled(ui, &response, "Comment text");
+        if view.focus_comment == Some(comment.id) {
+            response.request_focus();
+            view.focus_comment = None;
+        }
+        if response.lost_focus() {
+            // Enter or a click elsewhere keeps the text; Escape keeps the old one.
+            if !ui.input(|i| i.key_pressed(egui::Key::Escape)) && text != comment.text {
+                requests.run("graph.comment.set", json!({ "comment": comment.id, "text": text }));
+            }
+            view.editing_comment = None;
+            view.focus_comment = Some(comment.id);
+        } else {
+            view.editing_comment = Some((editing, text));
+        }
+        view.focused |= response.has_focus();
+        return;
+    }
+    painter.with_clip_rect(title_rect.shrink(4.0)).text(
+        pos2(title_rect.left() + 10.0, title_rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        if first_line.is_empty() { "Comment" } else { &first_line },
+        egui::FontId::proportional(14.0),
+        t.text,
+    );
+
+    let title = ui.interact(title_rect, id, Sense::click_and_drag());
+    title.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+    screen_bounds(ui, &title);
+    if view.focus_comment == Some(comment.id) {
+        title.request_focus();
+        view.focus_comment = None;
+    }
+    // The nodes inside move with the box.
+    let inside: Vec<&Node> = graph.nodes.iter().filter(|n| catalog.get(&n.kind).is_some_and(|d| rect.contains_rect(node_rect(n, d)))).collect();
+    let move_by = |delta: Vec2, requests: &mut Requests, key: Option<String>| {
+        let mut moves = vec![("graph.comment.set", json!({ "comment": comment.id, "position": [rect.min.x + delta.x, rect.min.y + delta.y] }))];
+        for node in &inside {
+            moves.push(("graph.node.move", json!({ "node": node.id, "position": [node.position[0] + delta.x, node.position[1] + delta.y] })));
+        }
+        for (command, params) in moves {
+            match &key {
+                Some(key) => requests.merge(command, params, key.clone()),
+                None => requests.run(command, params),
+            }
+        }
+    };
+    if title.dragged() {
+        let delta = title.drag_delta() * zoom;
+        if delta != Vec2::ZERO {
+            move_by(delta, requests, Some(format!("graph move {gesture}")));
+        }
+    }
+    if title.drag_stopped() {
+        requests.end_gesture = true;
+    }
+    let edit = title.double_clicked() || (title.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+    view.focused |= title.has_focus();
+    ui.memory_mut(|m| m.set_focus_lock_filter(id, egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() }));
+    if title.has_focus() {
+        let (step, resize, delete) = ui.input(|i| {
+            let mut d = Vec2::ZERO;
+            for (key, v) in [
+                (egui::Key::ArrowLeft, vec2(-1.0, 0.0)),
+                (egui::Key::ArrowRight, vec2(1.0, 0.0)),
+                (egui::Key::ArrowUp, vec2(0.0, -1.0)),
+                (egui::Key::ArrowDown, vec2(0.0, 1.0)),
+            ] {
+                if i.key_pressed(key) {
+                    d += v;
+                }
+            }
+            let amount = if i.modifiers.shift { NUDGE / 4.0 } else { NUDGE };
+            (d * amount, i.modifiers.command, i.key_pressed(egui::Key::Delete))
+        });
+        if step != Vec2::ZERO && resize {
+            requests.run("graph.comment.set", json!({ "comment": comment.id, "size": [comment.size[0] + step.x, comment.size[1] + step.y] }));
+        } else if step != Vec2::ZERO {
+            move_by(step, requests, None);
+        }
+        if delete {
+            requests.run("graph.comment.remove", json!({ "comment": comment.id }));
+        }
+        painter.rect_stroke(rect.expand(2.0), theme::CARD_RADIUS, Stroke::new(2.0, t.focus), egui::StrokeKind::Outside);
+    }
+    let mut start_editing = edit;
+    title.context_menu(|ui| {
+        if ui.add(egui::Button::new("Edit Text").shortcut_text("Enter")).clicked() {
+            start_editing = true;
+            ui.close();
+        }
+        if ui.add(egui::Button::new("Delete Comment").shortcut_text("Delete")).clicked() {
+            requests.run("graph.comment.remove", json!({ "comment": comment.id }));
+            ui.close();
+        }
+    });
+    if start_editing {
+        view.editing_comment = Some((comment.id, comment.text.clone()));
+        view.focus_comment = Some(comment.id);
+    }
+    title.on_hover_text("Drag to move it with the nodes inside; double-click to edit the text");
+
+    // The corner handle resizes the box.
+    let handle_rect = Rect::from_min_max(rect.max - vec2(COMMENT_HANDLE, COMMENT_HANDLE), rect.max);
+    let handle = ui.interact(handle_rect, id.with("size"), Sense::drag());
+    handle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Resize {name}")));
+    screen_bounds(ui, &handle);
+    let handle_color = if handle.hovered() || handle.dragged() { t.text } else { t.text_muted };
+    for k in [4.0, 8.0, 12.0] {
+        painter.line_segment([pos2(rect.max.x - k, rect.max.y - 3.0), pos2(rect.max.x - 3.0, rect.max.y - k)], Stroke::new(1.5, handle_color));
+    }
+    if handle.hovered() || handle.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+    }
+    if handle.dragged() {
+        let delta = handle.drag_delta() * zoom;
+        if delta != Vec2::ZERO {
+            requests.merge(
+                "graph.comment.set",
+                json!({ "comment": comment.id, "size": [comment.size[0] + delta.x, comment.size[1] + delta.y] }),
+                format!("graph comment size {gesture}"),
+            );
+        }
+    }
+    if handle.drag_stopped() {
+        requests.end_gesture = true;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn node_ui(
     ui: &mut egui::Ui,
@@ -422,7 +787,7 @@ fn node_ui(
     hovered_pin: &mut Option<PinPick>,
 ) {
     let rect = node_rect(node, def);
-    let selected = view.selected == Some(node.id);
+    let selected = view.selected.contains(&node.id);
     let painter = ui.painter().clone();
     painter.rect_filled(rect, theme::CARD_RADIUS, t.surface);
     let title_rect = Rect::from_min_size(rect.min, vec2(rect.width(), TITLE));
@@ -454,14 +819,26 @@ fn node_ui(
         title.request_focus();
         view.focus_node = None;
     }
-    if title.clicked() || title.drag_started() || title.gained_focus() {
-        view.selected = Some(node.id);
+    let toggle = ui.input(|i| i.modifiers.command);
+    if title.clicked() && toggle {
+        // Ctrl + click adds the node to the selection or takes it out.
+        if selected {
+            view.selected.retain(|id| *id != node.id);
+        } else {
+            view.selected.push(node.id);
+        }
+    } else if title.clicked() || ((title.drag_started() || title.gained_focus()) && !selected) {
+        view.selected = vec![node.id];
     }
     if title.dragged() {
         let delta = title.drag_delta() * zoom;
         if delta != Vec2::ZERO {
-            let position = [node.position[0] + delta.x, node.position[1] + delta.y];
-            requests.merge("graph.node.move", json!({ "node": node.id, "position": position }), format!("graph move {}", gesture));
+            // Dragging a selected node moves every selected node, as one undo step.
+            let moving = if view.selected.contains(&node.id) { view.selected.clone() } else { vec![node.id] };
+            for moved in moving.iter().filter_map(|id| graph.node(*id)) {
+                let position = [moved.position[0] + delta.x, moved.position[1] + delta.y];
+                requests.merge("graph.node.move", json!({ "node": moved.id, "position": position }), format!("graph move {}", gesture));
+            }
         }
     }
     if title.drag_stopped() {
@@ -492,14 +869,29 @@ fn node_ui(
             requests.run("graph.node.move", json!({ "node": node.id, "position": [node.position[0] + step.x, node.position[1] + step.y] }));
         }
         if delete {
-            requests.run("graph.node.remove", json!({ "node": node.id }));
+            let removing = if view.selected.contains(&node.id) { view.selected.clone() } else { vec![node.id] };
+            for id in removing {
+                requests.merge("graph.node.remove", json!({ "node": id }), format!("graph delete {gesture}"));
+            }
+            requests.end_gesture = true;
         }
         painter.rect_stroke(rect.expand(2.0), theme::CARD_RADIUS, Stroke::new(2.0, t.focus), egui::StrokeKind::Outside);
     }
     title.context_menu(|ui| {
         ui.label(egui::RichText::new(def.description).small().color(t.text_muted));
         ui.separator();
-        if ui.button("Delete Node").clicked() {
+        if !view.selected.contains(&node.id) {
+            view.selected = vec![node.id];
+        }
+        if ui.add(egui::Button::new("Copy").shortcut_text("Ctrl+C")).clicked() {
+            requests.clipboard = Some(false);
+            ui.close();
+        }
+        if ui.add(egui::Button::new("Duplicate").shortcut_text("Ctrl+D")).clicked() {
+            requests.clipboard = Some(true);
+            ui.close();
+        }
+        if ui.add(egui::Button::new("Delete Node").shortcut_text("Delete")).clicked() {
             requests.run("graph.node.remove", json!({ "node": node.id }));
             ui.close();
         }
@@ -835,7 +1227,7 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
         if let Some(created) = editor.dispatch("graph.node.add", &json!({ "kind": def.kind, "position": [menu.at.x, menu.at.y] }), None)
             && let Some(id) = created.get("node").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok())
         {
-            view.selected = Some(id);
+            view.selected = vec![id];
             view.focus_node = Some(id);
             if let Some(from) = &menu.from {
                 let target =
@@ -855,4 +1247,79 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
     if !close {
         view.add_menu = Some(menu);
     }
+}
+
+/// Copies the selected nodes and the links between them to the clipboard.
+fn copy_nodes(editor: &mut Editor, view: &GraphView) {
+    if view.selected.is_empty() {
+        editor.status = "Copy: select a node first.".to_owned();
+        return;
+    }
+    if let Some(text) = editor.dispatch("graph.node.copy", &json!({ "nodes": view.selected }), None).and_then(|r| r["text"].as_str().map(str::to_owned)) {
+        let count = view.selected.len();
+        editor.clipboard = Some(text.clone());
+        editor.copy_out = Some(text);
+        editor.status = if count == 1 { "Copy: the node is on the clipboard".to_owned() } else { format!("Copy: {count} nodes are on the clipboard") };
+    }
+}
+
+/// Adds copies of copied nodes and selects them. Returns false when `text` holds no nodes.
+fn paste_nodes(editor: &mut Editor, view: &mut GraphView, text: &str) -> bool {
+    let is_nodes =
+        serde_json::from_str::<Value>(text).ok().is_some_and(|v| v.get("format").and_then(Value::as_str) == Some(bayleaf_engine::graph::FRAGMENT_FORMAT));
+    if !is_nodes {
+        return false;
+    }
+    if let Some(result) = editor.dispatch("graph.node.paste", &json!({ "text": text }), None) {
+        select_new(editor, view, &result);
+    }
+    true
+}
+
+fn duplicate_nodes(editor: &mut Editor, view: &mut GraphView) {
+    if view.selected.is_empty() {
+        editor.status = "Duplicate: select a node first.".to_owned();
+        return;
+    }
+    if let Some(result) = editor.dispatch("graph.node.duplicate", &json!({ "nodes": view.selected }), None) {
+        select_new(editor, view, &result);
+    }
+}
+
+/// Selects the nodes a paste or duplicate added, focuses the first, and says what was left out.
+fn select_new(editor: &mut Editor, view: &mut GraphView, result: &Value) {
+    view.selected = result["nodes"].as_array().into_iter().flatten().filter_map(|v| v.as_u64().and_then(|n| u32::try_from(n).ok())).collect();
+    view.focus_node = view.selected.first().copied();
+    let skipped: Vec<&str> = result["skipped"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    if !skipped.is_empty() {
+        editor.status = format!("{} left out: a graph has only one", skipped.join(", "));
+    }
+}
+
+/// The graph editor's share of Ctrl+C, Ctrl+V and Ctrl+D while one of its nodes has focus.
+/// `paste` is the clipboard's text; `cut` copies, then removes the nodes as one undo step.
+pub(crate) fn clipboard_keys(editor: &mut Editor, copy: bool, cut: bool, paste: Option<String>, duplicate: bool) {
+    if editor.session.graph().is_none() {
+        return;
+    }
+    let mut view = std::mem::take(&mut editor.graph_view);
+    if copy || cut {
+        copy_nodes(editor, &view);
+    }
+    if cut {
+        let key = format!("graph cut {}", editor.gesture);
+        for id in std::mem::take(&mut view.selected) {
+            editor.dispatch("graph.node.remove", &json!({ "node": id }), Some(&key));
+        }
+        editor.gesture += 1;
+    }
+    if let Some(text) = paste
+        && !paste_nodes(editor, &mut view, &text)
+    {
+        editor.status = "Paste: the clipboard holds no nodes.".to_owned();
+    }
+    if duplicate {
+        duplicate_nodes(editor, &mut view);
+    }
+    editor.graph_view = view;
 }
