@@ -910,6 +910,7 @@ fn node_ui(
         pin_ui(ui, t, graph, catalog, node, def, pin, false, center, view, requests, hovered_pin);
         let linked = graph.link_into(node.id, pin.name).is_some();
         let label_rect = Rect::from_min_size(pos2(rect.left() + 12.0, center.y - ROW / 2.0), vec2(rect.width() * 0.42, ROW));
+        ui.interact(label_rect, ui.scope_id().with(("pin label", node.id, pin.name, false)), Sense::hover()).on_hover_text(pin_hint(pin));
         painter.text(pos2(label_rect.left(), center.y), egui::Align2::LEFT_CENTER, pin.label, egui::FontId::proportional(13.0), t.text);
         if !linked && pin.ty != PinType::Flow && !matches!(pin.default, PinDefault::Implicit(_)) {
             let field =
@@ -922,6 +923,8 @@ fn node_ui(
     for pin in def.outputs {
         let center = pin_pos(node, def, pin.name, true).unwrap_or(rect.right_top());
         pin_ui(ui, t, graph, catalog, node, def, pin, true, center, view, requests, hovered_pin);
+        let label_rect = Rect::from_min_max(pos2(rect.left() + rect.width() * 0.5, center.y - ROW / 2.0), pos2(rect.right() - 12.0, center.y + ROW / 2.0));
+        ui.interact(label_rect, ui.scope_id().with(("pin label", node.id, pin.name, true)), Sense::hover()).on_hover_text(pin_hint(pin));
         painter.text(pos2(rect.right() - 12.0, center.y), egui::Align2::RIGHT_CENTER, pin.label, egui::FontId::proportional(13.0), t.text);
     }
 }
@@ -965,6 +968,7 @@ fn pin_ui(
             format!("{side} {} ({}) of {} {}, {linked}", pin.label, pin.ty.label(), def.label, node.id),
         )
     });
+    let response = response.on_hover_text(pin_hint(pin));
     screen_bounds(ui, &response);
 
     let color = pin_color(t, pin.ty);
@@ -1019,6 +1023,19 @@ fn pin_ui(
     });
 }
 
+/// What hovering a pin, its label or its value says: the pin's name and the type of data it carries.
+fn pin_hint(pin: &PinDef) -> String {
+    let meaning = match pin.ty {
+        PinType::Flow => "what runs next",
+        PinType::Float => "one number",
+        PinType::Vec3 => "three numbers: X, Y and Z",
+        PinType::Color => "red, green and blue",
+        PinType::Bool => "true or false",
+        PinType::Any => "a number or a vector, by what is linked",
+    };
+    format!("{}: {} ({meaning})", pin.label, pin.ty.label())
+}
+
 fn node_name(catalog: &Catalog, node: &Node) -> String {
     format!("{} {}", catalog.get(&node.kind).map_or(node.kind.as_str(), |d| d.label), node.id)
 }
@@ -1035,6 +1052,7 @@ fn triple(value: &Value, default: [f32; 3]) -> [f32; 3] {
 fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rect: Rect, gesture: u64, requests: &mut Requests) {
     let key = format!("graph set {} {} {gesture}", node.id, pin.name);
     let name = format!("{} of {} {}", pin.label, def.label, node.id);
+    let hint = pin_hint(pin);
     match pin.ty {
         PinType::Float | PinType::Any => {
             let default = match pin.default {
@@ -1043,7 +1061,7 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
             };
             let current = value_or(node, pin.name, json!(default));
             if let Some(mut v) = bayleaf_engine::graph::as_f32(&current) {
-                let response = ui.put(rect, egui::DragValue::new(&mut v).speed(0.01).max_decimals(3));
+                let response = ui.put(rect, egui::DragValue::new(&mut v).speed(0.01).max_decimals(3)).on_hover_text(&hint);
                 labelled(ui, &response, &name);
                 commit(&response, requests, || ("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": v })), key);
             } else {
@@ -1057,7 +1075,7 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
                 _ => [0.0; 3],
             };
             let mut v = triple(&value_or(node, pin.name, Value::Null), default);
-            vec3_editor(ui, rect, &mut v, &name, requests, node.id, pin.name, key);
+            vec3_editor(ui, rect, &mut v, &name, Some(&hint), requests, node.id, pin.name, key);
         }
         PinType::Color => {
             let default = match pin.default {
@@ -1065,15 +1083,16 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
                 _ => [0.0; 3],
             };
             let mut v = triple(&value_or(node, pin.name, Value::Null), default);
-            let response =
-                ui.put(Rect::from_min_size(rect.min, vec2(rect.width().min(48.0), rect.height())), |ui: &mut egui::Ui| ui.color_edit_button_rgb(&mut v));
+            let response = ui
+                .put(Rect::from_min_size(rect.min, vec2(rect.width().min(48.0), rect.height())), |ui: &mut egui::Ui| ui.color_edit_button_rgb(&mut v))
+                .on_hover_text(&hint);
             labelled(ui, &response, &name);
             commit(&response, requests, || ("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": v })), key);
         }
         PinType::Bool => {
             let default = matches!(pin.default, PinDefault::Bool(true));
             let mut b = value_or(node, pin.name, json!(default)).as_bool().unwrap_or(default);
-            let response = ui.put(Rect::from_min_size(rect.min, vec2(rect.height(), rect.height())), egui::Checkbox::without_text(&mut b));
+            let response = ui.put(Rect::from_min_size(rect.min, vec2(rect.height(), rect.height())), egui::Checkbox::without_text(&mut b)).on_hover_text(&hint);
             labelled(ui, &response, &name);
             if response.changed() {
                 requests.run("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": b }));
@@ -1084,13 +1103,17 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
 }
 
 #[allow(clippy::too_many_arguments)]
-fn vec3_editor(ui: &mut egui::Ui, rect: Rect, v: &mut [f32; 3], name: &str, requests: &mut Requests, node: u32, field: &str, key: String) {
+fn vec3_editor(ui: &mut egui::Ui, rect: Rect, v: &mut [f32; 3], name: &str, hint: Option<&str>, requests: &mut Requests, node: u32, field: &str, key: String) {
     let width = (rect.width() - 4.0) / 3.0;
     let mut changed = false;
     let mut ended = false;
     for (i, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
         let cell = Rect::from_min_size(rect.min + vec2(i as f32 * (width + 2.0), 0.0), vec2(width, rect.height()));
         let response = ui.put(cell, egui::DragValue::new(&mut v[i]).speed(0.01).max_decimals(2));
+        let response = match hint {
+            Some(hint) => response.on_hover_text(hint),
+            None => response,
+        };
         labelled(ui, &response, &format!("{name} {axis}"));
         changed |= response.changed();
         ended |= response.drag_stopped() || response.lost_focus();
@@ -1124,7 +1147,7 @@ fn setting_row(ui: &mut egui::Ui, t: &Tokens, node: &Node, setting: &bayleaf_eng
         }
         SettingKind::Vec3(default) => {
             let mut v = triple(&value_or(node, setting.name, Value::Null), default);
-            vec3_editor(ui, field, &mut v, &name, requests, node.id, setting.name, key);
+            vec3_editor(ui, field, &mut v, &name, None, requests, node.id, setting.name, key);
         }
         SettingKind::Text(default) | SettingKind::Name(default) => {
             let mut text = value_or(node, setting.name, json!(default)).as_str().unwrap_or(default).to_owned();

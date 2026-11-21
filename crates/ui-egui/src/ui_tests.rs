@@ -1159,3 +1159,20 @@ fn f2_renames_a_file_in_its_own_tile_and_a_click_on_empty_space_clears_the_selec
     assert!(harness.state().project.selected.is_none(), "a click on empty space clears the selection");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn hovering_a_pin_its_label_or_its_value_shows_the_type_it_carries() {
+    let mut harness = graph_harness("script");
+    harness.state_mut().show_panel(crate::Panel::Graph);
+    let add = harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "add", "position": [200, 40] }), None).unwrap()["node"].as_u64().unwrap();
+    harness.run_steps(2);
+    let pin = harness.get_by_label_contains(&format!("Input A (Number or Vector) of Add {add}")).rect();
+    let value = harness.get_by_label(&format!("A of Add {add}")).rect();
+    for at in [pin.center(), pin.center() + egui::vec2(24.0, 0.0), value.center()] {
+        harness.hover_at(at);
+        harness.run_steps(30);
+        assert!(harness.query_all_by_label_contains("A: Number or Vector").next().is_some(), "hovering at {at:?} names the type");
+        harness.hover_at(egui::pos2(1.0, 1.0));
+        harness.run_steps(5);
+    }
+}
