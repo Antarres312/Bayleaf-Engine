@@ -1,7 +1,7 @@
 //! CPU side of a frame: what to draw, from where, and which object a screen point hits.
 
 use bayleaf_core::StableId;
-use bayleaf_core::math::{Mat3, Mat4, Vec2, Vec3, Vec4};
+use bayleaf_core::math::{DMat4, DVec3, Mat3, Mat4, Vec2, Vec3, Vec4};
 use bayleaf_scene::Scene;
 use std::sync::Arc;
 
@@ -76,27 +76,42 @@ impl AssetSource for NoAssets {
 /// Lights beyond this count are ignored.
 pub const MAX_LIGHTS: usize = 8;
 
-/// Where the scene is seen from.
+/// Where the scene is seen from. A frame is drawn in coordinates measured from `origin`, a world
+/// point at or near the camera, so the GPU's single precision stays exact however far from the
+/// world's centre the camera is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CameraView {
     pub view: Mat4,
     pub proj: Mat4,
+    /// The eye, measured from `origin`.
     pub position: Vec3,
+    /// The world point the frame's coordinates start from.
+    pub origin: DVec3,
 }
 
 impl CameraView {
-    /// Perspective camera at `eye` looking at `target`, +Y up.
+    /// Perspective camera at `eye` looking at `target`, +Y up, measured from the world's centre.
     pub fn look_at(eye: Vec3, target: Vec3, fov_degrees: f32, aspect: f32) -> Self {
         let up = if (target - eye).normalize_or_zero().cross(Vec3::Y).length_squared() < 1e-6 { Vec3::Z } else { Vec3::Y };
-        Self { view: Mat4::look_at_rh(eye, target, up), proj: Mat4::perspective_rh(fov_degrees.to_radians(), aspect.max(1e-3), 0.05, 5000.0), position: eye }
+        Self {
+            view: Mat4::look_at_rh(eye, target, up),
+            proj: Mat4::perspective_rh(fov_degrees.to_radians(), aspect.max(1e-3), 0.05, 5000.0),
+            position: eye,
+            origin: DVec3::ZERO,
+        }
     }
 
-    /// The view through a camera component placed by `world`.
-    pub fn from_camera(world: Mat4, camera: &Camera, aspect: f32) -> Self {
+    /// Like [`Self::look_at`] for world points in double precision: the frame is measured from the eye.
+    pub fn look_at_world(eye: DVec3, target: DVec3, fov_degrees: f32, aspect: f32) -> Self {
+        Self { origin: eye, ..Self::look_at(Vec3::ZERO, (target - eye).as_vec3(), fov_degrees, aspect) }
+    }
+
+    /// The view through a camera component placed by `world`, measured from the camera.
+    pub fn from_camera(world: DMat4, camera: &Camera, aspect: f32) -> Self {
         let aspect = aspect.max(1e-3);
         // Scale on a camera object does not stretch the view.
         let (_, rotation, position) = world.to_scale_rotation_translation();
-        let view = Mat4::from_rotation_translation(rotation, position).inverse();
+        let view = Mat4::from_quat(rotation.as_quat()).inverse();
         let proj = match camera.projection {
             Projection::Perspective => Mat4::perspective_rh(camera.fov.to_radians(), aspect, camera.near, camera.far),
             Projection::Orthographic => {
@@ -104,16 +119,32 @@ impl CameraView {
                 Mat4::orthographic_rh(-h * aspect, h * aspect, -h, h, camera.near, camera.far)
             }
         };
-        Self { view, proj, position }
+        Self { view, proj, position: Vec3::ZERO, origin: position }
     }
 
     /// A perspective view that shows a sphere of `radius` around `center` from a three-quarter angle.
-    pub fn framing(center: Vec3, radius: f32, aspect: f32) -> Self {
-        let distance = radius.max(0.5) * 2.6 + 1.0;
-        let eye = center + Vec3::new(0.6, 0.45, 0.65).normalize() * distance;
-        Self::look_at(eye, center, 50.0, aspect)
+    pub fn framing(center: DVec3, radius: f32, aspect: f32) -> Self {
+        let distance = f64::from(radius.max(0.5)) * 2.6 + 1.0;
+        let eye = center + DVec3::new(0.6, 0.45, 0.65).normalize() * distance;
+        Self::look_at_world(eye, center, 50.0, aspect)
     }
 
+    /// `world` (a world matrix in double precision) measured from this view's origin.
+    pub fn relative(&self, world: DMat4) -> Mat4 {
+        let mut m = world;
+        m.w_axis -= self.origin.extend(0.0);
+        m.as_mat4()
+    }
+
+    /// A world point measured from this view's origin.
+    pub fn relative_point(&self, point: DVec3) -> Vec3 {
+        (point - self.origin).as_vec3()
+    }
+
+    /// The eye in world space.
+    pub fn eye(&self) -> DVec3 {
+        self.origin + self.position.as_dvec3()
+    }
     pub fn view_proj(&self) -> Mat4 {
         self.proj * self.view
     }
@@ -269,6 +300,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
     let mut lights = Vec::new();
     let mut environment: Option<&Environment> = None;
     for (id, world) in scene.world_matrices() {
+        let world = camera.relative(world);
         if environment.is_none() {
             environment = scene.get::<Environment>(id);
         }
@@ -447,17 +479,24 @@ pub fn object_camera(scene: &Scene, id: StableId, aspect: f32) -> Option<CameraV
 }
 
 /// Centre and radius of a sphere around every drawn shape, or `None` for a scene with nothing to draw.
-pub fn bounds(scene: &Scene) -> Option<(Vec3, f32)> {
-    let frame = extract(scene, CameraView::look_at(Vec3::ONE, Vec3::ZERO, 60.0, 1.0), FrameOptions { show_grid: false, selected: None, time: 0.0 });
-    item_bounds(frame.items.iter())
+pub fn bounds(scene: &Scene) -> Option<(DVec3, f32)> {
+    world_bounds(scene, None)
 }
 
 /// Bounds of one object's shapes.
-pub fn object_bounds(scene: &Scene, id: StableId) -> Option<(Vec3, f32)> {
-    let frame = extract(scene, CameraView::look_at(Vec3::ONE, Vec3::ZERO, 60.0, 1.0), FrameOptions { show_grid: false, selected: None, time: 0.0 });
-    item_bounds(frame.items.iter().filter(|i| i.object == id)).or_else(|| scene.world_matrix(id).map(|m| (m.w_axis.truncate(), 0.5)))
+pub fn object_bounds(scene: &Scene, id: StableId) -> Option<(DVec3, f32)> {
+    world_bounds(scene, Some(id)).or_else(|| scene.world_matrix(id).map(|m| (m.w_axis.truncate(), 0.5)))
 }
 
+/// Bounds in world space, worked out near the shapes (measured from the first object) so far-away
+/// scenes keep their precision.
+fn world_bounds(scene: &Scene, only: Option<StableId>) -> Option<(DVec3, f32)> {
+    let origin = scene.world_matrices().first().map_or(DVec3::ZERO, |(_, m)| m.w_axis.truncate());
+    let camera = CameraView { origin, ..CameraView::look_at(Vec3::ONE, Vec3::ZERO, 60.0, 1.0) };
+    let frame = extract(scene, camera, FrameOptions { show_grid: false, selected: None, time: 0.0 });
+    let (center, radius) = item_bounds(frame.items.iter().filter(|i| only.is_none_or(|id| i.object == id)))?;
+    Some((origin + center.as_dvec3(), radius))
+}
 pub(crate) fn item_bounds<'a>(items: impl Iterator<Item = &'a DrawItem>) -> Option<(Vec3, f32)> {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);

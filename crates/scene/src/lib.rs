@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use bayleaf_core::StableId;
-use bayleaf_core::math::Mat4;
+use bayleaf_core::math::DMat4;
 use bayleaf_ecs::{Entity, World};
 use serde_json::Value;
 
@@ -116,11 +116,11 @@ impl Scene {
     }
 
     /// Local-to-world matrix of every object, parents before children in hierarchy order.
-    pub fn world_matrices(&self) -> Vec<(StableId, Mat4)> {
+    pub fn world_matrices(&self) -> Vec<(StableId, DMat4)> {
         let mut out = Vec::with_capacity(self.entities.len());
-        let mut stack: Vec<(StableId, Mat4)> = self.children(None).iter().rev().map(|id| (*id, Mat4::IDENTITY)).collect();
+        let mut stack: Vec<(StableId, DMat4)> = self.children(None).iter().rev().map(|id| (*id, DMat4::IDENTITY)).collect();
         while let Some((id, parent_matrix)) = stack.pop() {
-            let local = self.get::<Transform>(id).map_or(Mat4::IDENTITY, Transform::matrix);
+            let local = self.get::<Transform>(id).map_or(DMat4::IDENTITY, Transform::matrix);
             let world = parent_matrix * local;
             out.push((id, world));
             stack.extend(self.children(Some(id)).iter().rev().map(|child| (*child, world)));
@@ -129,14 +129,14 @@ impl Scene {
     }
 
     /// Local-to-world matrix of one object.
-    pub fn world_matrix(&self, id: StableId) -> Option<Mat4> {
+    pub fn world_matrix(&self, id: StableId) -> Option<DMat4> {
         if !self.contains(id) {
             return None;
         }
-        let mut matrix = Mat4::IDENTITY;
+        let mut matrix = DMat4::IDENTITY;
         let mut current = Some(id);
         while let Some(object) = current {
-            matrix = self.get::<Transform>(object).map_or(Mat4::IDENTITY, Transform::matrix) * matrix;
+            matrix = self.get::<Transform>(object).map_or(DMat4::IDENTITY, Transform::matrix) * matrix;
             current = self.parent(object);
         }
         Some(matrix)
@@ -204,22 +204,17 @@ impl Scene {
     pub fn reparent_keeping_world(&mut self, id: StableId, new_parent: Option<StableId>, index: Option<usize>) -> Result<(), SceneError> {
         let world = self.world_matrix(id).ok_or(SceneError::UnknownObject(id))?;
         self.reparent(id, new_parent, index)?;
-        let parent_world = new_parent.and_then(|p| self.world_matrix(p)).unwrap_or(Mat4::IDENTITY);
+        let parent_world = new_parent.and_then(|p| self.world_matrix(p)).unwrap_or(DMat4::IDENTITY);
         if parent_world.determinant().abs() < 1e-12 {
             return Ok(());
         }
-        let local = parent_world.inverse() * world;
-        let (scale, rotation, position) = local.to_scale_rotation_translation();
-        let (rx, ry, rz) = rotation.to_euler(bayleaf_core::math::EulerRot::XYZ);
         // Round away float noise such as 0.49999997 or -0.0 left by the matrix maths.
-        let tidy = |v: f32| {
-            let r = (v * 1e4).round() / 1e4;
-            if r == 0.0 { 0.0 } else { r }
-        };
-        let transform =
-            Transform { position: position.to_array().map(tidy), rotation: [rx, ry, rz].map(|a| tidy(a.to_degrees())), scale: scale.to_array().map(tidy) };
+        let mut transform = Transform::from_matrix(parent_world.inverse() * world);
+        transform.position = transform.position.map(|v| (v * 1e6).round() / 1e6 + 0.0);
+        transform.rotation = transform.rotation.map(|v| (v * 1e4).round() / 1e4 + 0.0);
+        transform.scale = transform.scale.map(|v| (v * 1e4).round() / 1e4 + 0.0);
         let entity = self.entity(id)?;
-        if transform.position.iter().chain(&transform.rotation).chain(&transform.scale).all(|v| v.is_finite()) {
+        if transform.is_finite() {
             self.world.insert(entity, transform).map_err(|e| SceneError::Internal(e.to_string()))?;
         }
         Ok(())

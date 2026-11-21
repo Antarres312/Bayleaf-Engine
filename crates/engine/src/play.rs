@@ -27,6 +27,9 @@ pub(crate) struct Play {
     physics: Option<bayleaf_physics::Physics>,
     /// Whether play mode already said physics is not there.
     told_no_physics: bool,
+    /// Whether play mode already said single-precision physics is too far from the centre.
+    #[cfg(feature = "physics")]
+    told_far: bool,
 }
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
@@ -163,12 +166,18 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     #[cfg(feature = "physics")]
     let physics = {
         let settings = crate::project_cmds::settings_of(session).physics;
-        settings.enabled.then(|| bayleaf_physics::Physics::build(&session.scene, settings.gravity))
+        let precision = match settings.precision {
+            crate::project_cmds::PhysicsPrecision::Single => bayleaf_physics::Precision::Single,
+            crate::project_cmds::PhysicsPrecision::Double => bayleaf_physics::Precision::Double,
+        };
+        settings.enabled.then(|| bayleaf_physics::Physics::build(&session.scene, settings.gravity.map(f64::from), precision))
     };
     session.play = Some(Play {
         #[cfg(feature = "physics")]
         physics,
         told_no_physics: false,
+        #[cfg(feature = "physics")]
+        told_far: false,
         snapshot,
         host,
         time: 0.0,
@@ -295,7 +304,14 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
             let contacts = physics.step(&mut session.scene, dt);
             let named: Vec<(bayleaf_core::StableId, &str, bayleaf_core::StableId)> =
                 contacts.iter().map(|c| (c.object, contact_name(c.kind), c.other)).collect();
+            let far = physics.out_of_range() && !std::mem::replace(&mut play.told_far, true);
             play.host.notify(&mut session.scene, &named, play.time, &input);
+            if far {
+                session.log(
+                    Level::Info,
+                    "Warning: physics bodies are more than 10 km from the world's centre, where single precision loses accuracy; set Physics Precision to Double in Project Settings.".to_owned(),
+                );
+            }
             apply_requests(session);
         }
         let Some(play) = session.play.as_mut() else { return };
@@ -408,7 +424,7 @@ fn spawn(session: &mut Session, prefab: &str, position: [f32; 3]) -> Result<(), 
     let objects = crate::prefab_cmds::read_prefab(session, prefab).map_err(|e| e.to_string())?;
     let id = *session.scene.import(&objects, None, None).map_err(|e| e.to_string())?.first().ok_or("the prefab is empty")?;
     let mut transform = session.scene.get::<bayleaf_scene::components::Transform>(id).cloned().unwrap_or_default();
-    transform.position = position;
+    transform.position = position.map(f64::from);
     session.scene.set(id, transform).map_err(|e| e.to_string())?;
     session.scene.set(id, bayleaf_scene::components::Prefab::new(prefab)).map_err(|e| e.to_string())?;
     // Start the scripts of every object in the new copy.

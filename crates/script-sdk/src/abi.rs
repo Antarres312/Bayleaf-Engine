@@ -19,6 +19,8 @@ mod raw {
         pub fn find(name_ptr: *const u8, name_len: usize) -> i32;
         pub fn transform_get_of(handle: i32, out: *mut f32);
         pub fn transform_set_of(handle: i32, ptr: *const f32);
+        pub fn position_get_of(handle: i32, out: *mut f64);
+        pub fn position_set_of(handle: i32, ptr: *const f64);
         pub fn spawn(path_ptr: *const u8, path_len: usize, x: f32, y: f32, z: f32) -> i32;
         pub fn destroy(handle: i32) -> i32;
         pub fn send(handle: i32, name_ptr: *const u8, name_len: usize, value: f32) -> i32;
@@ -68,6 +70,11 @@ mod raw {
         unsafe { std::ptr::copy_nonoverlapping([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0f32].as_ptr(), out, 9) }
     }
     pub unsafe fn transform_set_of(_: i32, _: *const f32) {}
+    pub unsafe fn position_get_of(_: i32, out: *mut f64) {
+        // SAFETY: callers pass a pointer to 3 writable f64.
+        unsafe { std::ptr::copy_nonoverlapping([0.0f64; 3].as_ptr(), out, 3) }
+    }
+    pub unsafe fn position_set_of(_: i32, _: *const f64) {}
     pub unsafe fn spawn(_: *const u8, _: usize, _: f32, _: f32, _: f32) -> i32 {
         0
     }
@@ -234,4 +241,16 @@ pub(crate) fn velocity_of(handle: i32) -> Option<[f32; 3]> {
     // SAFETY: `out` is 3 writable f32, exactly what the host writes.
     let found = unsafe { raw::velocity_of(handle, out.as_mut_ptr()) };
     (found != 0).then_some(out)
+}
+
+pub(crate) fn position_get_of(handle: i32) -> [f64; 3] {
+    let mut values = [0.0f64; 3];
+    // SAFETY: `values` is 3 writable f64, exactly what the host writes.
+    unsafe { raw::position_get_of(handle, values.as_mut_ptr()) }
+    values
+}
+
+pub(crate) fn position_set_of(handle: i32, values: &[f64; 3]) {
+    // SAFETY: `values` is 3 readable f64, exactly what the host reads.
+    unsafe { raw::position_set_of(handle, values.as_ptr()) }
 }

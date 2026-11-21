@@ -703,5 +703,11 @@ fn project_settings_turn_physics_off_through_the_command() {
     let settings = harness.state_mut().dispatch("project.settings", &json!({}), None).unwrap();
     assert_eq!(settings["settings"]["physics"]["enabled"], false, "the click went through project.settings.set into the file");
     assert!(harness.query_by_label_contains("Gravity Y").is_some());
+    harness.get_by_label("Physics in play mode").click();
+    harness.run();
+    harness.get_by_label("Double physics precision").click();
+    harness.run();
+    let settings = harness.state_mut().dispatch("project.settings", &json!({}), None).unwrap();
+    assert_eq!(settings["settings"]["physics"]["precision"], "double");
     std::fs::remove_dir_all(&dir).ok();
 }

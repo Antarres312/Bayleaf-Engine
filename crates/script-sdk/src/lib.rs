@@ -122,6 +122,17 @@ impl Object {
         abi::destroy(self.0)
     }
 
+    /// Its position in double precision, relative to its parent: exact far from the world's centre,
+    /// where the single-precision [`Transform`] rounds.
+    pub fn position(self) -> [f64; 3] {
+        abi::position_get_of(self.0)
+    }
+
+    /// Sets its position in double precision when this call ends.
+    pub fn set_position(self, position: [f64; 3]) {
+        abi::position_set_of(self.0, &position);
+    }
+
     /// Pushes its physics body by an impulse (world space, mass times change of velocity) after
     /// this step. False when this call already asked too much.
     pub fn push(self, impulse: [f32; 3]) -> bool {

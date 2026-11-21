@@ -3,7 +3,7 @@
 //! Mouse: drag to orbit, Shift+drag or middle-drag to pan, scroll to zoom, click to select.
 //! Keyboard, with the view focused: arrows orbit, Shift+arrows pan, +/− zoom, F frames the selection.
 
-use bayleaf_core::math::{Vec2, Vec3};
+use bayleaf_core::math::{DVec3, Vec2, Vec3};
 use bayleaf_render::{CameraView, FrameOptions, RenderTarget, Renderer};
 
 use crate::{Editor, gizmo};
@@ -11,7 +11,7 @@ use crate::{Editor, gizmo};
 /// Camera that circles a target point. The editor's own view, not saved in the scene.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Orbit {
-    pub target: Vec3,
+    pub target: DVec3,
     /// Radians around +Y.
     pub yaw: f32,
     /// Radians above the horizon.
@@ -21,21 +21,27 @@ pub(crate) struct Orbit {
 
 impl Default for Orbit {
     fn default() -> Self {
-        Self { target: Vec3::ZERO, yaw: 0.75, pitch: 0.45, distance: 8.0 }
+        Self { target: DVec3::ZERO, yaw: 0.75, pitch: 0.45, distance: 8.0 }
     }
 }
 
 const PITCH_LIMIT: f32 = 1.55;
 
 impl Orbit {
-    pub fn eye(&self) -> Vec3 {
+    /// From the target to the eye.
+    fn offset(&self) -> Vec3 {
         let (sy, cy) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
-        self.target + Vec3::new(cp * sy, sp, cp * cy) * self.distance
+        Vec3::new(cp * sy, sp, cp * cy) * self.distance
     }
 
+    pub fn eye(&self) -> DVec3 {
+        self.target + self.offset().as_dvec3()
+    }
+
+    /// The view, measured from the eye so it stays exact far from the world's centre.
     pub fn view(&self, aspect: f32) -> CameraView {
-        CameraView::look_at(self.eye(), self.target, 50.0, aspect)
+        CameraView::look_at_world(self.eye(), self.target, 50.0, aspect)
     }
 
     pub fn rotate(&mut self, yaw: f32, pitch: f32) {
@@ -45,11 +51,11 @@ impl Orbit {
 
     /// Moves the target across the screen; `delta` is in fractions of the view height.
     pub fn pan(&mut self, delta: Vec2) {
-        let forward = (self.target - self.eye()).normalize_or(Vec3::NEG_Z);
+        let forward = (-self.offset()).normalize_or(Vec3::NEG_Z);
         let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
         let up = right.cross(forward);
         let scale = self.distance * 0.9;
-        self.target += (-right * delta.x + up * delta.y) * scale;
+        self.target += ((-right * delta.x + up * delta.y) * scale).as_dvec3();
     }
 
     pub fn zoom(&mut self, factor: f32) {
@@ -57,7 +63,7 @@ impl Orbit {
     }
 
     /// Looks at a sphere of `radius` around `center` from the current direction.
-    pub fn frame(&mut self, center: Vec3, radius: f32) {
+    pub fn frame(&mut self, center: DVec3, radius: f32) {
         self.target = center;
         self.distance = radius.max(0.5) * 2.6 + 1.0;
     }
@@ -263,18 +269,18 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     }
 
     // Handles on the selected object. Not during play: play-mode changes are thrown away on stop.
-    let projector = gizmo::Projector { view_proj: frame.camera.view_proj(), rect: response.rect, eye: frame.camera.position };
+    let projector = gizmo::Projector { view_proj: frame.camera.view_proj(), rect: response.rect, eye: frame.camera.position, origin: frame.camera.origin };
     let target = editor.selected.filter(|_| !editor.session.is_playing()).and_then(|id| {
         let scene = editor.session.scene();
         let world = scene.world_matrix(id)?;
-        let parent = scene.parent(id).and_then(|p| scene.world_matrix(p)).unwrap_or(bayleaf_core::math::Mat4::IDENTITY);
+        let parent = scene.parent(id).and_then(|p| scene.world_matrix(p)).unwrap_or(bayleaf_core::math::DMat4::IDENTITY);
         let local = scene.get::<bayleaf_engine::scene::components::Transform>(id)?.clone();
         Some((id, world, parent, local))
     });
     let hovered = target.as_ref().and_then(|(_, world, _, _)| {
         // A drag starts once the pointer has moved, maybe off the handle: test where it was pressed.
         let pointer = if response.drag_started() { ui.input(|i| i.pointer.press_origin()) } else { response.hover_pos() }?;
-        gizmo::hit(&projector, *world, view.tool, pointer, 7.0)
+        gizmo::hit(&projector, projector.relative(*world), view.tool, pointer, 7.0)
     });
     if response.drag_started_by(egui::PointerButton::Primary)
         && let (Some(handle), Some((id, world, parent, local))) = (hovered, target.clone())
@@ -285,7 +291,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         let scene = editor.session.scene();
         for other in editor.selection_roots().into_iter().filter(|o| *o != id) {
             if let (Some(world), Some(local)) = (scene.world_matrix(other), scene.get::<bayleaf_engine::scene::components::Transform>(other)) {
-                let parent = scene.parent(other).and_then(|p| scene.world_matrix(p)).unwrap_or(bayleaf_core::math::Mat4::IDENTITY);
+                let parent = scene.parent(other).and_then(|p| scene.world_matrix(p)).unwrap_or(bayleaf_core::math::DMat4::IDENTITY);
                 objects.push(gizmo::Start { object: other, local: local.clone(), world, parent });
             }
         }
@@ -311,7 +317,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     paint_icons(ui, &icons, editor.selected, response.rect);
     if let Some((_, world, _, _)) = &target {
         let active = view.gizmo_drag.as_ref().map(|d| d.handle).or(hovered);
-        paint_handles(ui, &projector, *world, view.tool, active, response.rect);
+        paint_handles(ui, &projector, projector.relative(*world), view.tool, active, response.rect);
     }
 
     // Mouse. In play mode the view is the game's: the pointer and buttons go to the scripts, and
@@ -459,6 +465,7 @@ fn scene_icons(editor: &Editor, projector: &gizmo::Projector) -> Vec<Icon> {
             } else {
                 return None;
             };
+            let world = projector.relative(world);
             let origin = world.w_axis.truncate();
             let center = projector.project(origin)?;
             let forward = world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Z);
@@ -558,7 +565,7 @@ fn paint_handles(
 #[cfg(test)]
 mod tests {
     use super::Orbit;
-    use bayleaf_core::math::{Vec2, Vec3};
+    use bayleaf_core::math::{DVec3, Vec2};
 
     #[test]
     fn orbit_keeps_its_distance_and_never_flips_over_the_pole() {
@@ -574,16 +581,16 @@ mod tests {
         let mut orbit = Orbit::default();
         let offset = orbit.eye() - orbit.target;
         orbit.pan(Vec2::new(0.3, 0.2));
-        assert!(orbit.target.distance(Vec3::ZERO) > 0.1);
+        assert!(orbit.target.distance(DVec3::ZERO) > 0.1);
         assert!(((orbit.eye() - orbit.target) - offset).length() < 1e-4);
     }
 
     #[test]
     fn framing_a_larger_object_moves_further_away() {
         let mut small = Orbit::default();
-        small.frame(Vec3::ZERO, 1.0);
+        small.frame(DVec3::ZERO, 1.0);
         let mut large = Orbit::default();
-        large.frame(Vec3::ZERO, 10.0);
+        large.frame(DVec3::ZERO, 10.0);
         assert!(large.distance > small.distance);
     }
 }

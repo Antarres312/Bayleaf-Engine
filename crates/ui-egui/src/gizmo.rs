@@ -5,7 +5,7 @@
 //! `scene.component.set`, as one undo step per drag. The same values can be typed in the
 //! Inspector, which is the keyboard path.
 
-use bayleaf_core::math::{EulerRot, Mat4, Quat, Vec3};
+use bayleaf_core::math::{DMat4, DVec3, EulerRot, Mat4, Quat, Vec3};
 use bayleaf_engine::scene::components::Transform;
 use egui::{Pos2, Rect, pos2};
 
@@ -49,12 +49,21 @@ pub(crate) struct Handle {
 /// World to screen for one frame of the scene view.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Projector {
+    /// Points are measured from `origin` (the frame's), as the renderer measures them.
     pub view_proj: Mat4,
     pub rect: Rect,
     pub eye: Vec3,
+    pub origin: DVec3,
 }
 
 impl Projector {
+    /// A world matrix measured from the projector's origin.
+    pub fn relative(&self, world: DMat4) -> Mat4 {
+        let mut m = world;
+        m.w_axis -= self.origin.extend(0.0);
+        m.as_mat4()
+    }
+
     /// Where a world point appears in the view; `None` behind the camera.
     pub fn project(&self, point: Vec3) -> Option<Pos2> {
         let clip = self.view_proj * point.extend(1.0);
@@ -132,9 +141,9 @@ fn distance_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
 pub(crate) struct Start {
     pub object: bayleaf_core::StableId,
     pub local: Transform,
-    /// The object's and its parent's world matrices.
-    pub world: Mat4,
-    pub parent: Mat4,
+    /// The object's and its parent's world matrices, in double precision.
+    pub world: DMat4,
+    pub parent: DMat4,
 }
 
 /// A drag in progress. The handle belongs to the first object, the primary selection; the
@@ -162,9 +171,10 @@ pub(crate) fn drag_to(projector: &Projector, drag: &Drag, pointer: Pos2) -> Vec<
 }
 
 fn change(projector: &Projector, handle: Handle, primary: &Start, from: Pos2, pointer: Pos2) -> Change {
-    let origin = primary.world.w_axis.truncate();
+    let world = projector.relative(primary.world);
+    let origin = world.w_axis.truncate();
     let len = handle_length(projector, origin);
-    let dir = axis_dir(handle, primary.world);
+    let dir = axis_dir(handle, world);
     // How far along the handle's direction on screen the pointer moved, in handle lengths.
     let along = || -> f32 {
         let (Some(a), Some(b)) = (projector.project(origin), projector.project(origin + dir * len)) else { return 0.0 };
@@ -194,7 +204,7 @@ fn apply(change: Change, start: &Start) -> Transform {
     let mut local = start.local.clone();
     match change {
         Change::Move(offset) => {
-            let world_target = start.world.w_axis.truncate() + offset;
+            let world_target = start.world.w_axis.truncate() + offset.as_dvec3();
             local.position = start.parent.inverse().transform_point3(world_target).to_array();
         }
         Change::Resize(axis, factor) => {
@@ -203,8 +213,8 @@ fn apply(change: Change, start: &Start) -> Transform {
         Change::Turn(axis, angle) => {
             let (_, world_rotation, _) = start.world.to_scale_rotation_translation();
             let (_, parent_rotation, _) = start.parent.to_scale_rotation_translation();
-            let turned = Quat::from_axis_angle(axis, angle) * world_rotation;
-            let (x, y, z) = (parent_rotation.inverse() * turned).normalize().to_euler(EulerRot::XYZ);
+            let turned = Quat::from_axis_angle(axis, angle) * world_rotation.as_quat();
+            let (x, y, z) = (parent_rotation.as_quat().inverse() * turned).normalize().to_euler(EulerRot::XYZ);
             local.rotation = [x.to_degrees(), y.to_degrees(), z.to_degrees()];
         }
     }
@@ -223,10 +233,11 @@ mod tests {
         let eye = Vec3::new(0.0, 0.0, 10.0);
         let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
         let proj = Mat4::perspective_rh(50f32.to_radians(), 1.0, 0.1, 100.0);
-        Projector { view_proj: proj * view, rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 400.0)), eye }
+        Projector { view_proj: proj * view, rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 400.0)), eye, origin: bayleaf_core::math::DVec3::ZERO }
     }
 
     fn start(n: u128, local: Transform, parent: Mat4) -> Start {
+        let parent = parent.as_dmat4();
         Start { object: bayleaf_core::StableId::from_u128(n), world: parent * local.matrix(), local, parent }
     }
 

@@ -46,11 +46,23 @@ pub struct PhysicsSettings {
     pub enabled: bool,
     /// World units per second squared.
     pub gravity: [f32; 3],
+    /// Single is faster; Double stays exact far from the world's centre (beyond about 10 km).
+    #[serde(default)]
+    pub precision: PhysicsPrecision,
+}
+
+/// How precisely physics counts positions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PhysicsPrecision {
+    #[default]
+    Single,
+    Double,
 }
 
 impl Default for PhysicsSettings {
     fn default() -> Self {
-        Self { enabled: true, gravity: [0.0, -9.81, 0.0] }
+        Self { enabled: true, gravity: [0.0, -9.81, 0.0], precision: PhysicsPrecision::Single }
     }
 }
 
@@ -137,7 +149,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Project Settings",
             menu: "",
             shortcut: "",
-            params: "none; returns {project, settings}: the open project's settings (physics: {enabled, gravity}), or the defaults and project: false outside a project",
+            params: "none; returns {project, settings}: the open project's settings (physics: {enabled, gravity, precision: \"single\" | \"double\"}), or the defaults and project: false outside a project",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: always,

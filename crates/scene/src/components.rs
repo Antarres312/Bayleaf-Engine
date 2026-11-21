@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use bayleaf_core::math::{EulerRot, Mat4, Quat, Vec3};
+use bayleaf_core::math::{DMat4, DQuat, DVec3, EulerRot};
 use bayleaf_ecs::Component;
 
 /// A component type the scene can store, show in the inspector and write to scene files.
@@ -48,10 +48,11 @@ impl SceneComponent for Name {
 }
 
 /// Position, rotation (Euler angles in degrees, applied X then Y then Z) and scale relative to the parent.
+/// The position is double precision, so objects far from the origin keep millimetre accuracy.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Transform {
-    pub position: [f32; 3],
+    pub position: [f64; 3],
     pub rotation: [f32; 3],
     pub scale: [f32; 3],
 }
@@ -63,10 +64,28 @@ impl Default for Transform {
 }
 
 impl Transform {
-    /// Local-to-parent matrix.
-    pub fn matrix(&self) -> Mat4 {
-        let [rx, ry, rz] = self.rotation.map(f32::to_radians);
-        Mat4::from_scale_rotation_translation(Vec3::from(self.scale), Quat::from_euler(EulerRot::XYZ, rx, ry, rz), Vec3::from(self.position))
+    /// Local-to-parent matrix, in double precision.
+    pub fn matrix(&self) -> DMat4 {
+        let [rx, ry, rz] = self.rotation.map(|d| f64::from(d).to_radians());
+        DMat4::from_scale_rotation_translation(DVec3::from(self.scale.map(f64::from)), DQuat::from_euler(EulerRot::XYZ, rx, ry, rz), DVec3::from(self.position))
+    }
+
+    /// True when every value is a finite number.
+    pub fn is_finite(&self) -> bool {
+        self.position.iter().all(|v| v.is_finite()) && self.rotation.iter().chain(&self.scale).all(|v| v.is_finite())
+    }
+
+    /// The transform a local-to-parent matrix stands for. Values come out as the matrix holds them,
+    /// with -0 made 0.
+    pub fn from_matrix(matrix: DMat4) -> Self {
+        let (scale, rotation, position) = matrix.to_scale_rotation_translation();
+        let (rx, ry, rz) = rotation.to_euler(EulerRot::XYZ);
+        let zero = |v: f64| if v == 0.0 { 0.0 } else { v };
+        Self {
+            position: position.to_array().map(zero),
+            rotation: [rx, ry, rz].map(|a| zero(a.to_degrees()) as f32),
+            scale: scale.to_array().map(|s| zero(s) as f32),
+        }
     }
 }
 
@@ -76,7 +95,10 @@ impl SceneComponent for Transform {
     const REMOVABLE: bool = false;
 
     fn validate(&self) -> Result<(), String> {
-        finite("transform", self.position.iter().chain(&self.rotation).chain(&self.scale))
+        if !self.position.iter().all(|v| v.is_finite()) {
+            return Err("transform values must be finite numbers".to_owned());
+        }
+        finite("transform", self.rotation.iter().chain(&self.scale))
     }
 }
 

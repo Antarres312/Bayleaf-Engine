@@ -142,9 +142,9 @@ impl Player {
 
 /// A view of everything in the scene, for a scene without a camera.
 fn fallback_camera(scene: &bayleaf_engine::scene::Scene, aspect: f32) -> CameraView {
-    let (center, radius) = render::bounds(scene).unwrap_or((bayleaf_core::math::Vec3::ZERO, 2.0));
-    let eye = center + bayleaf_core::math::Vec3::new(0.6, 0.45, 1.0).normalize() * (radius.max(0.5) * 2.6 + 1.0);
-    CameraView::look_at(eye, center, 60.0, aspect)
+    let (center, radius) = render::bounds(scene).unwrap_or((bayleaf_core::math::DVec3::ZERO, 2.0));
+    let eye = center + bayleaf_core::math::DVec3::new(0.6, 0.45, 1.0).normalize() * (f64::from(radius.max(0.5)) * 2.6 + 1.0);
+    CameraView::look_at_world(eye, center, 60.0, aspect)
 }
 
 impl eframe::App for Player {

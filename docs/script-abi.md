@@ -33,6 +33,8 @@ so module-level state belongs to that one script slot. Any language that compile
 | `find` | `(name_ptr: i32, name_len: i32) -> i32` | the handle of the first object with that name, in hierarchy order, or `0` |
 | `transform_get_of` | `(handle: i32, out: i32)` | like `transform_get`, for any object |
 | `transform_set_of` | `(handle: i32, ptr: i32)` | like `transform_set`, for any object; applied when the call ends |
+| `position_get_of` | `(handle: i32, out: i32)` | writes 3 little-endian `f64`: the object's local position in double precision, as this call last set it, else as the step began |
+| `position_set_of` | `(handle: i32, ptr: i32)` | reads 3 `f64` and sets the position, keeping rotation and scale; applied when the call ends; non-finite values are an error |
 | `spawn` | `(path_ptr: i32, path_len: i32, x: f32, y: f32, z: f32) -> i32` | asks for a copy of a `.bprefab` file (relative to the project folder) at a world position, after the step; `1` when asked, `0` when this call already asked 64 times |
 | `destroy` | `(handle: i32) -> i32` | asks to delete the object and its children after the step; `1` or `0` as for `spawn` |
 | `send` | `(handle: i32, name_ptr: i32, name_len: i32, value: f32) -> i32` | sends a message (a name of 1 to 64 bytes and a finite number) to the scripts of the object, or of every object when `handle` is `-1`; `1` when sent, `0` when this call already sent 64 |
@@ -68,7 +70,10 @@ copy's scripts start at once and run from the next step. Play mode puts everythi
 These imports came after the first ABI release; a module that uses them needs an engine that has
 them, and fails to load on an older one with a message naming the missing import.
 
-The transform is the object's local transform, relative to its parent.
+The transform is the object's local transform, relative to its parent. Positions are kept in double
+precision; `transform_get` gives them rounded to `f32`, and a `transform_set` that leaves the
+position as it was read keeps the exact one. Far from the world's centre (beyond about 10 km), move
+objects with `position_get_of` and `position_set_of`, as visual scripts' Move By does.
 
 ## Limits
 

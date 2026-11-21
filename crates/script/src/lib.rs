@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use bayleaf_core::StableId;
-use bayleaf_core::math::{Mat4, Vec3};
+use bayleaf_core::math::{DMat4, DVec3, Vec3};
 use bayleaf_scene::Scene;
 use bayleaf_scene::components::{ScriptRef, Scripts, Transform};
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
@@ -165,20 +165,23 @@ struct WorldView {
     objects: Vec<(StableId, String, [f32; 9])>,
     /// What rays can hit, by the same index: the world matrix and the box of the object's shape or
     /// sprite, in its own space.
-    shapes: Vec<Option<(Mat4, Vec3, Vec3)>>,
+    shapes: Vec<Option<(DMat4, DVec3, DVec3)>>,
+    /// Each object's position in double precision, by the same index.
+    positions: Vec<[f64; 3]>,
 }
 
 impl WorldView {
     fn of(scene: &Scene) -> Arc<Self> {
         let all = scene.world_matrices();
         let objects = all.iter().map(|(id, _)| (*id, scene.name(*id).unwrap_or_default().to_owned(), read_transform(scene, *id))).collect();
-        let shapes = all.iter().map(|(id, world)| shape_box(scene, *id).map(|(lo, hi)| (*world, lo, hi))).collect();
-        Arc::new(Self { objects, shapes })
+        let shapes = all.iter().map(|(id, world)| shape_box(scene, *id).map(|(lo, hi)| (*world, lo.as_dvec3(), hi.as_dvec3()))).collect();
+        let positions = all.iter().map(|(id, _)| read_position(scene, *id)).collect();
+        Arc::new(Self { objects, shapes, positions })
     }
 
     /// The nearest shape a ray hits within `max`, other than `skip`: its index and the distance.
-    fn raycast(&self, origin: Vec3, direction: Vec3, max: f32, skip: StableId) -> Option<(usize, f32)> {
-        let mut best: Option<(usize, f32)> = None;
+    fn raycast(&self, origin: DVec3, direction: DVec3, max: f64, skip: StableId) -> Option<(usize, f64)> {
+        let mut best: Option<(usize, f64)> = None;
         for (index, shape) in self.shapes.iter().enumerate() {
             let Some((world, lo, hi)) = shape else { continue };
             if self.objects[index].0 == skip || world.determinant().abs() < 1e-12 {
@@ -187,7 +190,7 @@ impl WorldView {
             // In the shape's own space the box is axis-aligned; the ray's parameter stays the world distance.
             let inverse = world.inverse();
             let (o, d) = (inverse.transform_point3(origin), inverse.transform_vector3(direction));
-            let (mut near, mut far) = (0.0f32, max);
+            let (mut near, mut far) = (0.0f64, max);
             let mut missed = false;
             for axis in 0..3 {
                 if d[axis].abs() < 1e-9 {
@@ -209,6 +212,12 @@ impl WorldView {
         self.objects.iter().position(|(o, _, _)| *o == id).map_or(0, |i| i as i32 + 1)
     }
 
+    /// The object a handle names and its index.
+    fn object(&self, handle: i32) -> Option<(StableId, usize)> {
+        let index = usize::try_from(handle).ok()?.checked_sub(1)?;
+        Some((self.objects.get(index)?.0, index))
+    }
+
     fn get(&self, handle: i32) -> Option<&(StableId, String, [f32; 9])> {
         usize::try_from(handle).ok().and_then(|h| h.checked_sub(1)).and_then(|i| self.objects.get(i))
     }
@@ -220,7 +229,9 @@ struct HostState {
     object: StableId,
     world: Arc<WorldView>,
     /// Transforms of other objects this call set, applied after it.
-    writes: Vec<(StableId, [f32; 9])>,
+    writes: Vec<(StableId, [f32; 9], [f64; 3])>,
+    /// This object's position in double precision.
+    position: [f64; 3],
     requests: Vec<Request>,
     /// Messages this call sent.
     outbox: Vec<Message>,
@@ -244,6 +255,7 @@ impl HostState {
             object,
             world: Arc::new(WorldView::default()),
             writes: Vec::new(),
+            position: [transform[0], transform[1], transform[2]].map(f64::from),
             requests: Vec::new(),
             outbox: Vec::new(),
             message: None,
@@ -256,6 +268,33 @@ impl HostState {
             logs: Vec::new(),
             fault: None,
             limits: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).instances(1).build(),
+        }
+    }
+}
+
+impl HostState {
+    /// The single-precision transform and precise position of `object` (index `index` in the
+    /// world view) as this call last set them, else as the step began.
+    fn current(&self, object: StableId, index: usize) -> ([f32; 9], [f64; 3]) {
+        if object == self.object {
+            return (self.transform, self.position);
+        }
+        self.writes
+            .iter()
+            .rev()
+            .find(|(o, _, _)| *o == object)
+            .map(|(_, v, p)| (*v, *p))
+            .unwrap_or_else(|| (self.world.objects[index].2, self.world.positions[index]))
+    }
+
+    /// Records a new transform for `object`: this script's own, or another object's, applied after the call.
+    fn set(&mut self, object: StableId, values: [f32; 9], position: [f64; 3]) {
+        if object == self.object {
+            self.transform = values;
+            self.position = position;
+            self.transform_changed = true;
+        } else {
+            self.writes.push((object, values, position));
         }
     }
 }
@@ -406,6 +445,7 @@ impl ScriptHost {
         let module_name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         let module = Module::new(&self.engine, bytes).map_err(|e| ScriptError::Invalid(module_name.clone(), e.to_string()))?;
         let mut state = HostState::new(object, read_transform(scene, object), script.properties.clone(), time, input);
+        state.position = read_position(scene, object);
         state.world = WorldView::of(scene);
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| &mut state.limits);
@@ -464,6 +504,7 @@ impl ScriptHost {
             {
                 let state = entry.store.data_mut();
                 state.transform = read_transform(scene, entry.object);
+                state.position = read_position(scene, entry.object);
                 state.transform_changed = false;
                 state.time = time;
                 state.input = Arc::clone(input);
@@ -506,6 +547,7 @@ impl ScriptHost {
                 {
                     let state = entry.store.data_mut();
                     state.transform = read_transform(scene, entry.object);
+                    state.position = read_position(scene, entry.object);
                     state.transform_changed = false;
                     state.time = time;
                     state.input = Arc::clone(input);
@@ -656,18 +698,35 @@ fn shape_box(scene: &Scene, id: StableId) -> Option<(Vec3, Vec3)> {
     Some((-half, half))
 }
 
+/// The transform as the 9 numbers of the ABI (the position narrowed to single precision).
 fn read_transform(scene: &Scene, object: StableId) -> [f32; 9] {
     let t = scene.get::<Transform>(object).cloned().unwrap_or_default();
-    [t.position[0], t.position[1], t.position[2], t.rotation[0], t.rotation[1], t.rotation[2], t.scale[0], t.scale[1], t.scale[2]]
+    let p = t.position.map(|v| v as f32);
+    [p[0], p[1], p[2], t.rotation[0], t.rotation[1], t.rotation[2], t.scale[0], t.scale[1], t.scale[2]]
+}
+
+fn read_position(scene: &Scene, object: StableId) -> [f64; 3] {
+    scene.get::<Transform>(object).map_or([0.0; 3], |t| t.position)
+}
+
+/// The precise position after a script set the single-precision transform `v`: unchanged when the
+/// script left the position as it read it, so far-away objects do not snap to the nearest `f32`.
+fn merged_position(v: &[f32; 9], precise: [f64; 3]) -> [f64; 3] {
+    let given = [v[0], v[1], v[2]];
+    if given == precise.map(|p| p as f32) { precise } else { given.map(f64::from) }
+}
+
+fn transform_from(v: &[f32; 9], position: [f64; 3]) -> Transform {
+    Transform { position, rotation: [v[3], v[4], v[5]], scale: [v[6], v[7], v[8]] }
 }
 
 /// Applies what a call changed: its own transform, other objects' transforms, and its requests.
 fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Request>, messages: &mut Vec<Message>) {
     write_transform(scene, entry);
     let state = entry.store.data_mut();
-    for (object, v) in state.writes.drain(..) {
+    for (object, v, position) in state.writes.drain(..) {
         if scene.contains(object) {
-            let _ = scene.set(object, Transform { position: [v[0], v[1], v[2]], rotation: [v[3], v[4], v[5]], scale: [v[6], v[7], v[8]] });
+            let _ = scene.set(object, transform_from(&v, position));
         }
     }
     requests.append(&mut state.requests);
@@ -680,8 +739,7 @@ fn write_transform(scene: &mut Scene, entry: &mut Instance) {
         return;
     }
     state.transform_changed = false;
-    let v = state.transform;
-    let transform = Transform { position: [v[0], v[1], v[2]], rotation: [v[3], v[4], v[5]], scale: [v[6], v[7], v[8]] };
+    let transform = transform_from(&state.transform, state.position);
     // `transform_set` already refused non-finite numbers, and the object exists (checked by the caller).
     let _ = scene.set(entry.object, transform);
 }
@@ -766,8 +824,35 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                 return Err(fault(&mut caller, "transform_set: values must be finite numbers".to_owned()));
             }
             let state = caller.data_mut();
+            state.position = merged_position(&values, state.position);
             state.transform = values;
             state.transform_changed = true;
+            Ok(())
+        })?;
+        linker.func_wrap("bayleaf", "position_get_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32| -> Result<(), wasmi::Error> {
+            let Some((object, index)) = caller.data().world.object(handle) else {
+                return Err(fault(&mut caller, format!("position_get_of: there is no object with handle {handle}")));
+            };
+            let (_, position) = caller.data().current(object, index);
+            let bytes: Vec<u8> = position.iter().flat_map(|v| v.to_le_bytes()).collect();
+            write_guest(&mut caller, out, &bytes, "position_get_of")
+        })?;
+        linker.func_wrap("bayleaf", "position_set_of", |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32| -> Result<(), wasmi::Error> {
+            let bytes = read_guest(&caller, ptr, 24, 24).map_err(|m| fault(&mut caller, format!("position_set_of: {m}")))?;
+            let mut position = [0.0f64; 3];
+            for (value, chunk) in position.iter_mut().zip(bytes.as_chunks::<8>().0) {
+                *value = f64::from_le_bytes(*chunk);
+            }
+            if !position.iter().all(|v| v.is_finite()) {
+                return Err(fault(&mut caller, "position_set_of: values must be finite numbers".to_owned()));
+            }
+            let Some((object, index)) = caller.data().world.object(handle) else {
+                return Err(fault(&mut caller, format!("position_set_of: there is no object with handle {handle}")));
+            };
+            let state = caller.data_mut();
+            let (mut values, _) = state.current(object, index);
+            values[..3].copy_from_slice(&position.map(|v| v as f32));
+            state.set(object, values, position);
             Ok(())
         })?;
         linker.func_wrap("bayleaf", "property", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<f32, wasmi::Error> {
@@ -817,17 +902,17 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             "bayleaf",
             "raycast",
             |mut caller: Caller<'_, HostState>, ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max: f32, out: i32| -> Result<i32, wasmi::Error> {
-                let (origin, direction) = (Vec3::new(ox, oy, oz), Vec3::new(dx, dy, dz));
+                let (origin, direction) = (Vec3::new(ox, oy, oz).as_dvec3(), Vec3::new(dx, dy, dz).as_dvec3());
                 if !(origin.is_finite() && direction.is_finite() && max.is_finite()) || direction.length_squared() < 1e-12 || max < 0.0 {
                     return Err(fault(&mut caller, "raycast: give a finite origin, a direction that is not zero, and a distance of 0 or more".to_owned()));
                 }
                 let direction = direction.normalize();
                 let state = caller.data();
-                let hit = state.world.raycast(origin, direction, max, state.object);
+                let hit = state.world.raycast(origin, direction, f64::from(max), state.object);
                 let (handle, values) = match hit {
                     Some((index, distance)) => {
-                        let point = origin + direction * distance;
-                        (index as i32 + 1, [distance, point.x, point.y, point.z])
+                        let point = (origin + direction * distance).as_vec3();
+                        (index as i32 + 1, [distance as f32, point.x, point.y, point.z])
                     }
                     None => (0, [0.0; 4]),
                 };
@@ -857,12 +942,10 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             Ok(caller.data().world.objects.iter().position(|(_, n, _)| *n == name).map_or(0, |i| i as i32 + 1))
         })?;
         linker.func_wrap("bayleaf", "transform_get_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32| -> Result<(), wasmi::Error> {
-            let state = caller.data();
-            let Some((object, _, start)) = state.world.get(handle).cloned() else {
+            let Some((object, index)) = caller.data().world.object(handle) else {
                 return Err(fault(&mut caller, format!("transform_get_of: there is no object with handle {handle}")));
             };
-            // The latest value this call set, else the value at the start of the step.
-            let value = if object == state.object { state.transform } else { state.writes.iter().rev().find(|(o, _)| *o == object).map_or(start, |(_, v)| *v) };
+            let (value, _) = caller.data().current(object, index);
             let bytes: Vec<u8> = value.iter().flat_map(|v| v.to_le_bytes()).collect();
             write_guest(&mut caller, out, &bytes, "transform_get_of")
         })?;
@@ -875,16 +958,12 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             if !values.iter().all(|v| v.is_finite()) {
                 return Err(fault(&mut caller, "transform_set_of: values must be finite numbers".to_owned()));
             }
-            let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+            let Some((object, index)) = caller.data().world.object(handle) else {
                 return Err(fault(&mut caller, format!("transform_set_of: there is no object with handle {handle}")));
             };
             let state = caller.data_mut();
-            if object == state.object {
-                state.transform = values;
-                state.transform_changed = true;
-            } else {
-                state.writes.push((object, values));
-            }
+            let (_, precise) = state.current(object, index);
+            state.set(object, values, merged_position(&values, precise));
             Ok(())
         })?;
         linker.func_wrap("bayleaf", "spawn", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, x: f32, y: f32, z: f32| -> Result<i32, wasmi::Error> {

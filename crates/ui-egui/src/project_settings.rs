@@ -1,7 +1,7 @@
 //! Project Settings: what applies to the whole project, such as physics. Reads the settings once
 //! per project and changes them only through `project.settings.set`.
 
-use bayleaf_engine::project_cmds::{PhysicsSettings, ProjectSettings, settings_of};
+use bayleaf_engine::project_cmds::{PhysicsPrecision, PhysicsSettings, ProjectSettings, settings_of};
 use serde_json::json;
 
 use crate::Editor;
@@ -54,6 +54,20 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     if ui.button("Earth Gravity").on_hover_text("9.81 m/s² downwards").clicked() {
                         settings.physics.gravity = PhysicsSettings::default().gravity;
                     }
+                    ui.horizontal(|ui| {
+                        ui.label("Precision");
+                        let choices = [
+                            (PhysicsPrecision::Single, "Single", "Faster; exact to the millimetre within about 10 km of the world's centre"),
+                            (PhysicsPrecision::Double, "Double", "About a third slower physics; exact far from the centre, for large worlds"),
+                        ];
+                        for (value, label, hint) in choices {
+                            let button = ui.add(egui::Button::selectable(settings.physics.precision == value, label)).on_hover_text(hint);
+                            ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(format!("{label} physics precision")));
+                            if button.clicked() {
+                                settings.physics.precision = value;
+                            }
+                        }
+                    });
                 });
             });
             ui.add_space(theme::GAP);

@@ -117,7 +117,7 @@ fn branch_follows_the_key_and_sine_is_accurate() {
     host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
     let p = transform(&scene, id).position;
     for (got, x) in p.iter().zip([1.0f32, 4.0, -7.0]) {
-        assert!((got - x.sin()).abs() < 1e-4, "sin({x}) = {got}");
+        assert!((got - f64::from(x.sin())).abs() < 1e-4, "sin({x}) = {got}");
     }
     let held = Arc::new(Input { keys: ["W".to_owned()].into_iter().collect(), ..Input::default() });
     host.update(&mut scene, 0.1, 0.0, &held);
@@ -452,4 +452,22 @@ fn a_raycast_finds_the_nearest_turned_box_and_misses_when_nothing_is_there() {
     let text = host.take_logs()[0].text.clone();
     let distance: f32 = text.trim_start_matches("hit at ").parse().unwrap();
     assert!((distance - (5.0 - std::f32::consts::FRAC_1_SQRT_2)).abs() < 0.01, "the corner of the turned cube is hit first: {text}");
+}
+
+#[test]
+fn move_by_keeps_small_steps_far_from_the_centre() {
+    // Single precision rounds to 1/16 of a unit at 1000 km; double precision keeps every millimetre.
+    let mut b = Builder::new();
+    let update = b.node("update", json!({}));
+    let step = b.node("moveBy", json!({ "offset": [0.001, 0.0, 0.0] }));
+    b.link(update, "then", step, "run");
+    let (mut scene, id, mut host) = run(&b.bytes(), &[]);
+    let far = 1.0e6;
+    scene.set(id, Transform { position: [far, 0.0, 0.0], rotation: [0.0; 3], scale: [1.0; 3] }).unwrap();
+    for _ in 0..100 {
+        host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    }
+    assert!(host.take_faults().is_empty());
+    let moved = transform(&scene, id).position[0] - far;
+    assert!((moved - 0.1).abs() < 1e-6, "100 steps of 1 mm make 10 cm: {moved}");
 }

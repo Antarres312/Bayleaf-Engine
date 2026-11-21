@@ -424,7 +424,7 @@ fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandE
         None => match bayleaf_render::scene_camera(scene, aspect) {
             Some(view) => (view, "scene"),
             None => {
-                let (center, radius) = bayleaf_render::bounds(scene).unwrap_or((bayleaf_core::math::Vec3::ZERO, 2.0));
+                let (center, radius) = bayleaf_render::bounds(scene).unwrap_or((bayleaf_core::math::DVec3::ZERO, 2.0));
                 (bayleaf_render::CameraView::framing(center, radius, aspect), "framing")
             }
         },

@@ -45,7 +45,7 @@ fn light_direction_follows_the_object_rotation() {
     let mut scene = Scene::new();
     // Rotated −90° about X, the light's −Z axis points straight down.
     object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 2}), [0.0; 3], [-90.0, 0.0, 0.0]);
-    let frame = extract(&scene, CameraView::framing(Vec3::ZERO, 1.0, 1.0), OPTIONS);
+    let frame = extract(&scene, CameraView::framing(bayleaf_core::math::DVec3::ZERO, 1.0, 1.0), OPTIONS);
     assert_eq!(frame.lights.len(), 1);
     assert!(frame.lights[0].direction.dot(Vec3::NEG_Y) > 0.99);
 }
@@ -54,7 +54,7 @@ fn light_direction_follows_the_object_rotation() {
 fn sprites_are_unlit_transparent_and_sized() {
     let mut scene = Scene::new();
     object(&mut scene, "sprite", json!({"color": [1, 0, 0, 1], "size": [3, 1]}), [0.0; 3], [0.0; 3]);
-    let frame = extract(&scene, CameraView::framing(Vec3::ZERO, 1.0, 1.0), OPTIONS);
+    let frame = extract(&scene, CameraView::framing(bayleaf_core::math::DVec3::ZERO, 1.0, 1.0), OPTIONS);
     let sprite = &frame.items[0];
     assert!(sprite.unlit && sprite.is_transparent());
     assert!(sprite.model.x_axis.length() > sprite.model.y_axis.length());
@@ -66,7 +66,7 @@ fn the_first_camera_object_is_the_scene_camera() {
     assert!(scene_camera(&scene, 1.0).is_none());
     object(&mut scene, "camera", json!({"projection": "perspective", "fov": 60, "size": 5, "near": 0.1, "far": 100}), [0.0, 5.0, 0.0], [0.0; 3]);
     let view = scene_camera(&scene, 1.0).unwrap();
-    assert!(view.position.distance(Vec3::new(0.0, 5.0, 0.0)) < 1e-5);
+    assert!(view.eye().distance(bayleaf_core::math::DVec3::new(0.0, 5.0, 0.0)) < 1e-5);
 }
 
 /// Renders on the GPU when one is available. Set `BAYLEAF_GPU_REQUIRED=1` to fail instead of skip.
@@ -678,4 +678,24 @@ fn a_small_shape_near_the_camera_casts_a_sharp_shadow_in_a_large_world() {
     // Straight below the box, seen past its near edge, and a little to the side of its shadow.
     let (under, beside) = (at(Vec3::new(0.0, 0.0, 0.15)), at(Vec3::new(0.6, 0.0, 0.15)));
     assert!(beside > under + 60, "the small box shadows the ground: under {under}, beside {beside}");
+}
+
+#[test]
+fn a_scene_1000_km_from_the_centre_looks_as_it_does_at_the_centre() {
+    let Some(gpu) = gpu() else { return };
+    let render = |offset: f64| {
+        let mut scene = Scene::new();
+        for (shape, x) in [("cube", -0.6), ("sphere", 0.6)] {
+            let id = mesh(&mut scene, shape, [0.0; 3]);
+            let transform = bayleaf_scene::components::Transform { position: [offset + x, 0.0, offset], rotation: [0.0, 30.0, 0.0], scale: [0.5; 3] };
+            scene.set(id, transform).unwrap();
+        }
+        object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3}), [0.0; 3], [-40.0, 20.0, 0.0]);
+        let center = bayleaf_core::math::DVec3::new(offset, 0.0, offset);
+        let camera = CameraView::look_at_world(center + bayleaf_core::math::DVec3::new(0.0, 0.4, 2.0), center, 50.0, 1.0);
+        gpu.render(&extract(&scene, camera, OPTIONS), 48, 48).unwrap()
+    };
+    let (near, far) = (render(0.0), render(1.0e6));
+    let differing = (0..48).flat_map(|y| (0..48).map(move |x| (x, y))).filter(|(x, y)| near.pixel(*x, *y) != far.pixel(*x, *y)).count();
+    assert!(differing < 10, "{differing} pixels differ between the centre and 1000 km out");
 }

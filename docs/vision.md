@@ -140,7 +140,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
    collisions and triggers, and lets them push bodies and set or read their velocity (scene format
    version 8). Project settings (`settings` in the `.bproject` file, project format version 2;
    `project.settings`, `project.settings.set`, the Project Settings panel) turn physics off or change
-   gravity. Still open: joints, a character controller, collider outlines in the scene view,
+   gravity, and choose single or double precision physics. Still open: joints, a character controller, collider outlines in the scene view,
    raycasts against colliders, physics commands for agents.
 
 ## Open questions
@@ -148,6 +148,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
 - Physics: integrate an allowlisted crate or write our own?
 - Scene file format: decided in M1 as pretty JSON (`.bscene`, `format: "bayleaf.scene"`, `version: 1`),
   with objects listed parents first in hierarchy order. Revisit if diffs get too noisy.
+- Positions are double precision in the scene, world matrices, scripts and the editor's handles; the
+  GPU gets single-precision numbers measured from the camera, so worlds far larger than 10 km render
+  without jitter. Physics is single precision by default (faster) or double (Project Settings).
 - Undo stores whole-scene snapshots, kept as compact JSON within a budget (500 steps, 256 MiB; the
   oldest go first). Very large scenes will still want per-command inverse operations.
 - How the guest SDK for languages other than Rust is distributed.

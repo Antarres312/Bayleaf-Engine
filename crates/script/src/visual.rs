@@ -589,7 +589,11 @@ impl Compiler<'_> {
                     _ => ("degrees", 12, "$add3"),
                 };
                 let [x, y, z] = vec3(self, input)?;
-                let _ = writeln!(code, "{indent}(call {call} (i32.const {offset}) {x} {y} {z})");
+                if n.kind == "moveBy" {
+                    let _ = writeln!(code, "{indent}(call $move_by {x} {y} {z})");
+                } else {
+                    let _ = writeln!(code, "{indent}(call {call} (i32.const {offset}) {x} {y} {z})");
+                }
             }
             "setPositionOf" => {
                 let (at, len) = self.named(next, "object", "name the object to move")?;
@@ -874,6 +878,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))
   (import "bayleaf" "transform_get_of" (func $transform_get_of (param i32 i32)))
   (import "bayleaf" "transform_set_of" (func $transform_set_of (param i32 i32)))
+  (import "bayleaf" "position_get_of" (func $position_get_of (param i32 i32)))
+  (import "bayleaf" "position_set_of" (func $position_set_of (param i32 i32)))
   (import "bayleaf" "spawn" (func $spawn (param i32 i32 f32 f32 f32) (result i32)))
   (import "bayleaf" "destroy" (func $destroy (param i32) (result i32)))
   (import "bayleaf" "send" (func $send (param i32 i32 i32 f32) (result i32)))
@@ -922,6 +928,13 @@ const PRELUDE: &str = r#"(module
     (f32.store offset=4 (local.get $at) (local.get $y))
     (f32.store offset=8 (local.get $at) (local.get $z))
     (call $transform_set (i32.const 0)))
+  ;; Moves this object by an offset in double precision (bytes 96..120), so far from the centre it moves smoothly.
+  (func $move_by (param $x f32) (param $y f32) (param $z f32)
+    (call $position_get_of (call $self_handle) (i32.const 96))
+    (f64.store (i32.const 96) (f64.add (f64.load (i32.const 96)) (f64.promote_f32 (local.get $x))))
+    (f64.store (i32.const 104) (f64.add (f64.load (i32.const 104)) (f64.promote_f32 (local.get $y))))
+    (f64.store (i32.const 112) (f64.add (f64.load (i32.const 112)) (f64.promote_f32 (local.get $z))))
+    (call $position_set_of (call $self_handle) (i32.const 96)))
   ;; Adds to three transform values starting at byte offset $at.
   (func $add3 (param $at i32) (param $x f32) (param $y f32) (param $z f32)
     (call $transform_get (i32.const 0))
