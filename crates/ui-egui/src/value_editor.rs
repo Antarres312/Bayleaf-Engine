@@ -194,7 +194,7 @@ fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: 
 
 fn choose(ui: &mut egui::Ui, current: &mut String, choices: &[&str], salt: &str, label: egui::Id, width: f32) -> Outcome {
     let mut changed = false;
-    let response = egui::ComboBox::from_id_salt(("choice", salt)).width(width).selected_text(title_case(current)).show_ui(ui, |ui| {
+    let response = craft_ui::ComboBox::from_id_salt(("choice", salt)).width(width).selected_text(title_case(current)).show_ui(ui, |ui| {
         for choice in choices {
             if ui.selectable_label(current == choice, title_case(choice)).clicked() && current != choice {
                 *current = (*choice).to_owned();

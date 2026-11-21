@@ -118,7 +118,11 @@ checked and recorded in `docs/feature-names.md`. Product copy never names or com
 - UI changes: the egui_kittest tests in `crates/ui-egui/src/ui_tests.rs`, with the accessibility check left on.
 
 **Known departures.** This SHOULD rule is not met yet: the translation system (AA 16; labels are plain English).
-Theme tokens live in `crates/ui-egui/src/theme.rs` (not craft-ui yet); their contrast is tested there.
+Theme tokens live in `crates/ui-egui/src/theme.rs`, as each Craft app keeps its own; their contrast is tested there.
+The editor uses craft-ui (storytold/craft-libs at one pinned `rev`) for widget-state colours, headed sections,
+combo boxes and the font stack (`crates/ui-egui/src/fonts.rs`; set `CRAFT_FONTS_DIR` to a craft-fonts checkout to
+embed its faces). craft-ui needs the suite's egui and winit forks: the root `Cargo.toml` patches them at the commits
+craft-libs uses, and a craft-libs `rev` move updates those patches in the same change.
 
 **Conventions.** `unsafe` is allowed only in `crates/script-sdk/src/abi.rs` (the guest FFI to the host), each block
 with a `// SAFETY:` comment. Every crate root carries the deny attributes

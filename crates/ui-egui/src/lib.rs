@@ -10,6 +10,7 @@ pub mod brand;
 mod console;
 mod dock;
 mod file_inspector;
+mod fonts;
 mod game_view;
 pub mod gamepad;
 mod gizmo;
@@ -24,6 +25,7 @@ mod theme;
 mod value_editor;
 
 pub use dock::{Layout, Panel};
+pub use fonts::install_fonts;
 
 use bayleaf_core::StableId;
 use bayleaf_engine::scene::doc::EXTENSION;

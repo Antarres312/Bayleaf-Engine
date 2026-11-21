@@ -44,9 +44,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             ui.add_space(theme::GAP);
         }
         ui.add_enabled_ui(project.is_some(), |ui| {
-            theme::section(t).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(egui::RichText::new("Physics").strong());
+            theme::headed(t, "Physics").show(ui, |ui| {
                 ui.checkbox(&mut settings.physics.enabled, "Physics in play mode")
                     .on_hover_text("Off: Rigid Bodies and Colliders do nothing when the game runs");
                 ui.add_enabled_ui(settings.physics.enabled, |ui| {
@@ -97,9 +95,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
 /// Input actions: a name and its bindings per row. The typed text is saved once every row reads
 /// right; until then the problem is shown under the list.
 fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, shown: &mut Shown, settings: &mut ProjectSettings) {
-    theme::section(t).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.label(egui::RichText::new("Input Actions").strong());
+    theme::headed(t, "Input Actions").show(ui, |ui| {
         ui.label(egui::RichText::new("Bindings: key:W, mouse:Left, pad:South, axis:LeftX+ (separate with commas)").small().color(t.text_muted));
         let mut changed = false;
         let mut remove = None;

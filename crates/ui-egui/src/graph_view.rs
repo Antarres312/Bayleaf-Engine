@@ -1141,7 +1141,7 @@ fn setting_row(ui: &mut egui::Ui, t: &Tokens, node: &Node, setting: &bayleaf_eng
             let current = value_or(node, setting.name, json!(default)).as_str().unwrap_or(default).to_owned();
             let mut picked = None;
             let response = ui.put(field, |ui: &mut egui::Ui| {
-                egui::ComboBox::from_id_salt(("graph choice", node.id, setting.name))
+                craft_ui::ComboBox::from_id_salt(("graph choice", node.id, setting.name))
                     .selected_text(current.as_str())
                     .width(field.width())
                     .show_ui(ui, |ui| {

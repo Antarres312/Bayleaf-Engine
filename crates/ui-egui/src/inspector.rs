@@ -379,7 +379,7 @@ fn file_row(
                 }
             }
             let shown = if current.is_empty() { field.none.to_owned() } else { current.to_owned() };
-            egui::ComboBox::from_id_salt((field.component, field.field))
+            craft_ui::ComboBox::from_id_salt((field.component, field.field))
                 .width((ui.available_width() - 1.0).max(60.0))
                 .selected_text(egui::RichText::new(shown).color(t.text))
                 .show_ui(ui, |ui| {

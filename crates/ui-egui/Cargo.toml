@@ -12,6 +12,9 @@ bayleaf-core = { workspace = true }
 bayleaf-engine = { workspace = true }
 gilrs = { workspace = true }
 bayleaf-render = { workspace = true }
+craft-fonts-build = { workspace = true }
+# system_fonts: installed fonts fill in scripts the embedded faces lack (desktop only).
+craft-ui = { workspace = true, features = ["system_fonts"] }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 egui_dock = { workspace = true }
@@ -20,6 +23,10 @@ png = { workspace = true }
 serde = { workspace = true }
 rfd = { workspace = true }
 serde_json = { workspace = true }
+
+[build-dependencies]
+# Embeds craft-fonts faces when CRAFT_FONTS_DIR names a craft-fonts checkout.
+craft-fonts-build = { workspace = true }
 
 [lints]
 workspace = true

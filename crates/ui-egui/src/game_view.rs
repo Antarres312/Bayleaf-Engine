@@ -143,34 +143,24 @@ fn state_panel(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui) {
     };
     let mut clear = false;
     egui::ScrollArea::vertical().id_salt("game state").auto_shrink([false, false]).show(ui, |ui| {
-        theme::section(t).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new("Game").strong());
-            match &state {
-                Some(state) => values(ui, t, "Game", &state.game),
-                None => muted(ui, t, "The game's values appear here while it plays."),
-            }
+        theme::headed(t, "Game").show(ui, |ui| match &state {
+            Some(state) => values(ui, t, "Game", &state.game),
+            None => muted(ui, t, "The game's values appear here while it plays."),
         });
         ui.add_space(theme::SECTION_GAP);
-        theme::section(t).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new("Players").strong());
-            match &state {
-                Some(state) if state.players.is_empty() => muted(ui, t, "No player values yet."),
-                Some(state) => {
-                    for (id, player) in &state.players {
-                        let name = editor.session.scene().name(*id).unwrap_or("Player").to_owned();
-                        ui.label(egui::RichText::new(&name).color(t.text_muted));
-                        values(ui, t, &name, player);
-                    }
+        theme::headed(t, "Players").show(ui, |ui| match &state {
+            Some(state) if state.players.is_empty() => muted(ui, t, "No player values yet."),
+            Some(state) => {
+                for (id, player) in &state.players {
+                    let name = editor.session.scene().name(*id).unwrap_or("Player").to_owned();
+                    ui.label(egui::RichText::new(&name).color(t.text_muted));
+                    values(ui, t, &name, player);
                 }
-                None => muted(ui, t, "Each player's values appear here while the game plays."),
             }
+            None => muted(ui, t, "Each player's values appear here while the game plays."),
         });
         ui.add_space(theme::SECTION_GAP);
-        theme::section(t).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new("Saved").strong());
+        theme::headed(t, "Saved").show(ui, |ui| {
             match &saved {
                 Ok(saved) => values(ui, t, "Saved", saved),
                 Err(problem) => {

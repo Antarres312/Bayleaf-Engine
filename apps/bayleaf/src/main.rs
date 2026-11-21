@@ -54,6 +54,7 @@ struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, scene: Option<PathBuf>, setup: Option<ControlSetup>) -> anyhow::Result<Self> {
+        bayleaf_ui_egui::install_fonts(&cc.egui_ctx);
         let mut editor = Editor::default();
         if let Some(text) = cc.storage.and_then(|s| s.get_string(LAYOUT_KEY)) {
             // A layout from another version is ignored; the editor keeps its default layout.

@@ -34,6 +34,10 @@ clap = { version = "4", features = ["derive", "env"] }
 glam = { version = "0.30", features = ["serde"] }
 eframe = { version = "0.37", default-features = false, features = ["wgpu", "accesskit", "default_fonts", "persistence"] }
 egui_dock = { version = "0.22", features = ["serde"] }
+# Shared egui controls of the Craft apps (storytold/craft-libs). Every craft-libs crate stays at one
+# rev merged on its main branch; moving the rev is a change of its own.
+craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
+craft-fonts-build = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
 # Same version eframe uses for its saved state; it keeps non-finite floats that JSON cannot.
 ron = "0.12"
 egui = { version = "0.37", default-features = false }
@@ -82,3 +86,18 @@ debug = "line-tables-only"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# craft-ui is built against the Craft apps' egui fork and its winit (fork-only text input and
+# right-to-left APIs). Cargo does not carry a dependency's patches over, so every app repeats them,
+# at the same commits craft-libs uses at its pinned rev.
+[patch.crates-io]
+ecolor = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+emath = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-winit = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_kittest = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }

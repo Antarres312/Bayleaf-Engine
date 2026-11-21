@@ -71,7 +71,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    each keeping its own name and transform. Then: each copy keeps the component changes made to it
    (its overrides, listed on its Prefab card) when it is updated from the file; copies update when
    the scene opens; prefabs may hold copies of other prefabs, which follow their own files (scene
-   format version 7). Still open from M1: craft-ui theme tokens, the translation system.
+   format version 7). Still open from M1: the translation system. Later the
+   editor took craft-ui (widget-state colours, sections, combo boxes, the font stack) and with it the
+   suite's egui and winit forks; its theme tokens stay its own, as in every Craft app.
 3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
    a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with

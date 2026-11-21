@@ -185,6 +185,12 @@ pub(crate) fn section(t: &Tokens) -> egui::Frame {
     egui::Frame::new().fill(t.surface).corner_radius(SECTION_RADIUS).inner_margin(Margin { left: 6, right: 6, top: 0, bottom: 0 })
 }
 
+/// A group of settings under a heading, through the Craft apps' shared section
+/// (`craft_ui::layout::Section`), framed like an inspector section. It fills the width.
+pub(crate) fn headed(t: &Tokens, heading: &str) -> craft_ui::layout::Section {
+    craft_ui::layout::Section::new(section(t)).heading(egui::RichText::new(heading).strong())
+}
+
 fn style(t: &Tokens, dark: bool) -> egui::Style {
     let mut style = egui::Style::default();
     let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
@@ -207,20 +213,21 @@ fn style(t: &Tokens, dark: bool) -> egui::Style {
     v.striped = false;
     v.indent_has_left_vline = false;
 
-    let radius = CornerRadius::same(RADIUS);
     let w = &mut v.widgets;
-    w.noninteractive.bg_fill = t.panel;
-    w.noninteractive.weak_bg_fill = t.panel;
+    // Fills for each widget state, through the Craft apps' shared palette mechanism.
+    let palette = craft_ui::theme::WidgetPalette {
+        noninteractive: t.panel,
+        inactive: t.control,
+        hovered: t.control_hover,
+        active: t.control_active,
+        open: t.control_active,
+    };
+    palette.apply_to(w, CornerRadius::same(RADIUS), Stroke::new(1.5, t.text));
     w.noninteractive.bg_stroke = Stroke::new(1.0, t.divider);
     w.noninteractive.fg_stroke = Stroke::new(1.0, t.text);
-    w.noninteractive.corner_radius = radius;
     // Controls are told apart by fill, not outline. The only outline is the focus ring.
-    for (state, fill) in [(&mut w.inactive, t.control), (&mut w.hovered, t.control_hover), (&mut w.active, t.control_active), (&mut w.open, t.control_active)] {
-        state.bg_fill = fill;
-        state.weak_bg_fill = fill;
+    for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
         state.bg_stroke = Stroke::NONE;
-        state.fg_stroke = Stroke::new(1.5, t.text);
-        state.corner_radius = radius;
         state.expansion = 0.0;
     }
     // egui draws focused widgets with the active style, so this is the keyboard focus ring.
