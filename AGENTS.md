@@ -67,7 +67,7 @@ a member of the suite. The vision, decisions and milestones are in `docs/vision.
 **Layout by layer.** `cargo xtask layers` enforces it. Register every new crate in `xtask/src/layers.rs`
 in the same change that adds it.
 - L0 `crates/core`; L1 `crates/ecs`; L2 `crates/scene`, `crates/assets`, `crates/graph`; L3 `crates/render`;
-  L4 `crates/script`, `crates/gameplay`, `crates/streaming`; L5 `crates/engine`; L6 `crates/ui-egui`, `crates/automation`.
+  L4 `crates/script`, `crates/gameplay`, `crates/streaming`, `crates/physics`; L5 `crates/engine`; L6 `crates/ui-egui`, `crates/automation`.
 - Apps (L7): `apps/bayleaf` (editor), `apps/bayleaf-cli` (headless and MCP), `apps/bayleaf-player` (runs a game
   without the editor). `xtask/` holds repository checks.
 - No crate below L6 uses egui, eframe, winit or rfd.

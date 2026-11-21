@@ -10,8 +10,9 @@ pub const FORMAT: &str = "bayleaf.scene";
 /// Version 2 replaced the single `script` component with the `scripts` list; version 3 added
 /// `mesh.material`; version 4 added point and spot lights, `directionalLight.shadows` and the
 /// `prefab` link; version 5 added `mesh.model` and `sprite.image`; version 6 added the `environment`
-/// component. Older files still load.
-pub const VERSION: u32 = 6;
+/// component; version 7 added `environment.fogDistance`, `spotLight.shadows`, `pointLight.shadows` and prefab overrides; version 8
+/// added `rigidBody` and `collider`. Older files still load.
+pub const VERSION: u32 = 8;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.

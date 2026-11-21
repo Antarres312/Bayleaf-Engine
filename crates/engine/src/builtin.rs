@@ -1,6 +1,5 @@
 //! Built-in commands that do not belong to a feature area: about, undo and redo.
 
-use bayleaf_scene::Scene;
 use serde_json::{Value, json};
 
 use crate::{CommandError, CommandSpec, HistoryStep, Mutates, Prompt, Session, Snapshot, always};
@@ -72,17 +71,19 @@ fn redo(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
 /// Puts a snapshot back and returns the state it replaced, for the opposite stack.
 fn restore(session: &mut Session, snapshot: Snapshot) -> Result<Snapshot, CommandError> {
     match snapshot {
-        Snapshot::Scene(doc) => {
-            let current = session.scene.to_doc();
-            session.scene = Scene::from_doc(&doc)?;
+        Snapshot::Scene(_) => {
+            let current = Snapshot::scene(&session.scene);
+            session.scene = snapshot.to_scene()?;
             session.dirty = true;
-            Ok(Snapshot::Scene(current))
+            Ok(current)
         }
-        Snapshot::Graph(graph) => {
+        Snapshot::Graph(_) => {
+            let graph = snapshot.to_graph()?;
             let open = session.graph.as_mut().ok_or_else(|| CommandError::Failed("the graph of this step is closed".to_owned()))?;
-            let current = std::mem::replace(&mut open.graph, graph);
+            let current = Snapshot::graph(&open.graph);
+            open.graph = graph;
             open.dirty = true;
-            Ok(Snapshot::Graph(current))
+            Ok(current)
         }
     }
 }

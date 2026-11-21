@@ -90,6 +90,25 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             let source = link["source"].as_str().unwrap_or_default().to_owned();
             card(ui, t, "prefab card", "Prefab", Some(&source), false, |ui| {
                 ui.add(egui::Label::new(egui::RichText::new(&source).color(t.text_muted)).truncate());
+                // What this copy changed, which stays when the prefab file changes.
+                let overrides: Vec<String> = link["overrides"]
+                    .as_array()
+                    .map(|list| {
+                        list.iter()
+                            .filter_map(|o| o.as_str()?.split_once('/').map(|(_, c)| c.to_owned()))
+                            .map(|c| kinds.iter().find(|k| k.name == c).map_or(c.clone(), |k| k.label.to_owned()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let summary = if overrides.is_empty() {
+                    "Same as the prefab file".to_owned()
+                } else {
+                    let mut labels = overrides.clone();
+                    labels.sort();
+                    labels.dedup();
+                    format!("Own changes, kept when the file changes: {}", labels.join(", "))
+                };
+                ui.add(egui::Label::new(egui::RichText::new(summary).small().color(t.text_muted)).wrap());
                 ui.horizontal(|ui| {
                     if ui.button("Apply").on_hover_text("Write this object and its children to the prefab file, and update its other copies in the scene").clicked() {
                         pending = Some(Pending::Prefab("scene.prefab.apply"));

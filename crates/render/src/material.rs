@@ -230,6 +230,8 @@ pub fn compile(graph: &Graph) -> Result<CompiledMaterial, Vec<Problem>> {
     if !problems.is_empty() {
         return Err(problems);
     }
+    // Material graphs keep the surface's own normal.
+    fields.push("s.normal".to_owned());
     let transparent =
         graph.link_into(output.id, "opacity").is_some() || graph.value(output.id, "opacity").and_then(bayleaf_graph::as_f32).is_some_and(|v| v < 1.0);
     let mut surface = String::from("fn surface(s: SurfaceIn) -> Surface {\n");
@@ -350,7 +352,7 @@ impl Compiler<'_> {
                         None => return Err(problem(node, &format!("a material may use at most {MAX_TEXTURES} images"))),
                     };
                     let uv = self.input_as(node, "uv", Ty::V)?;
-                    self.lines.push(format!("let {sample} = textureSampleLevel(t{slot}, material_sampler, ({uv}).xy, 0.0);"));
+                    self.lines.push(format!("let {sample} = textureSample(t{slot}, material_sampler, ({uv}).xy);"));
                 }
                 if pin == "alpha" { (format!("{sample}.a"), Ty::F) } else { (format!("{sample}.rgb"), Ty::V) }
             }

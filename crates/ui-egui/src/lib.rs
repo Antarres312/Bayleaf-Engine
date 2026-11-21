@@ -10,11 +10,13 @@ pub mod brand;
 mod console;
 mod dock;
 mod file_inspector;
+pub mod gamepad;
 mod gizmo;
 mod graph_view;
 mod hierarchy;
 mod inspector;
 mod project;
+mod project_settings;
 mod scene_view;
 mod script_info;
 mod theme;
@@ -70,6 +72,10 @@ pub struct Editor {
     builds: Vec<(String, std::sync::mpsc::Receiver<Result<bayleaf_engine::code_scripts::Built, String>>)>,
     /// The file clicked in the Project panel, shown in the Inspector while no object is selected.
     inspected_file: Option<file_inspector::Inspected>,
+    /// Gamepads, read in play mode.
+    gamepads: gamepad::Gamepads,
+    /// The settings the Project Settings panel shows.
+    project_settings: project_settings::Shown,
 }
 
 impl Default for Editor {
@@ -99,6 +105,8 @@ impl Default for Editor {
             close_confirmed: false,
             builds: Vec::new(),
             inspected_file: None,
+            gamepads: gamepad::Gamepads::default(),
+            project_settings: project_settings::Shown::default(),
         }
     }
 }
@@ -275,6 +283,8 @@ impl Editor {
         // Keys typed into a text field are not game input.
         let keys = if ctx.text_edit_focused() { Default::default() } else { ctx.input(|i| i.keys_down.iter().map(|k| k.name().to_owned()).collect()) };
         self.session.set_keys(keys);
+        let pad = self.gamepads.read();
+        self.session.set_pad(pad);
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         self.session.tick(dt);
         // The scene view sets the pointer again while it is shown; hidden, the game sees none.

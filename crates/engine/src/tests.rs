@@ -74,6 +74,27 @@ fn undo_and_redo_walk_the_history() {
 }
 
 #[test]
+fn the_history_keeps_the_newest_steps_up_to_its_limit() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let id = create(&registry, &mut session, json!({"name": "Moved"}));
+    let extra = 10;
+    for x in 0..crate::MAX_UNDO_STEPS + extra {
+        let params = json!({"id": id, "component": "transform", "value": {"position": [x, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}});
+        registry.execute(&mut session, "scene.component.set", &params).unwrap();
+    }
+    assert!(session.history_bytes() <= crate::UNDO_BUDGET_BYTES);
+    let mut undone = 0;
+    while registry.execute(&mut session, "edit.undo", &Value::Null).is_ok() {
+        undone += 1;
+    }
+    assert_eq!(undone, crate::MAX_UNDO_STEPS, "the oldest steps were dropped");
+    let x = session.scene().get::<bayleaf_scene::components::Transform>(bayleaf_core::StableId::parse_hex(&id).unwrap()).unwrap().position[0];
+    assert!(x > 0.0, "undo stops at the oldest kept step, not at the start: x = {x}");
+    registry.execute(&mut session, "edit.redo", &Value::Null).unwrap();
+}
+
+#[test]
 fn a_new_change_clears_redo() {
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();
@@ -594,6 +615,14 @@ fn scripts_spawn_prefabs_and_destroy_objects_in_play_mode_and_stop_undoes_it() {
     registry.execute(&mut session, "play.step", &Value::Null).unwrap();
     assert_eq!(named(&session, "Ball"), 0, "nothing without the click");
     registry.execute(&mut session, "play.input", &json!({"keys": [], "pointer": [0.1, 0.2], "buttons": 1})).unwrap();
+    assert!(registry.execute(&mut session, "play.input", &json!({"keys": [], "pad": {"buttons": ["Jump"]}})).is_err(), "unknown gamepad buttons are refused");
+    registry
+        .execute(
+            &mut session,
+            "play.input",
+            &json!({"keys": [], "pointer": [0.1, 0.2], "buttons": 1, "pad": {"axes": [2, 0, 0, 0, 0, 0], "buttons": ["South"]}}),
+        )
+        .unwrap();
     registry.execute(&mut session, "play.step", &Value::Null).unwrap();
     assert_eq!(named(&session, "Ball"), 1, "the click spawned a ball");
     assert_eq!(named(&session, "Junk"), 0, "and destroyed the junk");
@@ -700,4 +729,184 @@ fn copied_nodes_paste_with_new_ids_and_their_links_and_one_of_a_kind_nodes_stay_
     registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
     let refused = registry.execute(&mut session, "graph.node.paste", &json!({"text": text})).unwrap_err();
     assert!(refused.to_string().contains("material nodes"), "{refused}");
+}
+
+#[test]
+fn a_render_without_a_path_comes_back_as_base64_png() {
+    assert_eq!([b"M".as_slice(), b"Ma", b"Man"].map(crate::scene_cmds::base64), ["TQ==", "TWE=", "TWFu"]);
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    create(&registry, &mut session, json!({}));
+    assert!(registry.execute(&mut session, "scene.render", &json!({"width": 4096, "height": 8})).is_err(), "inline renders stay small");
+    match registry.execute(&mut session, "scene.render", &json!({"width": 8, "height": 8})) {
+        // The PNG signature, in base64.
+        Ok(result) => assert!(result["png"].as_str().unwrap().starts_with("iVBORw0KGgo"), "{result}"),
+        Err(e) if std::env::var_os("BAYLEAF_GPU_REQUIRED").is_none() => eprintln!("no GPU, skipped: {e}"),
+        Err(e) => panic!("{e}"),
+    }
+}
+
+#[test]
+fn prefab_copies_keep_their_own_changes_nest_and_update_when_the_scene_opens() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-prefab-overrides-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("room.bscene")})).unwrap();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params).unwrap();
+    let mesh = |color: [f32; 3]| json!({"shape": "sphere", "color": [color[0], color[1], color[2], 1], "metallic": 0, "roughness": 0.5});
+    let color = |session: &Session, id: bayleaf_core::StableId| session.scene().component(id, "mesh").unwrap()["color"][0].as_f64().unwrap();
+    let bulb_of = |session: &Session, lamp: &str| session.scene().children(Some(bayleaf_core::StableId::parse_hex(lamp).unwrap()))[0];
+
+    // A lamp prefab with a bulb, placed twice.
+    let first = create(&registry, &mut session, json!({"name": "Lamp"}));
+    create(&registry, &mut session, json!({"name": "Bulb", "parent": first, "components": {"mesh": mesh([0.9, 0.0, 0.0])}}));
+    run(&mut session, "scene.prefab.create", json!({"id": first, "path": "lamp.bprefab"}));
+    let second = run(&mut session, "scene.prefab.place", json!({"path": "lamp.bprefab"}))["id"].as_str().unwrap().to_owned();
+
+    // The second copy's bulb is its own colour: an override.
+    let bulb = bulb_of(&session, &second);
+    run(&mut session, "scene.component.set", json!({"id": bulb, "component": "mesh", "value": mesh([0.1, 0.0, 0.9])}));
+    assert_eq!(session.scene().component(bayleaf_core::StableId::parse_hex(&second).unwrap(), "prefab").unwrap()["overrides"], json!(["1/mesh"]));
+
+    // The first copy gains a light and is applied: the second gets the light and keeps its colour.
+    let first_bulb = bulb_of(&session, &first);
+    run(&mut session, "scene.component.add", json!({"id": first_bulb, "component": "pointLight"}));
+    run(&mut session, "scene.prefab.apply", json!({"id": first}));
+    let bulb = bulb_of(&session, &second);
+    assert!(session.scene().component(bulb, "pointLight").is_ok(), "the change from the file arrived");
+    assert!((color(&session, bulb) - 0.1).abs() < 1e-6, "the copy's own colour stayed");
+
+    // A room prefab holding a lamp copy; the lamp inside follows the lamp file.
+    let room = create(&registry, &mut session, json!({"name": "Room"}));
+    run(&mut session, "scene.prefab.place", json!({"path": "lamp.bprefab", "parent": room}));
+    run(&mut session, "scene.prefab.create", json!({"id": room, "path": "room.bprefab"}));
+    let placed_room = run(&mut session, "scene.prefab.place", json!({"path": "room.bprefab"}))["id"].as_str().unwrap().to_owned();
+    assert!(registry.execute(&mut session, "scene.prefab.place", &json!({"path": "lamp.bprefab", "parent": first})).is_ok());
+    let nested_self = session.scene().children(Some(bayleaf_core::StableId::parse_hex(&first).unwrap())).last().copied().unwrap();
+    assert!(registry.execute(&mut session, "scene.prefab.apply", &json!({"id": first})).is_err(), "a prefab may not hold itself");
+    run(&mut session, "scene.object.delete", json!({"id": nested_self}));
+
+    // The lamp file changes outside this scene; opening the scene brings it in, overrides kept.
+    run(&mut session, "scene.save", json!({}));
+    let file = dir.join("lamp.bprefab");
+    let mut prefab: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    prefab["objects"][1]["components"]["mesh"]["color"][0] = json!(0.5);
+    std::fs::write(&file, prefab.to_string()).unwrap();
+    run(&mut session, "scene.open", json!({"path": dir.join("room.bscene")}));
+    assert!(!session.is_dirty(), "updating copies on open does not mark the scene changed");
+    assert!((color(&session, bulb_of(&session, &first)) - 0.5).abs() < 1e-6, "a plain copy follows the file");
+    assert!((color(&session, bulb_of(&session, &second)) - 0.1).abs() < 1e-6, "a copy's own colour stays");
+    let lamp_in_room = session.scene().children(Some(bayleaf_core::StableId::parse_hex(&placed_room).unwrap()))[0];
+    let bulb_in_room = session.scene().children(Some(lamp_in_room))[0];
+    assert!((color(&session, bulb_in_room) - 0.5).abs() < 1e-6, "the lamp inside the placed room follows the lamp file");
+
+    // Revert drops the copy's own changes.
+    run(&mut session, "scene.prefab.revert", json!({"id": second}));
+    assert!((color(&session, bulb_of(&session, &second)) - 0.5).abs() < 1e-6);
+    assert!(session.scene().component(bayleaf_core::StableId::parse_hex(&second).unwrap(), "prefab").unwrap().get("overrides").is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A box with a script falls onto a floor in play mode: physics moves it, the script hears of the
+/// landing, and stopping play puts the box back.
+#[cfg(feature = "physics")]
+#[test]
+fn physics_drops_a_box_on_the_floor_and_its_script_hears_the_collision() {
+    use bayleaf_graph::{Graph, Link, PinRef};
+    use bayleaf_script::visual::CATALOG;
+    let dir = std::env::temp_dir().join(format!("bayleaf-physics-play-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut graph = Graph::empty(&CATALOG);
+    let landed = graph.add_node(&CATALOG, "message", [0.0, 0.0]).unwrap();
+    graph.set_value(&CATALOG, landed, "message", json!("collision")).unwrap();
+    let log = graph.add_node(&CATALOG, "log", [0.0, 0.0]).unwrap();
+    graph.set_value(&CATALOG, log, "message", json!("landed")).unwrap();
+    graph.connect(&CATALOG, Link { from: PinRef::new(landed, "then"), to: PinRef::new(log, "run") }).unwrap();
+    std::fs::write(dir.join("land.bscript"), graph.to_json()).unwrap();
+
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("drop.bscene")})).unwrap();
+    let collider = json!({"shape": "box", "size": [1, 1, 1], "friction": 0.5, "restitution": 0, "trigger": false});
+    create(
+        &registry,
+        &mut session,
+        json!({"name": "Floor", "components": {"collider": collider, "transform": {"position": [0, -0.5, 0], "rotation": [0, 0, 0], "scale": [20, 1, 20]}}}),
+    );
+    let body = json!({"kind": "dynamic", "mass": 1, "gravityScale": 1, "lockRotation": false});
+    let id = create(
+        &registry,
+        &mut session,
+        json!({"name": "Box", "components": {"rigidBody": body, "collider": collider, "transform": {"position": [0, 3, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}}}),
+    );
+    registry.execute(&mut session, "scene.script.add", &json!({"id": id, "module": "land.bscript"})).unwrap();
+    let box_id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    let height = |s: &Session| s.scene().get::<bayleaf_scene::components::Transform>(box_id).unwrap().position[1];
+
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.05, "steps": 60})).unwrap();
+    assert!((height(&session) - 0.5).abs() < 0.05, "the box rests on the floor: {}", height(&session));
+    let status = registry.execute(&mut session, "play.status", &Value::Null).unwrap();
+    assert!(status["console"].to_string().contains("landed"), "the script heard the collision: {status}");
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert_eq!(height(&session), 3.0, "stopping play puts it back");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn project_settings_are_kept_in_the_project_file_and_checked() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let outside = registry.execute(&mut session, "project.settings", &Value::Null).unwrap();
+    assert_eq!(outside["project"], false);
+    assert_eq!(outside["settings"]["physics"]["enabled"], true, "defaults outside a project");
+    assert!(registry.execute(&mut session, "project.settings.set", &json!({"settings": {"physics": {"enabled": false, "gravity": [0, 0, 0]}}})).is_err());
+
+    let dir = std::env::temp_dir().join(format!("bayleaf-settings-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let set = json!({"settings": {"physics": {"enabled": false, "gravity": [0, -3.7, 0]}}});
+    registry.execute(&mut session, "project.settings.set", &set).unwrap();
+    let bad = json!({"settings": {"physics": {"enabled": true, "gravity": [0, -1e9, 0]}}});
+    assert!(registry.execute(&mut session, "project.settings.set", &bad).is_err(), "gravity has a limit");
+
+    // A fresh session that opens the project reads them back from the file.
+    let mut other = Session::default();
+    registry.execute(&mut other, "project.open", &json!({"path": dir})).unwrap();
+    let read = registry.execute(&mut other, "project.settings", &Value::Null).unwrap();
+    assert_eq!(read["settings"]["physics"]["enabled"], false);
+    assert!((read["settings"]["physics"]["gravity"][1].as_f64().unwrap() + 3.7).abs() < 1e-5);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Turned off in the project settings, physics leaves bodies where they are; turned on with
+/// gravity pointing up, it lifts them.
+#[cfg(feature = "physics")]
+#[test]
+fn play_mode_follows_the_physics_settings() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-settings-play-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let collider = json!({"shape": "box", "size": [1, 1, 1], "friction": 0.5, "restitution": 0, "trigger": false});
+    let body = json!({"kind": "dynamic", "mass": 1, "gravityScale": 1, "lockRotation": false});
+    let id = create(
+        &registry,
+        &mut session,
+        json!({"name": "Box", "components": {"rigidBody": body, "collider": collider, "transform": {"position": [0, 20, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}}}),
+    );
+    let box_id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    let height_after = |session: &mut Session, physics: serde_json::Value| {
+        registry.execute(session, "project.settings.set", &json!({"settings": {"physics": physics}})).unwrap();
+        registry.execute(session, "play.start", &Value::Null).unwrap();
+        registry.execute(session, "play.step", &json!({"seconds": 0.05, "steps": 20})).unwrap();
+        let y = session.scene().get::<bayleaf_scene::components::Transform>(box_id).unwrap().position[1];
+        registry.execute(session, "play.stop", &Value::Null).unwrap();
+        y
+    };
+    assert_eq!(height_after(&mut session, json!({"enabled": false, "gravity": [0, -9.81, 0]})), 20.0, "physics off: it stays");
+    assert!(height_after(&mut session, json!({"enabled": true, "gravity": [0, 9.81, 0]})) > 20.5, "gravity up: it rises");
+    std::fs::remove_dir_all(&dir).ok();
 }

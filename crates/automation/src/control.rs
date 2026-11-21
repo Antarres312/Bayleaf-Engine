@@ -80,6 +80,36 @@ impl ControlServer {
     pub fn pending(&self) -> impl Iterator<Item = ControlRequest> + '_ {
         self.requests.try_iter()
     }
+
+    /// Answers every waiting request with `handler`: `engine.commands` and `engine.execute`.
+    /// Returns how many were answered.
+    pub fn answer(&self, handler: &mut dyn Handler) -> usize {
+        let requests: Vec<ControlRequest> = self.pending().collect();
+        let count = requests.len();
+        for request in requests {
+            let result = match request.method.as_str() {
+                "engine.commands" => Ok(handler.commands()),
+                "engine.execute" => match request.params.get("command").and_then(Value::as_str) {
+                    Some(command) => {
+                        let params = request.params.get("params").cloned().unwrap_or_else(|| json!({}));
+                        handler.execute(command, &params)
+                    }
+                    None => Err("engine.execute needs params.command".to_owned()),
+                },
+                other => Err(format!("unknown method {other}; use engine.commands or engine.execute")),
+            };
+            request.respond(result);
+        }
+        count
+    }
+}
+
+/// What answers control requests: the editor, on its UI thread.
+pub trait Handler {
+    /// The command list, as `engine.commands` returns it.
+    fn commands(&mut self) -> Value;
+    /// Runs one command for an agent, inside the agent's allowed folders.
+    fn execute(&mut self, command: &str, params: &Value) -> Result<Value, String>;
 }
 
 fn serve_connection(stream: TcpStream, token: &str, sender: &Sender<ControlRequest>, wake: &(dyn Fn() + Send + Sync)) -> std::io::Result<()> {
@@ -154,6 +184,8 @@ pub fn load_or_create_token(path: &Path) -> std::io::Result<String> {
     if let Ok(text) = std::fs::read_to_string(path) {
         let token = text.trim().to_owned();
         if token.len() >= 32 {
+            // A file from an older version may still be readable by others.
+            restrict_to_owner(path)?;
             return Ok(token);
         }
     }
@@ -174,8 +206,33 @@ fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
 }
 
-/// On Windows the file inherits the folder's access rules; keep it in a folder only you can read.
-#[cfg(not(unix))]
+/// On Windows: drops the rules the file inherits from its folder and gives only the current user
+/// access, with the system's `icacls` tool.
+#[cfg(windows)]
+fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
+    let user = std::env::var("USERNAME").map_err(|_| std::io::Error::other("USERNAME is not set, so the token file cannot be limited to you"))?;
+    let account = match std::env::var("USERDOMAIN") {
+        Ok(domain) if !domain.is_empty() => format!("{domain}\\{user}"),
+        _ => user,
+    };
+    let status = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/inheritance:r", "/grant:r"])
+        .arg(format!("{account}:F"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        // A token others may read is not kept.
+        let _ = std::fs::remove_file(path);
+        Err(std::io::Error::other(format!("icacls could not limit {} to {account}", path.display())))
+    }
+}
+
+/// Elsewhere the file keeps its folder's access rules; keep it in a folder only you can read.
+#[cfg(not(any(unix, windows)))]
 fn restrict_to_owner(_: &Path) -> std::io::Result<()> {
     Ok(())
 }
@@ -264,6 +321,13 @@ mod tests {
         let path = std::env::temp_dir().join(format!("bayleaf-token-{}", std::process::id())).join("control.token");
         let first = load_or_create_token(&path).unwrap();
         assert_eq!(first.len(), 64);
+        // On Windows only the current user is left on the file's access list.
+        #[cfg(windows)]
+        {
+            let listing = std::process::Command::new("icacls").arg(&path).output().unwrap();
+            let text = String::from_utf8_lossy(&listing.stdout);
+            assert_eq!(text.matches(":(").count(), 1, "one access rule: {text}");
+        }
         assert_eq!(load_or_create_token(&path).unwrap(), first);
         std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }

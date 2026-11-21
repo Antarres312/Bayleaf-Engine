@@ -21,12 +21,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let near = globals.inv_view_proj * vec4<f32>(in.ndc, 0.0, 1.0);
     let far = globals.inv_view_proj * vec4<f32>(in.ndc, 1.0, 1.0);
     let dir = normalize(far.xyz / far.w - near.xyz / near.w);
-    var color: vec3<f32>;
-    if (dir.y >= 0.0) {
-        color = mix(globals.sky_horizon.rgb, globals.sky_zenith.rgb, pow(dir.y, 0.6));
-    } else {
-        color = mix(globals.sky_horizon.rgb, globals.sky_ground.rgb, pow(-dir.y, 0.4));
-    }
+    var color = bl_sky(dir);
     // The sun: the first light, when it is directional, as a small bright disc in a soft glow.
     if (u32(globals.ambient.w) > 0u && globals.lights[0].direction.w == 0.0) {
         let to_sun = -normalize(globals.lights[0].direction.xyz);

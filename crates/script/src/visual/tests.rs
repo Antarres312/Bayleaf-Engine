@@ -209,6 +209,58 @@ fn every_node_kind_compiles_and_runs() {
     b.link(on_message, "then", keep, "run");
     b.link(on_message, "value", keep, "value");
     let read = b.node("variable", json!({ "name": "pings" }));
+    // Vector and true/false variables, a key press and a timer.
+    let pressed = b.node("keyPressed", json!({ "key": "Q" }));
+    let keep_vector = b.node("setVectorVariable", json!({}));
+    b.link(pressed, "then", keep_vector, "run");
+    b.link(make, "vector", keep_vector, "value");
+    let read_vector = b.node("vectorVariable", json!({}));
+    let timer = b.node("timer", json!({ "seconds": 0.5 }));
+    let keep_flag = b.node("setFlag", json!({ "value": true }));
+    b.link(timer, "then", keep_flag, "run");
+    let read_flag = b.node("flag", json!({}));
+    let gate_on_flag = b.node("branch", json!({}));
+    b.link(keep_flag, "then", gate_on_flag, "run");
+    b.link(read_flag, "value", gate_on_flag, "condition");
+    // A gamepad: the stick moves, a button and the trigger decide.
+    let stick = b.node("padStick", json!({ "stick": "Right" }));
+    let trigger = b.node("padTrigger", json!({}));
+    let pad_button = b.node("padButton", json!({ "button": "North" }));
+    let pad_gate = b.node("and", json!({}));
+    b.link(pad_button, "down", pad_gate, "a");
+    b.link(stick, "connected", pad_gate, "b");
+    let pull = b.node("greater", json!({ "b": 0.5 }));
+    b.link(trigger, "amount", pull, "a");
+    let pad_branch = b.node("branch", json!({}));
+    b.link(keep_vector, "then", pad_branch, "run");
+    b.link(pad_gate, "result", pad_branch, "condition");
+    let pad_move = b.node("moveBy", json!({}));
+    b.link(pad_branch, "true", pad_move, "run");
+    b.link(stick, "direction", pad_move, "offset");
+    let pad_log = b.node("log", json!({ "message": "pulled" }));
+    b.link(pad_move, "then", pad_log, "run");
+    let pulled = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    b.link(pull, "result", pulled, "condition");
+    b.link(pulled, "result", pad_log, "value");
+    let ray = b.node("raycast", json!({}));
+    let ray_gate = b.node("branch", json!({}));
+    b.link(pad_log, "then", ray_gate, "run");
+    b.link(ray, "hit", ray_gate, "condition");
+    let ray_log = b.node("log", json!({ "message": "hit" }));
+    b.link(ray_gate, "true", ray_log, "run");
+    b.link(ray, "distance", ray_log, "value");
+    let ray_move = b.node("setPosition", json!({}));
+    b.link(ray_log, "then", ray_move, "run");
+    b.link(ray, "point", ray_move, "position");
+    let push = b.node("addImpulse", json!({}));
+    b.link(ray_move, "then", push, "run");
+    let speed = b.node("velocity", json!({}));
+    b.link(speed, "velocity", push, "impulse");
+    let set_speed = b.node("setVelocity", json!({ "object": "Scripted" }));
+    b.link(push, "then", set_speed, "run");
+    let move_to = b.node("setPositionOf", json!({ "object": "Scripted" }));
+    b.link(gate_on_flag, "false", move_to, "run");
+    b.link(read_vector, "value", move_to, "position");
     let send = b.node("sendMessage", json!({ "message": "ping", "object": "Scripted" }));
     b.link(destroy, "then", send, "run");
     b.link(read, "value", send, "value");
@@ -304,4 +356,100 @@ fn a_click_spawns_and_names_must_be_given() {
     let problems = compile(&b.0).unwrap_err();
     assert_eq!(problems[0].node, Some(set_of));
     assert!(problems[0].message.contains("name the object"));
+}
+
+#[test]
+fn key_presses_run_once_per_press_and_timers_keep_time() {
+    let mut b = Builder::new();
+    let pressed = b.node("keyPressed", json!({ "key": "Space" }));
+    let count = b.node("variable", json!({}));
+    let plus = b.node("add", json!({ "b": 1.0 }));
+    b.link(count, "value", plus, "a");
+    let keep = b.node("setVariable", json!({}));
+    b.link(pressed, "then", keep, "run");
+    b.link(plus, "result", keep, "value");
+    // Every 0.25 s, x of the vector variable grows by 1 and the object moves there.
+    let timer = b.node("timer", json!({ "seconds": 0.25 }));
+    let at = b.node("vectorVariable", json!({ "name": "spot" }));
+    let step = b.node("add", json!({ "b": [1.0, 0.0, 0.0] }));
+    b.link(at, "value", step, "a");
+    let keep_spot = b.node("setVectorVariable", json!({ "name": "spot" }));
+    b.link(timer, "then", keep_spot, "run");
+    b.link(step, "result", keep_spot, "value");
+    let place = b.node("setPosition", json!({}));
+    b.link(keep_spot, "then", place, "run");
+    let now = b.node("vectorVariable", json!({ "name": "spot" }));
+    b.link(now, "value", place, "position");
+    let log = b.node("log", json!({ "message": "presses" }));
+    b.link(place, "then", log, "run");
+    b.link(count, "value", log, "value");
+    let (mut scene, id, mut host) = run(&b.bytes(), &[]);
+    let held = Arc::new(Input { keys: ["Space".to_owned()].into_iter().collect(), ..Input::default() });
+    let free = Arc::new(Input::default());
+    // Held for three steps, let go, pressed again: two presses. Six steps of 0.1 s: two timer runs.
+    for input in [&held, &held, &held, &free, &held, &free] {
+        host.update(&mut scene, 0.1, 0.0, input);
+    }
+    assert!(host.take_faults().is_empty());
+    assert_eq!(transform(&scene, id).position[0], 2.0, "the timer ran twice in 0.6 s");
+    assert_eq!(host.take_logs().last().unwrap().text, "presses 2");
+}
+#[test]
+fn gamepad_sticks_and_buttons_reach_visual_scripts() {
+    let mut b = Builder::new();
+    let update = b.node("update", json!({}));
+    let held = b.node("padButton", json!({ "button": "South" }));
+    let branch = b.node("branch", json!({}));
+    b.link(update, "then", branch, "run");
+    b.link(held, "down", branch, "condition");
+    let stick = b.node("padStick", json!({}));
+    let place = b.node("setPosition", json!({}));
+    b.link(branch, "true", place, "run");
+    b.link(stick, "direction", place, "position");
+    let (mut scene, id, mut host) = run(&b.bytes(), &[]);
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    assert_eq!(transform(&scene, id).position, [0.0; 3], "no gamepad, nothing held");
+    let pad = crate::Pad { axes: [0.5, -0.25, 0.0, 0.0, 0.0, 0.0], buttons: 1 };
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input { pad: Some(pad), ..Input::default() }));
+    assert_eq!(transform(&scene, id).position, [0.5, -0.25, 0.0], "South held: the object goes where the left stick points");
+
+    let mut wrong = Builder::new();
+    let start = wrong.node("start", json!({}));
+    let button = wrong.node("padButton", json!({ "button": "Jump" }));
+    let gate = wrong.node("branch", json!({}));
+    wrong.link(start, "then", gate, "run");
+    wrong.link(button, "down", gate, "condition");
+    assert!(compile(&wrong.0).unwrap_err()[0].message.contains("no gamepad button Jump"));
+}
+
+#[test]
+fn a_raycast_finds_the_nearest_turned_box_and_misses_when_nothing_is_there() {
+    let mut b = Builder::new();
+    let update = b.node("update", json!({}));
+    let ray = b.node("raycast", json!({ "direction": [1.0, 0.0, 0.0], "distance": 20.0 }));
+    let branch = b.node("branch", json!({}));
+    b.link(update, "then", branch, "run");
+    b.link(ray, "hit", branch, "condition");
+    let log = b.node("log", json!({ "message": "hit at" }));
+    b.link(branch, "true", log, "run");
+    b.link(ray, "distance", log, "value");
+    let miss = b.node("log", json!({ "message": "miss" }));
+    b.link(branch, "false", miss, "run");
+
+    let (mut scene, _, mut host) = run(&b.bytes(), &[]);
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    assert_eq!(host.take_logs()[0].text, "miss", "nothing to hit yet");
+
+    // A cube turned 45° about Y at x = 5, and a farther one behind it.
+    let cube = json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.5});
+    for (name, x) in [("Near", 5.0), ("Far", 9.0)] {
+        let id = scene.create_object(None, name).unwrap();
+        scene.add_component(id, "mesh").unwrap();
+        scene.set_component(id, "mesh", cube.clone()).unwrap();
+        scene.set_component(id, "transform", json!({"position": [x, 0, 0], "rotation": [0, 45, 0], "scale": [1, 1, 1]})).unwrap();
+    }
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    let text = host.take_logs()[0].text.clone();
+    let distance: f32 = text.trim_start_matches("hit at ").parse().unwrap();
+    assert!((distance - (5.0 - std::f32::consts::FRAC_1_SQRT_2)).abs() < 0.01, "the corner of the turned cube is hit first: {text}");
 }

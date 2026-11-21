@@ -37,6 +37,22 @@ The server speaks the Model Context Protocol over stdio (JSON-RPC 2.0, one messa
 command is one tool, named with `_` for `.` (`scene_object_create`). Commands that change nothing
 are marked read-only. A failed command returns a tool result with `isError: true` and the reason.
 
+### Resources
+
+The server also offers resources, which a client can read and subscribe to:
+
+| URI | Type | What it shows |
+|---|---|---|
+| `bayleaf://scene` | JSON | the open scene: every object and component (`scene.document`) |
+| `bayleaf://scene/render` | PNG | the scene from its first camera, or framing every object, 640 × 360 |
+| `bayleaf://graph` | JSON | the graph open in the graph editor, its file and its problems |
+| `bayleaf://play` | JSON | play mode: running or not, time, script errors |
+
+After `resources/subscribe`, the server sends `notifications/resources/updated` when the resource
+changes: after each request, and every half second while none arrives. That includes changes you
+make in the editor in bridge mode. `scene.render` without a `path` returns the picture as base64 PNG
+(`{png}`, at most 2048 pixels on a side); with a path it writes the file as before.
+
 To add it to Claude Code, put this in the project's `.mcp.json` (paths are examples):
 
 ```json
@@ -94,4 +110,6 @@ the same `id`, `ok`, and either `result` or `error`.
 - Limits: 1 MiB per line, 16 connections, 5 minutes idle, 60 seconds per reply. After a timeout the
   command may still run; check the scene before sending it again.
 
-On Windows the token file gets the access rules of its folder. Keep it in a folder only you can read.
+On Windows the token file's inherited access rules are removed and only your account may read it
+(with the system's `icacls`); on Linux and macOS it is readable by you only (mode 600). If that
+fails, the editor does not open the control channel.

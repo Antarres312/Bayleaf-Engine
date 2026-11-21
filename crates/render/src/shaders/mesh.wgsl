@@ -8,7 +8,7 @@ const PI: f32 = 3.14159265;
 // Highlight colour of selected objects (linear).
 const SELECTION: vec3<f32> = vec3<f32>(1.0, 0.45, 0.08);
 
-@group(1) @binding(0) var shadow_map: texture_depth_2d;
+@group(1) @binding(0) var shadow_map: texture_depth_2d_array;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
 
 // Images: a sprite's image in t0, or a material's Image nodes by slot. Unused slots hold a white pixel.
@@ -75,8 +75,39 @@ fn geometry_schlick_ggx(n_dot_x: f32, k: f32) -> f32 {
 // How much of the shadow-casting light reaches a point: 1 lit, 0 in shadow. Nine taps of the
 // shadow map (percentage-closer filtering) soften the edge.
 fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
+    var face = 0;
+    var bias = globals.shadow.y;
+    var offset_along_normal = globals.shadow.w;
+    if (globals.shadow_extra.y > 1.5) {
+        // Sun cascades: the slice of view depth the point lies in. Each cascade's texel size, and
+        // so its bias, comes from its matrix.
+        let depth = (globals.view_proj * vec4<f32>(world_pos, 1.0)).w;
+        face = select(select(0, 1, depth >= globals.shadow_extra.z), 2, depth >= globals.shadow_extra.w);
+        let m = globals.shadow_faces[face];
+        let texel = 2.0 / max(length(m[0].xyz), 1e-6) / f32(textureDimensions(shadow_map).x);
+        // How much depth one world unit along the light makes: the length of the matrix's depth row.
+        bias = texel * length(vec3<f32>(m[0].z, m[1].z, m[2].z)) * 1.5;
+        offset_along_normal = texel * 1.5;
+    }
     // Pushing the point out along the normal keeps surfaces from shadowing themselves.
-    let p = globals.light_view_proj * vec4<f32>(world_pos + n * globals.shadow.w, 1.0);
+    let pushed = world_pos + n * offset_along_normal;
+    // Around a point light, the face the point lies in: the main direction from the light.
+    if (globals.shadow_extra.y > 0.5 && globals.shadow_extra.y < 1.5) {
+        let d = pushed - globals.lights[u32(globals.shadow.x)].position.xyz;
+        let a = abs(d);
+        if (a.x >= a.y && a.x >= a.z) {
+            face = select(1, 0, d.x > 0.0);
+        } else if (a.y >= a.z) {
+            face = select(3, 2, d.y > 0.0);
+        } else {
+            face = select(5, 4, d.z > 0.0);
+        }
+    }
+    let p = globals.shadow_faces[face] * vec4<f32>(pushed, 1.0);
+    // Behind a spot light: outside its shadow map.
+    if (p.w <= 0.0) {
+        return 1.0;
+    }
     let ndc = p.xyz / p.w;
     let uv = ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z > 1.0) {
@@ -86,10 +117,19 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
             let offset = vec2<f32>(f32(x), f32(y)) * globals.shadow.z;
-            lit = lit + textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, ndc.z - globals.shadow.y);
+            lit = lit + textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, face, ndc.z - bias);
         }
     }
     return lit / 9.0;
+}
+
+// Fog in the horizon colour: the further away, the more it hides (exponential with distance).
+fn fogged(color: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    if (globals.fog.w <= 0.0) {
+        return color;
+    }
+    let hidden = 1.0 - exp(-globals.fog.w * distance(globals.camera_pos.xyz, world_pos));
+    return mix(color, globals.fog.rgb, hidden);
 }
 
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
@@ -103,6 +143,8 @@ struct Surface {
     roughness: f32,
     emissive: vec3<f32>,
     alpha: f32,
+    // World-space shading normal, facing the camera's side.
+    normal: vec3<f32>,
 };
 
 struct SurfaceIn {
@@ -131,6 +173,36 @@ fn bl_noise(p: vec3<f32>) -> f32 {
     return mix(a, b, u.z);
 }
 
+// sRGB-encoded numbers from a texture that the sampler decoded as colour (normal and
+// metal/roughness images are stored as plain numbers).
+fn bl_srgb(c: vec3<f32>) -> vec3<f32> {
+    let low = c * 12.92;
+    let high = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+    return select(high, low, c <= vec3<f32>(0.0031308));
+}
+
+// Bends normal n by a tangent-space normal map value. The tangent frame comes from how position
+// and texture coordinates change across the screen, so models need no stored tangents (the
+// cotangent frame of Schüler 2013, "Normal Mapping Without Precomputed Tangents"). Texture v
+// runs down the image, so the map's green (up) is the frame's minus v direction.
+fn bl_normal_map(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, mapped: vec3<f32>) -> vec3<f32> {
+    let dp1 = dpdx(p);
+    let dp2 = dpdy(p);
+    let duv1 = dpdx(uv);
+    let duv2 = dpdy(uv);
+    let dp2perp = cross(dp2, n);
+    let dp1perp = cross(n, dp1);
+    let t = dp2perp * duv1.x + dp1perp * duv2.x;
+    let b = dp2perp * duv1.y + dp1perp * duv2.y;
+    let size = max(dot(t, t), dot(b, b));
+    if (size < 1e-20) {
+        return n;
+    }
+    let scale = inverseSqrt(size);
+    // Screen y runs down in wgpu, which turns this frame over: both directions change sign.
+    return normalize(-t * scale * mapped.x + b * scale * mapped.y + n * mapped.z);
+}
+
 fn bl_checker(p: vec3<f32>) -> f32 {
     // A small offset keeps faces that lie exactly on a cell border from flickering.
     let c = floor(p + vec3<f32>(1e-3));
@@ -142,21 +214,26 @@ fn bl_checker(p: vec3<f32>) -> f32 {
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let selected = in.params.z > 0.5;
-    if (in.params.w > 0.5) {
-        let image = textureSampleLevel(t0, material_sampler, in.uv, 0.0);
-        var unlit = in.color.rgb * image.rgb;
-        if (selected) {
-            unlit = mix(unlit, SELECTION, 0.25);
-        }
-        return vec4<f32>(unlit, in.color.a * image.a);
-    }
-
     var n = normalize(in.normal);
     if (!front) {
         n = -n;
     }
     let v = normalize(globals.camera_pos.xyz - in.world_pos);
+    // The surface is worked out before any branch that returns, so its images can pick their
+    // smaller copies from how fast the texture coordinates change across the screen.
     let s = surface(SurfaceIn(in.world_pos, n, v, in.color, in.params, globals.camera_pos.w, in.uv));
+    if (in.params.w > 0.5) {
+        // Sprites: their colour times their image, without light.
+        var unlit = fogged(s.base, in.world_pos);
+        if (selected) {
+            unlit = mix(unlit, SELECTION, 0.25);
+        }
+        return vec4<f32>(unlit, s.alpha);
+    }
+
+    // Shadows test the geometric normal; light uses the shading normal.
+    let geometric = n;
+    n = normalize(s.normal);
     let base = max(s.base, vec3<f32>(0.0));
     let metallic = clamp(s.metallic, 0.0, 1.0);
     let roughness = clamp(s.roughness, 0.045, 1.0);
@@ -166,10 +243,21 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     let r = roughness + 1.0;
     let k = r * r / 8.0;
 
-    // Hemisphere ambient, brighter from above. Metals reflect it tinted by their own colour.
+    // Hemisphere ambient, brighter from above, for the diffuse part.
     let ambient = mix(globals.ambient_ground.rgb, globals.ambient.rgb, n.y * 0.5 + 0.5);
-    let ambient_f = fresnel_schlick(n_dot_v, f0);
-    var color = ambient * ((vec3<f32>(1.0) - ambient_f) * (1.0 - metallic) * base + ambient_f);
+    // Reflections: what lies in the mirror direction. A smooth surface sees the sky as drawn; a
+    // rough one sees it blurred, which the hemisphere light stands in for. Rough surfaces also
+    // brighten less at grazing angles (Fresnel with the roughness taken into account).
+    let mirror = reflect(-v, n);
+    let blurred = mix(globals.ambient_ground.rgb, globals.ambient.rgb, mirror.y * 0.5 + 0.5);
+    var sharp = blurred;
+    if (globals.sky_horizon.w > 0.5) {
+        sharp = bl_sky(mirror);
+    }
+    let env = mix(sharp, blurred, roughness);
+    let grazing = max(vec3<f32>(1.0 - roughness), f0) - f0;
+    let ambient_f = f0 + grazing * pow(clamp(1.0 - n_dot_v, 0.0, 1.0), 5.0);
+    var color = ambient * (vec3<f32>(1.0) - ambient_f) * (1.0 - metallic) * base + env * ambient_f;
     let count = min(u32(globals.ambient.w), MAX_LIGHTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let light = globals.lights[index];
@@ -190,7 +278,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
             }
         }
         if (f32(index) == globals.shadow.x) {
-            falloff = falloff * shadow_factor(in.world_pos, n);
+            falloff = falloff * shadow_factor(in.world_pos, geometric);
         }
         let h = normalize(v + l);
         let n_dot_l = max(dot(n, l), 0.0);
@@ -202,7 +290,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
         color = color + (diffuse + specular) * light.radiance.rgb * n_dot_l * falloff;
     }
 
-    color = color + max(s.emissive, vec3<f32>(0.0));
+    color = fogged(color + max(s.emissive, vec3<f32>(0.0)), in.world_pos);
     if (selected) {
         // A light tint plus a glow toward grazing angles, so the surface keeps its own colour.
         let rim = pow(1.0 - n_dot_v, 4.0);

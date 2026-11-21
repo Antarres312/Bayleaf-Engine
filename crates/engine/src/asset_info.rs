@@ -81,7 +81,7 @@ pub fn describe(session: &Session, path: &Path) -> Info {
     let extension = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let mut result = match extension.as_str() {
-        "png" => image(path),
+        "png" | "jpg" | "jpeg" => image(path),
         "glb" | "gltf" => model(path),
         "bscene" => scene(path),
         "bprefab" => prefab(session, path),
@@ -138,6 +138,14 @@ fn model(path: &Path) -> Info {
             let size: Vec<String> = (0..3).map(|i| format!("{:.2}", mesh.max[i] - mesh.min[i])).collect();
             info.row("Size", format!("{} m", size.join(" × ")));
             info.row("Texture coordinates", if mesh.uvs.is_empty() { "No" } else { "Yes" });
+            if mesh.parts.len() > 1 {
+                info.row("Parts", format!("{}, each with its own material", mesh.parts.len()));
+            }
+            if let Some(m) = &mesh.material {
+                let image = m.image.as_ref().map_or_else(|| "no image".to_owned(), |i| format!("a {} × {} image", i.width, i.height));
+                let normal = if m.normal.is_some() { ", a normal map" } else { "" };
+                info.row("Material", format!("its own colour, {image}{normal}, metallic {:.2}, roughness {:.2}", m.metallic, m.roughness));
+            }
         }
         Err(e) => info.problems.push(e),
     }

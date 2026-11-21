@@ -23,6 +23,13 @@ mod raw {
         pub fn destroy(handle: i32) -> i32;
         pub fn send(handle: i32, name_ptr: *const u8, name_len: usize, value: f32) -> i32;
         pub fn message_name(out: *mut u8, cap: usize) -> i32;
+        pub fn pad_connected() -> i32;
+        pub fn apply_impulse(handle: i32, x: f32, y: f32, z: f32) -> i32;
+        pub fn set_velocity(handle: i32, x: f32, y: f32, z: f32) -> i32;
+        pub fn velocity_of(handle: i32, out: *mut f32) -> i32;
+        pub fn raycast(ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max: f32, out: *mut f32) -> i32;
+        pub fn pad_axis(index: i32) -> f32;
+        pub fn pad_button(index: i32) -> i32;
     }
 }
 
@@ -71,6 +78,28 @@ mod raw {
         0
     }
     pub unsafe fn message_name(_: *mut u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn pad_connected() -> i32 {
+        0
+    }
+    pub unsafe fn apply_impulse(_: i32, _: f32, _: f32, _: f32) -> i32 {
+        0
+    }
+    pub unsafe fn set_velocity(_: i32, _: f32, _: f32, _: f32) -> i32 {
+        0
+    }
+    pub unsafe fn velocity_of(_: i32, _: *mut f32) -> i32 {
+        0
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn raycast(_: f32, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32, _: *mut f32) -> i32 {
+        0
+    }
+    pub unsafe fn pad_axis(_: i32) -> f32 {
+        0.0
+    }
+    pub unsafe fn pad_button(_: i32) -> i32 {
         0
     }
 }
@@ -163,4 +192,46 @@ pub(crate) fn message_name() -> String {
     let len = unsafe { raw::message_name(buffer.as_mut_ptr(), buffer.len()) };
     let len = usize::try_from(len).unwrap_or(0).min(buffer.len());
     String::from_utf8_lossy(&buffer[..len]).into_owned()
+}
+
+pub(crate) fn pad_connected() -> bool {
+    // SAFETY: no arguments; the host returns a plain number.
+    unsafe { raw::pad_connected() != 0 }
+}
+
+pub(crate) fn pad_axis(index: i32) -> f32 {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::pad_axis(index) }
+}
+
+pub(crate) fn pad_button(index: i32) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::pad_button(index) != 0 }
+}
+
+/// The handle of the first object a ray hits (0 for none), its distance and the hit point.
+pub(crate) fn raycast(origin: [f32; 3], direction: [f32; 3], max: f32) -> (i32, [f32; 4]) {
+    let mut out = [0.0f32; 4];
+    let [ox, oy, oz] = origin;
+    let [dx, dy, dz] = direction;
+    // SAFETY: `out` is 4 writable f32, exactly what the host writes.
+    let handle = unsafe { raw::raycast(ox, oy, oz, dx, dy, dz, max, out.as_mut_ptr()) };
+    (handle, out)
+}
+
+pub(crate) fn apply_impulse(handle: i32, v: [f32; 3]) -> bool {
+    // SAFETY: plain numbers in and out.
+    unsafe { raw::apply_impulse(handle, v[0], v[1], v[2]) != 0 }
+}
+
+pub(crate) fn set_velocity(handle: i32, v: [f32; 3]) -> bool {
+    // SAFETY: plain numbers in and out.
+    unsafe { raw::set_velocity(handle, v[0], v[1], v[2]) != 0 }
+}
+
+pub(crate) fn velocity_of(handle: i32) -> Option<[f32; 3]> {
+    let mut out = [0.0f32; 3];
+    // SAFETY: `out` is 3 writable f32, exactly what the host writes.
+    let found = unsafe { raw::velocity_of(handle, out.as_mut_ptr()) };
+    (found != 0).then_some(out)
 }

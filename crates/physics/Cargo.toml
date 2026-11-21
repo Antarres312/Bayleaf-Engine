@@ -1,0 +1,19 @@
+[package]
+name = "bayleaf-physics"
+description = "L4: rigid-body physics for play mode, on Rapier. Opt-in: the engine's `physics` feature."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bayleaf-core = { workspace = true }
+bayleaf-scene = { workspace = true }
+rapier3d = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

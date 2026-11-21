@@ -1,4 +1,4 @@
-﻿//! Built-in scene components.
+//! Built-in scene components.
 //!
 //! Axis convention: right-handed, +Y up. Cameras and lights look along their local −Z axis.
 
@@ -254,11 +254,22 @@ pub struct Environment {
     pub ambient: f32,
     /// Draw the sky behind the scene; off, the background is the horizon colour and only the light remains.
     pub show_sky: bool,
+    /// Distance in world units at which fog in the horizon colour hides half of what is behind it;
+    /// 0 for no fog.
+    #[serde(default)]
+    pub fog_distance: f32,
 }
 
 impl Default for Environment {
     fn default() -> Self {
-        Self { sky_color: [0.18, 0.36, 0.72], horizon_color: [0.62, 0.72, 0.82], ground_color: [0.22, 0.2, 0.18], ambient: 1.0, show_sky: true }
+        Self {
+            sky_color: [0.18, 0.36, 0.72],
+            horizon_color: [0.62, 0.72, 0.82],
+            ground_color: [0.22, 0.2, 0.18],
+            ambient: 1.0,
+            show_sky: true,
+            fog_distance: 0.0,
+        }
     }
 }
 
@@ -271,7 +282,14 @@ impl SceneComponent for Environment {
         unit_range("skyColor", &self.sky_color)?;
         unit_range("horizonColor", &self.horizon_color)?;
         unit_range("groundColor", &self.ground_color)?;
-        if (0.0..=4.0).contains(&self.ambient) { Ok(()) } else { Err("ambient must be between 0 and 4".to_owned()) }
+        if !(0.0..=4.0).contains(&self.ambient) {
+            return Err("ambient must be between 0 and 4".to_owned());
+        }
+        if self.fog_distance == 0.0 || (0.1..=100_000.0).contains(&self.fog_distance) {
+            Ok(())
+        } else {
+            Err("fogDistance must be 0 (no fog) or between 0.1 and 100000".to_owned())
+        }
     }
 }
 
@@ -284,11 +302,14 @@ pub struct PointLight {
     pub intensity: f32,
     /// Distance in world units at which the light has faded out.
     pub range: f32,
+    /// Shapes around it cast shadows (see `SpotLight::shadows`).
+    #[serde(default)]
+    pub shadows: bool,
 }
 
 impl Default for PointLight {
     fn default() -> Self {
-        Self { color: [1.0, 0.95, 0.85], intensity: 8.0, range: 8.0 }
+        Self { color: [1.0, 0.95, 0.85], intensity: 8.0, range: 8.0, shadows: false }
     }
 }
 
@@ -316,11 +337,15 @@ pub struct SpotLight {
     pub angle: f32,
     /// How much of the cone's edge fades: 0 for a hard edge, 1 for a fade from the centre.
     pub softness: f32,
+    /// Shapes in the cone cast shadows. One light casts shadows at a time: the first directional
+    /// light that does, else the spot or point light nearest the camera that does.
+    #[serde(default)]
+    pub shadows: bool,
 }
 
 impl Default for SpotLight {
     fn default() -> Self {
-        Self { color: [1.0, 1.0, 1.0], intensity: 12.0, range: 12.0, angle: 45.0, softness: 0.3 }
+        Self { color: [1.0, 1.0, 1.0], intensity: 12.0, range: 12.0, angle: 45.0, softness: 0.3, shadows: false }
     }
 }
 
@@ -380,7 +405,7 @@ impl SceneComponent for Sprite {
 
     fn validate(&self) -> Result<(), String> {
         unit_range("color", &self.color)?;
-        file_field("image", &self.image, &["png"])?;
+        file_field("image", &self.image, &["png", "jpg", "jpeg"])?;
         if self.size.iter().all(|s| s.is_finite() && *s > 0.0) { Ok(()) } else { Err("size must be greater than 0".to_owned()) }
     }
 }
@@ -457,6 +482,25 @@ fn unit_range(what: &str, values: &[f32]) -> Result<(), String> {
 pub struct Prefab {
     /// The `.bprefab` file, relative to the project folder (or the scene's folder outside a project).
     pub source: String,
+    /// What this copy changed and keeps when it is updated from the file: `"<index>/<component>"`,
+    /// where index counts the copy's objects in hierarchy order (the copy itself is 0).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<String>,
+}
+
+/// Most overrides one prefab copy keeps.
+pub const MAX_PREFAB_OVERRIDES: usize = 1000;
+
+impl Prefab {
+    /// A link to `source` with no overrides.
+    pub fn new(source: impl Into<String>) -> Self {
+        Self { source: source.into(), overrides: Vec::new() }
+    }
+
+    /// The object index and component name of each override.
+    pub fn parsed_overrides(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.overrides.iter().filter_map(|o| o.split_once('/')).filter_map(|(i, c)| Some((i.parse().ok()?, c)))
+    }
 }
 
 impl SceneComponent for Prefab {
@@ -466,10 +510,122 @@ impl SceneComponent for Prefab {
     const LISTED: bool = false;
 
     fn validate(&self) -> Result<(), String> {
-        if !self.source.is_empty() && self.source.len() <= 512 && self.source.ends_with(".bprefab") {
-            Ok(())
-        } else {
-            Err("source must be the path of a .bprefab file (at most 512 characters)".to_owned())
+        if self.source.is_empty() || self.source.len() > 512 || !self.source.ends_with(".bprefab") {
+            return Err("source must be the path of a .bprefab file (at most 512 characters)".to_owned());
         }
+        let well_formed = |o: &String| {
+            o.len() <= 80
+                && o.split_once('/').is_some_and(|(i, c)| i.parse::<usize>().is_ok() && !c.is_empty() && c.chars().all(|ch| ch.is_ascii_alphanumeric()))
+        };
+        if self.overrides.len() > MAX_PREFAB_OVERRIDES || !self.overrides.iter().all(well_formed) {
+            return Err(format!("overrides must be at most {MAX_PREFAB_OVERRIDES} entries like \"2/mesh\""));
+        }
+        Ok(())
+    }
+}
+
+/// How a body moves in play mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BodyKind {
+    /// Moved by gravity, collisions and impulses.
+    #[default]
+    Dynamic,
+    /// Moved only by its transform (scripts, animation); pushes dynamic bodies.
+    Kinematic,
+    /// Never moves.
+    Static,
+}
+
+/// Makes the object a physics body in play mode. Its Collider gives it a shape.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RigidBody {
+    pub kind: BodyKind,
+    /// Kilograms, more than 0.
+    pub mass: f32,
+    /// How strongly gravity pulls it: 1 normal, 0 floating, negative upwards.
+    pub gravity_scale: f32,
+    /// Keeps it upright: collisions move it but do not turn it.
+    pub lock_rotation: bool,
+}
+
+impl Default for RigidBody {
+    fn default() -> Self {
+        Self { kind: BodyKind::Dynamic, mass: 1.0, gravity_scale: 1.0, lock_rotation: false }
+    }
+}
+
+impl SceneComponent for RigidBody {
+    const NAME: &'static str = "rigidBody";
+    const LABEL: &'static str = "Rigid Body";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        if !(self.mass.is_finite() && self.mass > 0.0 && self.mass <= 1.0e6) {
+            return Err("mass must be more than 0 and at most 1000000".to_owned());
+        }
+        if !(self.gravity_scale.is_finite() && (-100.0..=100.0).contains(&self.gravity_scale)) {
+            return Err("gravityScale must be between -100 and 100".to_owned());
+        }
+        Ok(())
+    }
+
+    fn options(field: &str) -> &'static [&'static str] {
+        if field == "kind" { &["dynamic", "kinematic", "static"] } else { &[] }
+    }
+}
+
+/// A collider's shape, in the object's own space before its scale.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColliderShape {
+    /// `size` is the box's width, height and depth.
+    #[default]
+    Box,
+    /// `size[0]` is the diameter.
+    Sphere,
+    /// Upright: `size[0]` is the diameter, `size[1]` the whole height.
+    Capsule,
+}
+
+/// The shape physics uses for the object: what it collides with, or, as a trigger, what it notices
+/// entering and leaving it. Without a Rigid Body the object is a static obstacle.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Collider {
+    pub shape: ColliderShape,
+    pub size: [f32; 3],
+    /// 0 slippery to 1 grippy (up to 10).
+    pub friction: f32,
+    /// Bounciness: 0 none, 1 keeps all its speed.
+    pub restitution: f32,
+    /// Notices other colliders passing through instead of blocking them.
+    pub trigger: bool,
+}
+
+impl Default for Collider {
+    fn default() -> Self {
+        Self { shape: ColliderShape::Box, size: [1.0, 1.0, 1.0], friction: 0.5, restitution: 0.0, trigger: false }
+    }
+}
+
+impl SceneComponent for Collider {
+    const NAME: &'static str = "collider";
+    const LABEL: &'static str = "Collider";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        if !self.size.iter().all(|s| s.is_finite() && *s > 0.0 && *s <= 10_000.0) {
+            return Err("size values must be more than 0 and at most 10000".to_owned());
+        }
+        if !(self.friction.is_finite() && (0.0..=10.0).contains(&self.friction)) {
+            return Err("friction must be between 0 and 10".to_owned());
+        }
+        unit_range("restitution", &[self.restitution])
+    }
+
+    fn options(field: &str) -> &'static [&'static str] {
+        if field == "shape" { &["box", "sphere", "capsule"] } else { &[] }
     }
 }

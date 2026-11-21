@@ -1,8 +1,10 @@
 //! Prefabs: an object and its children saved to a `.bprefab` file, to place again and again.
 //!
-//! A placed copy keeps a `prefab` link to its file. Nothing updates on its own: Apply writes a
-//! copy's objects to the file and updates every other copy in the scene, Revert reads the file
-//! again. Each copy keeps its own name and transform.
+//! A placed copy keeps a `prefab` link to its file. Apply writes a copy's objects to the file and
+//! updates every other copy in the scene; opening a scene updates every copy from its file; Revert
+//! reads the file again and drops the copy's own changes. Each copy keeps its own name and
+//! transform, and the component changes made to it (its overrides) survive updates. A prefab may
+//! hold copies of other prefabs: they update from their own files, inside the copy.
 
 use std::path::{Path, PathBuf};
 
@@ -110,9 +112,11 @@ fn prefab_create(session: &mut Session, params: &Value) -> Result<Value, Command
         return Err(CommandError::BadParams(format!("prefab files end in .{PREFAB_EXTENSION}")));
     }
     let path = session.script_dir().join(&p.path);
+    let source = link_path(session, &path);
+    refuse_self_copy(session, p.id, &source)?;
     let written = write_prefab(session, &path, &session.scene, p.id)?;
     let source = link_path(session, &written);
-    session.scene.set(p.id, Prefab { source: source.clone() })?;
+    session.scene.set(p.id, Prefab::new(source.clone()))?;
     Ok(json!({ "path": written, "source": source }))
 }
 
@@ -132,7 +136,11 @@ fn prefab_place(session: &mut Session, params: &Value) -> Result<Value, CommandE
     let source = link_path(session, &full);
     let objects = read_prefab(session, &source)?;
     let id = *session.scene.import(&objects[..], p.parent, p.index)?.first().ok_or_else(|| CommandError::Failed("the prefab is empty".to_owned()))?;
-    session.scene.set(id, Prefab { source })?;
+    session.scene.set(id, Prefab::new(source.clone()))?;
+    // Copies of other prefabs inside it come from their own files.
+    for nested in nested_copies(&session.scene, id) {
+        refresh(session, nested, true, &mut vec![source.clone()])?;
+    }
     Ok(json!({ "id": id }))
 }
 
@@ -149,9 +157,11 @@ fn source_of(session: &Session, id: StableId) -> Result<String, CommandError> {
 fn prefab_apply(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: IdParams = parse(params)?;
     let source = source_of(session, p.id)?;
+    refuse_self_copy(session, p.id, &source)?;
     let path = session.script_dir().join(&source);
     write_prefab(session, &path, &session.scene, p.id)?;
-    let objects = read_prefab(session, &source)?;
+    // This copy now is the prefab: it has no changes of its own.
+    session.scene.set(p.id, Prefab::new(source.clone()))?;
     let others: Vec<StableId> = session
         .scene
         .world_matrices()
@@ -160,7 +170,10 @@ fn prefab_apply(session: &mut Session, params: &Value) -> Result<Value, CommandE
         .filter(|id| *id != p.id && session.scene.get::<Prefab>(*id).is_some_and(|l| l.source == source))
         .collect();
     for other in &others {
-        replace_contents(&mut session.scene, *other, &objects)?;
+        // An earlier update may have rebuilt the copy this one sat in.
+        if session.scene.contains(*other) {
+            refresh(session, *other, true, &mut Vec::new())?;
+        }
     }
     Ok(json!({ "updated": others.len() }))
 }
@@ -168,11 +181,164 @@ fn prefab_apply(session: &mut Session, params: &Value) -> Result<Value, CommandE
 fn prefab_revert(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: IdParams = parse(params)?;
     let source = source_of(session, p.id)?;
-    let objects = read_prefab(session, &source)?;
-    replace_contents(&mut session.scene, p.id, &objects)?;
+    session.scene.set(p.id, Prefab::new(source))?;
+    refresh(session, p.id, false, &mut Vec::new())?;
     Ok(json!({}))
 }
 
+/// A prefab may not hold a copy of itself.
+fn refuse_self_copy(session: &Session, id: StableId, source: &str) -> Result<(), CommandError> {
+    if order(&session.scene, id).iter().skip(1).any(|o| session.scene.get::<Prefab>(*o).is_some_and(|l| l.source == source)) {
+        return Err(CommandError::Failed(format!("{source} would hold a copy of itself")));
+    }
+    Ok(())
+}
+
+/// Components a copy's own root keeps from the scene, not the file.
+const KEPT: [&str; 3] = ["name", "transform", "prefab"];
+
+/// `root` and everything below it, in hierarchy order.
+fn order(scene: &Scene, root: StableId) -> Vec<StableId> {
+    scene.export(&[root]).map(|objects| objects.into_iter().map(|o| o.id).collect()).unwrap_or_default()
+}
+
+/// The nearest copy at or above `id`, and `id`'s index among that copy's objects.
+fn copy_of(scene: &Scene, id: StableId) -> Option<(StableId, usize)> {
+    let mut at = Some(id);
+    while let Some(object) = at {
+        if scene.get::<Prefab>(object).is_some() {
+            return order(scene, object).iter().position(|o| *o == id).map(|index| (object, index));
+        }
+        at = scene.parent(object);
+    }
+    None
+}
+
+/// Copies inside `root` that are not inside another copy inside `root`.
+fn nested_copies(scene: &Scene, root: StableId) -> Vec<StableId> {
+    order(scene, root)
+        .into_iter()
+        .skip(1)
+        .filter(|id| scene.get::<Prefab>(*id).is_some() && copy_of(scene, scene.parent(*id).unwrap_or(root)).is_some_and(|(c, _)| c == root))
+        .collect()
+}
+
+/// Records that component `component` of object `id` was changed in the scene, so the copy it
+/// belongs to keeps the change when it is updated from its file. A copy's own name and transform
+/// are always its own; inside another copy they are that copy's change.
+pub(crate) fn note_override(scene: &mut Scene, id: StableId, component: &str) {
+    if component == "prefab" {
+        return;
+    }
+    let Some((root, index)) = copy_of(scene, id) else { return };
+    if index == 0 && KEPT.contains(&component) {
+        let Some((outer, _)) = scene.parent(root).and_then(|parent| copy_of(scene, parent)) else { return };
+        if let Some(at) = order(scene, outer).iter().position(|o| *o == root) {
+            add_override(scene, outer, at, component);
+        }
+        return;
+    }
+    add_override(scene, root, index, component);
+}
+fn add_override(scene: &mut Scene, root: StableId, index: usize, component: &str) {
+    let Some(mut link) = scene.get::<Prefab>(root).cloned() else { return };
+    let key = format!("{index}/{component}");
+    if !link.overrides.contains(&key) && link.overrides.len() < bayleaf_scene::components::MAX_PREFAB_OVERRIDES {
+        link.overrides.push(key);
+        let _ = scene.set(root, link);
+    }
+}
+
+/// One copy's overrides with their values (`None`: the component was removed).
+struct Kept {
+    /// The copy's index inside the copy being updated (0 for that copy itself), and its file.
+    at: usize,
+    source: String,
+    values: Vec<(usize, String, Option<Value>)>,
+}
+
+/// Updates copy `root` from its file. With `keep`, the overrides of it and of the copies inside it
+/// are put back afterwards; the copies inside it update from their own files first. `visited`
+/// holds the files being updated around it, so a prefab that holds itself is refused.
+fn refresh(session: &mut Session, root: StableId, keep: bool, visited: &mut Vec<String>) -> Result<(), CommandError> {
+    let source = source_of(session, root)?;
+    if visited.contains(&source) || visited.len() > MAX_NESTING {
+        return Err(CommandError::Failed(format!("{source} holds a copy of itself, or prefabs nest more than {MAX_NESTING} deep")));
+    }
+    let objects = read_prefab(session, &source)?;
+    let kept: Vec<Kept> = if keep { capture(&session.scene, root) } else { Vec::new() };
+    replace_contents(&mut session.scene, root, &objects)?;
+    visited.push(source);
+    for nested in nested_copies(&session.scene, root) {
+        refresh(session, nested, true, visited)?;
+    }
+    visited.pop();
+    let scene = &mut session.scene;
+    let now = order(scene, root);
+    for copy in kept {
+        let Some(&target) = now.get(copy.at) else { continue };
+        let Some(mut link) = scene.get::<Prefab>(target).cloned().filter(|l| l.source == copy.source) else { continue };
+        let objects = order(scene, target);
+        for (index, component, value) in copy.values {
+            let Some(&object) = objects.get(index) else { continue };
+            // Best effort: a change that no longer fits the file is dropped.
+            let applied = match value {
+                Some(value) => {
+                    if scene.component(object, &component).is_err() {
+                        let _ = scene.add_component(object, &component);
+                    }
+                    scene.set_component(object, &component, value).is_ok()
+                }
+                None => scene.component(object, &component).is_err() || scene.remove_component(object, &component).is_ok(),
+            };
+            let key = format!("{index}/{component}");
+            if applied && !link.overrides.contains(&key) {
+                link.overrides.push(key);
+            }
+        }
+        let _ = scene.set(target, link);
+    }
+    Ok(())
+}
+
+/// Most prefabs inside one another.
+const MAX_NESTING: usize = 16;
+
+/// The overrides of copy `root` and of the copies inside it, with their current values.
+fn capture(scene: &Scene, root: StableId) -> Vec<Kept> {
+    let all = order(scene, root);
+    all.iter()
+        .enumerate()
+        .filter_map(|(at, id)| {
+            let link = scene.get::<Prefab>(*id)?;
+            let objects = order(scene, *id);
+            let values = link
+                .parsed_overrides()
+                .filter_map(|(index, component)| Some((index, component.to_owned(), scene.component(*objects.get(index)?, component).ok())))
+                .collect();
+            Some(Kept { at, source: link.source.clone(), values })
+        })
+        .collect()
+}
+
+/// Updates every copy in the scene from its file, keeping overrides. Copies whose file cannot be
+/// read keep what the scene holds; the problems are returned.
+pub(crate) fn refresh_all(session: &mut Session) -> Vec<String> {
+    let outermost: Vec<StableId> = session
+        .scene
+        .world_matrices()
+        .into_iter()
+        .map(|(id, _)| id)
+        .filter(|id| session.scene.get::<Prefab>(*id).is_some() && session.scene.parent(*id).is_none_or(|p| copy_of(&session.scene, p).is_none()))
+        .collect();
+    let mut problems = Vec::new();
+    for id in outermost {
+        if let Err(e) = refresh(session, id, true, &mut Vec::new()) {
+            problems.push(e.to_string());
+        }
+    }
+    problems
+}
 /// Makes `id` and its children match the prefab `objects`, keeping `id`'s own name, transform,
 /// link and place in the hierarchy, so the copy stays where it was and keeps its id.
 fn replace_contents(scene: &mut Scene, id: StableId, objects: &[ObjectDoc]) -> Result<(), CommandError> {
@@ -180,7 +346,7 @@ fn replace_contents(scene: &mut Scene, id: StableId, objects: &[ObjectDoc]) -> R
     for child in scene.children(Some(id)).to_vec() {
         scene.delete_object(child)?;
     }
-    let keep = ["name", "transform", "prefab"];
+    let keep = KEPT;
     let current: Vec<&'static str> = scene.components(id)?.into_iter().map(|(name, _)| name).collect();
     for name in current {
         if !keep.contains(&name) && !root.components.contains_key(name) {

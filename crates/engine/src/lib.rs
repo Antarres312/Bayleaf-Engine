@@ -55,10 +55,44 @@ impl From<bayleaf_scene::SceneError> for CommandError {
     }
 }
 
-/// What an undo step restores.
+/// What an undo step restores, as compact JSON bytes: a parsed document takes several times more
+/// memory than its text, and big scenes make many steps.
 enum Snapshot {
-    Scene(SceneDoc),
-    Graph(bayleaf_graph::Graph),
+    Scene(Vec<u8>),
+    Graph(Vec<u8>),
+}
+
+/// Undo and redo together keep at most this many bytes of snapshots; the oldest steps go first.
+pub const UNDO_BUDGET_BYTES: usize = 256 << 20;
+/// Most undo steps kept.
+pub const MAX_UNDO_STEPS: usize = 500;
+
+impl Snapshot {
+    fn scene(scene: &Scene) -> Self {
+        // A scene document is plain data, so writing it as JSON does not fail.
+        Self::Scene(serde_json::to_vec(&scene.to_doc()).unwrap_or_default())
+    }
+
+    fn graph(graph: &bayleaf_graph::Graph) -> Self {
+        Self::Graph(serde_json::to_vec(graph).unwrap_or_default())
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Scene(bytes) | Self::Graph(bytes) => bytes.len(),
+        }
+    }
+
+    fn to_scene(&self) -> Result<Scene, CommandError> {
+        let Self::Scene(bytes) = self else { return Err(CommandError::Failed("this undo step is not a scene".to_owned())) };
+        let doc: SceneDoc = serde_json::from_slice(bytes).map_err(|e| CommandError::Failed(format!("the undo step cannot be read: {e}")))?;
+        Ok(Scene::from_doc(&doc)?)
+    }
+
+    fn to_graph(&self) -> Result<bayleaf_graph::Graph, CommandError> {
+        let Self::Graph(bytes) = self else { return Err(CommandError::Failed("this undo step is not a graph".to_owned())) };
+        serde_json::from_slice(bytes).map_err(|e| CommandError::Failed(format!("the undo step cannot be read: {e}")))
+    }
 }
 
 struct HistoryStep {
@@ -142,6 +176,20 @@ impl Session {
     pub fn set_pointer(&mut self, pointer: Option<[f32; 2]>, buttons: u8) {
         if self.input.pointer != pointer || self.input.buttons != buttons {
             self.input = std::sync::Arc::new(bayleaf_script::Input { pointer, buttons, ..(*self.input).clone() });
+        }
+    }
+
+    /// The gamepad scripts see (`None`: none connected). Axes are clamped to their ranges.
+    pub fn set_pad(&mut self, pad: Option<bayleaf_script::Pad>) {
+        let pad = pad.map(|mut p| {
+            for (i, a) in p.axes.iter_mut().enumerate() {
+                let low = if i < 4 { -1.0 } else { 0.0 };
+                *a = if a.is_finite() { a.clamp(low, 1.0) } else { 0.0 };
+            }
+            p
+        });
+        if self.input.pad != pad {
+            self.input = std::sync::Arc::new(bayleaf_script::Input { pad, ..(*self.input).clone() });
         }
     }
 
@@ -236,17 +284,38 @@ impl Session {
         !self.redo.is_empty()
     }
 
-    fn replace_scene(&mut self, scene: Scene, path: Option<PathBuf>) {
+    /// Opens `scene` in place of the current one. Prefab copies update from their files; the
+    /// problems with files that cannot be read are returned.
+    fn replace_scene(&mut self, scene: Scene, path: Option<PathBuf>) -> Vec<String> {
         self.scene = scene;
         self.set_scene_path(path);
+        let problems = prefab_cmds::refresh_all(self);
         self.dirty = false;
         self.forget(|s| matches!(s, Snapshot::Scene(_)));
+        problems
     }
 
     /// Drops the undo and redo steps `which` selects.
     fn forget(&mut self, which: impl Fn(&Snapshot) -> bool) {
         self.undo.retain(|s| !which(&s.before));
         self.redo.retain(|s| !which(&s.before));
+    }
+
+    /// Drops the oldest undo steps beyond [`MAX_UNDO_STEPS`] or [`UNDO_BUDGET_BYTES`]. The newest
+    /// step always stays, so the last change can be undone however big the scene is.
+    fn trim_history(&mut self) {
+        let mut total: usize = self.undo.iter().chain(&self.redo).map(|s| s.before.len()).sum();
+        let mut drop = 0;
+        while self.undo.len() - drop > 1 && (self.undo.len() - drop > MAX_UNDO_STEPS || total > UNDO_BUDGET_BYTES) {
+            total -= self.undo[drop].before.len();
+            drop += 1;
+        }
+        self.undo.drain(..drop);
+    }
+
+    /// Bytes the undo and redo steps keep.
+    pub fn history_bytes(&self) -> usize {
+        self.undo.iter().chain(&self.redo).map(|s| s.before.len()).sum()
     }
 
     /// The graph open in the graph editor.
@@ -379,20 +448,19 @@ impl CommandRegistry {
         (spec.enabled)(session).map_err(|reason| CommandError::Disabled { id: id.to_owned(), reason })?;
         let before = match spec.mutates {
             Mutates::No => return (spec.run)(session, params),
-            Mutates::Scene => Snapshot::Scene(session.scene.to_doc()),
-            Mutates::Graph => {
-                Snapshot::Graph(session.graph.as_ref().map(|g| g.graph.clone()).ok_or_else(|| CommandError::Failed(graph_cmds::NO_GRAPH.to_owned()))?)
-            }
+            Mutates::Scene => Snapshot::scene(&session.scene),
+            Mutates::Graph => Snapshot::graph(&session.graph.as_ref().ok_or_else(|| CommandError::Failed(graph_cmds::NO_GRAPH.to_owned()))?.graph),
         };
         match (spec.run)(session, params) {
             // Play-mode changes to the scene are thrown away on stop, so they are not undo steps and do not dirty the file.
             Ok(result) if session.is_playing() && spec.mutates == Mutates::Scene => Ok(result),
             Ok(result) => {
                 let merges = merge_key.is_some() && session.undo.last().is_some_and(|s| s.merge_key.as_deref() == merge_key);
+                session.redo.clear();
                 if !merges {
                     session.undo.push(HistoryStep { command: id.to_owned(), before, merge_key: merge_key.map(str::to_owned) });
+                    session.trim_history();
                 }
-                session.redo.clear();
                 match spec.mutates {
                     Mutates::Graph => {
                         if let Some(graph) = session.graph.as_mut() {
@@ -405,17 +473,10 @@ impl CommandRegistry {
             }
             Err(error) => {
                 // A failed command leaves its document as it was.
-                match before {
-                    Snapshot::Scene(doc) => {
-                        if let Ok(scene) = Scene::from_doc(&doc) {
-                            session.scene = scene;
-                        }
-                    }
-                    Snapshot::Graph(graph) => {
-                        if let Some(open) = session.graph.as_mut() {
-                            open.graph = graph;
-                        }
-                    }
+                if let Ok(scene) = before.to_scene() {
+                    session.scene = scene;
+                } else if let (Ok(graph), Some(open)) = (before.to_graph(), session.graph.as_mut()) {
+                    open.graph = graph;
                 }
                 Err(error)
             }

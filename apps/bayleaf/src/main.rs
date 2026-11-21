@@ -79,21 +79,22 @@ impl App {
     /// Answers the agents' requests on the UI thread, before the frame is drawn.
     fn serve_agents(&mut self) {
         let Some(control) = &self.control else { return };
-        let requests: Vec<_> = control.server.pending().collect();
-        for request in requests {
-            let result = match request.method.as_str() {
-                "engine.commands" => Ok(self.editor.automation_commands()),
-                "engine.execute" => match request.params.get("command").and_then(serde_json::Value::as_str) {
-                    Some(command) => {
-                        let params = request.params.get("params").cloned().unwrap_or_else(|| serde_json::json!({}));
-                        self.editor.execute_automation(command, &params, &control.confinement)
-                    }
-                    None => Err("engine.execute needs params.command".to_owned()),
-                },
-                other => Err(format!("unknown method {other}; use engine.commands or engine.execute")),
-            };
-            request.respond(result);
-        }
+        control.server.answer(&mut AgentHandler { editor: &mut self.editor, confinement: &control.confinement });
+    }
+}
+/// The editor answering agents, inside their allowed folders.
+struct AgentHandler<'a> {
+    editor: &'a mut Editor,
+    confinement: &'a Confinement,
+}
+
+impl control::Handler for AgentHandler<'_> {
+    fn commands(&mut self) -> serde_json::Value {
+        self.editor.automation_commands()
+    }
+
+    fn execute(&mut self, command: &str, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+        self.editor.execute_automation(command, params, self.confinement)
     }
 }
 

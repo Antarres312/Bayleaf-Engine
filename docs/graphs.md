@@ -60,7 +60,7 @@ A mesh uses a material when its `material` field names a `.bmaterial` file, rela
 folder). In the Inspector, pick it from the Mesh card's Material list. The **Object Color** node reads
 the mesh's colour, so one material can be tinted per object. A material whose opacity is linked, or
 set below 1, is drawn as transparent. Materials that use **Time** animate in the scene view.
-The **Image** node reads a PNG file (relative to the project folder) by the surface's texture
+The **Image** node reads a PNG or JPEG file (relative to the project folder) by the surface's texture
 coordinates; **Texture Coordinates** gives them as a vector, to scale or move them. A material may
 use up to 4 images.
 
@@ -79,8 +79,17 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   **Step Seconds** output is the step length.
 - **Branch** continues with True or False.
 - **Property** nodes declare numbers that the Inspector shows per object, with a default.
-- **Set Variable** keeps a number under a name and **Variable** reads it. Each script on each object
-  has its own variables, and every variable starts at 0.
+- **Set Variable** keeps a number under a name and **Variable** reads it; **Set Vector Variable**
+  and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False
+  Variable** for true or false. Each script on each object has its own variables; numbers and vectors
+  start at 0, true/false at false.
+- **On Key Pressed** runs once when its key goes down; **On Timer** runs every given number of
+  seconds of play.
+- **Add Impulse**, **Set Velocity** and **Velocity** move physics bodies. **On Message** with `collision`,
+  `collisionEnd`, `triggerEnter` or `triggerExit` runs when the object touches another collider.
+- **Raycast** sends a ray and gives whether it hit another object's shape or sprite, how far, and where.
+- **Gamepad Stick**, **Gamepad Trigger** and **Gamepad Button Held** read the first connected gamepad
+  (see `docs/script-abi.md` for the button names).
 - **Send Message** sends a message name and a number to the scripts of the first object with the
   given name, or of every object when no name is given. **On Message** runs when a message with its
   name arrives; its Value output is the number. Messages arrive after the step. A message sent

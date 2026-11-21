@@ -141,9 +141,15 @@ impl ProjectView {
         self.files_of(&[Kind::Model])
     }
 
-    /// Every PNG image in the project (the only image format read so far).
+    /// Every PNG and JPEG image in the project (the image formats the engine reads).
     pub(crate) fn image_files(&self) -> Vec<String> {
-        self.files_of(&[Kind::Image]).into_iter().filter(|f| f.to_ascii_lowercase().ends_with(".png")).collect()
+        self.files_of(&[Kind::Image])
+            .into_iter()
+            .filter(|f| {
+                let f = f.to_ascii_lowercase();
+                bayleaf_render::assets::IMAGE_EXTENSIONS.iter().any(|e| f.ends_with(&format!(".{e}")))
+            })
+            .collect()
     }
 
     fn files_of(&self, kinds: &[Kind]) -> Vec<String> {

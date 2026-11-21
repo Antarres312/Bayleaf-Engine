@@ -33,7 +33,23 @@ struct Globals {
     sky_zenith: vec4<f32>,
     sky_horizon: vec4<f32>,
     sky_ground: vec4<f32>,
+    // rgb: fog colour, w: fog density per world unit (0: no fog)
+    fog: vec4<f32>,
+    // World to each face of the shadow map (one for a sun or spot light; +X, -X, +Y, -Y, +Z, -Z
+    // around a point light).
+    shadow_faces: array<mat4x4<f32>, 6>,
+    // x: faces in use
+    shadow_extra: vec4<f32>,
     lights: array<Light, MAX_LIGHTS>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
+
+// The sky's colour in direction `dir` (unit length): from the horizon up to the top, or down to the
+// ground. Drawn behind the scene and seen in reflections.
+fn bl_sky(dir: vec3<f32>) -> vec3<f32> {
+    if (dir.y >= 0.0) {
+        return mix(globals.sky_horizon.rgb, globals.sky_zenith.rgb, pow(dir.y, 0.6));
+    }
+    return mix(globals.sky_horizon.rgb, globals.sky_ground.rgb, pow(-dir.y, 0.4));
+}

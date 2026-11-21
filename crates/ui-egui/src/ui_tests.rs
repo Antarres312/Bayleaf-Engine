@@ -479,6 +479,11 @@ fn a_placed_prefab_is_marked_and_its_card_unlinks_it() {
     harness.run();
     assert!(harness.query_by_label_contains("Crate prefab").is_some(), "the hierarchy row says it is a prefab");
     assert!(harness.query_by_label("Apply").is_some() && harness.query_by_label("Revert").is_some());
+    assert!(harness.query_by_label_contains("Same as the prefab file").is_some());
+    let editor = harness.state_mut();
+    editor.dispatch("scene.component.add", &json!({ "id": id, "component": "mesh" }), None);
+    harness.run();
+    assert!(harness.query_by_label_contains("Own changes, kept when the file changes: Mesh").is_some(), "the card lists the copy's own changes");
     harness.get_by_label("Unlink").click();
     harness.run();
     assert!(harness.state().session.scene().component(id, "prefab").is_err());
@@ -680,4 +685,23 @@ fn a_material_graph_shows_a_preview_that_can_be_hidden() {
     harness.get_by_label("Show Preview").click();
     harness.run();
     assert!(harness.query_by_label_contains("Material preview").is_some());
+}
+
+#[test]
+fn project_settings_turn_physics_off_through_the_command() {
+    let mut harness = harness();
+    harness.state_mut().show_panel(crate::Panel::ProjectSettings);
+    harness.run();
+    assert!(harness.query_by_label_contains("Open a project to change its settings").is_some(), "outside a project the defaults are shown");
+
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-settings-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.run();
+    harness.get_by_label("Physics in play mode").click();
+    harness.run();
+    let settings = harness.state_mut().dispatch("project.settings", &json!({}), None).unwrap();
+    assert_eq!(settings["settings"]["physics"]["enabled"], false, "the click went through project.settings.set into the file");
+    assert!(harness.query_by_label_contains("Gravity Y").is_some());
+    std::fs::remove_dir_all(&dir).ok();
 }

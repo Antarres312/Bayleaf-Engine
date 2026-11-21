@@ -38,8 +38,19 @@ so module-level state belongs to that one script slot. Any language that compile
 | `send` | `(handle: i32, name_ptr: i32, name_len: i32, value: f32) -> i32` | sends a message (a name of 1 to 64 bytes and a finite number) to the scripts of the object, or of every object when `handle` is `-1`; `1` when sent, `0` when this call already sent 64 |
 | `message_is` | `(name_ptr: i32, name_len: i32) -> i32` | during `bayleaf_message`, `1` when the message has this name, else `0` |
 | `message_name` | `(out: i32, cap: i32) -> i32` | during `bayleaf_message`, writes up to `cap` bytes of the message's name and returns its full length; `0` outside it |
+| `apply_impulse` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | pushes the object's dynamic physics body by an impulse in world space, after the step; `1` when asked, `0` when this call already asked 64 times |
+| `set_velocity` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | sets the body's velocity (world units per second) after the step; `1` or `0` as above |
+| `velocity_of` | `(handle: i32, out: i32) -> i32` | writes 3 `f32`: the body's velocity as the step began; returns `1` when the object has a body, else `0` (and writes zeros) |
+| `raycast` | `(ox, oy, oz, dx, dy, dz, max: f32, out: i32) -> i32` | the handle of the first object whose mesh shape or sprite a ray from the origin along the direction hits within `max` world units (this script's object is left out), or `0`; writes 4 `f32`: distance and hit point xyz. Objects are as the step began; a mesh with a model counts as its shape's unit box |
+| `pad_connected` | `() -> i32` | `1` while a gamepad is connected (the first one), else `0` |
+| `pad_axis` | `(index: i32) -> f32` | `0` left stick x, `1` left stick y, `2` right stick x, `3` right stick y (-1 to 1, y up), `4` left trigger, `5` right trigger (0 to 1); `0` without a gamepad or for another index |
+| `pad_button` | `(index: i32) -> i32` | `1` while the button is held: 0 South, 1 East, 2 West, 3 North, 4 LeftBumper, 5 RightBumper, 6 LeftTrigger, 7 RightTrigger, 8 Select, 9 Start, 10 LeftStick, 11 RightStick, 12 Up, 13 Down, 14 Left, 15 Right |
 
 ### Messages
+
+In a build with physics, contacts arrive as messages to both objects' scripts after the physics
+step: `collision` and `collisionEnd` when colliders start and stop touching, `triggerEnter` and
+`triggerExit` when one of them is a trigger. The value is the other object's handle.
 
 Messages are delivered after every script's update in the step, in the order sent. Each script of
 the target object that exports `bayleaf_message` gets the call, with the same limits as any other

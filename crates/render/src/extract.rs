@@ -151,6 +151,8 @@ pub struct DrawItem {
     /// Images by texture slot: a sprite's image, or a material's Texture nodes in order. A
     /// missing image reads as white.
     pub textures: Vec<Option<Arc<Image>>>,
+    /// The model's triangles this item draws (first index, count); None for all of them.
+    pub part: Option<(u32, u32)>,
 }
 
 impl DrawItem {
@@ -197,7 +199,7 @@ pub struct LightItem {
     /// Cosines of the spot cone's outer edge and of where its fade starts.
     pub cos_outer: f32,
     pub cos_inner: f32,
-    /// This light casts shadows (directional lights only, for now).
+    /// This light casts shadows (the first light that does; one at a time).
     pub shadows: bool,
 }
 
@@ -234,6 +236,8 @@ pub struct Frame {
     pub clear_color: Vec4,
     /// The sky drawn behind the scene, if the scene has one.
     pub sky: Option<Sky>,
+    /// Fog colour (linear RGB) and density per world unit; density 0 is no fog.
+    pub fog: (Vec3, f32),
     pub show_grid: bool,
     pub selected: Option<StableId>,
     /// More selected objects, highlighted like `selected`.
@@ -270,7 +274,8 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
         }
         if let Some(mesh) = scene.get::<Mesh>(id) {
             let material = if mesh.material.is_empty() { None } else { assets.material(&mesh.material) };
-            items.push(DrawItem {
+            let model = if mesh.model.is_empty() { None } else { assets.model(&mesh.model) };
+            let mut item = DrawItem {
                 object: id,
                 shape: mesh.shape,
                 model: world,
@@ -280,8 +285,30 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
                 unlit: false,
                 textures: material.as_ref().map(|m| m.textures.iter().map(|path| assets.image(path)).collect()).unwrap_or_default(),
                 material,
-                mesh: if mesh.model.is_empty() { None } else { assets.model(&mesh.model) },
-            });
+                mesh: model.clone(),
+                part: None,
+            };
+            // A model's own materials tint the mesh colour and set metallic and roughness, unless a
+            // material graph is chosen; a model with several draws one item per part.
+            match model.as_ref().filter(|_| item.material.is_none()) {
+                Some(model) if model.parts.len() > 1 => {
+                    for part in &model.parts {
+                        let mut piece = item.clone();
+                        piece.part = Some((part.first, part.count));
+                        if let Some(own) = &part.material {
+                            apply_model_material(&mut piece, own);
+                        }
+                        items.push(piece);
+                    }
+                }
+                Some(model) => {
+                    if let Some(own) = &model.material {
+                        apply_model_material(&mut item, own);
+                    }
+                    items.push(item);
+                }
+                None => items.push(item),
+            }
         }
         if let Some(sprite) = scene.get::<Sprite>(id) {
             let model = world * Mat4::from_scale(Vec3::new(sprite.size[0], sprite.size[1], 1.0));
@@ -296,6 +323,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
                 material: None,
                 mesh: None,
                 textures: if sprite.image.is_empty() { Vec::new() } else { vec![assets.image(&sprite.image)] },
+                part: None,
             });
         }
         let direction = world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Y);
@@ -313,14 +341,14 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
                 range: light.range,
                 cos_outer: -1.0,
                 cos_inner: -1.0,
-                shadows: false,
+                shadows: light.shadows,
             });
         }
         if let Some(light) = scene.get::<SpotLight>(id) {
             let radiance = Vec3::from(light.color) * light.intensity;
             let half = (light.angle * 0.5).to_radians();
             let (cos_outer, cos_inner) = (half.cos(), (half * (1.0 - light.softness)).cos());
-            lights.push(LightItem { kind: LightKind::Spot, position, direction, radiance, range: light.range, cos_outer, cos_inner, shadows: false });
+            lights.push(LightItem { kind: LightKind::Spot, position, direction, radiance, range: light.range, cos_outer, cos_inner, shadows: light.shadows });
         }
     }
     // Sun-like lights first, then the lights nearest the camera, as many as the shader takes.
@@ -337,6 +365,11 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
         Some(env) => environment_light(env),
         None => (DEFAULT_AMBIENT, DEFAULT_AMBIENT * 0.35, DEFAULT_CLEAR, None),
     };
+    // Half of what lies ogDistance away is hidden: 1 - exp(-density * distance) = 0.5.
+    let fog = match environment {
+        Some(env) if env.fog_distance > 0.0 => (Vec3::from(env.horizon_color), std::f32::consts::LN_2 / env.fog_distance),
+        _ => (Vec3::ZERO, 0.0),
+    };
     Frame {
         camera,
         items,
@@ -345,11 +378,19 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
         ambient_ground,
         clear_color,
         sky,
+        fog,
         show_grid: options.show_grid,
         selected: options.selected,
         highlighted: Vec::new(),
         time: options.time,
     }
+}
+
+fn apply_model_material(item: &mut DrawItem, own: &bayleaf_assets::ModelMaterial) {
+    item.color *= Vec4::from(own.base_color);
+    item.metallic = own.metallic;
+    item.roughness = own.roughness;
+    item.textures = vec![own.image.clone(), own.metal_roughness.clone(), own.normal.clone()];
 }
 
 /// Ambient light from above and below, the background colour and the sky of an environment.
@@ -376,6 +417,7 @@ pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Ar
         material: Some(material),
         mesh: None,
         textures,
+        part: None,
     };
     Frame {
         camera: CameraView::look_at(Vec3::new(0.0, 0.3, 1.9), Vec3::ZERO, 36.0, aspect),
@@ -385,6 +427,7 @@ pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Ar
         ambient_ground,
         clear_color,
         sky,
+        fog: (Vec3::ZERO, 0.0),
         show_grid: false,
         selected: None,
         highlighted: Vec::new(),

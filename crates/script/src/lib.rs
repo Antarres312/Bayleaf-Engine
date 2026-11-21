@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use bayleaf_core::StableId;
+use bayleaf_core::math::{Mat4, Vec3};
 use bayleaf_scene::Scene;
 use bayleaf_scene::components::{ScriptRef, Scripts, Transform};
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
@@ -88,7 +89,39 @@ pub struct Input {
     pub pointer: Option<[f32; 2]>,
     /// Mouse buttons held: bit 0 left, bit 1 right, bit 2 middle.
     pub buttons: u8,
+    /// The first connected gamepad, if any.
+    pub pad: Option<Pad>,
 }
+
+/// A gamepad: sticks and triggers (by [`PAD_AXES`]) and the buttons held (bit i: [`PAD_BUTTONS`][i]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Pad {
+    /// Sticks from -1 to 1 (x right, y up), triggers from 0 to 1.
+    pub axes: [f32; 6],
+    pub buttons: u32,
+}
+
+/// Names of a gamepad's axes, by index.
+pub const PAD_AXES: [&str; 6] = ["LeftX", "LeftY", "RightX", "RightY", "LeftTrigger", "RightTrigger"];
+/// Names of a gamepad's buttons, by bit. South is the bottom face button, North the top one.
+pub const PAD_BUTTONS: [&str; 16] = [
+    "South",
+    "East",
+    "West",
+    "North",
+    "LeftBumper",
+    "RightBumper",
+    "LeftTrigger",
+    "RightTrigger",
+    "Select",
+    "Start",
+    "LeftStick",
+    "RightStick",
+    "Up",
+    "Down",
+    "Left",
+    "Right",
+];
 
 /// Something a script asked for that changes which objects exist. The play loop does these
 /// after the step, in order.
@@ -98,7 +131,14 @@ pub enum Request {
     Spawn { by: StableId, prefab: String, position: [f32; 3] },
     /// Delete an object and its children.
     Destroy(StableId),
+    /// Push a physics body by an impulse (world space). `by` is the asking script's object.
+    Push { by: StableId, object: StableId, impulse: [f32; 3] },
+    /// Set a physics body's velocity (world units per second).
+    SetVelocity { by: StableId, object: StableId, velocity: [f32; 3] },
 }
+
+/// Physics bodies' velocities, as scripts see them during a step.
+pub type Velocities = std::collections::HashMap<StableId, [f32; 3]>;
 
 /// Most requests one script call may make.
 const MAX_REQUESTS_PER_CALL: usize = 64;
@@ -123,13 +163,46 @@ struct Message {
 #[derive(Default)]
 struct WorldView {
     objects: Vec<(StableId, String, [f32; 9])>,
+    /// What rays can hit, by the same index: the world matrix and the box of the object's shape or
+    /// sprite, in its own space.
+    shapes: Vec<Option<(Mat4, Vec3, Vec3)>>,
 }
 
 impl WorldView {
     fn of(scene: &Scene) -> Arc<Self> {
-        let objects =
-            scene.world_matrices().into_iter().map(|(id, _)| (id, scene.name(id).unwrap_or_default().to_owned(), read_transform(scene, id))).collect();
-        Arc::new(Self { objects })
+        let all = scene.world_matrices();
+        let objects = all.iter().map(|(id, _)| (*id, scene.name(*id).unwrap_or_default().to_owned(), read_transform(scene, *id))).collect();
+        let shapes = all.iter().map(|(id, world)| shape_box(scene, *id).map(|(lo, hi)| (*world, lo, hi))).collect();
+        Arc::new(Self { objects, shapes })
+    }
+
+    /// The nearest shape a ray hits within `max`, other than `skip`: its index and the distance.
+    fn raycast(&self, origin: Vec3, direction: Vec3, max: f32, skip: StableId) -> Option<(usize, f32)> {
+        let mut best: Option<(usize, f32)> = None;
+        for (index, shape) in self.shapes.iter().enumerate() {
+            let Some((world, lo, hi)) = shape else { continue };
+            if self.objects[index].0 == skip || world.determinant().abs() < 1e-12 {
+                continue;
+            }
+            // In the shape's own space the box is axis-aligned; the ray's parameter stays the world distance.
+            let inverse = world.inverse();
+            let (o, d) = (inverse.transform_point3(origin), inverse.transform_vector3(direction));
+            let (mut near, mut far) = (0.0f32, max);
+            let mut missed = false;
+            for axis in 0..3 {
+                if d[axis].abs() < 1e-9 {
+                    missed |= o[axis] < lo[axis] || o[axis] > hi[axis];
+                } else {
+                    let (a, b) = ((lo[axis] - o[axis]) / d[axis], (hi[axis] - o[axis]) / d[axis]);
+                    near = near.max(a.min(b));
+                    far = far.min(a.max(b));
+                }
+            }
+            if !missed && near <= far && best.is_none_or(|(_, t)| near < t) {
+                best = Some((index, near));
+            }
+        }
+        best
     }
 
     fn handle_of(&self, id: StableId) -> i32 {
@@ -153,6 +226,7 @@ struct HostState {
     outbox: Vec<Message>,
     /// The name of the message being delivered, during `bayleaf_message`.
     message: Option<String>,
+    velocities: Arc<Velocities>,
     transform: [f32; 9],
     transform_changed: bool,
     properties: BTreeMap<String, f32>,
@@ -173,6 +247,7 @@ impl HostState {
             requests: Vec::new(),
             outbox: Vec::new(),
             message: None,
+            velocities: Arc::new(Velocities::new()),
             transform,
             transform_changed: false,
             properties,
@@ -243,6 +318,7 @@ pub struct ScriptHost {
     requests: Vec<Request>,
     /// Messages sent and not yet delivered.
     messages: Vec<Message>,
+    velocities: Arc<Velocities>,
 }
 
 impl Default for ScriptHost {
@@ -251,7 +327,16 @@ impl Default for ScriptHost {
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         let linker = make_linker(&engine);
-        Self { engine, linker, instances: Vec::new(), faults: Vec::new(), logs: Vec::new(), requests: Vec::new(), messages: Vec::new() }
+        Self {
+            engine,
+            linker,
+            instances: Vec::new(),
+            faults: Vec::new(),
+            logs: Vec::new(),
+            requests: Vec::new(),
+            messages: Vec::new(),
+            velocities: Arc::new(Velocities::new()),
+        }
     }
 }
 
@@ -383,6 +468,7 @@ impl ScriptHost {
                 state.time = time;
                 state.input = Arc::clone(input);
                 state.world = Arc::clone(&world);
+                state.velocities = Arc::clone(&self.velocities);
             }
             let result = call(entry, |store| update.call(store, dt));
             let script = entry.script_name.clone();
@@ -424,6 +510,7 @@ impl ScriptHost {
                     state.time = time;
                     state.input = Arc::clone(input);
                     state.world = Arc::clone(&world);
+                    state.velocities = Arc::clone(&self.velocities);
                     state.message = Some(message.name.clone());
                 }
                 let result = call(entry, |store| on_message.call(store, message.value));
@@ -472,6 +559,24 @@ impl ScriptHost {
         reloaded.sort();
         reloaded.dedup();
         reloaded
+    }
+
+    /// The physics bodies' velocities scripts read in the next calls.
+    pub fn set_velocities(&mut self, velocities: Velocities) {
+        self.velocities = Arc::new(velocities);
+    }
+
+    /// Tells scripts about physics contacts: each `(object, name, other)` becomes a message called
+    /// `name` to `object`'s scripts, its value the other object's handle, delivered now.
+    pub fn notify(&mut self, scene: &mut Scene, contacts: &[(StableId, &str, StableId)], time: f64, input: &Arc<Input>) {
+        if contacts.is_empty() {
+            return;
+        }
+        let world = WorldView::of(scene);
+        for (object, name, other) in contacts {
+            self.messages.push(Message { to: Some(*object), name: (*name).to_owned(), value: world.handle_of(*other) as f32 });
+        }
+        self.deliver(scene, time, input);
     }
 
     /// Spawns and destroys scripts asked for since the last call, in order.
@@ -532,6 +637,23 @@ fn call(entry: &mut Instance, run: impl FnOnce(&mut Store<HostState>) -> Result<
             Err(ScriptError::Trapped { module: entry.module_name.clone(), message: reason })
         }
     }
+}
+
+/// The box of an object's mesh shape or sprite in its own space, if it has one. A mesh with a model
+/// counts as its shape's unit box; models do not keep their exact size here.
+fn shape_box(scene: &Scene, id: StableId) -> Option<(Vec3, Vec3)> {
+    use bayleaf_scene::components::{Mesh, Shape, Sprite};
+    if let Some(mesh) = scene.get::<Mesh>(id) {
+        let half = match mesh.shape {
+            Shape::Plane => Vec3::new(0.5, 0.001, 0.5),
+            Shape::Quad => Vec3::new(0.5, 0.5, 0.001),
+            Shape::Cube | Shape::Sphere => Vec3::splat(0.5),
+        };
+        return Some((-half, half));
+    }
+    let sprite = scene.get::<Sprite>(id)?;
+    let half = Vec3::new(sprite.size[0] * 0.5, sprite.size[1] * 0.5, 0.001);
+    Some((-half, half))
 }
 
 fn read_transform(scene: &Scene, object: StableId) -> [f32; 9] {
@@ -596,6 +718,29 @@ fn fault(caller: &mut Caller<'_, HostState>, message: String) -> wasmi::Error {
     wasmi::Error::new(message)
 }
 
+/// Records a physics request for the object with `handle`, applied after the step.
+fn physics_request(
+    caller: &mut Caller<'_, HostState>,
+    what: &str,
+    handle: i32,
+    v: [f32; 3],
+    make: impl FnOnce(StableId, StableId, [f32; 3]) -> Request,
+) -> Result<i32, wasmi::Error> {
+    if !v.iter().all(|c| c.is_finite()) {
+        return Err(fault(caller, format!("{what}: give finite numbers")));
+    }
+    let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+        return Err(fault(caller, format!("{what}: there is no object with handle {handle}")));
+    };
+    let state = caller.data_mut();
+    if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+        return Ok(0);
+    }
+    let by = state.object;
+    state.requests.push(make(by, object, v));
+    Ok(1)
+}
+
 fn make_linker(engine: &Engine) -> Linker<HostState> {
     let mut linker = Linker::new(engine);
     let result = (|| -> Result<(), wasmi::errors::LinkerError> {
@@ -646,6 +791,60 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         linker.func_wrap("bayleaf", "mouse_down", |caller: Caller<'_, HostState>, button: i32| -> i32 {
             match u32::try_from(button) {
                 Ok(b) if b < 3 => i32::from((caller.data().input.buttons >> b) & 1),
+                _ => 0,
+            }
+        })?;
+        linker.func_wrap(
+            "bayleaf",
+            "apply_impulse",
+            |mut caller: Caller<'_, HostState>, handle: i32, x: f32, y: f32, z: f32| -> Result<i32, wasmi::Error> {
+                physics_request(&mut caller, "apply_impulse", handle, [x, y, z], |by, object, impulse| Request::Push { by, object, impulse })
+            },
+        )?;
+        linker.func_wrap("bayleaf", "set_velocity", |mut caller: Caller<'_, HostState>, handle: i32, x: f32, y: f32, z: f32| -> Result<i32, wasmi::Error> {
+            physics_request(&mut caller, "set_velocity", handle, [x, y, z], |by, object, velocity| Request::SetVelocity { by, object, velocity })
+        })?;
+        linker.func_wrap("bayleaf", "velocity_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32| -> Result<i32, wasmi::Error> {
+            let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                return Err(fault(&mut caller, format!("velocity_of: there is no object with handle {handle}")));
+            };
+            let found = caller.data().velocities.get(&object).copied();
+            let bytes: Vec<u8> = found.unwrap_or([0.0; 3]).iter().flat_map(|v| v.to_le_bytes()).collect();
+            write_guest(&mut caller, out, &bytes, "velocity_of")?;
+            Ok(i32::from(found.is_some()))
+        })?;
+        linker.func_wrap(
+            "bayleaf",
+            "raycast",
+            |mut caller: Caller<'_, HostState>, ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max: f32, out: i32| -> Result<i32, wasmi::Error> {
+                let (origin, direction) = (Vec3::new(ox, oy, oz), Vec3::new(dx, dy, dz));
+                if !(origin.is_finite() && direction.is_finite() && max.is_finite()) || direction.length_squared() < 1e-12 || max < 0.0 {
+                    return Err(fault(&mut caller, "raycast: give a finite origin, a direction that is not zero, and a distance of 0 or more".to_owned()));
+                }
+                let direction = direction.normalize();
+                let state = caller.data();
+                let hit = state.world.raycast(origin, direction, max, state.object);
+                let (handle, values) = match hit {
+                    Some((index, distance)) => {
+                        let point = origin + direction * distance;
+                        (index as i32 + 1, [distance, point.x, point.y, point.z])
+                    }
+                    None => (0, [0.0; 4]),
+                };
+                let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+                write_guest(&mut caller, out, &bytes, "raycast")?;
+                Ok(handle)
+            },
+        )?;
+        linker.func_wrap("bayleaf", "pad_connected", |caller: Caller<'_, HostState>| -> i32 { i32::from(caller.data().input.pad.is_some()) })?;
+        linker.func_wrap("bayleaf", "pad_axis", |caller: Caller<'_, HostState>, index: i32| -> f32 {
+            let pad = caller.data().input.pad.unwrap_or_default();
+            usize::try_from(index).ok().and_then(|i| pad.axes.get(i).copied()).unwrap_or(0.0)
+        })?;
+        linker.func_wrap("bayleaf", "pad_button", |caller: Caller<'_, HostState>, index: i32| -> i32 {
+            let pad = caller.data().input.pad.unwrap_or_default();
+            match u32::try_from(index) {
+                Ok(b) if b < 32 => i32::from((pad.buttons >> b) & 1 == 1),
                 _ => 0,
             }
         })?;

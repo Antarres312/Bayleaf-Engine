@@ -41,6 +41,33 @@ pub struct MeshData {
     /// Smallest and largest corner of the box around every position.
     pub min: [f32; 3],
     pub max: [f32; 3],
+    /// The model's own material, from its first triangles that have one.
+    pub material: Option<ModelMaterial>,
+    /// Runs of triangles that share a material, in index order. A model with one material has one.
+    pub parts: Vec<MeshPart>,
+}
+
+/// Triangles `indices[first..first + count]` and the material they use.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshPart {
+    pub first: u32,
+    pub count: u32,
+    pub material: Option<ModelMaterial>,
+}
+
+/// The parts of a glTF material the engine draws: base colour (linear RGBA, times the image when
+/// there is one), metallic and roughness (times their image), and a normal map.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelMaterial {
+    pub base_color: [f32; 4],
+    pub metallic: f32,
+    pub roughness: f32,
+    /// The base colour image, read by the first texture coordinates.
+    pub image: Option<Arc<Image>>,
+    /// Roughness in green and metallic in blue, times the numbers above.
+    pub metal_roughness: Option<Arc<Image>>,
+    /// A tangent-space normal map.
+    pub normal: Option<Arc<Image>>,
 }
 
 fn file_id(path: &Path, modified: Option<SystemTime>) -> u64 {
@@ -60,12 +87,85 @@ fn read_limited(path: &Path) -> Result<(Vec<u8>, Option<SystemTime>), String> {
     Ok((bytes, meta.modified().ok()))
 }
 
-/// Reads a PNG file.
+/// File extensions of the images this crate reads.
+pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
+
+/// Reads a PNG or JPEG file. The kind comes from the file's first bytes, not its name.
 pub fn load_image(path: &Path) -> Result<Image, String> {
     let (bytes, modified) = read_limited(path)?;
-    let mut image = decode_png(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut image = decode_image(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     image.id = file_id(path, modified);
     Ok(image)
+}
+
+/// One size of an image: width, height and RGBA pixels.
+pub type MipLevel = (u32, u32, Vec<u8>);
+
+/// The smaller copies of an image, each half the size of the one before (rounded down, at least
+/// 1), down to 1 x 1, not counting the image itself. Colours are averaged as light (in linear
+/// space, not as sRGB numbers), so a fine black and white pattern turns light grey, not dark grey.
+pub fn mip_levels(image: &Image) -> Vec<MipLevel> {
+    let to_linear: Vec<f32> = (0..=255u8).map(|v| srgb_to_linear(f32::from(v) / 255.0)).collect();
+    let mut levels = Vec::new();
+    let (mut w, mut h, mut src) = (image.width.max(1), image.height.max(1), image.rgba.clone());
+    while w > 1 || h > 1 {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut out = vec![0u8; (nw * nh * 4) as usize];
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut sum = [0.0f32; 4];
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let (sx, sy) = ((x * 2 + dx).min(w - 1), (y * 2 + dy).min(h - 1));
+                    let at = ((sy * w + sx) * 4) as usize;
+                    for c in 0..3 {
+                        sum[c] += to_linear[usize::from(src[at + c])];
+                    }
+                    sum[3] += f32::from(src[at + 3]) / 255.0;
+                }
+                let at = ((y * nw + x) * 4) as usize;
+                for c in 0..3 {
+                    out[at + c] = (linear_to_srgb(sum[c] / 4.0) * 255.0).round() as u8;
+                }
+                out[at + 3] = (sum[3] / 4.0 * 255.0).round() as u8;
+            }
+        }
+        levels.push((nw, nh, out.clone()));
+        (w, h, src) = (nw, nh, out);
+    }
+    levels
+}
+
+fn srgb_to_linear(v: f32) -> f32 {
+    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+}
+
+fn linear_to_srgb(v: f32) -> f32 {
+    let v = v.clamp(0.0, 1.0);
+    if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
+}
+
+/// Decodes PNG or JPEG bytes into RGBA. The id is left at 0.
+pub fn decode_image(bytes: &[u8]) -> Result<Image, String> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) { decode_jpeg(bytes) } else { decode_png(bytes) }
+}
+
+/// Decodes JPEG bytes into RGBA (JPEG has no transparency, so alpha is 255). The id is left at 0.
+pub fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
+    use zune_core::colorspace::ColorSpace;
+    use zune_core::options::DecoderOptions;
+    let side = MAX_IMAGE_SIDE as usize;
+    let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA).set_max_width(side).set_max_height(side);
+    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(zune_core::bytestream::ZCursor::new(bytes), options);
+    decoder.decode_headers().map_err(|e| format!("not a JPEG image: {e:?}"))?;
+    let (width, height) = decoder.dimensions().ok_or("not a JPEG image")?;
+    if width == 0 || height == 0 || width > side || height > side {
+        return Err(format!("images may be at most {MAX_IMAGE_SIDE} pixels on a side, not {width} x {height}"));
+    }
+    let rgba = decoder.decode().map_err(|e| format!("broken JPEG image: {e:?}"))?;
+    if rgba.len() != width * height * 4 {
+        return Err("broken JPEG image: wrong number of pixels".to_owned());
+    }
+    Ok(Image { id: 0, width: width as u32, height: height as u32, rgba })
 }
 
 /// Decodes PNG bytes into RGBA. The id is left at 0.
@@ -122,11 +222,29 @@ pub fn load_model(path: &Path) -> Result<MeshData, String> {
         indices: Vec::new(),
         min: [0.0; 3],
         max: [0.0; 3],
+        material: None,
+        parts: Vec::new(),
     };
     let scene = gltf.default_scene().or_else(|| gltf.scenes().next()).ok_or_else(|| format!("{}: the model has no scene", path.display()))?;
+    // Runs of indices and the glTF material each uses.
+    let mut runs: Vec<(u32, u32, Option<usize>)> = Vec::new();
     for node in scene.nodes() {
-        add_node(&node, glam::Mat4::IDENTITY, &buffers, &mut mesh, 0).map_err(|e| format!("{}: {e}", path.display()))?;
+        add_node(&node, glam::Mat4::IDENTITY, &buffers, &mut mesh, &mut runs, 0).map_err(|e| format!("{}: {e}", path.display()))?;
     }
+    let mut materials: HashMap<usize, ModelMaterial> = HashMap::new();
+    for (first, count, index) in runs {
+        let material = match index.and_then(|i| gltf.materials().nth(i).map(|m| (i, m))) {
+            Some((i, m)) => {
+                if let std::collections::hash_map::Entry::Vacant(slot) = materials.entry(i) {
+                    slot.insert(model_material(&m, &buffers, folder, mesh.id).map_err(|e| format!("{}: {e}", path.display()))?);
+                }
+                materials.get(&i).cloned()
+            }
+            None => None,
+        };
+        mesh.parts.push(MeshPart { first, count, material });
+    }
+    mesh.material = mesh.parts.iter().find_map(|p| p.material.clone());
     if mesh.indices.is_empty() {
         return Err(format!("{}: the model has no triangles", path.display()));
     }
@@ -149,7 +267,58 @@ fn buffer_path(folder: &Path, uri: &str) -> Option<PathBuf> {
     Some(folder.join(relative))
 }
 
-fn add_node(node: &gltf::Node<'_>, parent: glam::Mat4, buffers: &[Vec<u8>], mesh: &mut MeshData, depth: usize) -> Result<(), String> {
+/// The base colour, metallic, roughness and images of a glTF material.
+fn model_material(material: &gltf::Material<'_>, buffers: &[Vec<u8>], folder: &Path, model_id: u64) -> Result<ModelMaterial, String> {
+    let pbr = material.pbr_metallic_roughness();
+    let read = |texture: Option<(gltf::Texture<'_>, u32)>, what: &str| match texture {
+        Some((texture, 0)) => texture_image(&texture, buffers, folder, model_id).map(Some).map_err(|e| format!("{what} image: {e}")),
+        // Images read by a second set of texture coordinates are left out.
+        _ => Ok(None),
+    };
+    let image = read(pbr.base_color_texture().map(|i| (i.texture(), i.tex_coord())), "base colour")?;
+    let metal_roughness = read(pbr.metallic_roughness_texture().map(|i| (i.texture(), i.tex_coord())), "metallic and roughness")?;
+    let normal = read(material.normal_texture().map(|i| (i.texture(), i.tex_coord())), "normal")?;
+    let finite = |v: f32, fallback: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { fallback };
+    Ok(ModelMaterial {
+        base_color: pbr.base_color_factor().map(|c| finite(c, 1.0)),
+        metallic: finite(pbr.metallic_factor(), 1.0),
+        roughness: finite(pbr.roughness_factor(), 1.0),
+        image,
+        metal_roughness,
+        normal,
+    })
+}
+
+/// The image a glTF texture shows: inside the binary buffer, or a file beside the model.
+fn texture_image(texture: &gltf::Texture<'_>, buffers: &[Vec<u8>], folder: &Path, model_id: u64) -> Result<Arc<Image>, String> {
+    let source = texture.source();
+    let bytes = match source.source() {
+        gltf::image::Source::View { view, .. } => {
+            let buffer = buffers.get(view.buffer().index()).ok_or("its buffer is missing")?;
+            let end = view.offset().checked_add(view.length()).ok_or("it lies outside its buffer")?;
+            buffer.get(view.offset()..end).ok_or("it lies outside its buffer")?.to_vec()
+        }
+        gltf::image::Source::Uri { uri, .. } if uri.starts_with("data:") => {
+            return Err("images inside the file as text are not supported yet; save the model as .glb".to_owned());
+        }
+        gltf::image::Source::Uri { uri, .. } => {
+            let file = buffer_path(folder, uri).ok_or_else(|| format!("{uri} must be a file next to the model"))?;
+            read_limited(&file)?.0
+        }
+    };
+    let mut image = decode_image(&bytes)?;
+    // Distinct from the model's id and from its other images.
+    image.id = (model_id ^ (source.index() as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)) | 1;
+    Ok(Arc::new(image))
+}
+fn add_node(
+    node: &gltf::Node<'_>,
+    parent: glam::Mat4,
+    buffers: &[Vec<u8>],
+    mesh: &mut MeshData,
+    runs: &mut Vec<(u32, u32, Option<usize>)>,
+    depth: usize,
+) -> Result<(), String> {
     if depth > 64 {
         return Err("the node tree is too deep".to_owned());
     }
@@ -189,11 +358,18 @@ fn add_node(node: &gltf::Node<'_>, parent: glam::Mat4, buffers: &[Vec<u8>], mesh
             mesh.positions.extend(positions.iter().map(|p| world.transform_point3(glam::Vec3::from(*p)).to_array()));
             mesh.normals.extend(normals.iter().map(|n| (normal_matrix * glam::Vec3::from(*n)).normalize_or_zero().to_array()));
             mesh.uvs.extend(uvs);
+            let (first, count) = (mesh.indices.len() as u32, indices.len() as u32);
             mesh.indices.extend(indices.into_iter().map(|i| base + i));
+            // Neighbouring parts with the same material draw as one.
+            let material = primitive.material().index();
+            match runs.last_mut() {
+                Some(last) if last.2 == material && last.0 + last.1 == first => last.1 += count,
+                _ => runs.push((first, count, material)),
+            }
         }
     }
     for child in node.children() {
-        add_node(&child, world, buffers, mesh, depth + 1)?;
+        add_node(&child, world, buffers, mesh, runs, depth + 1)?;
     }
     Ok(())
 }

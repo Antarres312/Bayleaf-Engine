@@ -428,6 +428,15 @@ fn meshes_draw_their_model_and_are_picked_by_its_box() {
     let mut assets = crate::FileAssets { base: dir.clone(), materials: &mut materials, cache: &mut cache, allow: &allow, warnings: Vec::new() };
     let frame = extract_with(&scene, camera, OPTIONS, &mut assets);
     assert_eq!(pick(&frame, Vec2::new(0.45, 0.0)), Some(wall), "picked by the model's box, past the unit cube");
+
+    // A model's own material tints it.
+    let mut gltf: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("wall.gltf")).unwrap()).unwrap();
+    gltf["meshes"][0]["primitives"][0]["material"] = json!(0);
+    gltf["materials"] = json!([{ "pbrMetallicRoughness": { "baseColorFactor": [0.05, 1.0, 0.05, 1.0], "metallicFactor": 0.0 } }]);
+    std::fs::write(dir.join("wall.gltf"), gltf.to_string()).unwrap();
+    let image = render_with_files(&gpu, &scene, &dir, &mut crate::MaterialLibrary::new(), camera);
+    let [r, g, b, _] = image.pixel(32 + 12, 32).unwrap();
+    assert!(g > r + 60 && g > b + 60, "the model's base colour is green: {:?}", [r, g, b]);
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -452,4 +461,221 @@ fn an_environment_draws_a_sky_above_the_ground_and_lights_shapes_from_it() {
     scene.set_component(holder, "environment", hidden).unwrap();
     let image = gpu.render(&extract(&scene, camera, OPTIONS), 64, 64).unwrap();
     assert_eq!(image.pixel(32, 1), image.pixel(32, 62), "without the sky the background is one colour");
+}
+
+#[test]
+fn a_spot_light_casts_a_shadow_when_asked() {
+    let Some(gpu) = gpu() else { return };
+    let render = |shadows: bool| {
+        let spot = json!({"color": [1, 1, 1], "intensity": 60, "range": 12, "angle": 80, "softness": 0.1, "shadows": shadows});
+        let mut scene = floor_scene(&[("spotLight", spot, [0.0, 6.0, 0.0], [-90.0, 0.0, 0.0])]);
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.9}), [0.0, 3.0, 0.0], [0.0; 3]);
+        let camera = CameraView::look_at(Vec3::new(0.0, 7.0, 7.0), Vec3::ZERO, 60.0, 1.0);
+        let frame = extract(&scene, camera, OPTIONS);
+        // Straight under the cube, and beside its shadow but still in the cone.
+        let under = camera_pixel(&frame.camera, Vec3::new(0.0, 0.0, 0.0), 64);
+        let beside = camera_pixel(&frame.camera, Vec3::new(2.2, 0.0, 0.0), 64);
+        let image = gpu.render(&frame, 64, 64).unwrap();
+        (image.pixel(under.0, under.1).unwrap(), image.pixel(beside.0, beside.1).unwrap())
+    };
+    let (under, beside) = render(true);
+    assert!(brightness(beside) > brightness(under) + 60, "the floor under the cube is in shadow: under {under:?}, beside {beside:?}");
+    let (under, _) = render(false);
+    assert!(brightness(under) > brightness(render(true).0) + 60, "without shadows the floor under the cube is lit");
+}
+
+#[test]
+fn fog_hides_far_shapes_in_the_horizon_colour() {
+    let Some(gpu) = gpu() else { return };
+    let render = |fog: f32| {
+        let mut scene = Scene::new();
+        mesh(&mut scene, "cube", [0.0, 0.0, -30.0]);
+        let env = json!({"skyColor": [0, 0, 0], "horizonColor": [0.9, 0.1, 0.1], "groundColor": [0, 0, 0], "ambient": 1, "showSky": false, "fogDistance": fog});
+        object(&mut scene, "environment", env, [0.0; 3], [0.0; 3]);
+        let camera = CameraView::look_at(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), 5.0, 1.0);
+        gpu.render(&extract(&scene, camera, OPTIONS), 32, 32).unwrap().pixel(16, 16).unwrap()
+    };
+    let (clear, foggy) = (render(0.0), render(3.0));
+    let red = |p: [u8; 4]| i32::from(p[0]) - i32::from(p[1]);
+    assert!(red(foggy) > red(clear) + 80, "the far cube takes the fog colour: clear {clear:?}, foggy {foggy:?}");
+}
+/// A 2 x 2 square facing +Z with texture coordinates (v down, as in glTF) and a one-pixel normal
+/// map of `normal` (RGB), in a folder of its own.
+fn normal_mapped_square(name: &str, normal: [u8; 3]) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("bayleaf-render-normal-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut png_bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png_bytes, 1, 1);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.write_header().unwrap().write_image_data(&normal).unwrap();
+    }
+    std::fs::write(dir.join("normal.png"), png_bytes).unwrap();
+    let positions: [[f32; 3]; 4] = [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]];
+    let normals = [[0.0f32, 0.0, 1.0]; 4];
+    let uvs: [[f32; 2]; 4] = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
+    let mut bin: Vec<u8> = positions.iter().flatten().chain(normals.iter().flatten()).chain(uvs.iter().flatten()).flat_map(|f| f.to_le_bytes()).collect();
+    for i in [0u16, 1, 2, 0, 2, 3] {
+        bin.extend(i.to_le_bytes());
+    }
+    std::fs::write(dir.join("square.bin"), &bin).unwrap();
+    let gltf = json!({
+        "asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 0}]}],
+        "materials": [{"pbrMetallicRoughness": {"metallicFactor": 0.0, "roughnessFactor": 1.0}, "normalTexture": {"index": 0}}],
+        "textures": [{"source": 0}], "images": [{"uri": "normal.png"}],
+        "buffers": [{"uri": "square.bin", "byteLength": bin.len()}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 48}, {"buffer": 0, "byteOffset": 48, "byteLength": 48},
+            {"buffer": 0, "byteOffset": 96, "byteLength": 32}, {"buffer": 0, "byteOffset": 128, "byteLength": 12}
+        ],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [-1, -1, 0], "max": [1, 1, 0]},
+            {"bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC3"},
+            {"bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC2"},
+            {"bufferView": 3, "componentType": 5123, "count": 6, "type": "SCALAR"}
+        ]
+    });
+    std::fs::write(dir.join("square.gltf"), gltf.to_string()).unwrap();
+    dir
+}
+
+#[test]
+fn a_normal_map_bends_the_light_toward_its_right_and_up() {
+    let Some(gpu) = gpu() else { return };
+    let lit = |name: &str, normal: [u8; 3], light_rotation: [f32; 3]| {
+        let dir = normal_mapped_square(name, normal);
+        let mut scene = Scene::new();
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "square.gltf"}), [0.0; 3], [0.0; 3]);
+        object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3, "shadows": false}), [0.0; 3], light_rotation);
+        let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 40.0, 1.0);
+        let image = render_with_files(&gpu, &scene, &dir, &mut crate::MaterialLibrary::new(), camera);
+        std::fs::remove_dir_all(&dir).ok();
+        brightness(image.pixel(32, 32).unwrap())
+    };
+    // A light from the right (+X), grazing the square: turned toward it, the surface is brighter.
+    let from_right = [0.0, 80.0, 0.0];
+    let (flat, right) = (lit("flat-x", [128, 128, 255], from_right), lit("right", [255, 128, 128], from_right));
+    assert!(right > flat + 40, "a normal map leaning right catches light from the right: flat {flat}, leaning {right}");
+    // A light from above (+Y): the map's green leans the surface up, toward the top of the image.
+    let from_above = [-80.0, 0.0, 0.0];
+    let (flat, up) = (lit("flat-y", [128, 128, 255], from_above), lit("up", [128, 255, 128], from_above));
+    assert!(up > flat + 40, "a normal map leaning up catches light from above: flat {flat}, leaning {up}");
+}
+
+#[test]
+fn a_model_with_two_materials_draws_each_part_in_its_own() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-render-parts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // Two squares side by side, each its own glTF primitive: left green, right red.
+    let positions: [[f32; 3]; 8] =
+        [[-2.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, 1.0, 0.0], [-2.0, 1.0, 0.0], [0.0, -1.0, 0.0], [2.0, -1.0, 0.0], [2.0, 1.0, 0.0], [0.0, 1.0, 0.0]];
+    let mut bin: Vec<u8> = positions.iter().flatten().flat_map(|f| f.to_le_bytes()).collect();
+    for i in [0u16, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7] {
+        bin.extend(i.to_le_bytes());
+    }
+    std::fs::write(dir.join("two.bin"), &bin).unwrap();
+    let gltf = json!({
+        "asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [
+            {"attributes": {"POSITION": 0}, "indices": 1, "material": 0},
+            {"attributes": {"POSITION": 0}, "indices": 2, "material": 1}
+        ]}],
+        "materials": [
+            {"pbrMetallicRoughness": {"baseColorFactor": [0.05, 1.0, 0.05, 1.0], "metallicFactor": 0.0}},
+            {"pbrMetallicRoughness": {"baseColorFactor": [1.0, 0.05, 0.05, 1.0], "metallicFactor": 0.0}}
+        ],
+        "buffers": [{"uri": "two.bin", "byteLength": bin.len()}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 96},
+            {"buffer": 0, "byteOffset": 96, "byteLength": 12},
+            {"buffer": 0, "byteOffset": 108, "byteLength": 12}
+        ],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 8, "type": "VEC3", "min": [-2, -1, 0], "max": [2, 1, 0]},
+            {"bufferView": 1, "componentType": 5123, "count": 6, "type": "SCALAR"},
+            {"bufferView": 2, "componentType": 5123, "count": 6, "type": "SCALAR"}
+        ]
+    });
+    std::fs::write(dir.join("two.gltf"), gltf.to_string()).unwrap();
+    assert_eq!(bayleaf_assets::load_model(&dir.join("two.gltf")).unwrap().parts.len(), 2);
+
+    let Some(gpu) = gpu() else { return };
+    let mut scene = Scene::new();
+    object(&mut scene, "mesh", json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.9, "model": "two.gltf"}), [0.0; 3], [0.0; 3]);
+    object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3, "shadows": false}), [0.0; 3], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 50.0, 1.0);
+    let image = render_with_files(&gpu, &scene, &dir, &mut crate::MaterialLibrary::new(), camera);
+    let (left, right) = (image.pixel(20, 32).unwrap(), image.pixel(44, 32).unwrap());
+    assert!(left[1] > left[0] + 60, "the left part is green: {left:?}");
+    assert!(right[0] > right[1] + 60, "the right part is red: {right:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_point_light_casts_shadows_all_around_it() {
+    let Some(gpu) = gpu() else { return };
+    let render = |shadows: bool| {
+        let bulb = json!({"color": [1, 1, 1], "intensity": 80, "range": 14, "shadows": shadows});
+        let mut scene = floor_scene(&[("pointLight", bulb, [0.0, 3.0, 0.0], [0.0; 3])]);
+        // One cube below the light, one off to the side: their shadows fall on different faces.
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.9}), [0.0, 1.5, 0.0], [0.0; 3]);
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.9}), [2.0, 1.0, 0.0], [0.0; 3]);
+        let frame = extract(&scene, top_down(), OPTIONS);
+        let image = gpu.render(&frame, 96, 96).unwrap();
+        let at = |p: Vec3| {
+            let (x, y) = camera_pixel(&frame.camera, p, 96);
+            brightness(image.pixel(x, y).unwrap())
+        };
+        // Below the first cube (seen past its edge), behind the second, and a lit spot in between.
+        (at(Vec3::new(0.0, 0.0, 0.9)), at(Vec3::new(4.2, 0.0, 0.0)), at(Vec3::new(-2.0, 0.0, 0.0)))
+    };
+    let (under, behind, lit) = render(true);
+    assert!(lit > under + 40, "the floor below the first cube is in shadow: under {under}, lit {lit}");
+    assert!(lit > behind + 20, "the floor behind the side cube is in shadow: behind {behind}, lit {lit}");
+    let (under_off, behind_off, _) = render(false);
+    assert!(under_off > under + 40 && behind_off > behind + 20, "without shadows both are lit");
+}
+
+#[test]
+fn smooth_surfaces_mirror_the_sky_and_rough_ones_blur_it() {
+    let Some(gpu) = gpu() else { return };
+    let centre = |roughness: f32| {
+        let mut scene = Scene::new();
+        let ball = mesh(&mut scene, "sphere", [0.0, 0.0, 0.0]);
+        scene.set_component(ball, "mesh", json!({"shape": "sphere", "color": [1, 1, 1, 1], "metallic": 1, "roughness": roughness})).unwrap();
+        // A red horizon between a blue top and a green ground, no lights.
+        let env = json!({"skyColor": [0.0, 0.0, 1.0], "horizonColor": [1.0, 0.0, 0.0], "groundColor": [0.0, 1.0, 0.0], "ambient": 1, "showSky": true});
+        object(&mut scene, "environment", env, [0.0; 3], [0.0; 3]);
+        let mut frame = extract(&scene, CameraView::look_at(Vec3::new(0.0, 0.0, 2.5), Vec3::ZERO, 30.0, 1.0), OPTIONS);
+        frame.lights.clear();
+        gpu.render(&frame, 32, 32).unwrap().pixel(16, 16).unwrap()
+    };
+    // The middle of the ball mirrors the horizon behind the camera.
+    let (smooth, rough) = (centre(0.05), centre(1.0));
+    assert!(smooth[0] > smooth[2] + 60 && smooth[0] > smooth[1], "a mirror ball shows the red horizon: {smooth:?}");
+    assert!(smooth[0] > rough[0] + 40, "a rough ball blurs it: smooth {smooth:?}, rough {rough:?}");
+}
+#[test]
+fn a_small_shape_near_the_camera_casts_a_sharp_shadow_in_a_large_world() {
+    let Some(gpu) = gpu() else { return };
+    let sun = json!({"color": [1, 1, 1], "intensity": 2, "shadows": true});
+    let mut scene = floor_scene(&[("directionalLight", sun, [0.0, 10.0, 0.0], [-90.0, 0.0, 0.0])]);
+    let floor = scene.world_matrices()[0].0;
+    scene.set_component(floor, "transform", json!({"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [400, 1, 400]})).unwrap();
+    // A small box a little above the ground, close to the camera, and a far one that widens the scene.
+    let small = object(&mut scene, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.9}), [0.0, 0.6, 0.0], [0.0; 3]);
+    scene.set_component(small, "transform", json!({"position": [0, 0.6, 0], "rotation": [0, 0, 0], "scale": [0.4, 0.4, 0.4]})).unwrap();
+    object(&mut scene, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.9}), [150.0, 0.5, -150.0], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 2.5, 3.0), Vec3::new(0.0, 0.0, 0.0), 50.0, 1.0);
+    let frame = extract(&scene, camera, OPTIONS);
+    let image = gpu.render(&frame, 128, 128).unwrap();
+    let at = |p: Vec3| {
+        let (x, y) = camera_pixel(&frame.camera, p, 128);
+        brightness(image.pixel(x, y).unwrap())
+    };
+    // Straight below the box, seen past its near edge, and a little to the side of its shadow.
+    let (under, beside) = (at(Vec3::new(0.0, 0.0, 0.15)), at(Vec3::new(0.6, 0.0, 0.15)));
+    assert!(beside > under + 60, "the small box shadows the ground: under {under}, beside {beside}");
 }

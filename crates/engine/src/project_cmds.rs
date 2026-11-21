@@ -14,7 +14,8 @@ use crate::{CommandError, CommandSpec, Mutates, Prompt, Session, always, parse};
 pub const PROJECT_FORMAT: &str = "bayleaf.project";
 /// File extension of project files.
 pub const PROJECT_EXTENSION: &str = "bproject";
-const PROJECT_VERSION: u32 = 1;
+/// Version 2 added `settings`. Version 1 files still open.
+const PROJECT_VERSION: u32 = 2;
 
 /// A project file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -25,13 +26,56 @@ pub struct ProjectFile {
     pub name: String,
     /// The scene the project opens with, relative to the project folder.
     pub main_scene: String,
+    #[serde(default)]
+    pub settings: ProjectSettings,
+}
+
+/// Settings for the whole project. Play mode reads them when it starts.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectSettings {
+    #[serde(default)]
+    pub physics: PhysicsSettings,
+}
+
+/// Physics in play mode.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PhysicsSettings {
+    /// Off: Rigid Bodies and Colliders do nothing in play mode.
+    pub enabled: bool,
+    /// World units per second squared.
+    pub gravity: [f32; 3],
+}
+
+impl Default for PhysicsSettings {
+    fn default() -> Self {
+        Self { enabled: true, gravity: [0.0, -9.81, 0.0] }
+    }
+}
+
+/// Largest gravity along any axis.
+pub const MAX_GRAVITY: f32 = 1000.0;
+
+impl ProjectSettings {
+    fn check(&self) -> Result<(), CommandError> {
+        if !self.physics.gravity.iter().all(|g| g.is_finite() && g.abs() <= MAX_GRAVITY) {
+            return Err(CommandError::BadParams(format!("gravity values must be finite and at most {MAX_GRAVITY} in size")));
+        }
+        Ok(())
+    }
+}
+
+/// The open project's settings, or the defaults for a scene outside any project (or an unreadable file).
+pub fn settings_of(session: &Session) -> ProjectSettings {
+    session.project_dir().and_then(project_file_in).and_then(|file| ProjectFile::read(&file).ok()).map(|p| p.settings).unwrap_or_default()
 }
 
 impl ProjectFile {
     fn read(path: &Path) -> Result<Self, CommandError> {
         let text = std::fs::read_to_string(path).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", path.display())))?;
         let file: ProjectFile = serde_json::from_str(&text).map_err(|e| CommandError::Failed(format!("{} is not a project file: {e}", path.display())))?;
-        if file.format != PROJECT_FORMAT || file.version != PROJECT_VERSION {
+        if file.format != PROJECT_FORMAT || !(1..=PROJECT_VERSION).contains(&file.version) {
             return Err(CommandError::Failed(format!("{} is not a version {PROJECT_VERSION} Bayleaf project", path.display())));
         }
         Ok(file)
@@ -88,7 +132,56 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             enabled: always,
             run: project_info,
         },
+        CommandSpec {
+            id: "project.settings",
+            label: "Project Settings",
+            menu: "",
+            shortcut: "",
+            params: "none; returns {project, settings}: the open project's settings (physics: {enabled, gravity}), or the defaults and project: false outside a project",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: project_settings,
+        },
+        CommandSpec {
+            id: "project.settings.set",
+            label: "Change Project Settings",
+            menu: "",
+            shortcut: "",
+            params: "{settings}: the whole settings object, written to the project file; play mode uses it from its next start",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: |s| {
+                if s.project_dir().is_some() { Ok(()) } else { Err("open a project first; scenes outside a project use the default settings".to_owned()) }
+            },
+            run: project_settings_set,
+        },
     ]
+}
+
+fn project_settings(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let _: serde_json::Map<String, Value> = crate::parse(params)?;
+    Ok(json!({ "project": session.project_dir().is_some(), "settings": settings_of(session) }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsParams {
+    settings: ProjectSettings,
+}
+
+fn project_settings_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: SettingsParams = crate::parse(params)?;
+    p.settings.check()?;
+    let dir = session.project_dir().ok_or_else(|| CommandError::Failed("open a project first".to_owned()))?;
+    let file = project_file_in(dir).ok_or_else(|| CommandError::Failed("the project file is gone".to_owned()))?;
+    let path = session.allowed(&file, Access::Write)?;
+    let mut project = ProjectFile::read(&path)?;
+    project.settings = p.settings;
+    project.version = PROJECT_VERSION;
+    let text = serde_json::to_string_pretty(&project).map_err(|e| CommandError::Failed(e.to_string()))?;
+    std::fs::write(&path, text).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", path.display())))?;
+    Ok(json!({ "settings": project.settings }))
 }
 
 #[derive(Deserialize)]
@@ -118,8 +211,13 @@ fn project_new(session: &mut Session, params: &Value) -> Result<Value, CommandEr
         }
         std::fs::write(&path, text).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", path.display())))
     };
-    let project =
-        ProjectFile { format: PROJECT_FORMAT.to_owned(), version: PROJECT_VERSION, name: name.to_owned(), main_scene: "scenes/main.bscene".to_owned() };
+    let project = ProjectFile {
+        format: PROJECT_FORMAT.to_owned(),
+        version: PROJECT_VERSION,
+        name: name.to_owned(),
+        main_scene: "scenes/main.bscene".to_owned(),
+        settings: ProjectSettings::default(),
+    };
     write(&format!("{file_stem}.{PROJECT_EXTENSION}"), &serde_json::to_string_pretty(&project).unwrap_or_default())?;
     write("scenes/main.bscene", MAIN_SCENE)?;
     write("materials/ground.bmaterial", GROUND_MATERIAL)?;
@@ -161,7 +259,8 @@ fn project_open(session: &mut Session, params: &Value) -> Result<Value, CommandE
 fn open_scene_at(session: &mut Session, scene: &Path) -> Result<(), CommandError> {
     let path = session.allowed(scene, Access::Read)?;
     let loaded = bayleaf_scene::Scene::load(&path)?;
-    session.replace_scene(loaded, Some(path));
+    // A prefab file that cannot be read leaves its copies as the scene holds them.
+    let _ = session.replace_scene(loaded, Some(path));
     Ok(())
 }
 
@@ -178,7 +277,7 @@ fn project_info(session: &mut Session, params: &Value) -> Result<Value, CommandE
 /// The starting scene: a camera, the sun and sky, a checkered ground and a spinning cube.
 const MAIN_SCENE: &str = r#"{
   "format": "bayleaf.scene",
-  "version": 6,
+  "version": 7,
   "objects": [
     {
       "id": "0b1f6e3a8c2d4e5f9a7b6c5d4e3f2a10",

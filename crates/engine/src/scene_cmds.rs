@@ -64,7 +64,8 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Render Image…",
             menu: "",
             shortcut: "",
-            params: "{path, width?, height?, camera?, grid?}; writes a PNG. camera: an object with a camera component; \
+            params: "{path?, width?, height?, camera?, grid?}; writes a PNG, or without a path returns it as {png: base64} \
+                     (at most 2048 on a side). camera: an object with a camera component; \
                      default: the first camera in the scene, else a view framing every object",
             prompt: Prompt::None,
             mutates: Mutates::No,
@@ -81,6 +82,17 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             mutates: Mutates::No,
             enabled: always,
             run: scene_objects,
+        },
+        CommandSpec {
+            id: "scene.document",
+            label: "Show Scene Document",
+            menu: "",
+            shortcut: "",
+            params: "none; returns {path, dirty, scene}: every object and component, as the scene file holds them",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: scene_document,
         },
         CommandSpec {
             id: "scene.components",
@@ -339,7 +351,7 @@ struct SetParams {
 
 fn scene_new(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     parse::<serde_json::Map<String, Value>>(params)?;
-    session.replace_scene(Scene::new(), None);
+    let _ = session.replace_scene(Scene::new(), None);
     Ok(json!({}))
 }
 
@@ -348,8 +360,8 @@ fn scene_open(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     let path = session.allowed(&p.path, crate::confine::Access::Read)?;
     let scene = Scene::load(&path)?;
     let objects = scene.object_count();
-    session.replace_scene(scene, Some(path));
-    Ok(json!({ "objects": objects }))
+    let warnings = session.replace_scene(scene, Some(path));
+    Ok(json!({ "objects": objects, "warnings": warnings }))
 }
 
 fn scene_save(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
@@ -372,7 +384,8 @@ fn scene_save_as(session: &mut Session, params: &Value) -> Result<Value, Command
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RenderParams {
-    path: PathBuf,
+    #[serde(default)]
+    path: Option<PathBuf>,
     #[serde(default = "default_width")]
     width: u32,
     #[serde(default = "default_height")]
@@ -397,9 +410,10 @@ const MAX_RENDER_SIDE: u32 = 8192;
 fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: RenderParams = parse(params)?;
     // Checked before any rendering work.
-    let path = session.allowed(&p.path, crate::confine::Access::Write)?;
-    if !(1..=MAX_RENDER_SIDE).contains(&p.width) || !(1..=MAX_RENDER_SIDE).contains(&p.height) {
-        return Err(CommandError::BadParams(format!("width and height must be between 1 and {MAX_RENDER_SIDE}")));
+    let path = p.path.as_ref().map(|path| session.allowed(path, crate::confine::Access::Write)).transpose()?;
+    let largest = if path.is_some() { MAX_RENDER_SIDE } else { MAX_INLINE_RENDER_SIDE };
+    if !(1..=largest).contains(&p.width) || !(1..=largest).contains(&p.height) {
+        return Err(CommandError::BadParams(format!("width and height must be between 1 and {largest}")));
     }
     let scene = &session.scene;
     let aspect = p.width as f32 / p.height as f32;
@@ -425,8 +439,38 @@ fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandE
     let warnings = assets.warnings;
     let gpu = bayleaf_render::HeadlessGpu::new().map_err(|e| CommandError::Failed(e.to_string()))?;
     let image = gpu.render(&frame, p.width, p.height).map_err(|e| CommandError::Failed(e.to_string()))?;
-    image.write_png(&path).map_err(|e| CommandError::Failed(e.to_string()))?;
-    Ok(json!({ "path": path, "width": p.width, "height": p.height, "camera": source, "warnings": warnings }))
+    match path {
+        Some(path) => {
+            image.write_png(&path).map_err(|e| CommandError::Failed(e.to_string()))?;
+            Ok(json!({ "path": path, "width": p.width, "height": p.height, "camera": source, "warnings": warnings }))
+        }
+        None => {
+            let png = image.png_bytes().map_err(|e| CommandError::Failed(e.to_string()))?;
+            Ok(json!({ "png": base64(&png), "width": p.width, "height": p.height, "camera": source, "warnings": warnings }))
+        }
+    }
+}
+
+/// Largest side of a render returned inline, without a file.
+const MAX_INLINE_RENDER_SIDE: u32 = 2048;
+
+/// Standard base64 with padding (RFC 4648), for images returned in JSON.
+pub fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], chunk.get(1).copied().unwrap_or(0), chunk.get(2).copied().unwrap_or(0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            out.push(if i <= chunk.len() { char::from(ALPHABET[((n >> shift) & 63) as usize]) } else { '=' });
+        }
+    }
+    out
+}
+
+fn scene_document(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let _: serde_json::Map<String, Value> = parse(params)?;
+    Ok(json!({ "path": session.scene_path, "dirty": session.dirty, "scene": session.scene.to_doc() }))
 }
 
 fn tree(scene: &Scene, parent: Option<StableId>) -> Vec<Value> {
@@ -612,6 +656,7 @@ fn script_add(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     scripts.0.push(ScriptRef { module, properties: Default::default() });
     let index = scripts.0.len() - 1;
     session.scene.set(p.id, scripts)?;
+    crate::prefab_cmds::note_override(&mut session.scene, p.id, "scripts");
     Ok(json!({ "index": index }))
 }
 
@@ -627,6 +672,7 @@ fn script_remove(session: &mut Session, params: &Value) -> Result<Value, Command
     } else {
         session.scene.set(p.id, scripts)?;
     }
+    crate::prefab_cmds::note_override(&mut session.scene, p.id, "scripts");
     Ok(json!({}))
 }
 
@@ -647,6 +693,7 @@ fn script_set_property(session: &mut Session, params: &Value) -> Result<Value, C
         }
     }
     session.scene.set(p.id, scripts)?;
+    crate::prefab_cmds::note_override(&mut session.scene, p.id, "scripts");
     Ok(json!({}))
 }
 
@@ -663,18 +710,21 @@ fn object_reparent(session: &mut Session, params: &Value) -> Result<Value, Comma
 fn component_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: SetParams = parse(params)?;
     session.scene.set_component(p.id, &p.component, p.value)?;
+    crate::prefab_cmds::note_override(&mut session.scene, p.id, &p.component);
     Ok(json!({}))
 }
 
 fn component_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: ComponentParams = parse(params)?;
     session.scene.add_component(p.id, &p.component)?;
+    crate::prefab_cmds::note_override(&mut session.scene, p.id, &p.component);
     Ok(json!({}))
 }
 
 fn component_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: ComponentParams = parse(params)?;
     session.scene.remove_component(p.id, &p.component)?;
+    crate::prefab_cmds::note_override(&mut session.scene, p.id, &p.component);
     Ok(json!({}))
 }
 

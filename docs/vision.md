@@ -68,8 +68,10 @@ No crate below L6 may use egui, eframe, winit or rfd.
    (`scene.object.duplicate/copy/paste`), selecting several objects, and a question before the window
    closes with unsaved work. Prefabs: an object and its children saved as a `.bprefab` file and placed
    as linked copies (`scene.prefab.create/place/apply/revert`); Apply updates every copy in the scene,
-   each keeping its own name and transform, and nothing updates on its own. Still open from M1:
-   prefab overrides kept per copy and nested prefabs, craft-ui theme tokens, the translation system.
+   each keeping its own name and transform. Then: each copy keeps the component changes made to it
+   (its overrides, listed on its Prefab card) when it is updated from the file; copies update when
+   the scene opens; prefabs may hold copies of other prefabs, which follow their own files (scene
+   format version 7). Still open from M1: craft-ui theme tokens, the translation system.
 3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
    a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with
@@ -77,16 +79,22 @@ No crate below L6 may use egui, eframe, winit or rfd.
    one undo step per drag), clickable camera and light icons, point and spot lights (up to 8 lights,
    windowed inverse-square falloff), shadows from the first directional light (one shadow map fitted to
    the scene, 3x3 filtering), a camera preview in the scene view, and a grid that never flickers with
-   surfaces on the ground. Scene format version 4. Still open: textures and sprite images (wait for the
-   asset pipeline), shadows from point and spot lights, cascaded shadows for
-   large worlds.
+   surfaces on the ground. Scene format version 4. Then: shadows from spot and point lights
+   (`spotLight.shadows`, `pointLight.shadows`; a point light renders six faces; one light casts
+   shadows at a time); in scenes wider than 40 units the sun's shadow map is three cascades by
+   distance from the camera, so shadows close by stay sharp. Still open: several shadow-casting
+   lights at once.
    Added later: PNG images on sprites and in materials (Image and Texture Coordinates nodes, up to 4
    images per material), glTF 2.0 models on meshes (`.glb`, or `.gltf` with its buffers beside it),
-   read by `bayleaf-assets` with size limits. Scene format version 5. Still open: JPEG and other image
-   formats, mipmaps, model materials and textures from the glTF file, skinned and animated models.
+   read by `bayleaf-assets` with size limits. Scene format version 5. Then: JPEG images, mipmaps
+   averaged as light (with anisotropic filtering), and a model's own base colour, image, metallic and
+   roughness from its glTF material (the first material it uses), with its metal/roughness image and
+   normal map (no stored tangents needed), and one part per material for models with several. Still
+   open: other image formats, skinned and animated models.
    Added later: an Environment component (sky colours above, at and below the horizon, and the light
-   they give to shapes from above and below; scene format version 6). Still open: image-based
-   lighting and reflections, fog.
+   they give to shapes from above and below; scene format version 6), and fog in the horizon colour
+   (`environment.fogDistance`), and reflections of the sky on surfaces (sharp on smooth ones,
+   blurred on rough ones). Still open: reflections of other shapes, light from image files.
 4. **M3 Scripts (done, 2026-11-21):** WASM host on wasmi (fuel and memory limits, faults isolated per
    script), ABI v1 (`docs/script-abi.md`), Rust SDK (`crates/script-sdk`), example scripts (`scripts/`,
    built by `cargo xtask scripts`), hot reload, play mode (`play.start/stop/pause/step/input/status`)
@@ -96,8 +104,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    overrides (scene format version 2; version 1 files are migrated on load).
    Added later: the mouse, other objects (find, read and set their transforms), and spawning prefabs
    and destroying objects, in the ABI, the Rust SDK and visual scripts; messages between scripts
-   (`send`, delivered after the step to one object or every object). Still open: gamepads, physics
-   queries.
+   (`send`, delivered after the step to one object or every object); gamepads (the first connected
+   one, read with gilrs in the editor and the player); raycasts against mesh shapes and sprites
+   (`raycast`, the Raycast node). Physics: see M7. Still open: raycasts against a model's exact shape.
    Scripts in Rust can be made from the Project panel (`script.new`: a crate from a template, its own
    workspace) and built to WebAssembly there or with `script.build` (the editor builds in the
    background; agents may not start builds, as build code could reach any file). New files are named
@@ -110,8 +119,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
 5. **M4 Automation (done, 2026-11-21):** confined file access for agents (`--automation-read-root`,
    `--automation-write-root`, AA 18), `bayleaf-cli mcp` (MCP over stdio, one tool per command), and an
    editor control channel (`bayleaf --control`, loopback with a token) that the MCP server can bridge to.
-   See `docs/automation.md`. Still open: MCP resources (scene tree, renders as images), notifications
-   when the scene changes, and restricting the token file's access rules on Windows.
+   See `docs/automation.md`. Added later: MCP resources (the scene, a picture of it, the open graph,
+   play mode) with subscriptions and change notifications; the token file limited to your account on
+   Windows too; an end-to-end test of the MCP bridge to a running session.
 6. **M5 Graphs (done, 2026-11-21):** a shared graph model and editor panel; material graphs that compile
    to WGSL (`.bmaterial`, picked per mesh, live preview while editing, animated with Time); visual
    scripts that compile to WebAssembly with the script ABI (`.bscript`, with properties, branching
@@ -121,14 +131,23 @@ No crate below L6 may use egui, eframe, winit or rfd.
    the links between them (`graph.node.copy/paste/duplicate`), and zoom keys (Ctrl + Plus, Minus, 0);
    images in materials; comment boxes on the canvas (`graph.comment.*`) that move the nodes inside;
    a material preview on a sphere; variables and On Message / Send Message in visual scripts.
-   Still open: other variable types than numbers, events beyond start, update and messages.
+   Then: vector and true/false variables, On Key Pressed, On Timer and gamepad nodes. Still open:
+   events from physics (collisions, triggers).
 7. **M6 Gameplay framework** as opt-in modules.
-8. **M7 Streaming** (optional crate), physics and audio integrations.
+8. **M7 Streaming** (optional crate), physics and audio integrations. Physics is started: the
+   `physics` feature of `bayleaf-engine` (`crates/physics`, on Rapier) gives Rigid Body and Collider
+   components (box, sphere, capsule; triggers), steps at 60 Hz in play mode, tells scripts about
+   collisions and triggers, and lets them push bodies and set or read their velocity (scene format
+   version 8). Project settings (`settings` in the `.bproject` file, project format version 2;
+   `project.settings`, `project.settings.set`, the Project Settings panel) turn physics off or change
+   gravity. Still open: joints, a character controller, collider outlines in the scene view,
+   raycasts against colliders, physics commands for agents.
 
 ## Open questions
 
 - Physics: integrate an allowlisted crate or write our own?
 - Scene file format: decided in M1 as pretty JSON (`.bscene`, `format: "bayleaf.scene"`, `version: 1`),
   with objects listed parents first in hierarchy order. Revisit if diffs get too noisy.
-- Undo stores whole-scene snapshots. That is fine for small scenes; large scenes will need per-command inverse operations.
+- Undo stores whole-scene snapshots, kept as compact JSON within a budget (500 steps, 256 MiB; the
+  oldest go first). Very large scenes will still want per-command inverse operations.
 - How the guest SDK for languages other than Rust is distributed.

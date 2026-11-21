@@ -22,6 +22,11 @@ pub(crate) struct Play {
     pub(crate) time: f64,
     pub(crate) paused: bool,
     since_reload_check: f32,
+    /// Bodies of the objects with a Rigid Body or a Collider; `None` when the project turns physics off.
+    #[cfg(feature = "physics")]
+    physics: Option<bayleaf_physics::Physics>,
+    /// Whether play mode already said physics is not there.
+    told_no_physics: bool,
 }
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
@@ -75,7 +80,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Set Held Keys",
             menu: "",
             shortcut: "",
-            params: "{keys: [names], pointer?: [x, y] (-1 to 1, +y up; null when outside the view), buttons?: n (bit 0 left, 1 right, 2 middle)}; what scripts see as held, until the next call or the next editor frame",
+            params: "{keys: [names], pointer?: [x, y] (-1 to 1, +y up; null when outside the view), buttons?: n (bit 0 left, 1 right, 2 middle), pad?: {axes: [left x, left y, right x, right y, left trigger, right trigger], buttons: [South, East, …]}}; what scripts see as held, until the next call or the next editor frame",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: playing,
@@ -155,7 +160,21 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let input = std::sync::Arc::clone(&session.input);
     host.load_scene(&mut session.scene, &dir, 0.0, &input);
     let (scripts, running) = (host.len(), host.running());
-    session.play = Some(Play { snapshot, host, time: 0.0, paused: false, since_reload_check: 0.0 });
+    #[cfg(feature = "physics")]
+    let physics = {
+        let settings = crate::project_cmds::settings_of(session).physics;
+        settings.enabled.then(|| bayleaf_physics::Physics::build(&session.scene, settings.gravity))
+    };
+    session.play = Some(Play {
+        #[cfg(feature = "physics")]
+        physics,
+        told_no_physics: false,
+        snapshot,
+        host,
+        time: 0.0,
+        paused: false,
+        since_reload_check: 0.0,
+    });
     session.log(Level::Info, format!("Play mode started: {running} of {scripts} scripts running."));
     drain(session);
     Ok(json!({ "scripts": scripts, "running": running }))
@@ -198,6 +217,18 @@ struct InputParams {
     pointer: Option<[f32; 2]>,
     #[serde(default)]
     buttons: u8,
+    /// `{axes: [6 numbers], buttons: [names]}`; leave out when no gamepad is connected.
+    #[serde(default)]
+    pad: Option<PadParams>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PadParams {
+    #[serde(default)]
+    axes: [f32; 6],
+    #[serde(default)]
+    buttons: Vec<String>,
 }
 
 fn input(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
@@ -208,6 +239,21 @@ fn input(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     if p.pointer.is_some_and(|[x, y]| !(x.is_finite() && y.is_finite())) {
         return Err(CommandError::BadParams("pointer must be two finite numbers".to_owned()));
     }
+    let pad = match p.pad {
+        Some(pad) => {
+            let mut bits = 0u32;
+            for name in &pad.buttons {
+                let index = bayleaf_script::PAD_BUTTONS
+                    .iter()
+                    .position(|b| b == name)
+                    .ok_or_else(|| CommandError::BadParams(format!("unknown gamepad button {name:?}; use {}", bayleaf_script::PAD_BUTTONS.join(", "))))?;
+                bits |= 1 << index;
+            }
+            Some(bayleaf_script::Pad { axes: pad.axes, buttons: bits })
+        }
+        None => None,
+    };
+    session.set_pad(pad);
     session.set_keys(p.keys.into_iter().collect());
     session.set_pointer(p.pointer.map(|p| p.map(|c| c.clamp(-1.0, 1.0))), p.buttons & 0b111);
     Ok(json!({}))
@@ -236,8 +282,22 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
         let input = std::sync::Arc::clone(&session.input);
         let Some(play) = session.play.as_mut() else { return };
         play.time += f64::from(dt);
+        #[cfg(feature = "physics")]
+        if let Some(physics) = &play.physics {
+            play.host.set_velocities(physics.velocities());
+        }
         play.host.update(&mut session.scene, dt, play.time, &input);
         apply_requests(session);
+        #[cfg(feature = "physics")]
+        if let Some(play) = session.play.as_mut()
+            && let Some(physics) = play.physics.as_mut()
+        {
+            let contacts = physics.step(&mut session.scene, dt);
+            let named: Vec<(bayleaf_core::StableId, &str, bayleaf_core::StableId)> =
+                contacts.iter().map(|c| (c.object, contact_name(c.kind), c.other)).collect();
+            play.host.notify(&mut session.scene, &named, play.time, &input);
+            apply_requests(session);
+        }
         let Some(play) = session.play.as_mut() else { return };
         play.since_reload_check += dt;
         if play.since_reload_check >= RELOAD_CHECK_INTERVAL {
@@ -280,6 +340,24 @@ fn apply_requests(session: &mut Session) {
                     let _ = session.scene.delete_object(object);
                 }
             }
+            Request::Push { by, object, impulse } => physics_request(session, by, object, |_p| {
+                #[cfg(feature = "physics")]
+                return _p.physics.as_mut().map(|p| p.apply_impulse(object, impulse));
+                #[cfg(not(feature = "physics"))]
+                return {
+                    let _ = impulse;
+                    None
+                };
+            }),
+            Request::SetVelocity { by, object, velocity } => physics_request(session, by, object, |_p| {
+                #[cfg(feature = "physics")]
+                return _p.physics.as_mut().map(|p| p.set_velocity(object, velocity));
+                #[cfg(not(feature = "physics"))]
+                return {
+                    let _ = velocity;
+                    None
+                };
+            }),
             Request::Spawn { by, prefab, position } => {
                 if let Err(error) = spawn(session, &prefab, position) {
                     let who = session.scene.name(by).unwrap_or("Object").to_owned();
@@ -287,6 +365,38 @@ fn apply_requests(session: &mut Session) {
                 }
             }
         }
+    }
+}
+
+/// Applies a script's push or velocity change: `apply` gives `None` without physics (a build
+/// without it, or a project that turns it off; said once per play session) and `Some(false)` when
+/// the object has no dynamic body.
+fn physics_request(session: &mut Session, by: bayleaf_core::StableId, object: bayleaf_core::StableId, apply: impl FnOnce(&mut Play) -> Option<bool>) {
+    let Some(play) = session.play.as_mut() else { return };
+    let who = session.scene.name(by).unwrap_or("Object").to_owned();
+    match apply(play) {
+        Some(true) => {}
+        Some(false) => {
+            let target = session.scene.name(object).unwrap_or("Object").to_owned();
+            session.log(Level::Error, format!("[{who}] {target} has no dynamic Rigid Body to push"));
+        }
+        None => {
+            if std::mem::replace(&mut play.told_no_physics, true) {
+                return;
+            }
+            let why = if cfg!(feature = "physics") { "physics is off in the project settings" } else { "this build has no physics" };
+            session.log(Level::Error, format!("[{who}] {why}; impulses and velocities do nothing"));
+        }
+    }
+}
+/// The message name scripts get for a physics contact.
+#[cfg(feature = "physics")]
+fn contact_name(kind: bayleaf_physics::ContactKind) -> &'static str {
+    match kind {
+        bayleaf_physics::ContactKind::CollisionStart => "collision",
+        bayleaf_physics::ContactKind::CollisionEnd => "collisionEnd",
+        bayleaf_physics::ContactKind::TriggerEnter => "triggerEnter",
+        bayleaf_physics::ContactKind::TriggerExit => "triggerExit",
     }
 }
 
@@ -300,7 +410,7 @@ fn spawn(session: &mut Session, prefab: &str, position: [f32; 3]) -> Result<(), 
     let mut transform = session.scene.get::<bayleaf_scene::components::Transform>(id).cloned().unwrap_or_default();
     transform.position = position;
     session.scene.set(id, transform).map_err(|e| e.to_string())?;
-    session.scene.set(id, bayleaf_scene::components::Prefab { source: prefab.to_owned() }).map_err(|e| e.to_string())?;
+    session.scene.set(id, bayleaf_scene::components::Prefab::new(prefab)).map_err(|e| e.to_string())?;
     // Start the scripts of every object in the new copy.
     let base = session.script_dir();
     let input = std::sync::Arc::clone(&session.input);

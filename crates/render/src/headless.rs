@@ -21,7 +21,18 @@ impl Image {
 
     pub fn write_png(&self, path: &Path) -> Result<(), RenderError> {
         let file = std::fs::File::create(path).map_err(|e| RenderError::Io(format!("cannot create {}: {e}", path.display())))?;
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), self.width, self.height);
+        self.encode_png(std::io::BufWriter::new(file))
+    }
+
+    /// The image as PNG file bytes.
+    pub fn png_bytes(&self) -> Result<Vec<u8>, RenderError> {
+        let mut bytes = Vec::new();
+        self.encode_png(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    fn encode_png(&self, out: impl std::io::Write) -> Result<(), RenderError> {
+        let mut encoder = png::Encoder::new(out, self.width, self.height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);

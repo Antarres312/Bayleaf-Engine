@@ -28,6 +28,8 @@ const THEN: PinDef = pin("then", "Then", Flow);
 const MATH_OUT: &[PinDef] = &[pin("result", "Result", Any)];
 const MESSAGE: SettingDef = SettingDef { name: "message", label: "Message", kind: SettingKind::Name("hit") };
 const VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("count") };
+const VECTOR_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("target") };
+const FLAG: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("done") };
 
 const fn node(
     kind: &'static str,
@@ -71,6 +73,66 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[RUN, number("value", "Value", Float, 0.0)],
             outputs: &[THEN],
             settings: &[MESSAGE, SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "keyPressed",
+            label: "On Key Pressed",
+            category: "Events",
+            description: "Runs once in the step when the key goes down (names like W, Space, ArrowUp).",
+            inputs: &[],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "key", label: "Key", kind: SettingKind::Name("Space") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "timer",
+            label: "On Timer",
+            category: "Events",
+            description: "Runs every given number of seconds of play.",
+            inputs: &[],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "seconds", label: "Seconds", kind: SettingKind::Float(1.0) }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setVectorVariable",
+            label: "Set Vector Variable",
+            category: "Variables",
+            description: "Keeps a vector under a name, for this script on this object. Every vector variable starts at 0, 0, 0.",
+            inputs: &[RUN, vector("value", "Value", [0.0; 3])],
+            outputs: &[THEN],
+            settings: &[VECTOR_VARIABLE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "vectorVariable",
+            label: "Vector Variable",
+            category: "Variables",
+            description: "The vector Set Vector Variable last kept under this name, or 0, 0, 0.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", Vec3)],
+            settings: &[VECTOR_VARIABLE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setFlag",
+            label: "Set True/False Variable",
+            category: "Variables",
+            description: "Keeps true or false under a name, for this script on this object. Every one starts false.",
+            inputs: &[RUN, PinDef::with("value", "Value", Bool, PinDefault::Bool(false))],
+            outputs: &[THEN],
+            settings: &[FLAG],
+            unique: false,
+        },
+        NodeDef {
+            kind: "flag",
+            label: "True/False Variable",
+            category: "Variables",
+            description: "What Set True/False Variable last kept under this name, or false.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", Bool)],
+            settings: &[FLAG],
             unique: false,
         },
         NodeDef {
@@ -211,6 +273,74 @@ pub const CATALOG: Catalog = Catalog {
         },
         action("destroySelf", "Destroy This Object", "Deletes this object and its children after this step.", &[RUN]),
         NodeDef {
+            kind: "addImpulse",
+            label: "Add Impulse",
+            category: "Physics",
+            description: "Pushes a physics body (this object, or the first object with this name) by an impulse in world space, after this step.",
+            inputs: &[RUN, vector("impulse", "Impulse", [0.0, 5.0, 0.0])],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setVelocity",
+            label: "Set Velocity",
+            category: "Physics",
+            description: "Sets a physics body's velocity (this object, or the first object with this name), in world units per second, after this step.",
+            inputs: &[RUN, vector("velocity", "Velocity", [0.0; 3])],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "object", label: "Object", kind: SettingKind::Text("") }],
+            unique: false,
+        },
+        node(
+            "velocity",
+            "Velocity",
+            "Physics",
+            "This object's physics velocity as the step began (0 without a body).",
+            &[],
+            &[pin("velocity", "Velocity", Vec3)],
+        ),
+        NodeDef {
+            kind: "raycast",
+            label: "Raycast",
+            category: "Object",
+            description: "Sends a ray from Origin along Direction, up to Distance, and says whether it hits another object's shape or sprite, how far, and where.",
+            inputs: &[vector("origin", "Origin", [0.0; 3]), vector("direction", "Direction", [0.0, -1.0, 0.0]), number("distance", "Distance", Float, 100.0)],
+            outputs: &[pin("hit", "Hit", Bool), pin("distance", "Hit Distance", Float), pin("point", "Hit Point", Vec3)],
+            settings: &[],
+            unique: false,
+        },
+        NodeDef {
+            kind: "padStick",
+            label: "Gamepad Stick",
+            category: "Inputs",
+            description: "Where a gamepad stick (Left or Right) points, from -1 to 1 (x right, y up); 0 without a gamepad.",
+            inputs: &[],
+            outputs: &[pin("direction", "Direction", Vec3), pin("connected", "Gamepad Connected", Bool)],
+            settings: &[SettingDef { name: "stick", label: "Stick", kind: SettingKind::Name("Left") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "padTrigger",
+            label: "Gamepad Trigger",
+            category: "Inputs",
+            description: "How far a gamepad trigger (Left or Right) is pressed, from 0 to 1.",
+            inputs: &[],
+            outputs: &[pin("amount", "Amount", Float)],
+            settings: &[SettingDef { name: "trigger", label: "Trigger", kind: SettingKind::Name("Right") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "padButton",
+            label: "Gamepad Button Held",
+            category: "Inputs",
+            description: "True while the gamepad button is held: South, East, West, North, LeftBumper, RightBumper, Select, Start, Up, Down, Left, Right and others.",
+            inputs: &[],
+            outputs: &[pin("down", "Held", Bool)],
+            settings: &[SettingDef { name: "button", label: "Button", kind: SettingKind::Name("South") }],
+            unique: false,
+        },
+        NodeDef {
             kind: "keyDown",
             label: "Key Held",
             category: "Inputs",
@@ -283,12 +413,38 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     let mut start = String::new();
     let mut update = String::new();
     let mut message = String::new();
-    let mut events: Vec<&bayleaf_graph::Node> = graph.nodes.iter().filter(|n| matches!(n.kind.as_str(), "start" | "update" | "message")).collect();
+    // Globals the events keep between steps.
+    let mut state: Vec<String> = Vec::new();
+    let mut events: Vec<&bayleaf_graph::Node> =
+        graph.nodes.iter().filter(|n| matches!(n.kind.as_str(), "start" | "update" | "message" | "keyPressed" | "timer")).collect();
     events.sort_by_key(|n| n.id);
     for event in events {
         match c.chain(event.id, "then", 1) {
             Ok(code) if event.kind == "start" => start.push_str(&code),
             Ok(code) if event.kind == "update" => update.push_str(&code),
+            Ok(code) if event.kind == "keyPressed" => {
+                // Runs when the key is down now and was not in the last step.
+                let key = c.setting_text(event.id, "key", "Space");
+                let (at, len) = c.text(key.as_bytes());
+                let held = format!("(call $key_down (i32.const {at}) (i32.const {len}))");
+                let was = format!("$was_{}", event.id);
+                state.push(format!("(global {was} (mut i32) (i32.const 0))"));
+                let _ = writeln!(update, "    (if (i32.and {held} (i32.eqz (global.get {was})))\n      (then\n{code}      ))\n    (global.set {was} {held})");
+            }
+            Ok(code) if event.kind == "timer" => {
+                let seconds = c.setting_number(event.id, "seconds", 1.0);
+                if !(seconds.is_finite() && seconds >= 0.01) {
+                    problems.push(Problem::on(event.id, "the timer needs at least 0.01 seconds"));
+                    continue;
+                }
+                let clock = format!("$clock_{}", event.id);
+                state.push(format!("(global {clock} (mut f32) (f32.const 0))"));
+                let s = lit(seconds);
+                let _ = writeln!(
+                    update,
+                    "    (global.set {clock} (f32.add (global.get {clock}) (global.get $dt)))\n    (if (f32.ge (global.get {clock}) {s})\n      (then\n        (global.set {clock} (f32.sub (global.get {clock}) {s}))\n{code}      ))"
+                );
+            }
             Ok(code) => {
                 // Each On Message runs only for its own message name.
                 let name = c.setting_text(event.id, "message", "hit");
@@ -319,6 +475,20 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         graph.nodes.iter().filter(|n| n.kind == "variable" || n.kind == "setVariable").map(|n| c.setting_text(n.id, "name", "count")).collect();
     for name in &variables {
         let _ = writeln!(out, "  (global $var_{name} (mut f32) (f32.const 0))");
+    }
+    let named = |kinds: [&str; 2], default: &str| -> std::collections::BTreeSet<String> {
+        graph.nodes.iter().filter(|n| kinds.contains(&n.kind.as_str())).map(|n| c.setting_text(n.id, "name", default)).collect()
+    };
+    for name in named(["vectorVariable", "setVectorVariable"], "target") {
+        for axis in ["x", "y", "z"] {
+            let _ = writeln!(out, "  (global $vec_{name}_{axis} (mut f32) (f32.const 0))");
+        }
+    }
+    for name in named(["flag", "setFlag"], "done") {
+        let _ = writeln!(out, "  (global $flag_{name} (mut i32) (i32.const 0))");
+    }
+    for global in &state {
+        let _ = writeln!(out, "  {global}");
     }
     let _ = writeln!(out, "  (memory (export \"memory\") {pages})");
     for (at, bytes) in &c.data {
@@ -438,6 +608,18 @@ impl Compiler<'_> {
             "destroySelf" => {
                 let _ = writeln!(code, "{indent}(drop (call $destroy (call $self_handle)))");
             }
+            "addImpulse" | "setVelocity" => {
+                let (input, call) = if n.kind == "addImpulse" { ("impulse", "$apply_impulse") } else { ("velocity", "$set_velocity") };
+                let object = self.setting_text(next, "object", "");
+                let handle = if object.trim().is_empty() {
+                    "(call $self_handle)".to_owned()
+                } else {
+                    let (o_at, o_len) = self.text(object.as_bytes());
+                    format!("(call $find (i32.const {o_at}) (i32.const {o_len}))")
+                };
+                let [x, y, z] = vec3(self, input)?;
+                let _ = writeln!(code, "{indent}(drop (call {call} {handle} {x} {y} {z}))");
+            }
             "sendMessage" => {
                 let name = self.setting_text(next, "message", "hit");
                 let (at, len) = self.text(name.as_bytes());
@@ -450,6 +632,17 @@ impl Compiler<'_> {
                 };
                 let value = self.input(next, "value").and_then(|v| as_float(next, v))?;
                 let _ = writeln!(code, "{indent}(drop (call $send {handle} (i32.const {at}) (i32.const {len}) {value}))");
+            }
+            "setVectorVariable" => {
+                let name = self.setting_text(next, "name", "target");
+                let [x, y, z] = vec3(self, "value")?;
+                let _ =
+                    writeln!(code, "{indent}(global.set $vec_{name}_x {x})\n{indent}(global.set $vec_{name}_y {y})\n{indent}(global.set $vec_{name}_z {z})");
+            }
+            "setFlag" => {
+                let name = self.setting_text(next, "name", "done");
+                let value = self.input(next, "value").and_then(|v| as_bool(next, v))?;
+                let _ = writeln!(code, "{indent}(global.set $flag_{name} {value})");
             }
             "setVariable" => {
                 let name = self.setting_text(next, "name", "count");
@@ -507,6 +700,11 @@ impl Compiler<'_> {
         Ok(match n.kind.as_str() {
             "update" if pin == "dt" => Val::F("(global.get $dt)".to_owned()),
             "message" if pin == "value" => Val::F("(global.get $message)".to_owned()),
+            "vectorVariable" => {
+                let name = self.setting_text(node, "name", "target");
+                Val::V(["x", "y", "z"].map(|axis| format!("(global.get $vec_{name}_{axis})")))
+            }
+            "flag" => Val::B(format!("(global.get $flag_{})", self.setting_text(node, "name", "done"))),
             "variable" => Val::F(format!("(global.get $var_{})", self.setting_text(node, "name", "count"))),
             "number" => Val::F(lit(self.setting_number(node, "value", 1.0))),
             "vector" => {
@@ -546,6 +744,44 @@ impl Compiler<'_> {
             "positionOf" => {
                 let (at, len) = self.named(node, "object", "name the object to read")?;
                 Val::V([0, 1, 2].map(|i| format!("(call $t_of (call $find (i32.const {at}) (i32.const {len})) (i32.const {i}))")))
+            }
+            "velocity" => Val::V([0, 4, 8].map(|offset| format!("(call $velocity_value (i32.const {offset}))"))),
+            "raycast" => {
+                let [ox, oy, oz] = self.input(node, "origin").and_then(|v| as_vec(node, v))?;
+                let [dx, dy, dz] = self.input(node, "direction").and_then(|v| as_vec(node, v))?;
+                let max = self.input(node, "distance").and_then(|v| as_float(node, v))?;
+                let args = format!("{ox} {oy} {oz} {dx} {dy} {dz} {max}");
+                let at = |offset: u32| format!("(call $ray_value {args} (i32.const {offset}))");
+                match pin {
+                    "hit" => Val::B(format!("(i32.ne (call $raycast {args} (i32.const 48)) (i32.const 0))")),
+                    "distance" => Val::F(at(0)),
+                    _ => Val::V([at(4), at(8), at(12)]),
+                }
+            }
+            "padStick" => {
+                let base = match self.setting_text(node, "stick", "Left").as_str() {
+                    "Left" => 0,
+                    "Right" => 2,
+                    _ => return Err(Problem::on(node, "the stick is Left or Right")),
+                };
+                if pin == "connected" {
+                    Val::B("(call $pad_connected)".to_owned())
+                } else {
+                    Val::V([format!("(call $pad_axis (i32.const {base}))"), format!("(call $pad_axis (i32.const {}))", base + 1), lit(0.0)])
+                }
+            }
+            "padTrigger" => match self.setting_text(node, "trigger", "Right").as_str() {
+                "Left" => Val::F("(call $pad_axis (i32.const 4))".to_owned()),
+                "Right" => Val::F("(call $pad_axis (i32.const 5))".to_owned()),
+                _ => return Err(Problem::on(node, "the trigger is Left or Right")),
+            },
+            "padButton" => {
+                let name = self.setting_text(node, "button", "South");
+                let index = crate::PAD_BUTTONS
+                    .iter()
+                    .position(|b| *b == name)
+                    .ok_or_else(|| Problem::on(node, format!("there is no gamepad button {name}; use {}", crate::PAD_BUTTONS.join(", "))))?;
+                Val::B(format!("(call $pad_button (i32.const {index}))"))
             }
             "keyDown" => {
                 let key = self.setting_text(node, "key", "Space");
@@ -642,6 +878,13 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "destroy" (func $destroy (param i32) (result i32)))
   (import "bayleaf" "send" (func $send (param i32 i32 i32 f32) (result i32)))
   (import "bayleaf" "message_is" (func $message_is (param i32 i32) (result i32)))
+  (import "bayleaf" "apply_impulse" (func $apply_impulse (param i32 f32 f32 f32) (result i32)))
+  (import "bayleaf" "set_velocity" (func $set_velocity (param i32 f32 f32 f32) (result i32)))
+  (import "bayleaf" "velocity_of" (func $velocity_of (param i32 i32) (result i32)))
+  (import "bayleaf" "raycast" (func $raycast (param f32 f32 f32 f32 f32 f32 f32 i32) (result i32)))
+  (import "bayleaf" "pad_connected" (func $pad_connected (result i32)))
+  (import "bayleaf" "pad_axis" (func $pad_axis (param i32) (result f32)))
+  (import "bayleaf" "pad_button" (func $pad_button (param i32) (result i32)))
   (global $dt (mut f32) (f32.const 0))
   (global $message (mut f32) (f32.const 0))
   (func (export "bayleaf_abi") (result i32) (i32.const 1))
@@ -657,6 +900,14 @@ const PRELUDE: &str = r#"(module
   (func $t_of (param $h i32) (param $i i32) (result f32)
     (call $transform_get_of (local.get $h) (i32.const 0))
     (f32.load (i32.shl (local.get $i) (i32.const 2))))
+  ;; This object's velocity part at $offset (0, 4 or 8; bytes 64..76).
+  (func $velocity_value (param $offset i32) (result f32)
+    (drop (call $velocity_of (call $self_handle) (i32.const 64)))
+    (f32.load (i32.add (i32.const 64) (local.get $offset))))
+  ;; Casts a ray and returns the result value at $offset (0 distance, 4/8/12 hit point x/y/z; bytes 48..64).
+  (func $ray_value (param $ox f32) (param $oy f32) (param $oz f32) (param $dx f32) (param $dy f32) (param $dz f32) (param $max f32) (param $offset i32) (result f32)
+    (drop (call $raycast (local.get $ox) (local.get $oy) (local.get $oz) (local.get $dx) (local.get $dy) (local.get $dz) (local.get $max) (i32.const 48)))
+    (f32.load (i32.add (i32.const 48) (local.get $offset))))
   ;; Sets the position of the object with handle h.
   (func $set_position_of (param $h i32) (param $x f32) (param $y f32) (param $z f32)
     (call $transform_get_of (local.get $h) (i32.const 0))

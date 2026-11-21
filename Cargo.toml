@@ -15,6 +15,7 @@ rust-version = "1.95"
 bayleaf-core = { path = "crates/core" }
 bayleaf-ecs = { path = "crates/ecs" }
 bayleaf-scene = { path = "crates/scene" }
+bayleaf-physics = { path = "crates/physics" }
 bayleaf-graph = { path = "crates/graph" }
 bayleaf-assets = { path = "crates/assets" }
 bayleaf-render = { path = "crates/render" }
@@ -47,6 +48,13 @@ egui-wgpu = { version = "0.37", default-features = false }
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "1"
 png = "0.18"
+# Rigid-body physics (Apache-2.0).
+rapier3d = "0.36"
+# Gamepads (MIT OR Apache-2.0).
+gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
+# JPEG images (MIT OR Apache-2.0 OR Zlib).
+zune-jpeg = "0.5"
+zune-core = "0.5"
 # glTF 2.0 models (MIT OR Apache-2.0). Only the reader: images and text-embedded buffers are not used.
 gltf = { version = "1.4", default-features = false, features = ["utils"] }
 rfd = "0.17"

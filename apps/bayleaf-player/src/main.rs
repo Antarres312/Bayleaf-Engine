@@ -40,6 +40,7 @@ struct Player {
     /// Why the game cannot run, shown instead of it.
     failure: Option<String>,
     fullscreen: bool,
+    gamepads: bayleaf_ui_egui::gamepad::Gamepads,
 }
 
 /// Opens `game` and starts play mode. Returns the window title.
@@ -78,6 +79,8 @@ impl Player {
         // Input, then one step of the game.
         let keys = ctx.input(|i| i.keys_down.iter().filter(|k| **k != egui::Key::F11).map(|k| k.name().to_owned()).collect());
         self.session.set_keys(keys);
+        let pad = self.gamepads.read();
+        self.session.set_pad(pad);
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         self.session.tick(dt);
         if !self.session.is_playing() {
@@ -173,6 +176,7 @@ fn main() -> anyhow::Result<()> {
         materials: render::MaterialLibrary::default(),
         assets: render::assets::AssetCache::default(),
         gpu: None,
+        gamepads: bayleaf_ui_egui::gamepad::Gamepads::default(),
         failure,
         fullscreen: args.fullscreen,
     };

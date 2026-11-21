@@ -122,6 +122,22 @@ impl Object {
         abi::destroy(self.0)
     }
 
+    /// Pushes its physics body by an impulse (world space, mass times change of velocity) after
+    /// this step. False when this call already asked too much.
+    pub fn push(self, impulse: [f32; 3]) -> bool {
+        abi::apply_impulse(self.0, impulse)
+    }
+
+    /// Sets its physics body's velocity (world units per second) after this step.
+    pub fn set_velocity(self, velocity: [f32; 3]) -> bool {
+        abi::set_velocity(self.0, velocity)
+    }
+
+    /// Its physics body's velocity as the step began, if it has a body.
+    pub fn velocity(self) -> Option<[f32; 3]> {
+        abi::velocity_of(self.0)
+    }
+
     /// Sends a message and a number to its scripts ([`Script::message`]), after this step.
     /// False when this call already sent too many.
     pub fn send(self, message: &str, value: f32) -> bool {
@@ -145,6 +161,70 @@ pub fn message_name() -> String {
 /// after this step. False when this call already asked too much.
 pub fn spawn(prefab: &str, position: [f32; 3]) -> bool {
     abi::spawn(prefab, position)
+}
+
+/// What a ray hit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hit {
+    pub object: Object,
+    /// Distance from the ray's origin, in world units.
+    pub distance: f32,
+    /// Where the ray hit, in world space.
+    pub point: [f32; 3],
+}
+
+/// The first object's shape or sprite a ray from `origin` along `direction` hits within `max`
+/// (this script's own object is left out), as the objects were when the step began.
+pub fn raycast(origin: [f32; 3], direction: [f32; 3], max: f32) -> Option<Hit> {
+    let (handle, v) = abi::raycast(origin, direction, max);
+    (handle != 0).then_some(Hit { object: Object(handle), distance: v[0], point: [v[1], v[2], v[3]] })
+}
+
+/// A gamepad's sticks and triggers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PadAxis {
+    LeftX,
+    LeftY,
+    RightX,
+    RightY,
+    LeftTrigger,
+    RightTrigger,
+}
+
+/// A gamepad's buttons. South is the bottom face button, North the top one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PadButton {
+    South,
+    East,
+    West,
+    North,
+    LeftBumper,
+    RightBumper,
+    LeftTrigger,
+    RightTrigger,
+    Select,
+    Start,
+    LeftStick,
+    RightStick,
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// True while a gamepad is connected.
+pub fn pad_connected() -> bool {
+    abi::pad_connected()
+}
+
+/// A stick from -1 to 1 (x right, y up) or a trigger from 0 to 1; 0 without a gamepad.
+pub fn pad_axis(axis: PadAxis) -> f32 {
+    abi::pad_axis(axis as i32)
+}
+
+/// True while the button is held on the gamepad.
+pub fn pad_button(button: PadButton) -> bool {
+    abi::pad_button(button as i32)
 }
 
 /// Behaviour of one scripted object. One value lives per object for the whole play session.

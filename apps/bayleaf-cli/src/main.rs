@@ -109,7 +109,6 @@ fn main() -> anyhow::Result<()> {
         Cmd::Mcp { read_roots, write_roots, bridge, token_file, scene } => {
             // Checked in both modes, so the roots are always real folders (AA 18).
             let confinement = Confinement::new(&read_roots, &write_roots).map_err(anyhow::Error::msg)?;
-            let stdin = std::io::stdin();
             let stdout = std::io::stdout();
             match bridge {
                 Some(addr) => {
@@ -117,7 +116,7 @@ fn main() -> anyhow::Result<()> {
                     let token = std::fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
                     let client = ControlClient::connect(addr, token.trim()).map_err(anyhow::Error::msg)?;
                     eprintln!("bayleaf mcp: bridged to the editor at {addr}");
-                    mcp::serve(&mut BridgeBackend::new(client), stdin.lock(), stdout.lock())?;
+                    mcp::serve(&mut BridgeBackend::new(client), std::io::BufReader::new(std::io::stdin()), stdout.lock())?;
                 }
                 None => {
                     let mut backend = LocalBackend::new(confinement);
@@ -125,7 +124,7 @@ fn main() -> anyhow::Result<()> {
                         backend.execute("scene.open", &json!({ "path": scene })).map_err(anyhow::Error::msg)?;
                     }
                     eprintln!("bayleaf mcp: ready on stdio");
-                    mcp::serve(&mut backend, stdin.lock(), stdout.lock())?;
+                    mcp::serve(&mut backend, std::io::BufReader::new(std::io::stdin()), stdout.lock())?;
                 }
             }
         }
