@@ -1,0 +1,18 @@
+[package]
+name = "bayleaf-scene"
+description = "L2: object hierarchy with attached components and prefabs, stored on top of the ECS."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bayleaf-core = { workspace = true }
+bayleaf-ecs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "bayleaf-script"
+description = "L4: WebAssembly script host and the guest ABI. Visual scripts compile to the same ABI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

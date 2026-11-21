@@ -1,0 +1,13 @@
+[package]
+name = "bayleaf-graph"
+description = "L2: node-graph data model shared by the material editor and visual scripting."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "bayleaf-render"
+description = "L3: wgpu renderer and the material graph to WGSL compiler."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true

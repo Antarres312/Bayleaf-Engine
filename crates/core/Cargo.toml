@@ -1,0 +1,17 @@
+[package]
+name = "bayleaf-core"
+description = "L0: ids, handles, errors and math re-exports shared by every Bayleaf crate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+glam = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+getrandom = { workspace = true }
+
+[lints]
+workspace = true

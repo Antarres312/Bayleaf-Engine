@@ -1,0 +1,21 @@
+[package]
+name = "bayleaf-gameplay"
+description = "L4: opt-in gameplay roles. Each role is a cargo feature; projects can drop or replace any of them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+
+[features]
+default = []
+rules = []
+controller = []
+pawn = []
+game-state = []
+player-state = []
+
+[lints]
+workspace = true
