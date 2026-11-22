@@ -83,7 +83,13 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             Mutates::No,
             graph_close,
         ),
-        spec("graph.get", "Show Graph", "none; returns the graph in use: {id, domain, path, dirty, graph, problems}", Mutates::No, graph_get),
+        spec(
+            "graph.get",
+            "Show Graph",
+            "none; returns the graph in use: {id, domain, path, dirty, graph, problems, outputTypes}; outputTypes says what each number-or-vector output gives now, by its inputs: [{node, pin, type}]",
+            Mutates::No,
+            graph_get,
+        ),
         spec(
             "graph.list",
             "Open Graphs",
@@ -526,7 +532,23 @@ fn graph_get(session: &mut Session, params: &Value) -> Result<Value, CommandErro
         "dirty": doc.dirty,
         "graph": doc.graph,
         "problems": problems(&doc.graph),
+        "outputTypes": output_types(&doc.graph),
     }))
+}
+
+/// What each number-or-vector output gives now (a vector, a number or a whole number), as the
+/// graph editor shows it.
+fn output_types(graph: &Graph) -> Vec<Value> {
+    let Some(catalog) = catalog_for_domain(&graph.domain) else { return Vec::new() };
+    let mut out = Vec::new();
+    for node in &graph.nodes {
+        let Some(def) = catalog.def_of(node) else { continue };
+        for pin in def.outputs.iter().filter(|p| p.ty == bayleaf_graph::PinType::Any) {
+            let ty = graph.output_type(catalog, &bayleaf_graph::PinRef::new(node.id, pin.name));
+            out.push(json!({ "node": node.id, "pin": pin.name, "type": ty }));
+        }
+    }
+    out
 }
 
 /// The open graph and its catalog, for an edit.

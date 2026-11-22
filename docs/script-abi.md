@@ -91,6 +91,7 @@ this: there is no list property type yet.
 | `send` | `(handle: i32, name_ptr: i32, name_len: i32, value: f32) -> i32` | sends a message (a name of 1 to 64 bytes and a finite number) to the scripts of the object, or of every object when `handle` is `-1`; `1` when sent, `0` when this call already sent 64 |
 | `message_is` | `(name_ptr: i32, name_len: i32) -> i32` | during `bayleaf_message`, `1` when the message has this name, else `0` |
 | `message_name` | `(out: i32, cap: i32) -> i32` | during `bayleaf_message`, writes up to `cap` bytes of the message's name and returns its full length; `0` outside it |
+| `math_pow` | `(base: f32, exponent: f32) -> f32` | `base` to the power of `exponent`, for visual scripts' Power (WebAssembly has no instruction for it); Rust scripts use `f32::powf` |
 | `pointer_over_interface` | `() -> i32` | `1` while the pointer is over an interface element that takes it (its mouse buttons then read `0` here); Rust: `pointer_over_interface()` |
 | `apply_impulse` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | pushes the object's dynamic physics body by an impulse in world space, after the step; `1` when asked, `0` when this call already asked 64 times |
 | `set_velocity` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | sets the body's velocity (world units per second) after the step; `1` or `0` as above |

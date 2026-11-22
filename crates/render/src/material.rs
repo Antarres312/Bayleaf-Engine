@@ -50,6 +50,8 @@ pub const CATALOG: Catalog = Catalog {
     starter: &[("output", [360.0, 40.0])],
     variant: bayleaf_graph::no_variant,
     upgrade: bayleaf_graph::no_upgrade,
+    // Materials have no whole numbers; the list stays for the rule's sake.
+    fractional: &[],
     nodes: &[
         NodeDef {
             kind: "output",
@@ -241,6 +243,22 @@ pub const CATALOG: Catalog = Catalog {
             "Base to the power of the exponent.",
             &[number("base", "Base", Any, 1.0), number("exponent", "Exponent", Float, 2.0)],
             MATH_OUT,
+        ),
+        node(
+            "squareRoot",
+            "Square Root",
+            "Math",
+            "The number that times itself gives the input (0 below 0); for a vector, of each part.",
+            &[number("value", "Value", Any, 1.0)],
+            MATH_OUT,
+        ),
+        node(
+            "vectorLength",
+            "Vector Length",
+            "Math",
+            "How long a vector is: the distance from 0 to the point it names.",
+            &[pin("vector", "Vector", Vec3)],
+            &[pin("length", "Length", Float)],
         ),
         node("oneMinus", "One Minus", "Math", "1 − the input.", &[number("value", "Value", Any, 0.0)], MATH_OUT),
         node("clamp", "Clamp 0 to 1", "Math", "Keeps the input between 0 and 1.", &[number("value", "Value", Any, 0.0)], MATH_OUT),
@@ -504,6 +522,14 @@ impl Compiler<'_> {
                 let exponent = self.input_as(node, "exponent", Ty::F)?;
                 let exponent = if ty == Ty::V { format!("vec3<f32>({exponent})") } else { exponent };
                 (format!("pow(max({base}, {}), {exponent})", if ty == Ty::V { "vec3<f32>(0.0)" } else { "0.0" }), ty)
+            }
+            "squareRoot" => {
+                let (v, ty) = self.input(node, "value")?;
+                (format!("sqrt(max({v}, {}))", if ty == Ty::V { "vec3<f32>(0.0)" } else { "0.0" }), ty)
+            }
+            "vectorLength" => {
+                let v = self.input_as(node, "vector", Ty::V)?;
+                (format!("length({v})"), Ty::F)
             }
             "oneMinus" => {
                 let (v, ty) = self.input(node, "value")?;

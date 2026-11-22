@@ -18,7 +18,15 @@ stored on the node, or its default.
 Pin types: **Flow** (the order of actions in visual scripts), **Number**, **Vector**, **Color**,
 **True/False**, and **Number or Vector** for math nodes, which take their type from what is
 linked. A number can feed a vector or colour input (all three parts get it). Vectors and colours
-convert into each other. A vector cannot feed a number input: use Split Vector.
+convert into each other. A vector cannot feed a number input: use Split Vector or Vector Length.
+
+A math node's Number or Vector output gives what its inputs make it, and the editor shows it so (its
+colour and name): a vector when one of its number-or-vector inputs is a vector, linked or typed in;
+else, in visual scripts, a whole number when every number input is whole (Sine and Square Root give
+a number even then); else a number. A link is checked by that type, so a vector cannot go into a
+number input through Add, and a new link that would turn an output further on into one is refused.
+A file saved with such a link still opens; its compiler names the node to mend. `graph.get` gives
+the same types as `outputTypes`.
 
 The model keeps every graph valid:
 - A link joins an output to a compatible input on another node.
@@ -78,7 +86,8 @@ For a stylised look (cel shading, say), **Main Light** gives the main light at t
 direction towards it, its colour, and how much of it the shadows let through), **Other Lights** the
 light the others give, added up, and **View Direction** and **Screen Position** where the point is
 seen from. **Dot Product**, **Normalize**, **Step**, **Smooth Step**, **Posterize** (flat bands),
-**Remap**, **Power**, **Clamp 0 to 1**, **Blend**, **Split Vector** and **Make Vector** shape them, and
+**Remap**, **Power**, **Square Root**, **Vector Length**, **Clamp 0 to 1**, **Blend**, **Split Vector** and
+**Make Vector** shape them, and
 an **Image** read at a computed coordinate makes a ramp. A **Custom Lighting Output** in place of the
 Material Output shows its colour as it is: the graph does the lighting. Either output has an outline
 option (Outline Width in world units, up to 1, and Outline Color): the shape's back faces, grown along
@@ -108,7 +117,9 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   A **Property** node reads one (for an Object Property, the object of the scene chosen per object,
   from a list or by dragging it from the hierarchy; Found is false while none is chosen), and a
   **Set Property** node sets it on this object for the rest of play.
-- **Negate** turns the sign of a number, a whole number or a vector. Get and Set Component read and set another script's number,
+- **Negate** turns the sign of a number, a whole number or a vector. **Power** raises a number, a whole
+  number (staying whole) or each part of a vector; **Square Root** takes the root of a number or of each
+  part (0 below 0); **Vector Length** says how long a vector is. Get and Set Component read and set another script's number,
   whole-number, true/false, vector and colour properties as pins of those types.
 - **Set Variable** keeps a number under a name and **Variable** reads it; **Set Vector Variable**
   and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False

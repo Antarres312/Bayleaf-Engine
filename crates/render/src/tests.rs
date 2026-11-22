@@ -198,7 +198,12 @@ fn a_vector_into_a_number_input_is_a_problem_on_that_node() {
     let position = g.add_node(&CATALOG, "position", [0.0, 0.0]).unwrap();
     let add = g.add_node(&CATALOG, "add", [0.0, 0.0]).unwrap();
     link(&mut g, position, "position", add, "a");
-    link(&mut g, add, "result", out, "roughness");
+    // Add gives a vector here, so linking it into a number input is refused.
+    let into_roughness = Link { from: PinRef::new(add, "result"), to: PinRef::new(out, "roughness") };
+    assert!(g.connect(&CATALOG, into_roughness.clone()).is_err());
+    // A file saved with such a link still opens, and the compiler names the node to mend.
+    g.links.push(into_roughness);
+    let g = Graph::from_json(&g.to_json(), &CATALOG).expect("it opens");
     let problems = compile(&g).unwrap_err();
     assert_eq!(problems[0].node, Some(out));
     assert!(problems[0].message.contains("Split Vector"), "{problems:?}");

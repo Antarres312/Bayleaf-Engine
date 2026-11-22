@@ -666,7 +666,9 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
             for link in &graph.links {
                 let ends = graph.node(link.from.node).zip(graph.node(link.to.node)).and_then(|(from, to)| {
                     let (fd, td) = (catalog.def_of(from)?, catalog.def_of(to)?);
-                    let ty = fd.output(&link.from.pin)?.ty;
+                    fd.output(&link.from.pin)?;
+                    // Coloured by what flows: a number-or-vector output by what it gives here.
+                    let ty = graph.output_type(catalog, &link.from);
                     Some((pin_pos(from, fd, &link.from.pin, true)?, pin_pos(to, td, &link.to.pin, false)?, ty))
                 });
                 if let Some((a, b, ty)) = ends {
@@ -1200,6 +1202,7 @@ fn node_ui(
         }
     }
     for pin in def.outputs {
+        let pin = &shown_output(graph, catalog, node, pin);
         let center = pin_pos(node, def, pin.name, true).unwrap_or(rect.right_top());
         pin_ui(ui, t, graph, catalog, node, def, pin, true, center, view, requests, hovered_pin);
         // Only the label itself, so an input's field beside it keeps its own hover.
@@ -1334,6 +1337,12 @@ fn pin_ui(
 }
 
 /// What hovering a pin, its label or its value says: the pin's name and the type of data it carries.
+/// An output pin as its node's inputs make it: a number-or-vector output shows what it gives (a
+/// vector, a number or a whole number), in its colour, hint and accessible name.
+fn shown_output(graph: &Graph, catalog: &Catalog, node: &Node, pin: &PinDef) -> PinDef {
+    if pin.ty == PinType::Any { PinDef { ty: graph.output_type(catalog, &PinRef::new(node.id, pin.name)), ..*pin } } else { *pin }
+}
+
 fn pin_hint(pin: &PinDef) -> String {
     let meaning = match pin.ty {
         PinType::Flow => "what runs next",

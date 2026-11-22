@@ -188,9 +188,19 @@ fn every_node_kind_compiles_and_runs() {
     let sine = b.node("sine", json!({}));
     b.link(mul, "result", sine, "value");
 
+    // Power, Square Root and Vector Length, added into what is logged.
+    let power = b.node("power", json!({}));
+    b.link(sine, "result", power, "base");
+    let root = b.node("squareRoot", json!({}));
+    b.link(power, "result", root, "value");
+    let length = b.node("vectorLength", json!({}));
+    b.link(make, "vector", length, "vector");
+    let total = b.node("add", json!({}));
+    b.link(root, "result", total, "a");
+    b.link(length, "length", total, "b");
     let log = b.node("log", json!({}));
     b.link(start, "then", log, "run");
-    b.link(sine, "result", log, "value");
+    b.link(total, "result", log, "value");
     let mut previous = (log, "then");
     for (kind, pin) in [("setPosition", "position"), ("moveBy", "offset"), ("setRotation", "rotation"), ("rotateBy", "degrees"), ("setScale", "scale")] {
         let action = b.node(kind, json!({}));
@@ -550,7 +560,8 @@ fn every_node_kind_compiles_and_runs() {
     let (mut scene, _, mut host) = run(&b.bytes(), &[]);
     host.update(&mut scene, 0.1, 1.0, &Arc::new(Input::default()));
     assert!(host.take_faults().is_empty());
-    assert_eq!(host.take_logs()[0].text, "Hello 0");
+    // Sine of 0 is 0, so its power and root are 0; the made vector (0, 0.5, 0) is 0.5 long.
+    assert_eq!(host.take_logs()[0].text, "Hello 0.5");
 }
 
 /// Two objects: "Sender" sends `ping` with its counter to "Receiver" on each step, and "Receiver"
@@ -607,8 +618,14 @@ fn a_vector_into_a_number_input_is_a_problem_on_that_node() {
     b.link(start, "then", log, "run");
     let add = b.node("add", json!({}));
     b.link(position, "position", add, "a");
-    b.link(add, "result", log, "value");
-    let problems = compile(&b.0).unwrap_err();
+    // Add gives a vector here, so linking it into a number input is refused.
+    let into_log = Link { from: PinRef::new(add, "result"), to: PinRef::new(log, "value") };
+    let refused = b.0.connect(&CATALOG, into_log.clone()).unwrap_err().to_string();
+    assert!(refused.contains("Vector"), "{refused}");
+    // A file saved with such a link still opens, and the compiler names the node to mend.
+    b.0.links.push(into_log);
+    let read = Graph::from_json(&b.0.to_json(), &CATALOG).expect("it opens");
+    let problems = compile(&read).unwrap_err();
     assert_eq!(problems[0].node, Some(log));
     assert!(problems[0].message.contains("Split Vector"), "{problems:?}");
 }
@@ -1565,4 +1582,64 @@ fn a_visual_scripts_inspector_options_reach_its_description() {
     // Options the host would refuse are found before the script is saved.
     b.0.set_property_options("speed", PropertyOptions { choices: vec!["a".into()], ..PropertyOptions::default() }).unwrap();
     assert!(super::check_inspector(&b.0).unwrap_err().contains("choices"));
+}
+
+#[test]
+fn power_root_and_length_give_their_values_and_math_outputs_take_their_inputs_type() {
+    use bayleaf_graph::PinType;
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let whole = |b: &mut Builder, v: i64| b.node("wholeNumber", json!({ "value": v }));
+    let (three, four) = (whole(&mut b, 3), whole(&mut b, 4));
+    let (minus_two, minus_three) = (whole(&mut b, -2), whole(&mut b, -3));
+    let power = |b: &mut Builder, base: u32, exponent: u32| {
+        let p = b.node("power", json!({}));
+        b.link(base, "result", p, "base");
+        b.link(exponent, "result", p, "exponent");
+        p
+    };
+    let whole_power = power(&mut b, three, four);
+    let negative_power = power(&mut b, minus_two, minus_three);
+    let half_power = b.node("power", json!({ "base": 2.0, "exponent": 0.5 }));
+    let root = b.node("squareRoot", json!({ "value": 16.0 }));
+    let below_zero = b.node("squareRoot", json!({ "value": -4.0 }));
+    let length = b.node("vectorLength", json!({ "vector": [3.0, 4.0, 0.0] }));
+    let mut previous = (start, "then");
+    for (message, node, pin) in [
+        ("whole", whole_power, "result"),
+        ("negative", negative_power, "result"),
+        ("half", half_power, "result"),
+        ("root", root, "result"),
+        ("below", below_zero, "result"),
+        ("length", length, "length"),
+    ] {
+        let log = b.node("log", json!({ "message": message }));
+        b.link(previous.0, previous.1, log, "run");
+        b.link(node, pin, log, "value");
+        previous = (log, "then");
+    }
+
+    // What each output gives, from its inputs.
+    let ty = |b: &Builder, node: u32| b.0.output_type(&CATALOG, &PinRef::new(node, "result"));
+    assert_eq!(ty(&b, whole_power), PinType::Int, "whole to a whole power stays whole");
+    assert_eq!(ty(&b, half_power), PinType::Float);
+    assert_eq!(ty(&b, root), PinType::Float, "a root is a number even of a whole number");
+    let sum = b.node("add", json!({}));
+    b.link(three, "result", sum, "a");
+    b.link(four, "result", sum, "b");
+    assert_eq!(ty(&b, sum), PinType::Int);
+    let position = b.node("position", json!({}));
+    let moved = b.node("add", json!({}));
+    b.link(position, "position", moved, "a");
+    assert_eq!(ty(&b, moved), PinType::Vec3, "a vector in makes a vector out");
+    // A whole sum feeding a whole number input cannot then take a vector.
+    let remainder = b.node("remainder", json!({}));
+    b.link(sum, "result", remainder, "a");
+    let vector = b.0.connect(&CATALOG, Link { from: PinRef::new(position, "position"), to: PinRef::new(sum, "a") });
+    assert!(vector.is_err(), "the remainder would get a vector");
+
+    let (mut scene, _, mut host) = run(&b.bytes(), &[]);
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["whole 81", "negative 0", "half 1.414", "root 4", "below 0", "length 5"]);
 }

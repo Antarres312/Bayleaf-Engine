@@ -204,6 +204,9 @@ pub struct Catalog {
     /// Moves what this domain's nodes kept in files older than [`VERSION`] (the version read is
     /// given) into where it belongs now. See `no_upgrade`.
     pub upgrade: fn(&mut Graph, u32),
+    /// Kinds whose number-or-vector output is a number even when every input is a whole number
+    /// (Sine, Square Root). Other kinds keep whole numbers whole. See [`Graph::output_type`].
+    pub fractional: &'static [&'static str],
 }
 
 /// For catalogs whose files need nothing moved between versions.
@@ -962,7 +965,9 @@ impl Graph {
         }
         let mut seen = Graph { links: Vec::new(), ..self.clone() };
         for link in &self.links {
-            seen.check_link(catalog, link)?;
+            // A file is read by the pins' own types, so a graph saved with a link that no longer
+            // fits still opens (its compiler says what is wrong, on the node, to mend there).
+            seen.check_link(catalog, link, None)?;
             seen.links.push(link.clone());
         }
         Ok(())
@@ -1043,11 +1048,27 @@ impl Graph {
         let mut trial = self.clone();
         // The new link replaces the one it supersedes.
         trial.links.retain(|l| l != &link && if from_ty == PinType::Flow { l.from != link.from } else { l.to != link.to });
-        trial.check_link(catalog, &link)?;
+        trial.check_link(catalog, &link, Some(&trial))?;
         if trial.links.len() >= MAX_LINKS {
             return Err(GraphError::Refused(format!("a graph may have at most {MAX_LINKS} links")));
         }
         trial.links.push(link);
+        // What the new link brings may turn an output further on into a vector that its links no
+        // longer fit.
+        for later in &trial.links {
+            let (from, to) = trial.pin_types(catalog, later)?;
+            let from = if from == PinType::Any { trial.output_type(catalog, &later.from) } else { from };
+            if !from.connects_to(to) {
+                let label = |id: u32| trial.node(id).and_then(|n| catalog.def_of(n)).map_or("a node", |d| d.label);
+                return Err(GraphError::Format(format!(
+                    "then {} would give {} to {}, which takes {}",
+                    label(later.from.node),
+                    from.label(),
+                    label(later.to.node),
+                    to.label()
+                )));
+            }
+        }
         *self = trial;
         Ok(())
     }
@@ -1116,6 +1137,52 @@ impl Graph {
         self.node(node).and_then(|n| n.values.get(name))
     }
 
+    /// What an output pin gives. A number-or-vector output (`Any`) takes it from its node's
+    /// inputs: a vector when one of its number-or-vector inputs is a vector (linked, or a vector
+    /// typed in), else a whole number when every number input is whole (unless the kind is
+    /// [`Catalog::fractional`]), else a number. `Any` while nothing decides it (a loop of links).
+    pub fn output_type(&self, catalog: &Catalog, pin: &PinRef) -> PinType {
+        self.resolve_output(catalog, pin, 0)
+    }
+
+    fn resolve_output(&self, catalog: &Catalog, pin: &PinRef, depth: usize) -> PinType {
+        let Some(def) = self.node(pin.node).and_then(|n| catalog.def_of(n)) else { return PinType::Any };
+        let Some(out) = def.output(&pin.pin) else { return PinType::Any };
+        if out.ty != PinType::Any {
+            return out.ty;
+        }
+        if depth > 64 {
+            return PinType::Any;
+        }
+        let mut vector = false;
+        let mut whole = !catalog.fractional.contains(&def.kind);
+        let mut numbers = false;
+        for input in def.inputs.iter().filter(|p| matches!(p.ty, PinType::Any | PinType::Float | PinType::Int)) {
+            numbers = true;
+            let ty = match self.link_into(pin.node, input.name) {
+                Some(link) => self.resolve_output(catalog, &link.from, depth + 1),
+                None => match (input.ty, self.value(pin.node, input.name)) {
+                    (PinType::Int, _) => PinType::Int,
+                    (PinType::Any, Some(v)) if as_triple(v).is_some() => PinType::Vec3,
+                    (PinType::Any, None) if matches!(input.default, PinDefault::Vec3(_) | PinDefault::Color(_)) => PinType::Vec3,
+                    _ => PinType::Float,
+                },
+            };
+            match ty {
+                PinType::Vec3 | PinType::Color if input.ty == PinType::Any => vector = true,
+                PinType::Int => {}
+                PinType::Any => return PinType::Any,
+                _ => whole = false,
+            }
+        }
+        match (numbers, vector, whole) {
+            (false, _, _) => PinType::Any,
+            (true, true, _) => PinType::Vec3,
+            (true, false, true) => PinType::Int,
+            (true, false, false) => PinType::Float,
+        }
+    }
+
     fn pin_types(&self, catalog: &Catalog, link: &Link) -> Result<(PinType, PinType), GraphError> {
         let (_, from_def) = self.node_def(catalog, link.from.node)?;
         let (_, to_def) = self.node_def(catalog, link.to.node)?;
@@ -1126,8 +1193,15 @@ impl Graph {
     }
 
     /// Checks one link against the graph without it. Clashes with existing links are `Refused`.
-    fn check_link(&self, catalog: &Catalog, link: &Link) -> Result<(PinType, PinType), GraphError> {
+    /// `types`, when given, is the graph whose links decide what a number-or-vector output gives;
+    /// without it such an output fits any number input.
+    fn check_link(&self, catalog: &Catalog, link: &Link, types: Option<&Graph>) -> Result<(PinType, PinType), GraphError> {
         let (from, to) = self.pin_types(catalog, link)?;
+        // A number-or-vector output links as what its inputs make it.
+        let from = match types {
+            Some(graph) if from == PinType::Any => graph.output_type(catalog, &link.from),
+            _ => from,
+        };
         let (_, from_def) = self.node_def(catalog, link.from.node)?;
         let (_, to_def) = self.node_def(catalog, link.to.node)?;
         if link.from.node == link.to.node {

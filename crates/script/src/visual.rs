@@ -131,6 +131,7 @@ pub const CATALOG: Catalog = Catalog {
     starter: &[("start", [40.0, 40.0]), ("update", [40.0, 200.0])],
     variant: fields::variant,
     upgrade,
+    fractional: &["sine", "squareRoot"],
     nodes: &[
         node(
             "init",
@@ -936,6 +937,30 @@ pub const CATALOG: Catalog = Catalog {
         ),
         node("divide", "Divide", "Math", "A ÷ B.", &[number("a", "A", Any, 1.0), number("b", "B", Any, 1.0)], MATH_OUT),
         node("sine", "Sine", "Math", "The sine of the input, in radians.", &[number("value", "Value", Any, 0.0)], MATH_OUT),
+        node(
+            "power",
+            "Power",
+            "Math",
+            "Base to the power of the exponent: whole numbers stay whole (a negative exponent gives 0, or ±1 for 1 and −1); for a vector, each part.",
+            &[number("base", "Base", Any, 1.0), number("exponent", "Exponent", Float, 2.0)],
+            MATH_OUT,
+        ),
+        node(
+            "squareRoot",
+            "Square Root",
+            "Math",
+            "The number that times itself gives the input (0 below 0); for a vector, of each part.",
+            &[number("value", "Value", Any, 1.0)],
+            MATH_OUT,
+        ),
+        node(
+            "vectorLength",
+            "Vector Length",
+            "Math",
+            "How long a vector is: the distance from 0 to the point it names.",
+            &[vector("vector", "Vector", [0.0, 0.0, 0.0])],
+            &[pin("length", "Length", Float)],
+        ),
         node(
             "choose",
             "Choose",
@@ -1932,6 +1957,41 @@ impl Compiler<'_> {
         })
     }
 
+    /// Power, Square Root and Vector Length.
+    fn power_and_roots(&mut self, node: u32, kind: &str) -> Result<Val, Problem> {
+        Ok(match kind {
+            "power" => {
+                let base = self.input(node, "base")?;
+                let exponent = self.input(node, "exponent")?;
+                match (base, exponent) {
+                    (Val::I(b), Val::I(e)) => Val::I(format!("(call $ipow {b} {e})")),
+                    (base, exponent) => {
+                        let e = as_float(node, exponent)?;
+                        match base {
+                            Val::F(b) => Val::F(format!("(call $math_pow {b} {e})")),
+                            Val::I(b) => Val::F(format!("(call $math_pow (f32.convert_i32_s {b}) {e})")),
+                            Val::V(v) => Val::V(v.map(|c| format!("(call $math_pow {c} {e})"))),
+                            Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Power needs a number or a vector")),
+                        }
+                    }
+                }
+            }
+            "squareRoot" => {
+                let root = |v: &str| format!("(f32.sqrt (f32.max {v} (f32.const 0)))");
+                match self.input(node, "value")? {
+                    Val::F(v) => Val::F(root(&v)),
+                    Val::I(i) => Val::F(root(&format!("(f32.convert_i32_s {i})"))),
+                    Val::V(v) => Val::V(v.map(|c| root(&c))),
+                    Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Square Root needs a number or a vector")),
+                }
+            }
+            _ => {
+                let [x, y, z] = as_vec(node, self.input(node, "vector")?)?;
+                Val::F(format!("(call $len3 {x} {y} {z})"))
+            }
+        })
+    }
+
     /// The value of one output of a data node.
     fn output(&mut self, node: u32, pin: &str) -> Result<Val, Problem> {
         let graph = self.graph;
@@ -2244,6 +2304,7 @@ impl Compiler<'_> {
                 Val::I(i) => Val::F(format!("(call $sin (f32.convert_i32_s {i}))")),
                 Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
             },
+            "power" | "squareRoot" | "vectorLength" => self.power_and_roots(node, &n.kind)?,
             "choose" => {
                 let condition = self.input(node, "condition").and_then(|v| as_bool(node, v))?;
                 let a = self.input(node, "a")?;
@@ -2470,6 +2531,7 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "property_set" (func $property_set (param i32 i32 f32 f32 f32) (result i32)))
   (import "bayleaf" "property_set_text" (func $property_set_text (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "time" (func $time (result f64)))
+  (import "bayleaf" "math_pow" (func $math_pow (param f32 f32) (result f32)))
   (import "bayleaf" "key_down" (func $key_down (param i32 i32) (result i32)))
   (import "bayleaf" "pointer" (func $pointer (param i32) (result i32)))
   (import "bayleaf" "pointer_over_interface" (func $pointer_over_interface (result i32)))
@@ -2848,6 +2910,25 @@ const PRELUDE: &str = r#"(module
     (f32.store offset=4 (local.get $at) (f32.add (f32.load offset=4 (local.get $at)) (local.get $y)))
     (f32.store offset=8 (local.get $at) (f32.add (f32.load offset=8 (local.get $at)) (local.get $z)))
     (call $transform_set (i32.const 0)))
+  ;; A whole number to a whole power, by squaring; it wraps past the 32-bit range. A negative
+  ;; power is 0, except of 1 (1) and -1 (1 or -1).
+  (func $ipow (param $b i32) (param $e i32) (result i32) (local $r i32)
+    (if (i32.lt_s (local.get $e) (i32.const 0)) (then
+      (if (i32.eq (local.get $b) (i32.const 1)) (then (return (i32.const 1))))
+      (if (i32.eq (local.get $b) (i32.const -1)) (then
+        (return (select (i32.const -1) (i32.const 1) (i32.and (local.get $e) (i32.const 1))))))
+      (return (i32.const 0))))
+    (local.set $r (i32.const 1))
+    (block $done (loop $more
+      (br_if $done (i32.eqz (local.get $e)))
+      (if (i32.and (local.get $e) (i32.const 1)) (then (local.set $r (i32.mul (local.get $r) (local.get $b)))))
+      (local.set $b (i32.mul (local.get $b) (local.get $b)))
+      (local.set $e (i32.shr_u (local.get $e) (i32.const 1)))
+      (br $more)))
+    (local.get $r))
+  ;; The length of the vector (x, y, z).
+  (func $len3 (param $x f32) (param $y f32) (param $z f32) (result f32)
+    (f32.sqrt (f32.add (f32.add (f32.mul (local.get $x) (local.get $x)) (f32.mul (local.get $y) (local.get $y))) (f32.mul (local.get $z) (local.get $z)))))
   ;; Sine: reduce to [-pi/2, pi/2], then the Taylor series to x^9.
   (func $sin (param $x f32) (result f32) (local $x2 f32)
     (local.set $x (f32.sub (local.get $x) (f32.mul (f32.nearest (f32.mul (local.get $x) (f32.const 0.15915494))) (f32.const 6.2831855))))
