@@ -64,6 +64,8 @@ pub(crate) fn show(editor: &mut Editor, ctx: &egui::Context) {
 
 fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep: &mut bool) {
     let t = theme::tokens(ui);
+    // Everything fits the window's width: long text wraps instead of widening it.
+    ui.set_max_width(ui.available_width());
     // Where the game goes.
     theme::headed(t, "Platform").show(ui, |ui| {
         crate::value_editor::row(ui, t, "Platform", |ui, label, width| {
@@ -232,15 +234,15 @@ fn report_ui(ui: &mut egui::Ui, t: &theme::Tokens, report: &Value) {
     if !scripts.is_empty() {
         ui.add_space(theme::GAP);
         ui.label(egui::RichText::new(tl("How each script would run")).small().color(t.text_muted));
-        egui::Grid::new("export scripts").num_columns(2).striped(true).show(ui, |ui| {
-            for script in &scripts {
-                ui.label(script["path"].as_str().unwrap_or_default());
-                let runs = serde_json::from_value::<ScriptMode>(script["runs"].clone()).map(|m| tl(m.label()).to_owned()).unwrap_or_default();
-                let note = script["note"].as_str().unwrap_or_default();
-                ui.label(if note.is_empty() { runs } else { format!("{runs}: {}", tl(note)) });
-                ui.end_row();
-            }
-        });
+        // One script a line or two: its path, then how it runs, wrapped to the window (a grid does not
+        // wrap, and long notes would widen the window).
+        for script in &scripts {
+            let runs = serde_json::from_value::<ScriptMode>(script["runs"].clone()).map(|m| tl(m.label()).to_owned()).unwrap_or_default();
+            let note = script["note"].as_str().unwrap_or_default();
+            let how = if note.is_empty() { runs } else { format!("{runs}: {}", tl(note)) };
+            let path = script["path"].as_str().unwrap_or_default();
+            ui.add(egui::Label::new(egui::RichText::new(format!("{path}: {how}"))).wrap());
+        }
     }
     ui.label(egui::RichText::new(tf("{files} files go with the game.", &[("files", &report["files"].to_string())])).small().color(t.text_muted));
 }

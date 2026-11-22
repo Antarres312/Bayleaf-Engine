@@ -403,7 +403,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
      is widened by hand. Long texts (the check's findings, the notes on how each script runs, paths)
      wrap to the window's width instead of widening it, and the folder field gives way so the
      button always shows. A UI test chooses each mode at the window's opening size and checks the
-     Choose… button lies inside the window.
+     Choose… button lies inside the window. (Done.)
 
 ## Open questions
 

@@ -2149,3 +2149,25 @@ fn the_script_panel_sets_how_a_property_shows_in_the_inspector() {
     harness.run_steps(2);
     assert!(graph(&harness).property("speed").unwrap().inspector.slider);
 }
+
+#[test]
+fn the_export_window_keeps_its_width_for_every_mode() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-export-width-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir.join("Game") }), None);
+    harness.run();
+    harness.get_by_label("File").click();
+    harness.run();
+    harness.query_all_by_label_contains("Export Game…").next().unwrap().click();
+    harness.run_steps(3);
+    let choose = |harness: &Harness<'static, Editor>| harness.get_by_role_and_label(egui::accesskit::Role::Button, "Choose…").rect();
+    let opened = choose(&harness);
+    for mode in ["Interpreted", "Compiled to machine code", "Native"] {
+        harness.query_all_by_label_contains(mode).next().unwrap().click();
+        harness.run_steps(4);
+        let now = choose(&harness);
+        assert!(now.right() <= opened.right() + 1.0, "{mode}: Choose… moved from {opened:?} to {now:?}, so the window grew");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
