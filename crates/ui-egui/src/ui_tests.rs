@@ -2586,9 +2586,9 @@ fn save_as_part_in_the_interface_panel_puts_a_part_in_its_place() {
     // The part's text changes here only: a row for each named element inside it.
     harness.get_by_label("Part: Start").click();
     harness.run_steps(2);
-    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Start").click();
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Start Text").click();
     harness.run();
-    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Start").type_text("Begin");
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Start Text").type_text("Begin");
     harness.key_press(egui::Key::Enter);
     harness.run_steps(2);
     let menu = bayleaf_interface::Layout::load(&dir.join("menu.bui")).unwrap();

@@ -432,9 +432,13 @@ fn element_fields(
         if draft.kind == Kind::Part {
             done |= text_row(ui, t, "Layout", &mut draft.layout, "A .bui in the project");
             // The texts inside the part, changed here only: empty keeps the part's own.
+            if !inside.is_empty() {
+                ui.label(egui::RichText::new(tl("Texts inside the part, here only")).small().color(t.text_muted));
+            }
             for (name, own) in inside {
                 let mut text = draft.texts.get(name).cloned().unwrap_or_default();
-                crate::value_editor::row(ui, t, name, |ui, label, width| {
+                let row_name = tf("{name} Text", &[("name", name)]);
+                crate::value_editor::row(ui, t, &row_name, |ui, label, width| {
                     let r = ui.add_sized([width, ROW_HEIGHT], egui::TextEdit::singleline(&mut text).hint_text(own.as_str())).labelled_by(label);
                     if r.lost_focus() {
                         done = true;
