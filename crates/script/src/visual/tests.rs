@@ -480,6 +480,12 @@ fn every_node_kind_compiles_and_runs() {
     b.link(helper, "x", helper_back, "y");
     let helped = function_node(&mut b, "callFunction", "helper");
     b.link(other_log, "then", helped, "run");
+    // Negate, on a number.
+    let flipped = b.node("negate", json!({}));
+    b.link(time, "seconds", flipped, "value");
+    let flipped_log = b.node("log", json!({ "message": "flipped" }));
+    b.link(helped, "then", flipped_log, "run");
+    b.link(flipped, "result", flipped_log, "value");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -1410,4 +1416,29 @@ fn a_function_s_values_and_return_belong_to_its_own_actions() {
     b.link(start, "then", call, "run");
     let problems = compile(&b.0).unwrap_err();
     assert!(problems.iter().any(|p| p.node == Some(call) && p.message.contains("no function missing")), "{problems:?}");
+}
+
+#[test]
+fn negate_turns_the_sign_of_numbers_whole_numbers_and_vectors() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let number = b.node("negate", json!({ "value": 5.0 }));
+    let whole = b.node("negate", json!({}));
+    let minus_seven = b.node("wholeNumber", json!({ "value": -7 }));
+    b.link(minus_seven, "result", whole, "value");
+    let vector = b.node("negate", json!({}));
+    let made = b.node("vector", json!({ "x": 1.0, "y": -2.0, "z": 3.0 }));
+    b.link(made, "vector", vector, "value");
+    let parts = b.node("split", json!({}));
+    b.link(vector, "result", parts, "vector");
+    let mut previous = (start, "then");
+    for (message, from, pin) in [("number", number, "result"), ("whole", whole, "result"), ("y", parts, "y")] {
+        let log = b.node("log", json!({ "message": message }));
+        b.link(previous.0, previous.1, log, "run");
+        b.link(from, pin, log, "value");
+        previous = (log, "then");
+    }
+    let (_, _, mut host) = run(&b.bytes(), &[]);
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["number -5", "whole 7", "y 2"]);
 }

@@ -205,9 +205,10 @@ const COMMENT_PADDING: f32 = 30.0;
 /// Size of a comment's corner handle.
 const COMMENT_HANDLE: f32 = 16.0;
 
-/// Height of a node of kind `def`.
+/// Height of a node of kind `def`: its settings, then rows that each hold an input on the left and
+/// an output on the right.
 fn node_height(def: &NodeDef) -> f32 {
-    TITLE + (shown_settings(def) + def.outputs.len() + def.inputs.len()) as f32 * ROW + 6.0
+    TITLE + (shown_settings(def) + def.outputs.len().max(def.inputs.len())) as f32 * ROW + 6.0
 }
 
 /// How many settings a node shows as rows.
@@ -219,13 +220,13 @@ fn node_rect(node: &Node, def: &NodeDef) -> Rect {
     Rect::from_min_size(pos2(node.position[0], node.position[1]), vec2(NODE_WIDTH, node_height(def)))
 }
 
-/// Centre of a pin on the canvas. Rows: settings, then outputs, then inputs, so a value field on an
-/// input never shares a row with an output's label.
+/// Centre of a pin on the canvas. Rows: settings, then the pins, the nth input beside the nth output
+/// (Run beside Then), so a node is no taller than its longer side.
 fn pin_pos(node: &Node, def: &NodeDef, name: &str, output: bool) -> Option<Pos2> {
     let rect = node_rect(node, def);
     let pins = if output { def.outputs } else { def.inputs };
     let index = pins.iter().position(|p| p.name == name)?;
-    let row = shown_settings(def) + if output { index } else { def.outputs.len() + index };
+    let row = shown_settings(def) + index;
     let y = rect.top() + TITLE + 3.0 + (row as f32 + 0.5) * ROW;
     Some(pos2(if output { rect.right() } else { rect.left() }, y))
 }
@@ -1107,29 +1108,38 @@ fn node_ui(
         setting_row(ui, &Lists { graph, search: &view.search }, node, setting, row, gesture, requests);
         y += ROW;
     }
-    for pin in def.inputs {
+    for (index, pin) in def.inputs.iter().enumerate() {
         let center = pin_pos(node, def, pin.name, false).unwrap_or(rect.left_top());
+        // A field on this input ends before the label of the output beside it, if there is one.
+        let right = match def.outputs.get(index) {
+            Some(beside) => {
+                let width = painter.layout_no_wrap(tl(beside.label).to_owned(), egui::FontId::proportional(13.0), t.text).size().x;
+                (rect.right() - 12.0 - width - 8.0).max(rect.left() + rect.width() * 0.42 + 36.0)
+            }
+            None => rect.right() - 10.0,
+        };
         pin_ui(ui, t, graph, catalog, node, def, pin, false, center, view, requests, hovered_pin);
         let linked = graph.link_into(node.id, pin.name).is_some();
         let label_rect = Rect::from_min_size(pos2(rect.left() + 12.0, center.y - ROW / 2.0), vec2(rect.width() * 0.42, ROW));
         ui.interact(label_rect, ui.scope_id().with(("pin label", node.id, pin.name, false)), Sense::hover()).on_hover_text(pin_hint(pin));
         painter.text(pos2(label_rect.left(), center.y), egui::Align2::LEFT_CENTER, tl(pin.label), egui::FontId::proportional(13.0), t.text);
         if !linked && pin.ty != PinType::Flow && !matches!(pin.default, PinDefault::Implicit(_)) {
-            let field =
-                Rect::from_min_max(pos2(rect.left() + rect.width() * 0.42, center.y - ROW / 2.0 + 2.0), pos2(rect.right() - 10.0, center.y + ROW / 2.0 - 2.0));
+            let field = Rect::from_min_max(pos2(rect.left() + rect.width() * 0.42, center.y - ROW / 2.0 + 2.0), pos2(right, center.y + ROW / 2.0 - 2.0));
             input_editor(ui, node, def, pin, field, gesture, requests);
         } else if let PinDefault::Implicit(meaning) = pin.default
             && !linked
         {
             // What the pin means without a link: a material's surface, or a field Set Component leaves as it is.
-            let shown = if meaning == "unchanged" { "unchanged" } else { "surface" };
-            painter.text(pos2(rect.right() - 10.0, center.y), egui::Align2::RIGHT_CENTER, shown, egui::FontId::proportional(12.0), t.text_muted);
+            let shown = if meaning == "unchanged" { tl("unchanged") } else { tl("surface") };
+            painter.text(pos2(right, center.y), egui::Align2::RIGHT_CENTER, shown, egui::FontId::proportional(12.0), t.text_muted);
         }
     }
     for pin in def.outputs {
         let center = pin_pos(node, def, pin.name, true).unwrap_or(rect.right_top());
         pin_ui(ui, t, graph, catalog, node, def, pin, true, center, view, requests, hovered_pin);
-        let label_rect = Rect::from_min_max(pos2(rect.left() + rect.width() * 0.5, center.y - ROW / 2.0), pos2(rect.right() - 12.0, center.y + ROW / 2.0));
+        // Only the label itself, so an input's field beside it keeps its own hover.
+        let width = painter.layout_no_wrap(tl(pin.label).to_owned(), egui::FontId::proportional(13.0), t.text).size().x;
+        let label_rect = Rect::from_min_max(pos2(rect.right() - 12.0 - width - 4.0, center.y - ROW / 2.0), pos2(rect.right() - 12.0, center.y + ROW / 2.0));
         ui.interact(label_rect, ui.scope_id().with(("pin label", node.id, pin.name, true)), Sense::hover()).on_hover_text(pin_hint(pin));
         painter.text(pos2(rect.right() - 12.0, center.y), egui::Align2::RIGHT_CENTER, tl(pin.label), egui::FontId::proportional(13.0), t.text);
     }

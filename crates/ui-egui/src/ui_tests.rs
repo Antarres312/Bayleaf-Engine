@@ -1166,7 +1166,10 @@ fn f2_renames_a_file_in_its_own_tile_and_a_click_on_empty_space_clears_the_selec
 fn hovering_a_pin_its_label_or_its_value_shows_the_type_it_carries() {
     let mut harness = graph_harness("script");
     harness.state_mut().show_panel(crate::Panel::Graph);
-    let add = harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "add", "position": [200, 40] }), None).unwrap()["node"].as_u64().unwrap();
+    // Beside On Start and On Update, not on them, and in view.
+    let add = harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "add", "position": [320, 120] }), None).unwrap()["node"].as_u64().unwrap();
+    harness.run_steps(2);
+    harness.get_by_label("Fit All").click();
     harness.run_steps(2);
     let pin = harness.get_by_label_contains(&format!("Input A (Number or Vector) of Add {add}")).rect();
     let value = harness.get_by_label(&format!("A of Add {add}")).rect();

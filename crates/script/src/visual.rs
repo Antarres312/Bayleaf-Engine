@@ -795,6 +795,14 @@ pub const CATALOG: Catalog = Catalog {
         node("add", "Add", "Math", "A + B.", &[number("a", "A", Any, 0.0), number("b", "B", Any, 0.0)], MATH_OUT),
         node("subtract", "Subtract", "Math", "A − B.", &[number("a", "A", Any, 0.0), number("b", "B", Any, 0.0)], MATH_OUT),
         node("multiply", "Multiply", "Math", "A × B.", &[number("a", "A", Any, 1.0), number("b", "B", Any, 1.0)], MATH_OUT),
+        node(
+            "negate",
+            "Negate",
+            "Math",
+            "The value with its sign turned: 5 becomes −5 and −5 becomes 5; a vector points the other way.",
+            &[number("value", "Value", Any, 0.0)],
+            MATH_OUT,
+        ),
         node("divide", "Divide", "Math", "A ÷ B.", &[number("a", "A", Any, 1.0), number("b", "B", Any, 1.0)], MATH_OUT),
         node("sine", "Sine", "Math", "The sine of the input, in radians.", &[number("value", "Value", Any, 0.0)], MATH_OUT),
         node(
@@ -1947,6 +1955,12 @@ impl Compiler<'_> {
                     zip(node, a, b, |a, b| format!("({op} {a} {b})"))?
                 }
             }
+            "negate" => match self.input(node, "value")? {
+                Val::F(v) => Val::F(format!("(f32.neg {v})")),
+                Val::I(i) => Val::I(format!("(i32.sub (i32.const 0) {i})")),
+                Val::V(v) => Val::V(v.map(|c| format!("(f32.neg {c})"))),
+                _ => return Err(Problem::on(node, "Negate takes a number, a whole number or a vector")),
+            },
             "sine" => match self.input(node, "value")? {
                 Val::F(v) => Val::F(format!("(call $sin {v})")),
                 Val::V(v) => Val::V(v.map(|c| format!("(call $sin {c})"))),
