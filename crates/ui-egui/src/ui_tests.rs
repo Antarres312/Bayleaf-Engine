@@ -1909,3 +1909,39 @@ fn ctrl_s_saves_the_graph_while_it_is_in_use_and_the_scene_otherwise() {
     assert_eq!(dirty(&harness), (true, false), "the scene was saved, the graph left as it is");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn the_scene_heads_the_hierarchy_takes_dropped_objects_to_the_top_and_shows_in_the_inspector() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-scene-row-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut harness = harness();
+    assert!(harness.query_by_label("Untitled scene").is_some(), "an unsaved scene is Untitled");
+    create_named(&mut harness, "Parent");
+    create_named(&mut harness, "Child");
+    harness.state_mut().dispatch("scene.saveAs", &json!({ "path": dir.join("castle.bscene") }), None);
+    harness.run();
+    let scene_row = || "castle scene";
+    assert!(harness.query_by_label(scene_row()).is_some(), "the scene's row is named after its file");
+
+    // Child goes under Parent, then is dropped on the scene's row: back to the top.
+    let editor = harness.state_mut();
+    let ids: Vec<_> = editor.session.scene().children(None).to_vec();
+    editor.dispatch("scene.object.reparent", &json!({ "id": ids[1], "parent": ids[0] }), None);
+    harness.run();
+    assert_eq!(harness.state().session.scene().children(None).len(), 1);
+    let from = harness.get_by_label("Child").rect().center();
+    let to = harness.get_by_label(scene_row()).rect().center();
+    left_drag(&mut harness, from, to);
+    assert_eq!(harness.state().session.scene().children(None).len(), 2, "dropped on the scene, the object is at the top");
+
+    // Selecting the scene shows its file in the Inspector; Delete removes nothing.
+    harness.get_by_label(scene_row()).click();
+    harness.run();
+    assert!(harness.state().scene_selected && harness.state().selected.is_none());
+    assert!(harness.state().inspected_file.as_ref().is_some_and(|f| f.path.ends_with("castle.bscene")), "the Inspector shows the scene's file");
+    harness.key_press(egui::Key::Delete);
+    harness.run();
+    assert_eq!(harness.state().session.scene().object_count(), 2, "the scene is not an object to delete");
+    std::fs::remove_dir_all(&dir).ok();
+}

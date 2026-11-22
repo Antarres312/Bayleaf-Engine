@@ -43,7 +43,11 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     }
     let t = theme::tokens(ui);
     let Some(id) = editor.selected else {
-        empty_state(ui, "Nothing selected", "Select an object in the hierarchy or click it in the scene view.");
+        if editor.scene_selected {
+            empty_state(ui, "Untitled scene", "Save the scene to see what its file holds here.");
+        } else {
+            empty_state(ui, "Nothing selected", "Select an object in the hierarchy or click it in the scene view.");
+        }
         return;
     };
     let Ok(components) = editor.session.scene().components(id) else {

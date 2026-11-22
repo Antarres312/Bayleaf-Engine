@@ -70,6 +70,10 @@ struct RowState {
     renaming: Option<Rename>,
     /// A finished rename to apply: object and new name.
     commit: Option<(StableId, String)>,
+    /// The scene's own row is selected.
+    scene_selected: bool,
+    /// Where the scene's row is, as a place to drop objects to the top.
+    scene_row: Option<egui::Rect>,
 }
 
 /// An in-place rename: started by a double-click, F2, or the context menu.
@@ -87,7 +91,14 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     toolbar(editor, ui);
     ui.add_space(2.0);
     ui.separator();
-    let mut state = RowState { selected: editor.selected, also: editor.also_selected.clone(), renaming: editor.renaming.take(), ..RowState::default() };
+    let mut state = RowState {
+        selected: editor.selected,
+        also: editor.also_selected.clone(),
+        renaming: editor.renaming.take(),
+        scene_selected: editor.scene_selected,
+        ..RowState::default()
+    };
+    let scene_name = editor.session.scene_path().and_then(|p| p.file_stem()).map_or_else(|| tl("Untitled").to_owned(), |n| n.to_string_lossy().into_owned());
     let mut moved: Option<Value> = None;
     let mut script_dropped: Option<(StableId, String)> = None;
     let filter = editor.hierarchy_filter.trim().to_lowercase();
@@ -97,14 +108,22 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         let stripe_slot = ui.painter().add(egui::Shape::Noop);
         let full_width = ui.max_rect().x_range();
         let scene = editor.session.scene();
-        if scene.object_count() == 0 {
-            inspector::empty_state(ui, "Empty scene", "Use + to add an object.");
-        } else if filter.is_empty() {
-            tree(ui, scene, None, &mut state);
+        if filter.is_empty() {
+            // The scene itself heads the tree and holds every top object.
+            let state_id = ui.make_persistent_id("hierarchy scene");
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true)
+                .show_header(ui, |ui| scene_row(ui, &scene_name, &mut state))
+                .body(|ui| {
+                    if scene.object_count() == 0 {
+                        inspector::empty_state(ui, "Empty scene", "Use + to add an object.");
+                    } else {
+                        tree(ui, scene, None, &mut state);
+                    }
+                });
             theme::stripes(ui, stripe_slot, state.rows.iter().map(|(_, r)| *r), full_width);
-            // The space below the tree takes drops to the root.
+            // The space below the tree, and the scene's row, take drops to the top.
             let root_zone = ui.allocate_space(egui::vec2(ui.available_width(), ui.available_height().max(ROW_HEIGHT * 2.0))).1;
-            moved = handle_drop(ui, t, scene, &state.rows, root_zone);
+            moved = handle_drop(ui, t, scene, &state.rows, root_zone, state.scene_row);
         } else {
             let matches: Vec<StableId> =
                 scene.world_matrices().into_iter().map(|(id, _)| id).filter(|id| scene.name(*id).is_some_and(|n| n.to_lowercase().contains(&filter))).collect();
@@ -118,8 +137,15 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         }
         script_dropped = script_drop(ui, t, &state.rows);
     });
-    editor.selected = state.selected;
-    editor.also_selected = std::mem::take(&mut state.also);
+    if state.scene_selected && !editor.scene_selected {
+        editor.select_scene();
+    } else if state.selected.is_some() {
+        editor.scene_selected = false;
+    }
+    if !state.scene_selected || state.selected.is_some() {
+        editor.selected = state.selected;
+        editor.also_selected = std::mem::take(&mut state.also);
+    }
     if let Some((id, modifiers)) = state.modified_click {
         if modifiers.shift
             && let Some(anchor) = editor.selected
@@ -266,6 +292,23 @@ fn draggable_row(ui: &mut egui::Ui, id: StableId, name: &str, prefab: bool, stat
     state.rows.push((id, response.rect));
 }
 
+/// The scene's own row, named after its file: selecting it shows the scene in the Inspector. It is
+/// not an object, so it cannot be dragged, renamed or deleted; objects dropped on it go to the top.
+fn scene_row(ui: &mut egui::Ui, name: &str, state: &mut RowState) {
+    let t = theme::tokens(ui);
+    let selected = state.scene_selected && state.selected.is_none();
+    let button = egui::Button::selectable(selected, (name, egui::Atom::grow(), egui::RichText::new(tl("scene")).small().color(t.text_muted)))
+        .truncate()
+        .min_size(egui::vec2(ui.available_width(), LIST_ROW));
+    let response = ui.add(button).on_hover_text(tl("The scene: select it to see its file and settings in the Inspector"));
+    if response.clicked() {
+        state.scene_selected = true;
+        state.selected = None;
+        state.also.clear();
+    }
+    state.scene_row = Some(response.rect);
+}
+
 fn is_prefab(scene: &Scene, id: StableId) -> bool {
     scene.get::<bayleaf_engine::scene::components::Prefab>(id).is_some()
 }
@@ -304,7 +347,14 @@ fn script_drop(ui: &egui::Ui, t: &Tokens, rows: &[(StableId, egui::Rect)]) -> Op
 
 /// While an object is dragged: shows where it would land, and on release returns the
 /// `scene.object.reparent` params.
-fn handle_drop(ui: &mut egui::Ui, t: &Tokens, scene: &Scene, rows: &[(StableId, egui::Rect)], root_zone: egui::Rect) -> Option<Value> {
+fn handle_drop(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    scene: &Scene,
+    rows: &[(StableId, egui::Rect)],
+    root_zone: egui::Rect,
+    scene_row: Option<egui::Rect>,
+) -> Option<Value> {
     let dragged = egui::DragAndDrop::payload::<Dragged>(ui.ctx())?.0;
     let pointer = ui.ctx().pointer_interact_pos()?;
     let full_width = |rect: egui::Rect| egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), rect.y_range());
@@ -322,6 +372,7 @@ fn handle_drop(ui: &mut egui::Ui, t: &Tokens, scene: &Scene, rows: &[(StableId, 
             };
             (drop, *rect)
         })
+        .or_else(|| scene_row.filter(|row| full_width(*row).contains(pointer)).map(|row| (Drop::Root, row)))
         .or_else(|| root_zone.contains(pointer).then_some((Drop::Root, root_zone)));
     let (drop, rect) = target?;
     let params = drop_params(scene, dragged, drop);

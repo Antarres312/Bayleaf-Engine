@@ -86,6 +86,8 @@ pub struct Editor {
     close_asked: bool,
     /// The form a command asks with, while it is open.
     form: Option<Form>,
+    /// The scene's own row in the hierarchy is selected.
+    pub(crate) scene_selected: bool,
     /// The Export Game window, while it is open.
     export_window: Option<export_window::ExportWindow>,
     /// The interface language setting (Window > Language).
@@ -134,6 +136,7 @@ impl Default for Editor {
             copy_out: None,
             close_asked: false,
             form: None,
+            scene_selected: false,
             export_window: None,
             language: "en".to_owned(),
             fonts_language: "en",
@@ -222,8 +225,17 @@ impl Editor {
 
     /// Selects only `id` (or nothing).
     pub(crate) fn select_only(&mut self, id: Option<StableId>) {
+        self.scene_selected = false;
         self.selected = id;
         self.also_selected.clear();
+    }
+
+    /// Selects the scene itself (its row at the top of the hierarchy): the Inspector shows its file
+    /// and settings.
+    pub(crate) fn select_scene(&mut self) {
+        self.select_only(None);
+        self.scene_selected = true;
+        self.inspected_file = self.session.scene_path().map(|path| file_inspector::Inspected::new(path.to_path_buf()));
     }
 
     /// Adds `id` to the selection as the primary object, or takes it out if it is already in.
