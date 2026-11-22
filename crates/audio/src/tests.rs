@@ -122,4 +122,50 @@ fn a_flac_file_decodes_like_any_other_clip() {
     let loudest = decoded.left.iter().fold(0.0f32, |m, v| m.max(v.abs()));
     assert!(loudest > 0.4 && loudest <= 1.0, "16-bit samples come out between -1 and 1: {loudest}");
     assert!(Clip::decode(&file[..20], "flac", 16_000).is_err(), "a cut file is an error");
+    let path = std::env::temp_dir().join(format!("bayleaf-audio-flac-{}.flac", std::process::id()));
+    std::fs::write(&path, &file).unwrap();
+    let why = super::can_stream(&path).unwrap_err();
+    assert!(why.contains("loaded whole"), "FLAC is loaded whole, and says so: {why}");
+    std::fs::remove_file(&path).ok();
+}
+
+/// Mixes `mixer` a block at a time until its voices are done or `seconds` of sound have been
+/// asked for; returns the frames that had sound, giving the streaming thread time to keep up.
+fn mix_until_quiet(mixer: &mut Mixer, seconds: f64, rate: u32) -> usize {
+    let mut heard = 0;
+    let blocks = (seconds * f64::from(rate) / 1024.0).ceil() as usize;
+    for _ in 0..blocks {
+        if mixer.voices().is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let (left, _) = mixed(mixer, 1024);
+        heard += left.iter().filter(|v| v.abs() > 0.01).count();
+    }
+    heard
+}
+
+#[test]
+fn a_streamed_sound_plays_from_its_file_to_its_end_or_on_in_a_loop() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-audio-stream-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("long.wav");
+    std::fs::write(&path, wav(8_000, 1.0)).unwrap();
+    let sound = super::Sound::Streamed(Arc::new(super::can_stream(&path).unwrap()));
+
+    let mut mixer = Mixer::at_rate(16_000);
+    mixer.play_sound(&sound, "long.wav", None, 1.0, false, None).unwrap().unwrap();
+    let heard = mix_until_quiet(&mut mixer, 3.0, 16_000);
+    assert!(mixer.voices().is_empty(), "it ends with its file");
+    assert!(heard.abs_diff(16_000) < 400, "a second of sound at the output's rate: {heard} frames");
+
+    mixer.play_sound(&sound, "long.wav", None, 1.0, true, None).unwrap().unwrap();
+    let looped = mix_until_quiet(&mut mixer, 2.5, 16_000);
+    assert_eq!(mixer.voices().len(), 1, "a looping stream goes on");
+    assert!(looped > 30_000, "past its own length: {looped} frames");
+    assert_eq!(mixer.stop(None, Some(mixer.voices()[0].id)), 1);
+
+    std::fs::write(dir.join("broken.wav"), b"not a sound").unwrap();
+    assert!(super::can_stream(&dir.join("broken.wav")).is_err());
+    std::fs::remove_dir_all(&dir).ok();
 }

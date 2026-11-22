@@ -85,6 +85,18 @@ fn check_sound(path: &Path) -> Result<(), String> {
     bayleaf_audio::Clip::decode(&bytes, &extension, 48_000).map(|_| ()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Whether a sound can be played straight from its file.
+#[cfg(feature = "audio")]
+fn streamable(path: &Path) -> Result<(), String> {
+    bayleaf_audio::can_stream(path).map(|_| ())
+}
+
+/// Without sound built in, nothing plays, so streaming is not refused.
+#[cfg(not(feature = "audio"))]
+fn streamable(_: &Path) -> Result<(), String> {
+    Ok(())
+}
+
 /// Without sound built in, a sound is only checked for being a readable file of a fitting size.
 #[cfg(not(feature = "audio"))]
 fn check_sound(path: &Path) -> Result<(), String> {
@@ -333,6 +345,11 @@ fn import_settings_set(session: &mut Session, params: &Value) -> Result<Value, C
                 merge(&mut current, value)?;
                 settings.image = Some(serde_json::from_value(current).map_err(|e| CommandError::BadParams(format!("image: {e}")))?);
             }
+            "sound" if settings.sound.is_some() => {
+                let mut current = serde_json::to_value(&settings.sound).unwrap_or_default();
+                merge(&mut current, value)?;
+                settings.sound = Some(serde_json::from_value(current).map_err(|e| CommandError::BadParams(format!("sound: {e}")))?);
+            }
             other => return Err(CommandError::BadParams(format!("{} has no {other:?} import settings", file.display()))),
         }
     }
@@ -350,6 +367,9 @@ fn import_settings_set(session: &mut Session, params: &Value) -> Result<Value, C
                 pixels.height
             )));
         }
+    }
+    if settings.sound.as_ref().is_some_and(|s| s.stream) {
+        streamable(&file).map_err(CommandError::BadParams)?;
     }
     let path = settings_path(&file);
     std::fs::write(&path, settings.to_text()).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", path.display())))?;

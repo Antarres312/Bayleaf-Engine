@@ -1,7 +1,8 @@
 //! L4: sound for play mode.
 //!
 //! A [`Clip`] is a sound file decoded once (craft-audio: WAV, AIFF, MP3, Opus, AAC and others, and
-//! Ogg Vorbis) and turned into stereo at the output's rate. The [`Mixer`] plays clips as voices:
+//! Ogg Vorbis) and turned into stereo at the output's rate; a long sound may instead be played
+//! straight from its file ([`stream`]). The [`Mixer`] plays them as voices:
 //! each with a volume, looping or not, and, when spatial, quieter with distance and panned by
 //! where it is from the listener. [`Audio`] feeds the mixer to the default output device on a
 //! thread of its own (cpal), or, where there is no device, keeps the voices going silently so play
@@ -18,6 +19,17 @@ use std::time::Duration;
 
 use bayleaf_core::StableId;
 use bayleaf_core::math::DVec3;
+
+pub mod stream;
+
+pub use stream::{Streamed, can_stream};
+
+/// A sound to play: decoded whole, or read from its file as it plays.
+#[derive(Clone, Debug)]
+pub enum Sound {
+    Loaded(Arc<Clip>),
+    Streamed(Arc<Streamed>),
+}
 
 /// Longest sound one clip may hold, in seconds.
 pub const MAX_CLIP_SECONDS: f64 = 600.0;
@@ -111,13 +123,21 @@ pub struct Voice {
     pub owner: Option<StableId>,
     /// Where it came from: a file path, for listings.
     pub source: String,
-    clip: Arc<Clip>,
+    playing: Playing,
+    /// Frames played, counted from its start (or its last loop for a loaded clip).
     position: usize,
     pub looping: bool,
     pub volume: f32,
     /// `None` plays the same on both sides at any distance.
     pub place: Option<Place>,
     gains: [f32; 2],
+}
+
+/// What a voice plays from.
+#[derive(Debug)]
+enum Playing {
+    Clip(Arc<Clip>),
+    Stream(Box<stream::StreamVoice>),
 }
 
 impl Voice {
@@ -128,22 +148,60 @@ impl Voice {
 }
 
 /// The voices playing, mixed into stereo.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Mixer {
     voices: Vec<Voice>,
     next: u64,
     listener: Listener,
+    /// The output's rate, which streamed sounds are read at; [`SILENT_RATE`] until told.
+    rate: u32,
+}
+
+impl Default for Mixer {
+    fn default() -> Self {
+        Self::at_rate(SILENT_RATE)
+    }
 }
 
 impl Mixer {
+    /// A mixer for an output at `rate`.
+    pub fn at_rate(rate: u32) -> Self {
+        Self { voices: Vec::new(), next: 0, listener: Listener::default(), rate: rate.max(1) }
+    }
+
     /// Starts a clip; returns its voice id, or `None` when [`MAX_VOICES`] are already playing.
     pub fn play(&mut self, clip: Arc<Clip>, source: &str, owner: Option<StableId>, volume: f32, looping: bool, place: Option<Place>) -> Option<u64> {
+        self.start(Playing::Clip(clip), source, owner, volume, looping, place)
+    }
+
+    /// Starts a sound, loaded or read from its file; its voice id, `Ok(None)` when
+    /// [`MAX_VOICES`] are already playing, or why a streamed file cannot start.
+    pub fn play_sound(
+        &mut self,
+        sound: &Sound,
+        source: &str,
+        owner: Option<StableId>,
+        volume: f32,
+        looping: bool,
+        place: Option<Place>,
+    ) -> Result<Option<u64>, String> {
+        if self.voices.len() >= MAX_VOICES {
+            return Ok(None);
+        }
+        let playing = match sound {
+            Sound::Loaded(clip) => Playing::Clip(Arc::clone(clip)),
+            Sound::Streamed(file) => Playing::Stream(Box::new(stream::StreamVoice::start(file, self.rate, looping)?)),
+        };
+        Ok(self.start(playing, source, owner, volume, looping, place))
+    }
+
+    fn start(&mut self, playing: Playing, source: &str, owner: Option<StableId>, volume: f32, looping: bool, place: Option<Place>) -> Option<u64> {
         if self.voices.len() >= MAX_VOICES {
             return None;
         }
         self.next += 1;
         let mut voice =
-            Voice { id: self.next, owner, source: source.to_owned(), clip, position: 0, looping, volume: volume.clamp(0.0, 4.0), place, gains: [0.0; 2] };
+            Voice { id: self.next, owner, source: source.to_owned(), playing, position: 0, looping, volume: volume.clamp(0.0, 4.0), place, gains: [0.0; 2] };
         voice.gains = gains(&voice, &self.listener);
         self.voices.push(voice);
         Some(self.next)
@@ -184,7 +242,14 @@ impl Mixer {
     pub fn mix(&mut self, left: &mut [f32], right: &mut [f32]) {
         let frames = left.len().min(right.len());
         for voice in &mut self.voices {
-            let length = voice.clip.frames();
+            let clip = match &mut voice.playing {
+                Playing::Clip(clip) => Arc::clone(clip),
+                Playing::Stream(stream) => {
+                    voice.position += stream.mix(&mut left[..frames], &mut right[..frames], voice.gains);
+                    continue;
+                }
+            };
+            let length = clip.frames();
             let [gl, gr] = voice.gains;
             let mut written = 0;
             while written < frames && length > 0 {
@@ -196,14 +261,17 @@ impl Mixer {
                 }
                 let take = (length - voice.position).min(frames - written);
                 for i in 0..take {
-                    left[written + i] += voice.clip.left[voice.position + i] * gl;
-                    right[written + i] += voice.clip.right[voice.position + i] * gr;
+                    left[written + i] += clip.left[voice.position + i] * gl;
+                    right[written + i] += clip.right[voice.position + i] * gr;
                 }
                 voice.position += take;
                 written += take;
             }
         }
-        self.voices.retain(|v| v.looping || v.position < v.clip.frames());
+        self.voices.retain(|v| match &v.playing {
+            Playing::Clip(clip) => v.looping || v.position < clip.frames(),
+            Playing::Stream(stream) => !stream.is_over(),
+        });
     }
 }
 
@@ -231,6 +299,7 @@ pub struct Audio {
     mixer: Arc<Mutex<Mixer>>,
     rate: u32,
     clips: HashMap<PathBuf, Arc<Clip>>,
+    streams: HashMap<PathBuf, Arc<Streamed>>,
     output: Option<Output>,
     /// Why there is no output, when there is none.
     pub silent_because: Option<String>,
@@ -246,14 +315,24 @@ impl Audio {
     pub fn open() -> Self {
         let mixer = Arc::new(Mutex::new(Mixer::default()));
         match start_output(Arc::clone(&mixer)) {
-            Ok((output, rate)) => Self { mixer, rate, clips: HashMap::new(), output: Some(output), silent_because: None },
-            Err(why) => Self { mixer, rate: SILENT_RATE, clips: HashMap::new(), output: None, silent_because: Some(why) },
+            Ok((output, rate)) => {
+                lock(&mixer).rate = rate.max(1);
+                Self { mixer, rate, clips: HashMap::new(), streams: HashMap::new(), output: Some(output), silent_because: None }
+            }
+            Err(why) => Self { mixer, rate: SILENT_RATE, clips: HashMap::new(), streams: HashMap::new(), output: None, silent_because: Some(why) },
         }
     }
 
     /// Sound that is never heard, at `rate`: for tests and servers.
     pub fn silent(rate: u32) -> Self {
-        Self { mixer: Arc::new(Mutex::new(Mixer::default())), rate, clips: HashMap::new(), output: None, silent_because: Some("silent by request".to_owned()) }
+        Self {
+            mixer: Arc::new(Mutex::new(Mixer::at_rate(rate))),
+            rate,
+            clips: HashMap::new(),
+            streams: HashMap::new(),
+            output: None,
+            silent_because: Some("silent by request".to_owned()),
+        }
     }
 
     pub fn rate(&self) -> u32 {
@@ -281,6 +360,20 @@ impl Audio {
         let clip = Arc::new(Clip::decode(&bytes, &extension, self.rate).map_err(|e| format!("{}: {e}", path.display()))?);
         self.clips.insert(path.to_path_buf(), Arc::clone(&clip));
         Ok(clip)
+    }
+
+    /// The sound in the file at `path`: decoded whole the first time, or, with `stream`, checked
+    /// once and read from the file each time it plays.
+    pub fn sound(&mut self, path: &Path, stream: bool) -> Result<Sound, String> {
+        if !stream {
+            return self.clip(path).map(Sound::Loaded);
+        }
+        if let Some(file) = self.streams.get(path) {
+            return Ok(Sound::Streamed(Arc::clone(file)));
+        }
+        let file = Arc::new(can_stream(path)?);
+        self.streams.insert(path.to_path_buf(), Arc::clone(&file));
+        Ok(Sound::Streamed(file))
     }
 
     /// Works on the mixer.

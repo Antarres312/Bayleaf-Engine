@@ -2330,7 +2330,22 @@ fn files_brought_in_are_checked_copied_with_their_settings_and_placed() {
     {
         assert!(project.join(file).is_file(), "{file} came in");
     }
-    assert!(!project.join("assets/tone.wav.bimport").exists(), "sounds have no settings yet");
+    assert!(project.join("assets/tone.wav.bimport").is_file(), "sounds get settings too: streamed or loaded");
+    // A WAV can be played from its file; a file that is not a sound cannot.
+    registry.execute(&mut session, "asset.importSettings.set", &json!({"path": "assets/tone.wav", "settings": {"sound": {"stream": true}}})).unwrap();
+    let got = registry.execute(&mut session, "asset.importSettings.get", &json!({"path": "assets/tone.wav"})).unwrap();
+    assert_eq!(got["settings"]["sound"]["stream"], true);
+    #[cfg(feature = "audio")]
+    {
+        std::fs::write(project.join("assets/fake.ogg"), b"OggS but not really").unwrap();
+        let fake = registry.execute(&mut session, "asset.importSettings.set", &json!({"path": "assets/fake.ogg", "settings": {"sound": {"stream": true}}}));
+        assert!(fake.unwrap_err().to_string().contains("loaded whole"));
+    }
+    assert_eq!(
+        bayleaf_render::assets::import::SOUND_EXTENSIONS,
+        bayleaf_scene::components::SOUND_EXTENSIONS,
+        "import settings and the Audio Source take the same sounds"
+    );
     let again = registry.execute(&mut session, "asset.import", &json!({"files": [outside.join("logo.png")], "folder": "assets"})).unwrap();
     assert_ne!(again["imported"][0]["path"], "assets/logo.png", "a name already taken is not written over");
     let listed = registry.execute(&mut session, "asset.list", &json!({"path": "assets", "recursive": true})).unwrap();

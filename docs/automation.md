@@ -222,10 +222,12 @@ a number, and a file already in the project stays where it is. The files must be
 roots. Models and images get import settings beside them (`robot.glb.bimport`), read with
 `asset.importSettings.get` and written with `asset.importSettings.set` (`{path, settings: {model?:
 {scale, upAxis: "y" | "z"}, image?: {mipmaps, colorSpace: "color" | "data", compression: "none" | "bc1" |
-"bc3"}}}`); scenes using the file read it again. A data image is read as stored numbers, not as
+"bc3"}, sound?: {stream}}}`); scenes using the file read it again. A data image is read as stored numbers, not as
 sRGB colour (a model's normal and metallic-roughness images always are). BC1 and BC3 keep the image in
 4 x 4 blocks on the GPU (half a byte or a byte a pixel) where the device reads them, else as it is;
-they need sides in multiples of 4, which the command checks. Then
+they need sides in multiples of 4, which the command checks. A streamed sound is read from its file as
+it plays (WAV, AIFF, MP3, Opus and AAC; Ogg Vorbis and FLAC are always loaded whole, and the command
+refuses streaming them), so long music neither waits to be decoded nor takes memory to hold. Then
 `scene.file.place` (`{path, parent?, index?, position?}`) puts a model or a sound in the scene as an
 object, and `scene.image.apply` (`{id, image}`) shows an image on a sprite, or on a mesh through a
 new material made beside the image. Dropping files on the editor runs the same commands.

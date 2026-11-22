@@ -1,7 +1,8 @@
 //! Import settings: a small JSON file beside a model or image brought into a project
 //! (`robot.glb.bimport` beside `robot.glb`), saying how to read it: a model's scale and which way
 //! is up, whether an image gets smaller copies for far away, holds colour or plain numbers, and is
-//! kept block-compressed on the GPU. The loaders apply them, and read the
+//! kept block-compressed on the GPU, and whether a sound is played straight from its file. The
+//! loaders apply them, and read the
 //! file again when the settings change. A file without settings is read with the defaults.
 
 use std::path::{Path, PathBuf};
@@ -26,7 +27,21 @@ pub struct ImportSettings {
     /// For an image (`.png`, `.jpg`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageImport>,
+    /// For a sound (`.wav`, `.ogg`, ...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<SoundImport>,
 }
+
+/// How a sound is played.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoundImport {
+    /// Read from its file as it plays (long music), instead of decoded whole when first played.
+    pub stream: bool,
+}
+
+/// File extensions of sounds, as the scene's Audio Source takes them.
+pub const SOUND_EXTENSIONS: &[&str] = &["wav", "ogg", "flac", "mp3", "aif", "aiff", "opus", "m4a", "aac"];
 
 /// How a model is read.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -102,6 +117,7 @@ pub enum Compression {
 pub enum Imported {
     Model,
     Image,
+    Sound,
 }
 
 impl Imported {
@@ -110,6 +126,7 @@ impl Imported {
         match extension.as_str() {
             e if crate::MODEL_EXTENSIONS.contains(&e) => Some(Imported::Model),
             e if crate::IMAGE_EXTENSIONS.contains(&e) => Some(Imported::Image),
+            e if SOUND_EXTENSIONS.contains(&e) => Some(Imported::Sound),
             _ => None,
         }
     }
@@ -137,6 +154,7 @@ impl ImportSettings {
             version: VERSION,
             model: (kind == Imported::Model).then(ModelImport::default),
             image: (kind == Imported::Image).then(ImageImport::default),
+            sound: (kind == Imported::Sound).then(SoundImport::default),
         })
     }
 

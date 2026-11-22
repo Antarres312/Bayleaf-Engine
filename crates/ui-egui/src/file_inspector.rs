@@ -275,7 +275,13 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         if let Some(image) = &settings.image {
             given.insert("image".to_owned(), serde_json::json!(image));
         }
-        editor.dispatch("asset.importSettings.set", &serde_json::json!({ "path": file.path, "settings": given }), None);
+        if let Some(sound) = &settings.sound {
+            given.insert("sound".to_owned(), serde_json::json!(sound));
+        }
+        if editor.dispatch("asset.importSettings.set", &serde_json::json!({ "path": file.path, "settings": given }), None).is_none() {
+            // Refused (the status line says why): show what is saved again.
+            file.import = ImportSettings::defaults_for(&file.path).map(|defaults| ImportSettings::read_for(&file.path).map(|s| s.unwrap_or(defaults)));
+        }
     }
     let path = file.path.clone();
     // Something on the card (Edit on the scene's lighting) may have chosen another file to show.
@@ -326,7 +332,8 @@ fn interface_preview(ui: &mut egui::Ui, editor: &mut Editor, path: &Path) {
     ui.add_space(theme::SECTION_GAP);
 }
 
-/// A model's scale and up axis, or an image's mipmaps, colour space and compression. True when a change is finished (a drag let
+/// A model's scale and up axis, an image's mipmaps, colour space and compression, or whether a
+/// sound streams. True when a change is finished (a drag let
 /// go, a number typed in, a choice made), so the file is not written on every step of a drag.
 fn import_settings(ui: &mut egui::Ui, settings: &mut ImportSettings) -> bool {
     let t = theme::tokens(ui);
@@ -381,6 +388,12 @@ fn import_settings(ui: &mut egui::Ui, settings: &mut ImportSettings) -> bool {
                     }
                 });
             });
+        }
+        if let Some(sound) = settings.sound.as_mut() {
+            done |= ui
+                .checkbox(&mut sound.stream, tl("Stream"))
+                .on_hover_text(tl("Read from the file as it plays, for long music: WAV, AIFF, MP3, Opus and AAC. Off decodes it whole the first time it plays"))
+                .changed();
         }
     });
     done

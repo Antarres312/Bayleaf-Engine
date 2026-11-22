@@ -99,10 +99,12 @@ mod imp {
         session.play.as_mut().and_then(|p| p.audio.as_mut()).ok_or_else(|| "play mode is not running".to_owned())
     }
 
-    /// The sound file of a project path, read once: inside the readable folders.
-    fn clip(session: &mut Session, relative: &str) -> Result<std::sync::Arc<bayleaf_audio::Clip>, String> {
+    /// The sound file of a project path, inside the readable folders: decoded once, or played
+    /// straight from the file when its import settings say to stream it.
+    fn clip(session: &mut Session, relative: &str) -> Result<bayleaf_audio::Sound, String> {
         let path = session.allowed(&session.script_dir().join(relative), crate::confine::Access::Read).map_err(|e| e.to_string())?;
-        audio(session)?.clip(&path)
+        let stream = bayleaf_render::assets::import::ImportSettings::read_for(&path)?.and_then(|s| s.sound).is_some_and(|s| s.stream);
+        audio(session)?.sound(&path, stream)
     }
 
     /// Plays `object`'s Audio Source; returns the sound's id.
@@ -115,7 +117,7 @@ mod imp {
         let at = session.scene.world_matrix(object).map_or(DVec3::ZERO, |m| m.w_axis.truncate());
         let place = source.spatial.then_some(Place { at, range: f64::from(source.range) });
         audio(session)?
-            .with(|mixer| mixer.play(clip, &source.clip, Some(object), source.volume, source.looping, place))
+            .with(|mixer| mixer.play_sound(&clip, &source.clip, Some(object), source.volume, source.looping, place))?
             .ok_or_else(|| format!("{} sounds already play", bayleaf_audio::MAX_VOICES))
     }
 
@@ -128,7 +130,7 @@ mod imp {
         let clip = clip(session, relative)?;
         let place = Place { at: DVec3::from(position.map(f64::from)), range: 30.0 };
         audio(session)?
-            .with(|mixer| mixer.play(clip, relative, None, volume, false, Some(place)))
+            .with(|mixer| mixer.play_sound(&clip, relative, None, volume, false, Some(place)))?
             .ok_or_else(|| format!("{} sounds already play", bayleaf_audio::MAX_VOICES))
     }
 
