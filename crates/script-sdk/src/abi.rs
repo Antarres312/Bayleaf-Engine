@@ -15,6 +15,8 @@ mod raw {
         pub fn property_vector(key_ptr: *const u8, key_len: usize, out: *mut f32) -> i32;
         pub fn property_text(key_ptr: *const u8, key_len: usize, out: *mut u8, cap: usize) -> i32;
         pub fn property_object(key_ptr: *const u8, key_len: usize) -> i32;
+        pub fn property_set(key_ptr: *const u8, key_len: usize, x: f32, y: f32, z: f32) -> i32;
+        pub fn property_set_text(key_ptr: *const u8, key_len: usize, text_ptr: *const u8, text_len: usize) -> i32;
         pub fn time() -> f64;
         pub fn key_down(name_ptr: *const u8, name_len: usize) -> i32;
         pub fn pointer(out: *mut f32) -> i32;
@@ -81,6 +83,12 @@ mod raw {
         0
     }
     pub unsafe fn property_object(_: *const u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn property_set(_: *const u8, _: usize, _: f32, _: f32, _: f32) -> i32 {
+        0
+    }
+    pub unsafe fn property_set_text(_: *const u8, _: usize, _: *const u8, _: usize) -> i32 {
         0
     }
     pub unsafe fn time() -> f64 {
@@ -253,6 +261,16 @@ pub(crate) fn property_text(name: &str) -> String {
 pub(crate) fn property_object(name: &str) -> i32 {
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::property_object(name.as_ptr(), name.len()) }
+}
+
+pub(crate) fn property_set(name: &str, [x, y, z]: [f32; 3]) -> bool {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::property_set(name.as_ptr(), name.len(), x, y, z) != 0 }
+}
+
+pub(crate) fn property_set_text(name: &str, text: &str) -> bool {
+    // SAFETY: both pointers and lengths describe `name` and `text`; the host only reads.
+    unsafe { raw::property_set_text(name.as_ptr(), name.len(), text.as_ptr(), text.len()) != 0 }
 }
 
 pub(crate) fn time() -> f64 {

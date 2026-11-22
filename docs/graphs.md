@@ -91,10 +91,13 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
 - **On Start** and **On Update** begin chains of actions joined by flow links. On Update's
   **Step Seconds** output is the step length.
 - **Branch** continues with True or False.
-- **Property** nodes declare values that the Inspector shows per object, with a default: a number,
-  or a **Whole Number**, **True/False**, **Vector**, **Color**, **Text** or **Object Property** (an
-  object of the scene chosen per object, from a list or by dragging it from the hierarchy; Found
-  is false while none is chosen). Get and Set Component read and set another script's number,
+- **Properties** are values the Inspector shows per object. The script declares each in its panel
+  with a name, a type (number, whole number, true/false, vector, colour, text or object) and a
+  default (graph version 5; older scripts' Property nodes move their defaults there when opened).
+  A **Property** node reads one (for an Object Property, the object of the scene chosen per object,
+  from a list or by dragging it from the hierarchy; Found is false while none is chosen), and a
+  **Set Property** node sets it on this object for the rest of play.
+- **Negate** turns the sign of a number, a whole number or a vector. Get and Set Component read and set another script's number,
   whole-number, true/false, vector and colour properties as pins of those types.
 - **Set Variable** keeps a number under a name and **Variable** reads it; **Set Vector Variable**
   and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False
@@ -217,6 +220,9 @@ graph with every node kind and runs it.
 | `graph.variable.add` | `{name, type, start?}`: declares a visual script variable | yes |
 | `graph.variable.set` | `{name, rename?, start?}`; a rename renames it on its nodes too | yes |
 | `graph.variable.remove` | `{name}`; its nodes keep the name and start from zero | yes |
+| `graph.property.add` | `{name, type, default?}`: declares a visual script property | yes |
+| `graph.property.set` | `{name, rename?, default?}`; a rename renames it on its nodes too | yes |
+| `graph.property.remove` | `{name}`; its nodes stay and read zero where no object sets it | yes |
 | `graph.function.add` | `{name}`: declares a function with no inputs or outputs | yes |
 | `graph.function.set` | `{name, rename?, inputs?, outputs?}`, inputs and outputs `[{name, type}]`; its nodes follow, and links to pins that went away go | yes |
 | `graph.function.remove` | `{name}`; its nodes stay and say they name no function | yes |
@@ -247,8 +253,9 @@ steps. Automation file access to graphs is confined like any other file (`docs/a
 
 A visual script has a panel left of its canvas. **Variables** lists the script's variables: rename
 one (its nodes follow), set where it **Starts at**, place a node that reads it (**Get**) or sets it
-(**Set**), remove it, or **Add Variable** of a type. **Properties** lists the Property nodes with
-their types and defaults (**Add Property** places another, of a type), **Functions** lists the
+(**Set**), remove it, or **Add Variable** of a type. **Properties** lists the script's properties: rename
+one (its nodes follow), set its **Default**, place a node that reads it (**Get**) or sets it while
+the game plays (**Set**), remove it, or **Add Property** of a type; **Functions** lists the
 functions with their inputs and outputs (**Add Function** declares one and places its Function and
 Return nodes; **Add Input** and **Add Output** of a type; **Call** places a Call Function node), and
 **Script** has the **Menu path** field,

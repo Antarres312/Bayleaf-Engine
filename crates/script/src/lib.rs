@@ -1466,6 +1466,40 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                 Ok(i32::try_from(bytes.len()).unwrap_or(i32::MAX))
             },
         )?;
+        linker.func_wrap(
+            "bayleaf",
+            "property_set",
+            |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, x: f32, y: f32, z: f32| -> Result<i32, wasmi::Error> {
+                let key = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("property_set: {m}")))?;
+                if ![x, y, z].iter().all(|v| v.is_finite()) {
+                    return Err(fault(&mut caller, "property_set: give finite numbers".to_owned()));
+                }
+                let Some((ty, slot)) = caller.data_mut().properties.get_mut(&key) else { return Ok(0) };
+                match PropertyValue::from_numbers(*ty, [x, y, z]) {
+                    Some(value) => {
+                        *slot = value;
+                        Ok(1)
+                    }
+                    None => Ok(0),
+                }
+            },
+        )?;
+        linker.func_wrap(
+            "bayleaf",
+            "property_set_text",
+            |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, t_ptr: i32, t_len: i32| -> Result<i32, wasmi::Error> {
+                let key = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("property_set_text: {m}")))?;
+                let text = read_text(&caller, t_ptr, t_len, bayleaf_scene::components::MAX_PROPERTY_TEXT)
+                    .map_err(|m| fault(&mut caller, format!("property_set_text: {m}")))?;
+                let Some((ty, slot)) = caller.data_mut().properties.get_mut(&key) else { return Ok(0) };
+                let value = PropertyValue::Text(text);
+                if !value.fits(*ty) {
+                    return Ok(0);
+                }
+                *slot = value;
+                Ok(1)
+            },
+        )?;
         linker.func_wrap("bayleaf", "property_object", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
             let key = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("property_object: {m}")))?;
             let state = caller.data();

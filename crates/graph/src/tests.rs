@@ -51,6 +51,7 @@ const CATALOG: Catalog = Catalog {
     ],
     starter: &[("out", [300.0, 0.0])],
     variant: crate::no_variant,
+    upgrade: crate::no_upgrade,
 };
 
 fn link(from: u32, from_pin: &str, to: u32, to_pin: &str) -> Link {

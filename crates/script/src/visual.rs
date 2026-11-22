@@ -58,6 +58,40 @@ pub const TEXT_VARIABLE_BYTES: u32 = 1024;
 /// The object an action works on or a value is read from, from a search or This Object; when it is not
 /// linked, the node uses the object named in Object Name (or its own default).
 const TARGET: PinDef = pin("target", "Object", PinType::Object);
+/// The property a Property or Set Property node names, declared in the script's panel.
+const PROPERTY_NAME: SettingDef = SettingDef { name: "name", label: "Property", kind: SettingKind::Name("") };
+
+/// A Property node of one type: the property's value as an output.
+macro_rules! get_property {
+    ($kind:literal, $label:literal, $description:literal, $ty:expr) => {
+        NodeDef {
+            kind: $kind,
+            label: $label,
+            category: "Properties",
+            description: $description,
+            inputs: &[],
+            outputs: &[pin("value", "Value", $ty)],
+            settings: &[PROPERTY_NAME],
+            unique: false,
+        }
+    };
+}
+
+/// A Set Property node of one type: sets the property to its Value input.
+macro_rules! set_property {
+    ($kind:literal, $label:literal, $description:literal, $value:expr) => {
+        NodeDef {
+            kind: $kind,
+            label: $label,
+            category: "Properties",
+            description: $description,
+            inputs: &[RUN, $value],
+            outputs: &[THEN],
+            settings: &[PROPERTY_NAME],
+            unique: false,
+        }
+    };
+}
 /// The function a Function, Return or Call Function node belongs to, and its pins (`name:type`),
 /// kept in step with the function by `graph.function.set`.
 pub(crate) const FUNCTION_SETTINGS: [SettingDef; 3] = [
@@ -94,6 +128,7 @@ pub const CATALOG: Catalog = Catalog {
     extension: "bscript",
     starter: &[("start", [40.0, 40.0]), ("update", [40.0, 200.0])],
     variant: fields::variant,
+    upgrade,
     nodes: &[
         node(
             "init",
@@ -356,94 +391,64 @@ pub const CATALOG: Catalog = Catalog {
             &[pin("vector", "Vector", Vec3)],
             &[pin("x", "X", Float), pin("y", "Y", Float), pin("z", "Z", Float)],
         ),
-        NodeDef {
-            kind: "property",
-            label: "Property",
-            category: "Values",
-            description: "A number set per object in the Inspector, with a default.",
-            inputs: &[],
-            outputs: &[pin("value", "Value", Float)],
-            settings: &[
-                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("speed") },
-                SettingDef { name: "default", label: "Default", kind: SettingKind::Float(1.0) },
-            ],
-            unique: false,
-        },
-        NodeDef {
-            kind: "wholeProperty",
-            label: "Whole Number Property",
-            category: "Values",
-            description: "A whole number set per object in the Inspector, with a default.",
-            inputs: &[],
-            outputs: &[pin("value", "Value", PinType::Int)],
-            settings: &[
-                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("count") },
-                SettingDef { name: "default", label: "Default", kind: SettingKind::Float(0.0) },
-            ],
-            unique: false,
-        },
-        NodeDef {
-            kind: "flagProperty",
-            label: "True/False Property",
-            category: "Values",
-            description: "True or false, set per object in the Inspector, with a default.",
-            inputs: &[],
-            outputs: &[pin("value", "Value", Bool)],
-            settings: &[
-                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("enabled") },
-                SettingDef { name: "default", label: "Default", kind: SettingKind::Choice(&["False", "True"]) },
-            ],
-            unique: false,
-        },
-        NodeDef {
-            kind: "vectorProperty",
-            label: "Vector Property",
-            category: "Values",
-            description: "A vector set per object in the Inspector, with a default.",
-            inputs: &[],
-            outputs: &[pin("value", "Value", Vec3)],
-            settings: &[
-                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("offset") },
-                SettingDef { name: "default", label: "Default", kind: SettingKind::Vec3([0.0; 3]) },
-            ],
-            unique: false,
-        },
-        NodeDef {
-            kind: "colorProperty",
-            label: "Color Property",
-            category: "Values",
-            description: "A colour set per object in the Inspector, with a default.",
-            inputs: &[],
-            outputs: &[pin("value", "Value", PinType::Color)],
-            settings: &[
-                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("tint") },
-                SettingDef { name: "default", label: "Default", kind: SettingKind::Color([1.0; 3]) },
-            ],
-            unique: false,
-        },
-        NodeDef {
-            kind: "textProperty",
-            label: "Text Property",
-            category: "Values",
-            description: "Text set per object in the Inspector, with a default.",
-            inputs: &[],
-            outputs: &[pin("value", "Value", PinType::Text)],
-            settings: &[
-                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("label") },
-                SettingDef { name: "default", label: "Default", kind: SettingKind::Text("") },
-            ],
-            unique: false,
-        },
+        get_property!("property", "Property", "A number property: set per object in the Inspector, else its default in the script's panel.", Float),
+        get_property!("wholeProperty", "Whole Number Property", "A whole-number property: set per object in the Inspector, else its default.", PinType::Int),
+        get_property!("flagProperty", "True/False Property", "A true/false property: set per object in the Inspector, else its default.", Bool),
+        get_property!("vectorProperty", "Vector Property", "A vector property: set per object in the Inspector, else its default.", Vec3),
+        get_property!("colorProperty", "Color Property", "A colour property: set per object in the Inspector, else its default.", PinType::Color),
+        get_property!("textProperty", "Text Property", "A text property: set per object in the Inspector, else its default.", PinType::Text),
         NodeDef {
             kind: "objectProperty",
             label: "Object Property",
-            category: "Values",
-            description: "An object of the scene chosen per object in the Inspector (by its name); none (Found false) when it is not chosen or not there.",
+            category: "Properties",
+            description: "An object property: the object of the scene chosen per object in the Inspector (by its name); none (Found false) when none is chosen or it is not there.",
             inputs: &[],
             outputs: &[pin("value", "Value", PinType::Object), pin("found", "Found", Bool)],
-            settings: &[SettingDef { name: "name", label: "Name", kind: SettingKind::Name("target") }],
+            settings: &[PROPERTY_NAME],
             unique: false,
         },
+        set_property!(
+            "setProperty",
+            "Set Property",
+            "Sets this script's number property on this object, for the rest of play.",
+            number("value", "Value", Float, 0.0)
+        ),
+        set_property!(
+            "setWholeProperty",
+            "Set Whole Number Property",
+            "Sets this script's whole-number property on this object, for the rest of play.",
+            PinDef::with("value", "Value", PinType::Int, PinDefault::Int(0))
+        ),
+        set_property!(
+            "setFlagProperty",
+            "Set True/False Property",
+            "Sets this script's true/false property on this object, for the rest of play.",
+            PinDef::with("value", "Value", Bool, PinDefault::Bool(false))
+        ),
+        set_property!(
+            "setVectorProperty",
+            "Set Vector Property",
+            "Sets this script's vector property on this object, for the rest of play.",
+            vector("value", "Value", [0.0; 3])
+        ),
+        set_property!(
+            "setColorProperty",
+            "Set Color Property",
+            "Sets this script's colour property on this object, for the rest of play.",
+            PinDef::with("value", "Value", PinType::Color, PinDefault::Color([1.0; 3]))
+        ),
+        set_property!(
+            "setTextProperty",
+            "Set Text Property",
+            "Sets this script's text property on this object, for the rest of play.",
+            text("value", "Value", "")
+        ),
+        set_property!(
+            "setObjectProperty",
+            "Set Object Property",
+            "Sets this script's object property on this object to the linked object (by its name), for the rest of play.",
+            pin("value", "Object", PinType::Object)
+        ),
         NodeDef {
             kind: "functionStart",
             label: "Function",
@@ -982,25 +987,93 @@ pub fn variable_kinds(ty: VariableType) -> [&'static str; 2] {
     }
 }
 
-/// The Property node kind for each property type.
-pub const PROPERTY_KINDS: [(PropertyType, &str); 7] = [
-    (PropertyType::Number, "property"),
-    (PropertyType::WholeNumber, "wholeProperty"),
-    (PropertyType::TrueFalse, "flagProperty"),
-    (PropertyType::Vector, "vectorProperty"),
-    (PropertyType::Color, "colorProperty"),
-    (PropertyType::Text, "textProperty"),
-    (PropertyType::Object, "objectProperty"),
-];
-
-/// The property type a node kind declares, if it is a Property node.
-pub fn property_type(kind: &str) -> Option<PropertyType> {
-    PROPERTY_KINDS.iter().find(|(_, k)| *k == kind).map(|(ty, _)| *ty)
+/// The Property and Set Property node kinds for each property type.
+pub fn property_kinds(ty: VariableType) -> [&'static str; 2] {
+    match ty {
+        VariableType::Number => ["property", "setProperty"],
+        VariableType::WholeNumber => ["wholeProperty", "setWholeProperty"],
+        VariableType::TrueFalse => ["flagProperty", "setFlagProperty"],
+        VariableType::Vector => ["vectorProperty", "setVectorProperty"],
+        VariableType::Color => ["colorProperty", "setColorProperty"],
+        VariableType::Text => ["textProperty", "setTextProperty"],
+        VariableType::Object => ["objectProperty", "setObjectProperty"],
+    }
 }
 
-/// The Property node kind for a type.
-pub fn property_kind(ty: PropertyType) -> &'static str {
-    PROPERTY_KINDS.iter().find(|(t, _)| *t == ty).map_or("property", |(_, k)| *k)
+/// The property type a Property or Set Property node kind reads or sets.
+pub fn property_type(kind: &str) -> Option<VariableType> {
+    VariableType::ALL.into_iter().find(|ty| property_kinds(*ty).contains(&kind))
+}
+
+/// How the scene and the Inspector call a property of this type.
+pub fn scene_property_type(ty: VariableType) -> PropertyType {
+    match ty {
+        VariableType::Number => PropertyType::Number,
+        VariableType::WholeNumber => PropertyType::WholeNumber,
+        VariableType::TrueFalse => PropertyType::TrueFalse,
+        VariableType::Vector => PropertyType::Vector,
+        VariableType::Color => PropertyType::Color,
+        VariableType::Text => PropertyType::Text,
+        VariableType::Object => PropertyType::Object,
+    }
+}
+
+/// A declared default as `bayleaf_describe` lists it: an object property's none is `""`, a colour
+/// stays within 0 to 1.
+fn described_default(ty: VariableType, value: &serde_json::Value) -> serde_json::Value {
+    match ty {
+        VariableType::Object => serde_json::json!(""),
+        VariableType::Color => {
+            let parts: Vec<f32> = (0..3).map(|i| value.get(i).and_then(bayleaf_graph::as_f32).unwrap_or(1.0).clamp(0.0, 1.0)).collect();
+            serde_json::json!(parts)
+        }
+        _ => value.clone(),
+    }
+}
+
+/// What a Property node's name was before files said otherwise, by kind (graphs before version 5).
+const OLD_PROPERTY_NAMES: [(&str, &str); 7] = [
+    ("property", "speed"),
+    ("wholeProperty", "count"),
+    ("flagProperty", "enabled"),
+    ("vectorProperty", "offset"),
+    ("colorProperty", "tint"),
+    ("textProperty", "label"),
+    ("objectProperty", "target"),
+];
+
+/// Moves what visual scripts before version 5 kept on their Property nodes (each one's name and
+/// default) into the script's declared properties; the first node of a name gives its default.
+fn upgrade(graph: &mut Graph, read: u32) {
+    if read >= 5 {
+        return;
+    }
+    let mut declared = Vec::new();
+    for node in &mut graph.nodes {
+        let Some(ty) = property_type(&node.kind) else { continue };
+        let old_name = OLD_PROPERTY_NAMES.iter().find(|(k, _)| *k == node.kind).map_or("speed", |(_, n)| *n);
+        let name = node.values.get("name").and_then(serde_json::Value::as_str).unwrap_or(old_name).to_owned();
+        node.values.insert("name".to_owned(), serde_json::json!(name));
+        let old = node.values.remove("default");
+        let default = match (ty, old) {
+            (VariableType::Number, Some(v)) => serde_json::json!(bayleaf_graph::as_f32(&v).unwrap_or(1.0)),
+            (VariableType::Number, None) => serde_json::json!(1.0),
+            (VariableType::WholeNumber, v) => serde_json::json!(v.as_ref().and_then(bayleaf_graph::as_f32).unwrap_or(0.0).round() as i32),
+            (VariableType::TrueFalse, v) => serde_json::json!(v.as_ref().and_then(serde_json::Value::as_str) == Some("True")),
+            (VariableType::Text, v) => serde_json::json!(v.as_ref().and_then(serde_json::Value::as_str).unwrap_or_default()),
+            (VariableType::Object, _) => serde_json::Value::Null,
+            (VariableType::Vector | VariableType::Color, Some(v)) if ty.fits(&v) => v,
+            (_, _) => ty.zero(),
+        };
+        if !declared.iter().any(|(n, _, _): &(String, VariableType, serde_json::Value)| *n == name) {
+            declared.push((name, ty, default));
+        }
+    }
+    for (name, ty, default) in declared {
+        if graph.property(&name).is_none() && ty.fits(&default) {
+            let _ = graph.add_property(&name, ty, Some(default));
+        }
+    }
 }
 
 pub fn compile(graph: &Graph) -> Result<Vec<u8>, Vec<Problem>> {
@@ -1020,23 +1093,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         globals: Vec::new(),
         text_vars: std::collections::BTreeMap::new(),
     };
-    // Text variables keep their text in a buffer of their own, holding what they start as.
-    let mut starts: std::collections::BTreeMap<String, String> = graph
-        .nodes
-        .iter()
-        .filter(|n| variable_kinds(VariableType::Text).contains(&n.kind.as_str()))
-        .map(|n| (c.setting_text(n.id, "name", "label"), String::new()))
-        .collect();
-    starts.extend(graph.variables.iter().filter(|v| v.ty == VariableType::Text).map(|v| (v.name.clone(), v.start.as_str().unwrap_or_default().to_owned())));
-    for (name, start) in starts {
-        let mut end = start.len().min(TEXT_VARIABLE_BYTES as usize);
-        while !start.is_char_boundary(end) {
-            end -= 1;
-        }
-        let bytes = &start.as_bytes()[..end];
-        let (at, len) = c.reserve(bytes, TEXT_VARIABLE_BYTES - end as u32);
-        c.text_vars.insert(name, (at, len));
-    }
+    declare_storage(&mut c);
     let mut problems = Vec::new();
     let mut init = String::new();
     let mut start = String::new();
@@ -1094,9 +1151,11 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         }
     }
     let functions = compile_functions(&mut c, &mut problems);
-    // Property nodes declare properties even when nothing reads them yet.
+    // Nodes naming a property that is not declared still declare it, at the type's zero.
     for node in graph.nodes.iter().filter(|n| property_type(&n.kind).is_some()) {
-        c.declare_property(node.id);
+        if let Err(p) = c.property_of(node.id) {
+            problems.push(p);
+        }
     }
     if !problems.is_empty() {
         return Err(problems);
@@ -1328,27 +1387,23 @@ impl Compiler<'_> {
         self.graph.function(&name).cloned().ok_or_else(|| Problem::on(node, format!("this script has no function {name}")))
     }
 
-    /// Declares the property a Property node names, once, with its type and default.
-    fn declare_property(&mut self, node: u32) -> String {
-        let ty = self.graph.node(node).and_then(|n| property_type(&n.kind)).unwrap_or_default();
-        let name = self.setting_text(node, "name", "speed");
-        let three = |c: &Self, fallback: f32| -> [f32; 3] {
-            let value = c.graph.value(node, "default");
-            std::array::from_fn(|i| value.and_then(|v| v.get(i)).and_then(bayleaf_graph::as_f32).unwrap_or(fallback))
-        };
-        let default = match ty {
-            PropertyType::Number => serde_json::json!(self.setting_number(node, "default", 1.0)),
-            PropertyType::WholeNumber => serde_json::json!(self.setting_number(node, "default", 0.0).round() as i32),
-            PropertyType::TrueFalse => serde_json::json!(self.setting_text(node, "default", "False") == "True"),
-            PropertyType::Vector => serde_json::json!(three(self, 0.0)),
-            PropertyType::Color => serde_json::json!(three(self, 1.0).map(|c| c.clamp(0.0, 1.0))),
-            PropertyType::Text => serde_json::json!(self.setting_text(node, "default", "")),
-            PropertyType::Object => serde_json::json!(""),
-        };
-        if !self.properties.iter().any(|(n, _, _)| *n == name) {
-            self.properties.push((name.clone(), ty, default));
+    /// The property a Property or Set Property node names, after checking its type: a declared one,
+    /// or one the node declares at the type's zero.
+    fn property_of(&mut self, node: u32) -> Result<String, Problem> {
+        let ty = self.graph.node(node).and_then(|n| property_type(&n.kind)).unwrap_or(VariableType::Number);
+        let name = self.setting_text(node, "name", "");
+        if name.is_empty() {
+            return Err(Problem::on(node, "choose a property"));
         }
-        name
+        match self.graph.property(&name) {
+            Some(declared) if declared.ty != ty => Err(Problem::on(node, format!("{name} is a {} property, not a {}", declared.ty.label(), ty.label()))),
+            _ => {
+                if !self.properties.iter().any(|(n, _, _)| *n == name) {
+                    self.properties.push((name.clone(), scene_property_type(ty), described_default(ty, &ty.zero())));
+                }
+                Ok(name)
+            }
+        }
     }
 
     /// The actions that follow the flow output `pin` of `node`.
@@ -1578,6 +1633,26 @@ impl Compiler<'_> {
                 let _ = writeln!(code, "{indent}(if {condition}\n{indent}  (then\n{yes}{indent}  )\n{indent}  (else\n{no}{indent}  ))");
                 return Ok(code);
             }
+            "setProperty" | "setWholeProperty" | "setFlagProperty" | "setVectorProperty" | "setColorProperty" | "setTextProperty" | "setObjectProperty" => {
+                let name = self.property_of(next)?;
+                let ty = property_type(&n.kind).unwrap_or(VariableType::Number);
+                let (at, len) = self.text(name.as_bytes());
+                let key = format!("(i32.const {at}) (i32.const {len})");
+                let value = self.input(next, "value")?;
+                let zero = lit(0.0);
+                let set = match ty {
+                    VariableType::Text => format!("(call $property_set_string {key} {})", as_text(next, value)?),
+                    VariableType::Object => format!("(call $property_set_string {key} (call $name {}))", as_object(next, value)?),
+                    VariableType::Number => format!("(call $property_set {key} {} {zero} {zero})", as_float(next, value)?),
+                    VariableType::WholeNumber => format!("(call $property_set {key} (f32.convert_i32_s {}) {zero} {zero})", as_int(next, value)?),
+                    VariableType::TrueFalse => format!("(call $property_set {key} (f32.convert_i32_u {}) {zero} {zero})", as_bool(next, value)?),
+                    VariableType::Vector | VariableType::Color => {
+                        let [x, y, z] = as_vec(next, value)?;
+                        format!("(call $property_set {key} {x} {y} {z})")
+                    }
+                };
+                let _ = writeln!(code, "{indent}(drop {set})");
+            }
             "callFunction" => {
                 let function = self.function_of(next)?;
                 let mut args = Vec::new();
@@ -1744,7 +1819,7 @@ impl Compiler<'_> {
                 })
             }
             "property" | "wholeProperty" | "flagProperty" | "vectorProperty" | "colorProperty" | "textProperty" | "objectProperty" => {
-                let name = self.declare_property(node);
+                let name = self.property_of(node)?;
                 let (at, len) = self.text(name.as_bytes());
                 let key = format!("(i32.const {at}) (i32.const {len})");
                 match n.kind.as_str() {
@@ -2009,6 +2084,31 @@ fn zip(node: u32, a: Val, b: Val, op: impl Fn(&str, &str) -> String) -> Result<V
     })
 }
 
+/// What the script keeps before any code: its declared properties, in the order the panel lists
+/// them, and a buffer of its own for each text variable, holding what it starts as.
+fn declare_storage(c: &mut Compiler<'_>) {
+    let graph = c.graph;
+    for p in &graph.properties {
+        c.properties.push((p.name.clone(), scene_property_type(p.ty), described_default(p.ty, &p.default)));
+    }
+    let mut starts: std::collections::BTreeMap<String, String> = graph
+        .nodes
+        .iter()
+        .filter(|n| variable_kinds(VariableType::Text).contains(&n.kind.as_str()))
+        .map(|n| (c.setting_text(n.id, "name", "label"), String::new()))
+        .collect();
+    starts.extend(graph.variables.iter().filter(|v| v.ty == VariableType::Text).map(|v| (v.name.clone(), v.start.as_str().unwrap_or_default().to_owned())));
+    for (name, start) in starts {
+        let mut end = start.len().min(TEXT_VARIABLE_BYTES as usize);
+        while !start.is_char_boundary(end) {
+            end -= 1;
+        }
+        let bytes = &start.as_bytes()[..end];
+        let (at, len) = c.reserve(bytes, TEXT_VARIABLE_BYTES - end as u32);
+        c.text_vars.insert(name, (at, len));
+    }
+}
+
 /// Each function as a WebAssembly function: its inputs as parameters, its outputs as results.
 fn compile_functions(c: &mut Compiler<'_>, problems: &mut Vec<Problem>) -> String {
     let graph = c.graph;
@@ -2160,6 +2260,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "property_vector" (func $property_vector (param i32 i32 i32) (result i32)))
   (import "bayleaf" "property_text" (func $property_text (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "property_object" (func $property_object (param i32 i32) (result i32)))
+  (import "bayleaf" "property_set" (func $property_set (param i32 i32 f32 f32 f32) (result i32)))
+  (import "bayleaf" "property_set_text" (func $property_set_text (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "time" (func $time (result f64)))
   (import "bayleaf" "key_down" (func $key_down (param i32 i32) (result i32)))
   (import "bayleaf" "pointer" (func $pointer (param i32) (result i32)))
@@ -2468,6 +2570,9 @@ const PRELUDE: &str = r#"(module
   (func $property_part (param $a i32) (param $l i32) (param $i i32) (result f32)
     (drop (call $property_vector (local.get $a) (local.get $l) (i32.const 192)))
     (f32.load (i32.add (i32.const 192) (i32.shl (local.get $i) (i32.const 2)))))
+  ;; Sets a text (or object name) property to text $t.
+  (func $property_set_string (param $a i32) (param $l i32) (param $t i64) (result i32)
+    (call $property_set_text (local.get $a) (local.get $l) (call $tp (local.get $t)) (call $tl (local.get $t))))
   ;; A text property, copied onto the heap.
   (func $property_string (param $a i32) (param $l i32) (result i64) (local $n i32) (local $p i32)
     (local.set $n (call $property_text (local.get $a) (local.get $l) (i32.const 0) (i32.const 0)))

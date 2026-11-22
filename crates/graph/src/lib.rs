@@ -16,9 +16,10 @@ use serde_json::Value;
 /// `format` field of graph files.
 pub const FORMAT: &str = "bayleaf.graph";
 /// Current graph file version. Version 2 added declared `variables`; version 3 moved a visual script's
-/// Menu Path node into `menu`; version 4 added `functions`. Older files still read (a Menu Path node
-/// becomes `menu`).
-pub const VERSION: u32 = 4;
+/// Menu Path node into `menu`; version 4 added `functions`; version 5 added declared `properties`.
+/// Older files still read: a Menu Path node becomes `menu`, and a catalog's `upgrade` moves what its
+/// own nodes kept (a visual script's Property nodes' defaults become `properties`).
+pub const VERSION: u32 = 5;
 /// The node kind versions before 3 kept a visual script's menu path in, as its `path` value.
 const OLD_MENU_NODE: &str = "menuPath";
 /// Longest `menu`, in characters.
@@ -199,7 +200,13 @@ pub struct Catalog {
     /// A node's own pins when they depend on its settings (Get Component shows the fields of the
     /// component it names); `None` for the kind's pins. See `no_variant`.
     pub variant: fn(&Node) -> Option<&'static NodeDef>,
+    /// Moves what this domain's nodes kept in files older than [`VERSION`] (the version read is
+    /// given) into where it belongs now. See `no_upgrade`.
+    pub upgrade: fn(&mut Graph, u32),
 }
+
+/// For catalogs whose files need nothing moved between versions.
+pub fn no_upgrade(_: &mut Graph, _: u32) {}
 
 /// For catalogs whose node kinds always have the same pins.
 pub fn no_variant(_: &Node) -> Option<&'static NodeDef> {
@@ -354,7 +361,24 @@ pub struct Graph {
     /// Functions a visual script declares: what each takes and gives back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub functions: Vec<Function>,
+    /// Properties a visual script declares: values the Inspector sets per object, with defaults.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<Property>,
 }
+
+/// A property a visual script declares: a value the Inspector sets per object, its type and the
+/// default it has where the object sets none. An object property's default is none (`null`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Property {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: VariableType,
+    pub default: Value,
+}
+
+/// Most properties a graph declares.
+pub const MAX_PROPERTIES: usize = 256;
 
 /// What a variable holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -637,6 +661,63 @@ impl Graph {
         Ok(())
     }
 
+    pub fn property(&self, name: &str) -> Option<&Property> {
+        self.properties.iter().find(|p| p.name == name)
+    }
+
+    /// Declares a property; `default` defaults to the type's zero.
+    pub fn add_property(&mut self, name: &str, ty: VariableType, default: Option<Value>) -> Result<(), GraphError> {
+        check_variable_name(name).map_err(|_| GraphError::Refused(format!("property name {name:?} must be 1 to 64 letters, digits or _")))?;
+        if self.property(name).is_some() {
+            return Err(GraphError::Refused(format!("there is already a property {name}")));
+        }
+        if self.properties.len() >= MAX_PROPERTIES {
+            return Err(GraphError::Refused(format!("a graph declares at most {MAX_PROPERTIES} properties")));
+        }
+        let default = default.unwrap_or_else(|| ty.zero());
+        if !ty.fits(&default) {
+            return Err(GraphError::Refused(format!("a {} property cannot default to {default}", ty.label())));
+        }
+        self.properties.push(Property { name: name.to_owned(), ty, default });
+        Ok(())
+    }
+
+    /// Changes a property's default, or renames it; nodes of `kinds` that name it by their `name`
+    /// setting follow the new name.
+    pub fn set_property(&mut self, name: &str, rename: Option<&str>, default: Option<Value>, kinds: &[&str]) -> Result<(), GraphError> {
+        let index = self.properties.iter().position(|p| p.name == name).ok_or_else(|| GraphError::Refused(format!("there is no property {name}")))?;
+        if let Some(default) = default {
+            let ty = self.properties[index].ty;
+            if !ty.fits(&default) {
+                return Err(GraphError::Refused(format!("a {} property cannot default to {default}", ty.label())));
+            }
+            self.properties[index].default = default;
+        }
+        if let Some(new) = rename.filter(|n| *n != name) {
+            check_variable_name(new).map_err(|_| GraphError::Refused(format!("property name {new:?} must be 1 to 64 letters, digits or _")))?;
+            if self.property(new).is_some() {
+                return Err(GraphError::Refused(format!("there is already a property {new}")));
+            }
+            self.properties[index].name = new.to_owned();
+            for node in self.nodes.iter_mut().filter(|n| kinds.contains(&n.kind.as_str())) {
+                if node.values.get("name").and_then(Value::as_str) == Some(name) {
+                    node.values.insert("name".to_owned(), Value::from(new));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Takes a property away; nodes naming it stay, reading the type's zero unless an object sets it.
+    pub fn remove_property(&mut self, name: &str) -> Result<(), GraphError> {
+        let before = self.properties.len();
+        self.properties.retain(|p| p.name != name);
+        if self.properties.len() == before {
+            return Err(GraphError::Refused(format!("there is no property {name}")));
+        }
+        Ok(())
+    }
+
     /// Takes a declaration away; nodes naming it keep working, starting from the type's zero.
     pub fn remove_variable(&mut self, name: &str) -> Result<(), GraphError> {
         let before = self.variables.len();
@@ -661,6 +742,7 @@ impl Graph {
             variables: Vec::new(),
             menu: String::new(),
             functions: Vec::new(),
+            properties: Vec::new(),
         }
     }
 
@@ -719,7 +801,12 @@ impl Graph {
     /// Parses and checks a graph file of `catalog`'s domain.
     pub fn from_json(text: &str, catalog: &Catalog) -> Result<Self, GraphError> {
         let mut graph: Graph = serde_json::from_str(text).map_err(|e| GraphError::Format(e.to_string()))?;
+        let read = graph.version;
         graph.upgrade();
+        if read < VERSION {
+            (catalog.upgrade)(&mut graph, read);
+            graph.version = VERSION;
+        }
         graph.check(catalog)?;
         Ok(graph)
     }
@@ -768,6 +855,18 @@ impl Graph {
             }
             if self.variables[..index].iter().any(|v| v.name == variable.name) {
                 return Err(GraphError::Format(format!("variable {} is declared twice", variable.name)));
+            }
+        }
+        if self.properties.len() > MAX_PROPERTIES {
+            return Err(GraphError::Format(format!("a graph declares at most {MAX_PROPERTIES} properties")));
+        }
+        for (index, property) in self.properties.iter().enumerate() {
+            check_variable_name(&property.name).map_err(GraphError::Format)?;
+            if !property.ty.fits(&property.default) {
+                return Err(GraphError::Format(format!("property {} defaults to a value that is not a {}", property.name, property.ty.label())));
+            }
+            if self.properties[..index].iter().any(|p| p.name == property.name) {
+                return Err(GraphError::Format(format!("property {} is declared twice", property.name)));
             }
         }
         if self.functions.len() > MAX_FUNCTIONS {

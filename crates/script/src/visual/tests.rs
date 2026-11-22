@@ -26,6 +26,15 @@ impl Builder {
         id
     }
 
+    /// A Property node naming `name`, declaring the property with `default` if it is not yet.
+    fn property(&mut self, kind: &str, name: &str, default: serde_json::Value) -> u32 {
+        let ty = super::property_type(kind).unwrap();
+        if self.0.property(name).is_none() {
+            self.0.add_property(name, ty, Some(default)).unwrap();
+        }
+        self.node(kind, json!({ "name": name }))
+    }
+
     fn link(&mut self, from: u32, from_pin: &str, to: u32, to_pin: &str) {
         self.0.connect(&CATALOG, Link { from: PinRef::new(from, from_pin), to: PinRef::new(to, to_pin) }).unwrap();
     }
@@ -60,7 +69,7 @@ fn transform(scene: &Scene, id: StableId) -> Transform {
 fn spinner() -> Builder {
     let mut b = Builder::new();
     let update = b.node("update", json!({}));
-    let speed = b.node("property", json!({"name": "speed", "default": 90.0}));
+    let speed = b.property("property", "speed", json!(90.0));
     let per_step = b.node("multiply", json!({}));
     b.link(speed, "value", per_step, "a");
     b.link(update, "dt", per_step, "b");
@@ -172,7 +181,7 @@ fn every_node_kind_compiles_and_runs() {
     let make = b.node("vector", json!({ "y": 0.5 }));
     b.link(choose, "result", make, "x");
     let number = b.node("number", json!({ "value": 0.0 }));
-    let prop = b.node("property", json!({ "name": "unused", "default": 2.0 }));
+    let prop = b.property("property", "unused", json!(2.0));
     let mul = b.node("multiply", json!({}));
     b.link(number, "value", mul, "a");
     b.link(prop, "value", mul, "b");
@@ -441,29 +450,29 @@ fn every_node_kind_compiles_and_runs() {
     b.link(keep_whole, "then", whole_log, "run");
     b.link(read_whole, "value", whole_log, "value");
     // Typed properties, each read once.
-    let count = b.node("wholeProperty", json!({ "name": "count", "default": 3 }));
+    let count = b.property("wholeProperty", "count", json!(3));
     let count_log = b.node("log", json!({ "message": "count" }));
     b.link(whole_log, "then", count_log, "run");
     b.link(count, "value", count_log, "value");
-    let on = b.node("flagProperty", json!({ "name": "on", "default": "True" }));
+    let on = b.property("flagProperty", "on", json!(true));
     let on_gate = b.node("branch", json!({}));
     b.link(count_log, "then", on_gate, "run");
     b.link(on, "value", on_gate, "condition");
-    let offset = b.node("vectorProperty", json!({ "name": "offset", "default": [1.0, 2.0, 3.0] }));
+    let offset = b.property("vectorProperty", "offset", json!([1.0, 2.0, 3.0]));
     let offset_parts = b.node("split", json!({}));
     b.link(offset, "value", offset_parts, "vector");
     let offset_log = b.node("log", json!({ "message": "offset" }));
     b.link(on_gate, "true", offset_log, "run");
     b.link(offset_parts, "y", offset_log, "value");
-    let tint = b.node("colorProperty", json!({ "name": "tint", "default": [0.5, 0.5, 1.0] }));
+    let tint = b.property("colorProperty", "tint", json!([0.5, 0.5, 1.0]));
     let keep_tint = b.node("setColorVariable", json!({}));
     b.link(offset_log, "then", keep_tint, "run");
     b.link(tint, "value", keep_tint, "value");
-    let label = b.node("textProperty", json!({ "name": "label", "default": "hi" }));
+    let label = b.property("textProperty", "label", json!("hi"));
     let label_log = b.node("log", json!({ "message": "label" }));
     b.link(keep_tint, "then", label_log, "run");
     b.link(label, "value", label_log, "text");
-    let other = b.node("objectProperty", json!({ "name": "target" }));
+    let other = b.property("objectProperty", "target", json!(null));
     let other_name = b.node("nameOf", json!({}));
     b.link(other, "value", other_name, "target");
     let other_gate = b.node("branch", json!({}));
@@ -486,6 +495,23 @@ fn every_node_kind_compiles_and_runs() {
     let flipped_log = b.node("log", json!({ "message": "flipped" }));
     b.link(helped, "then", flipped_log, "run");
     b.link(flipped, "result", flipped_log, "value");
+    // Set Property, one of each type, on the properties declared above.
+    let mut after = (flipped_log, "then");
+    for (kind, name, value) in [
+        ("setProperty", "unused", json!(4.0)),
+        ("setWholeProperty", "count", json!(5)),
+        ("setFlagProperty", "on", json!(true)),
+        ("setVectorProperty", "offset", json!([1.0, 2.0, 3.0])),
+        ("setColorProperty", "tint", json!([0.2, 0.3, 0.4])),
+        ("setTextProperty", "label", json!("set")),
+    ] {
+        let set = b.node(kind, json!({ "name": name, "value": value }));
+        b.link(after.0, after.1, set, "run");
+        after = (set, "then");
+    }
+    let set_target = b.node("setObjectProperty", json!({ "name": "target" }));
+    b.link(after.0, after.1, set_target, "run");
+    b.link(me, "object", set_target, "value");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -930,7 +956,7 @@ fn a_script_on_another_object_is_read_and_set_like_a_component() {
     // Bob logs its speed every step.
     let mut bob = Builder::new();
     let update = bob.node("update", json!({}));
-    let speed = bob.node("property", json!({ "name": "speed", "default": 2.0 }));
+    let speed = bob.property("property", "speed", json!(2.0));
     let log = bob.node("log", json!({ "message": "speed" }));
     bob.link(update, "then", log, "run");
     bob.link(speed, "value", log, "value");
@@ -992,7 +1018,7 @@ fn scripts_init_then_start_after_the_whole_scene_is_loaded() {
     std::fs::write(dir.join("reader.bscript"), reader.0.to_json()).unwrap();
     // Health, below it: declares maxHealth 100 and logs its own On Init.
     let mut health = Builder::new();
-    health.node("property", json!({ "name": "maxHealth", "default": 100.0 }));
+    health.property("property", "maxHealth", json!(100.0));
     let init = health.node("init", json!({}));
     let said = health.node("log", json!({ "message": "health init" }));
     health.link(init, "then", said, "run");
@@ -1222,19 +1248,19 @@ fn typed_properties_read_their_defaults_and_the_values_an_object_sets() {
         b.link(from.0, from.1, node, pin);
         previous = (node, "then");
     };
-    let count = b.node("wholeProperty", json!({ "name": "count", "default": 3 }));
+    let count = b.property("wholeProperty", "count", json!(3));
     log(&mut b, "count", "value", (count, "value"));
-    let label = b.node("textProperty", json!({ "name": "label", "default": "hi" }));
+    let label = b.property("textProperty", "label", json!("hi"));
     log(&mut b, "label", "text", (label, "value"));
-    let on = b.node("flagProperty", json!({ "name": "on", "default": "False" }));
+    let on = b.property("flagProperty", "on", json!(false));
     let on_number = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
     b.link(on, "value", on_number, "condition");
     log(&mut b, "on", "value", (on_number, "result"));
-    let offset = b.node("vectorProperty", json!({ "name": "offset", "default": [1.0, 2.0, 3.0] }));
+    let offset = b.property("vectorProperty", "offset", json!([1.0, 2.0, 3.0]));
     let parts = b.node("split", json!({}));
     b.link(offset, "value", parts, "vector");
     log(&mut b, "offset", "value", (parts, "z"));
-    let target = b.node("objectProperty", json!({ "name": "target" }));
+    let target = b.property("objectProperty", "target", json!(null));
     let target_name = b.node("nameOf", json!({}));
     b.link(target, "value", target_name, "target");
     log(&mut b, "target", "text", (target_name, "result"));
@@ -1284,7 +1310,7 @@ fn typed_properties_read_their_defaults_and_the_values_an_object_sets() {
 fn another_script_s_whole_number_property_is_read_and_set_as_a_whole_number() {
     let mut counter = Builder::new();
     let update = counter.node("update", json!({}));
-    let count = counter.node("wholeProperty", json!({ "name": "count", "default": 2 }));
+    let count = counter.property("wholeProperty", "count", json!(2));
     let log = counter.node("log", json!({ "message": "count" }));
     counter.link(update, "then", log, "run");
     counter.link(count, "value", log, "value");
@@ -1441,4 +1467,51 @@ fn negate_turns_the_sign_of_numbers_whole_numbers_and_vectors() {
     let (_, _, mut host) = run(&b.bytes(), &[]);
     let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(lines, ["number -5", "whole 7", "y 2"]);
+}
+
+#[test]
+fn set_property_changes_this_object_s_property_for_the_rest_of_play() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let set_count = b.node("setWholeProperty", json!({ "name": "count", "value": 9 }));
+    b.link(start, "then", set_count, "run");
+    let set_label = b.node("setTextProperty", json!({ "name": "label", "value": "changed" }));
+    b.link(set_count, "then", set_label, "run");
+    let count = b.property("wholeProperty", "count", json!(3));
+    let label = b.property("textProperty", "label", json!("hi"));
+    let log = b.node("log", json!({ "message": "now" }));
+    b.link(set_label, "then", log, "run");
+    b.link(label, "value", log, "text");
+    b.link(count, "value", log, "value");
+    // A Set Property of the wrong type for the declared property is a problem on that node.
+    let wrong = b.node("setProperty", json!({ "name": "label" }));
+    b.link(log, "then", wrong, "run");
+    let problems = compile(&b.0).unwrap_err();
+    assert!(problems.iter().any(|p| p.node == Some(wrong) && p.message.contains("Text property")), "{problems:?}");
+    b.0.remove_node(wrong).unwrap();
+
+    let (_, _, mut host) = run(&b.bytes(), &[]);
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["now changed 9"]);
+}
+
+#[test]
+fn property_defaults_kept_on_nodes_in_older_scripts_move_into_declared_properties() {
+    let old = r#"{
+      "format": "bayleaf.graph", "version": 4, "domain": "script",
+      "nodes": [
+        { "id": 1, "kind": "property", "position": [0, 0], "values": { "name": "speed", "default": 45.0 } },
+        { "id": 2, "kind": "flagProperty", "position": [0, 60], "values": { "name": "on", "default": "True" } },
+        { "id": 3, "kind": "textProperty", "position": [0, 120] }
+      ]
+    }"#;
+    let graph = Graph::from_json(old, &CATALOG).unwrap();
+    let declared: Vec<(&str, VariableType, &serde_json::Value)> = graph.properties.iter().map(|p| (p.name.as_str(), p.ty, &p.default)).collect();
+    assert_eq!(
+        declared,
+        [("speed", VariableType::Number, &json!(45.0)), ("on", VariableType::TrueFalse, &json!(true)), ("label", VariableType::Text, &json!(""))]
+    );
+    assert!(graph.nodes.iter().all(|n| !n.values.contains_key("default")), "the nodes keep only the name");
+    assert_eq!(graph.value(3, "name"), Some(&json!("label")), "a node without a name keeps the name it had");
 }

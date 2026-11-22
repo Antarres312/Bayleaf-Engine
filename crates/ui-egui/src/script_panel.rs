@@ -7,7 +7,7 @@
 use crate::i18n::tl;
 use std::collections::HashMap;
 
-use bayleaf_engine::graph::{Graph, Node, VariableType};
+use bayleaf_engine::graph::{Graph, VariableType};
 use serde_json::{Value, json};
 
 use crate::Editor;
@@ -28,7 +28,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, at: [f
         ui.add_space(4.0);
         variables(editor, ui, t, graph, at, panel);
         ui.add_space(theme::SECTION_GAP);
-        properties(editor, ui, t, graph, at);
+        properties(editor, ui, t, graph, at, panel);
         ui.add_space(theme::SECTION_GAP);
         functions(editor, ui, t, graph, at, panel);
         ui.add_space(theme::SECTION_GAP);
@@ -187,14 +187,13 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
     }
 }
 
-/// The script's properties: its Property nodes, whose values the Inspector sets per object. Each has
-/// a type, chosen when it is added, and a default edited here.
-fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at: [f32; 2]) {
-    use bayleaf_engine::scene::components::PropertyType;
-    use bayleaf_engine::script::visual::{property_kind, property_type};
+/// The script's properties: values the Inspector sets per object, each with a name, a type and a
+/// default edited here, and buttons that place a node reading it (**Get**) or setting it while the
+/// game plays (**Set**). Add Property declares one of a type.
+fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at: [f32; 2], panel: &mut ScriptPanel) {
+    use bayleaf_engine::script::visual::property_kinds;
     theme::headed(t, "Properties").show(ui, |ui| {
-        let nodes: Vec<(&Node, PropertyType)> = graph.nodes.iter().filter_map(|n| property_type(&n.kind).map(|ty| (n, ty))).collect();
-        if nodes.is_empty() {
+        if graph.properties.is_empty() {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(tl("Values set per object in the Inspector: numbers, text, objects and more.")).small().color(t.text_muted),
@@ -202,71 +201,71 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
                 .wrap(),
             );
         }
-        for (node, ty) in nodes {
-            let name = node.values.get("name").and_then(Value::as_str).unwrap_or("speed").to_owned();
-            ui.push_id(("property", node.id), |ui| {
-                ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(tl(ty.label())).small().color(t.text_muted));
-                    ui.add(egui::Label::new(name.as_str()).truncate());
-                });
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(egui::RichText::new(tl("Default")).color(t.text_muted));
-                    if let Some(value) = default_editor(ui, ty, node.values.get("default"), &name) {
-                        let key = format!("property default {} {}", node.id, editor.gesture);
-                        editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "default", "value": value }), Some(&key));
-                    }
+        for property in &graph.properties {
+            ui.push_id(("property", &property.name), |ui| {
+                egui::Frame::new().fill(t.panel).corner_radius(theme::SECTION_RADIUS).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(tl(property.ty.label())).small().color(t.text_muted));
+                        let key = format!("property {}", property.name);
+                        let label = crate::i18n::tf("Name of property {name}", &[("name", &property.name)]);
+                        if let Some(typed) = name_field(ui, panel, &key, &property.name, &label) {
+                            editor.dispatch("graph.property.set", &json!({ "name": property.name, "rename": typed }), None);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(egui::RichText::new(tl("Default")).color(t.text_muted));
+                        if property.ty == VariableType::Object {
+                            ui.label(egui::RichText::new(tl("none; chosen per object in the Inspector")).color(t.text_muted));
+                        } else if let Some(value) = start_editor(ui, property.ty, &property.default, &property.name) {
+                            let key = format!("property default {} {}", property.name, editor.gesture);
+                            editor.dispatch("graph.property.set", &json!({ "name": property.name, "default": value }), Some(&key));
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        let [get, set] = property_kinds(property.ty);
+                        let read = ui.small_button(tl("Get")).on_hover_text(tl("Place a node that reads it"));
+                        ui.ctx().accesskit_node_builder(read.id, |node| node.set_label(crate::i18n::tf("Get property {name}", &[("name", &property.name)])));
+                        if read.clicked() {
+                            place(editor, get, at, &property.name);
+                        }
+                        let write = ui.small_button(tl("Set")).on_hover_text(tl("Place a node that sets it while the game plays"));
+                        ui.ctx().accesskit_node_builder(write.id, |node| node.set_label(crate::i18n::tf("Set property {name}", &[("name", &property.name)])));
+                        if write.clicked() {
+                            place(editor, set, at, &property.name);
+                        }
+                        let remove = ui.small_button(tl("Remove")).on_hover_text(tl("Its nodes stay and read zero where no object sets it"));
+                        ui.ctx()
+                            .accesskit_node_builder(remove.id, |node| node.set_label(crate::i18n::tf("Remove property {name}", &[("name", &property.name)])));
+                        if remove.clicked() {
+                            editor.dispatch("graph.property.remove", &json!({ "name": property.name }), None);
+                        }
+                    });
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(theme::SECTION_GAP);
         }
         ui.menu_button(tl("Add Property"), |ui| {
-            for ty in PropertyType::ALL {
+            for ty in VariableType::ALL {
                 if ui.button(tl(ty.label())).clicked() {
                     let stem = match ty {
-                        PropertyType::Number => "value",
-                        PropertyType::WholeNumber => "count",
-                        PropertyType::TrueFalse => "enabled",
-                        PropertyType::Vector => "offset",
-                        PropertyType::Color => "tint",
-                        PropertyType::Text => "label",
-                        PropertyType::Object => "target",
+                        VariableType::Number => "speed",
+                        VariableType::WholeNumber => "count",
+                        VariableType::TrueFalse => "enabled",
+                        VariableType::Vector => "offset",
+                        VariableType::Color => "tint",
+                        VariableType::Text => "label",
+                        VariableType::Object => "target",
                     };
-                    let taken = |n: &str| {
-                        graph.nodes.iter().any(|node| property_type(&node.kind).is_some() && node.values.get("name").and_then(Value::as_str) == Some(n))
-                    };
-                    place(editor, property_kind(ty), at, &free_name(stem, taken));
+                    let name = free_name(stem, |n| graph.property(n).is_some());
+                    editor.dispatch("graph.property.add", &json!({ "name": name, "type": ty }), None);
                     ui.close();
                 }
             }
         })
         .response
-        .on_hover_text(tl("Place a Property node of a type: a value the Inspector sets per object"));
+        .on_hover_text(tl("Declare a property of a type: a value the Inspector sets per object"));
     });
-}
-
-/// An editor for a Property node's default. Returns the new setting value when it changed.
-fn default_editor(ui: &mut egui::Ui, ty: bayleaf_engine::scene::components::PropertyType, current: Option<&Value>, name: &str) -> Option<Value> {
-    use bayleaf_engine::scene::components::PropertyType;
-    let variable = match ty {
-        PropertyType::Number => VariableType::Number,
-        PropertyType::WholeNumber => VariableType::WholeNumber,
-        PropertyType::Vector => VariableType::Vector,
-        PropertyType::Color => VariableType::Color,
-        PropertyType::Text => VariableType::Text,
-        PropertyType::TrueFalse => {
-            // The node keeps True or False as a word.
-            let mut on = current.and_then(Value::as_str) == Some("True");
-            let field = ui.checkbox(&mut on, "");
-            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Default of property {name}", &[("name", name)])));
-            return field.changed().then(|| json!(if on { "True" } else { "False" }));
-        }
-        PropertyType::Object => {
-            ui.label(egui::RichText::new(tl("none; chosen per object in the Inspector")).color(theme::tokens(ui).text_muted));
-            return None;
-        }
-    };
-    let fallback = if ty == PropertyType::Color { json!([1.0, 1.0, 1.0]) } else { variable.zero() };
-    start_editor(ui, variable, current.unwrap_or(&fallback), name)
 }
 
 /// Places a Function, Return or Call Function node of `function` at `at`, with its pins.

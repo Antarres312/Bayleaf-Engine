@@ -122,6 +122,21 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         ),
         spec("graph.variable.remove", "Remove Variable", "{name}: its nodes keep working, starting from zero", Mutates::Graph, variable_remove),
         spec(
+            "graph.property.add",
+            "Add Property",
+            "{name, type, default?}: declares a property of a visual script (type as for variables), with a default (else zero); the Inspector sets it per object",
+            Mutates::Graph,
+            property_add,
+        ),
+        spec(
+            "graph.property.set",
+            "Change Property",
+            "{name, rename?, default?}: a new default, or a new name that its Property and Set Property nodes follow",
+            Mutates::Graph,
+            property_set,
+        ),
+        spec("graph.property.remove", "Remove Property", "{name}: its nodes stay, reading zero where no object sets it", Mutates::Graph, property_remove),
+        spec(
             "graph.function.add",
             "Add Function",
             "{name}: declares a function of a visual script, with no inputs or outputs yet; its Function node begins its actions, Return gives back its outputs and Call Function runs it",
@@ -198,6 +213,46 @@ struct VariableNameParams {
 fn variable_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: VariableNameParams = parse(params)?;
     open_script(session)?.remove_variable(&p.name).map_err(failed)?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PropertyAddParams {
+    name: String,
+    #[serde(rename = "type")]
+    ty: bayleaf_graph::VariableType,
+    #[serde(default)]
+    default: Option<Value>,
+}
+
+fn property_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: PropertyAddParams = parse(params)?;
+    open_script(session)?.add_property(&p.name, p.ty, p.default).map_err(failed)?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PropertySetParams {
+    name: String,
+    #[serde(default)]
+    rename: Option<String>,
+    #[serde(default)]
+    default: Option<Value>,
+}
+
+fn property_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: PropertySetParams = parse(params)?;
+    let graph = open_script(session)?;
+    let ty = graph.property(&p.name).map(|v| v.ty).ok_or_else(|| CommandError::BadParams(format!("there is no property {}", p.name)))?;
+    graph.set_property(&p.name, p.rename.as_deref(), p.default, &bayleaf_script::visual::property_kinds(ty)).map_err(failed)?;
+    Ok(json!({}))
+}
+
+fn property_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: VariableNameParams = parse(params)?;
+    open_script(session)?.remove_property(&p.name).map_err(failed)?;
     Ok(json!({}))
 }
 

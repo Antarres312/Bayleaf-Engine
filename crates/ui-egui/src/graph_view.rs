@@ -1428,6 +1428,13 @@ fn setting_row(
         function_picker(ui, lists.graph, node, setting, field, requests);
         return;
     }
+    // A Property or Set Property node picks a property of its type.
+    if setting.name == "name"
+        && let Some(ty) = bayleaf_engine::script::visual::property_type(&node.kind)
+    {
+        property_picker(ui, lists.graph, node, ty, setting, field, requests);
+        return;
+    }
     // Get, Try Get and Set Component pick a component whose fields scripts can use; the node's
     // pins follow the choice.
     if setting.name == "component" && COMPONENT_KINDS.contains(&node.kind.as_str()) {
@@ -1706,6 +1713,53 @@ fn function_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayl
                         );
                         requests.run("graph.node.set", json!({ "node": node.id, "name": "function", "value": function.name }));
                     }
+                }
+            })
+            .response
+    });
+    labelled(
+        ui,
+        &response,
+        &crate::i18n::tf("{setting} of node {id}: {current}", &[("setting", tl(setting.label)), ("id", &node.id.to_string()), ("current", &current)]),
+    );
+}
+
+/// A Property or Set Property node picks one of the script's properties of its type; New
+/// Property… declares one and picks it.
+fn property_picker(
+    ui: &mut egui::Ui,
+    graph: &Graph,
+    node: &Node,
+    ty: bayleaf_engine::graph::VariableType,
+    setting: &bayleaf_engine::graph::SettingDef,
+    field: Rect,
+    requests: &mut Requests,
+) {
+    let current = node.values.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let names: Vec<String> = graph.properties.iter().filter(|p| p.ty == ty).map(|p| p.name.clone()).collect();
+    let shown = if current.is_empty() { tl("Choose a property").to_owned() } else { current.clone() };
+    let response = ui.put(field, |ui: &mut egui::Ui| {
+        craft_ui::ComboBox::from_id_salt(("property", node.id))
+            .width(field.width())
+            .truncate()
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for choice in &names {
+                    if ui.selectable_label(*choice == current, choice).clicked() && *choice != current {
+                        requests.run("graph.node.set", json!({ "node": node.id, "name": "name", "value": choice }));
+                    }
+                }
+                if !names.is_empty() {
+                    ui.separator();
+                }
+                if ui
+                    .button(tl("New Property…"))
+                    .on_hover_text(crate::i18n::tf("Declare a new {type} property for this node", &[("type", tl(ty.label()))]))
+                    .clicked()
+                {
+                    let fresh = (1..).map(|n| format!("property{n}")).find(|n| graph.property(n).is_none()).unwrap_or_else(|| "property".to_owned());
+                    requests.run("graph.property.add", json!({ "name": fresh, "type": ty }));
+                    requests.run("graph.node.set", json!({ "node": node.id, "name": "name", "value": fresh }));
                 }
             })
             .response

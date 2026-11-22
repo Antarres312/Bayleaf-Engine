@@ -77,7 +77,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
    properties have types: number, whole number, true/false, vector, colour, text and object, each
    with its own Inspector field (scene format version 16). Visual scripts have functions with typed
    inputs and outputs (Function, Return and Call Function nodes; `graph.function.*`; graph version
-   4). Later the
+   4); properties declared in the script's panel, with Set Property nodes and `property_set` in the
+   ABI (graph version 5). Later the
    editor took craft-ui (widget-state colours, sections, combo boxes, the font stack) and with it the
    suite's egui and winit forks; its theme tokens stay its own, as in every Craft app. Then: narrow
    panels put an inspector value under its label instead of past the panel's edge; the Project panel's

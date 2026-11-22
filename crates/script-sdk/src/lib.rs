@@ -90,6 +90,38 @@ pub fn property_object(name: &str) -> Option<Object> {
     Some(abi::property_object(name)).filter(|h| *h != 0).map(Object)
 }
 
+/// Sets a number property of this script on this object, for the rest of play. A whole-number
+/// property takes it rounded, a true/false one non-zero as true. False when there is no such
+/// property of a number type.
+pub fn set_property(name: &str, value: f32) -> bool {
+    abi::property_set(name, [value, 0.0, 0.0])
+}
+
+/// Sets a whole-number property; false when there is none.
+pub fn set_property_whole(name: &str, value: i32) -> bool {
+    abi::property_set(name, [value as f32, 0.0, 0.0])
+}
+
+/// Sets a true/false property; false when there is none.
+pub fn set_property_flag(name: &str, value: bool) -> bool {
+    abi::property_set(name, [f32::from(u8::from(value)), 0.0, 0.0])
+}
+
+/// Sets a vector or colour property; false when there is none.
+pub fn set_property_vector(name: &str, value: [f32; 3]) -> bool {
+    abi::property_set(name, value)
+}
+
+/// Sets a text property; false when there is none.
+pub fn set_property_text(name: &str, value: &str) -> bool {
+    abi::property_set_text(name, value)
+}
+
+/// Sets an object property to an object (by its name), or to none; false when there is none.
+pub fn set_property_object(name: &str, object: Option<Object>) -> bool {
+    abi::property_set_text(name, &object.map(Object::name).unwrap_or_default())
+}
+
 /// A property a script declares in [`Script::PROPERTIES`]: its name and default. The Inspector
 /// edits it per object with a field of its type.
 #[derive(Clone, Copy, Debug, PartialEq)]

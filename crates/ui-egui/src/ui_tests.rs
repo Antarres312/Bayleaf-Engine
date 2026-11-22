@@ -1772,8 +1772,21 @@ fn a_typed_property_is_added_in_the_panel_and_edited_with_its_own_field_in_the_i
     harness.run();
     harness.get_by_label("Text").click();
     harness.run();
-    let placed = graph(&harness).nodes.iter().find(|n| n.kind == "textProperty").map(|n| n.id);
-    assert!(placed.is_some(), "Add Property > Text places a Text Property node");
+    let declared = graph(&harness).property("label").cloned();
+    assert_eq!(declared.map(|p| p.ty), Some(bayleaf_engine::graph::VariableType::Text), "Add Property > Text declares a text property");
+    // Get and Set place a node that reads it and one that sets it.
+    harness.get_by_label("Get property label").click();
+    harness.run();
+    harness.get_by_label("Set property label").click();
+    harness.run();
+    let kinds: Vec<String> = graph(&harness).nodes.iter().filter(|n| n.values.get("name") == Some(&json!("label"))).map(|n| n.kind.clone()).collect();
+    assert!(kinds.contains(&"textProperty".to_owned()) && kinds.contains(&"setTextProperty".to_owned()), "{kinds:?}");
+    // The default is edited in the panel.
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Start of label").click();
+    harness.run();
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Start of label").type_text("Open");
+    harness.run();
+    assert_eq!(graph(&harness).property("label").map(|p| p.default.clone()), Some(json!("Open")));
     harness.state_mut().dispatch("graph.save", &json!({ "path": dir.join("sign.bscript") }), None);
 
     // An object with the script shows the property as a text field.
@@ -1789,7 +1802,11 @@ fn a_typed_property_is_added_in_the_panel_and_edited_with_its_own_field_in_the_i
     harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Label").type_text("Shop");
     harness.run();
     let scripts = harness.state().session.scene().get::<bayleaf_engine::scene::components::Scripts>(id).cloned().unwrap();
-    assert_eq!(scripts.0[0].properties.get("label").and_then(|v| v.text()), Some("Shop"), "the typed text is the object's value");
+    assert_eq!(
+        scripts.0[0].properties.get("label").and_then(|v| v.text()),
+        Some("OpenShop"),
+        "the field starts at the panel's default, and the typed text is the object's value"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

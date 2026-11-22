@@ -43,6 +43,7 @@ pub const CATALOG: Catalog = Catalog {
     extension: "bmaterial",
     starter: &[("output", [360.0, 40.0])],
     variant: bayleaf_graph::no_variant,
+    upgrade: bayleaf_graph::no_upgrade,
     nodes: &[
         NodeDef {
             kind: "output",

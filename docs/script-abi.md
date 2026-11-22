@@ -29,6 +29,8 @@ so module-level state belongs to that one script slot. Any language that compile
 | `property_whole` | `(key_ptr: i32, key_len: i32) -> i32` | a whole-number or true/false property (1 or 0), or a number rounded; `0` when there is none |
 | `property_vector` | `(key_ptr: i32, key_len: i32, out: i32) -> i32` | writes a vector or colour property as 3 `f32` at `out`; `1` when there is one, else `0` (and zeros) |
 | `property_text` | `(key_ptr: i32, key_len: i32, out: i32, cap: i32) -> i32` | copies at most `cap` bytes of a text or object property (the object's name) to `out` and returns its whole length; `cap` 0 only asks for the length |
+| `property_set` | `(key_ptr: i32, key_len: i32, x: f32, y: f32, z: f32) -> i32` | sets this script's property on this object for the rest of play: a number takes `x`, a whole number `x` rounded, true/false `x` non-zero, a vector or colour all three (a colour kept within 0 to 1); `1` when set, `0` when there is no such property of those types. Non-finite numbers are an error |
+| `property_set_text` | `(key_ptr: i32, key_len: i32, text_ptr: i32, text_len: i32) -> i32` | sets a text property, or an object property to an object's name (empty for none), for the rest of play; `1` when set, `0` when there is no such property or the text is longer than 1024 bytes |
 | `property_object` | `(key_ptr: i32, key_len: i32) -> i32` | the handle of the object an object property names (the first with that name), or `0` for none |
 | `time` | `() -> f64` | seconds since play mode started |
 | `key_down` | `(name_ptr: i32, name_len: i32) -> i32` | `1` while the key is held (names like `W`, `Space`, `ArrowUp`), else `0` |
