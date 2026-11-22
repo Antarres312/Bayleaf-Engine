@@ -299,7 +299,9 @@ impl Compiler<'_> {
             PinDefault::Implicit("normal") => ("s.normal".to_owned(), Ty::V),
             PinDefault::Implicit("uv") => ("vec3<f32>(s.uv, 0.0)".to_owned(), Ty::V),
             PinDefault::Implicit(_) => ("s.position".to_owned(), Ty::V),
-            PinDefault::Bool(_) | PinDefault::None => (if declared == Ty::F { "0.0f".to_owned() } else { "vec3<f32>(0.0)".to_owned() }, declared),
+            PinDefault::Bool(_) | PinDefault::Text(_) | PinDefault::None => {
+                (if declared == Ty::F { "0.0f".to_owned() } else { "vec3<f32>(0.0)".to_owned() }, declared)
+            }
         })
         .map(|(code, ty)| if declared == Ty::V && ty == Ty::F && pin_def.ty != Any { (format!("vec3<f32>({code})"), Ty::V) } else { (code, ty) })
     }

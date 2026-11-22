@@ -1469,3 +1469,18 @@ fn nodes_naming_a_script_follow_its_properties_when_the_script_changes() {
     assert!(graph(&harness).links.is_empty(), "the link from the property the script dropped is gone");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn an_unlinked_text_input_is_typed_in_the_node() {
+    let mut harness = graph_harness("script");
+    let join =
+        harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "joinText", "position": [300, 260] }), None).unwrap()["node"].as_u64().unwrap() as u32;
+    harness.run();
+    let field = format!("A of Join Text {join}");
+    harness.get_by_label(&field).focus();
+    harness.run();
+    harness.get_by_label(&field).type_text("Score: ");
+    harness.run();
+    assert_eq!(graph(&harness).value(join, "a").and_then(|v| v.as_str()), Some("Score: "));
+    assert!(harness.query_by_label_contains(&format!("Output Result (Text) of Join Text {join}")).is_some(), "the output says it carries text");
+}

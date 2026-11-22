@@ -29,5 +29,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Object (pin type), This Object, Find Object Named, Find Object With, Count Objects With, For Each Object With, Destroy Object, Object Name, Component, Tag or Script, Found, Each, Index, Find (category) | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Preferences, Hide file extensions, Project Panel (settings section) | not yet | Not checked yet | Generic editor terms; same |
 | Get Component, Try Get Component, Set Component, Component (setting), unchanged | not yet | Not checked yet | Generic terms for visual script nodes; same |
+| On Init, Text (pin type and node), Join Text, Text Length, Number to Text, Text to Number, Valid, Same Text, Text Contains, Starts With, Ends With, Find in Text, Part of Text, Replace Text, Upper Case, Lower Case, Trim Text, Name Of | not yet | Not checked yet | Generic terms for visual script nodes; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

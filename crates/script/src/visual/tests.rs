@@ -332,6 +332,56 @@ fn every_node_kind_compiles_and_runs() {
     b.link(lamp, "intensity", brighten, "intensity");
     b.link(read_transform, "scale", brighten, "color");
     b.link(lamp, "shadows", brighten, "shadows");
+    // On Init, and text: every text node feeding a log behind a branch that stays false.
+    let init = b.node("init", json!({}));
+    let text_gate = b.node("branch", json!({}));
+    b.link(init, "then", text_gate, "run");
+    let me_named = b.node("nameOf", json!({}));
+    let words = b.node("text", json!({ "value": " Hi " }));
+    let trimmed = b.node("trimText", json!({}));
+    b.link(words, "result", trimmed, "text");
+    let upper = b.node("upperCase", json!({}));
+    b.link(trimmed, "result", upper, "text");
+    let lower = b.node("lowerCase", json!({}));
+    b.link(upper, "result", lower, "text");
+    let joined = b.node("joinText", json!({}));
+    b.link(lower, "result", joined, "a");
+    b.link(me_named, "result", joined, "b");
+    let length = b.node("textLength", json!({}));
+    b.link(joined, "result", length, "text");
+    let spelled = b.node("numberToText", json!({}));
+    b.link(length, "result", spelled, "value");
+    let read_back = b.node("textToNumber", json!({}));
+    b.link(spelled, "result", read_back, "text");
+    let cut = b.node("textPart", json!({ "start": 1.0, "count": 2.0 }));
+    b.link(joined, "result", cut, "text");
+    let swapped = b.node("replaceText", json!({ "find": "i", "with": "I" }));
+    b.link(cut, "result", swapped, "text");
+    let where_in = b.node("findText", json!({ "part": "S" }));
+    b.link(swapped, "result", where_in, "text");
+    let checks = [("sameText", "a", "b"), ("textContains", "text", "part"), ("startsWith", "text", "part"), ("endsWith", "text", "part")];
+    let mut condition = read_back;
+    let mut condition_pin = "valid";
+    for (kind, first, second) in checks {
+        let check = b.node(kind, json!({}));
+        b.link(swapped, "result", check, first);
+        b.link(joined, "result", check, second);
+        let both = b.node("and", json!({}));
+        b.link(condition, condition_pin, both, "a");
+        b.link(check, "result", both, "b");
+        condition = both;
+        condition_pin = "result";
+    }
+    b.link(condition, condition_pin, text_gate, "condition");
+    let text_log = b.node("log", json!({ "message": "text" }));
+    b.link(text_gate, "true", text_log, "run");
+    b.link(swapped, "result", text_log, "text");
+    b.link(where_in, "result", text_log, "value");
+    let by_name = b.node("findNamed", json!({}));
+    b.link(me_named, "result", by_name, "named");
+    let named_gate = b.node("branch", json!({}));
+    b.link(text_log, "then", named_gate, "run");
+    b.link(by_name, "found", named_gate, "condition");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -815,4 +865,129 @@ fn a_script_on_another_object_is_read_and_set_like_a_component() {
     assert!(host.take_faults().is_empty());
     let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(lines, ["speed 2", "read 2", "found 1", "speed 9", "read 9", "found 1"]);
+}
+
+/// Every script of a scene runs On Init, then every one runs On Start, whatever the hierarchy
+/// order: a script above another reads the other's properties in its On Start.
+#[test]
+fn scripts_init_then_start_after_the_whole_scene_is_loaded() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-init-order-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // The reader, first in the hierarchy: On Init logs, On Start logs Health's maxHealth.
+    let mut reader = Builder::new();
+    let init = reader.node("init", json!({}));
+    let said = reader.node("log", json!({ "message": "reader init" }));
+    reader.link(init, "then", said, "run");
+    let start = reader.node("start", json!({}));
+    let health = reader.node("findWith", json!({ "kind": "Health" }));
+    let get = reader.node("getComponent", json!({ "component": "Health", "fields": ["maxHealth"] }));
+    reader.link(health, "object", get, "target");
+    let log = reader.node("log", json!({ "message": "max" }));
+    reader.link(start, "then", log, "run");
+    reader.link(get, "maxHealth", log, "value");
+    std::fs::write(dir.join("reader.bscript"), reader.0.to_json()).unwrap();
+    // Health, below it: declares maxHealth 100 and logs its own On Init.
+    let mut health = Builder::new();
+    health.node("property", json!({ "name": "maxHealth", "default": 100.0 }));
+    let init = health.node("init", json!({}));
+    let said = health.node("log", json!({ "message": "health init" }));
+    health.link(init, "then", said, "run");
+    std::fs::write(dir.join("health.bscript"), health.0.to_json()).unwrap();
+
+    let mut scene = Scene::new();
+    let first = scene.create_object(None, "Reader").unwrap();
+    let second = scene.create_object(None, "Player").unwrap();
+    scene.add_component(first, "scripts").unwrap();
+    scene.set_component(first, "scripts", json!([{ "module": "reader.bscript" }])).unwrap();
+    scene.add_component(second, "scripts").unwrap();
+    scene.set_component(second, "scripts", json!([{ "module": "health.bscript" }])).unwrap();
+    let mut host = ScriptHost::new();
+    host.load_scene(&mut scene, &dir, 0.0, &Arc::new(Input::default()));
+
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["reader init", "health init", "max 100"], "every init, then every start");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Text nodes count, cut and search by characters, so letters outside A to Z count once.
+#[test]
+fn text_nodes_join_measure_search_cut_replace_and_convert() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let mut previous = (start, "then");
+    let mut line = |b: &mut Builder, message: &str, text: Option<(u32, &str)>, value: Option<(u32, &str)>| {
+        let log = b.node("log", json!({ "message": message }));
+        b.link(previous.0, previous.1, log, "run");
+        if let Some((node, pin)) = text {
+            b.link(node, pin, log, "text");
+        }
+        if let Some((node, pin)) = value {
+            b.link(node, pin, log, "value");
+        }
+        previous = (log, "then");
+    };
+    let word = b.node("text", json!({ "value": "  Zażółć gęślą  " }));
+    let trimmed = b.node("trimText", json!({}));
+    b.link(word, "result", trimmed, "text");
+    let length = b.node("textLength", json!({}));
+    b.link(trimmed, "result", length, "text");
+    line(&mut b, "trimmed", Some((trimmed, "result")), Some((length, "result")));
+    let cut = b.node("textPart", json!({ "start": 2.0, "count": 4.0 }));
+    b.link(trimmed, "result", cut, "text");
+    line(&mut b, "part", Some((cut, "result")), None);
+    let past_end = b.node("textPart", json!({ "start": 10.0, "count": 100.0 }));
+    b.link(trimmed, "result", past_end, "text");
+    line(&mut b, "end", Some((past_end, "result")), None);
+    let found = b.node("findText", json!({ "part": "gę" }));
+    b.link(trimmed, "result", found, "text");
+    line(&mut b, "index", None, Some((found, "result")));
+    let missing = b.node("findText", json!({ "part": "xyz" }));
+    b.link(trimmed, "result", missing, "text");
+    line(&mut b, "missing", None, Some((missing, "result")));
+    let swapped = b.node("replaceText", json!({ "text": "a-b-c", "find": "-", "with": " + " }));
+    line(&mut b, "replaced", Some((swapped, "result")), None);
+    let loud = b.node("upperCase", json!({ "text": "Mixed Case 1" }));
+    line(&mut b, "upper", Some((loud, "result")), None);
+    let joined = b.node("joinText", json!({ "a": "Level ", "b": "" }));
+    let number = b.node("numberToText", json!({ "value": 3.5 }));
+    b.link(number, "result", joined, "b");
+    line(&mut b, "joined", Some((joined, "result")), None);
+    let parsed = b.node("textToNumber", json!({ "text": " -2.25 " }));
+    line(&mut b, "parsed", None, Some((parsed, "result")));
+    let bad = b.node("textToNumber", json!({ "text": "12abc" }));
+    let valid = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    b.link(bad, "valid", valid, "condition");
+    line(&mut b, "bad", None, Some((valid, "result")));
+    let same = b.node("sameText", json!({ "a": "abc", "b": "abc" }));
+    let ends = b.node("endsWith", json!({ "text": "file.png", "part": ".png" }));
+    let both = b.node("and", json!({}));
+    b.link(same, "result", both, "a");
+    b.link(ends, "result", both, "b");
+    let said = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    b.link(both, "result", said, "condition");
+    line(&mut b, "checks", None, Some((said, "result")));
+    let name = b.node("nameOf", json!({}));
+    line(&mut b, "name", Some((name, "result")), None);
+
+    let (_, _, mut host) = run(&b.bytes(), &[]);
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(
+        lines,
+        [
+            "trimmed Zażółć gęślą 12",
+            "part żółć",
+            "end lą",
+            "index 7",
+            "missing -1",
+            "replaced a + b + c",
+            "upper MIXED CASE 1",
+            "joined Level 3.5",
+            "parsed -2.25",
+            "bad 0",
+            "checks 1",
+            "name Scripted",
+        ]
+    );
 }

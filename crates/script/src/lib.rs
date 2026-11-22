@@ -568,6 +568,11 @@ struct Instance {
     on_message: Option<TypedFunc<f32, ()>>,
     /// Stopped after an error; it no longer runs.
     stopped: bool,
+    /// `bayleaf_init`, until it has run. Scripts loaded together all init once all of them are
+    /// loaded, then all start, so each one sees the others (their properties, as components).
+    pending_init: Option<TypedFunc<(), ()>>,
+    /// `bayleaf_start`, until it has run (after every script loaded with it has run its init).
+    pending_start: Option<TypedFunc<(), ()>>,
 }
 
 /// All script instances of one play session.
@@ -627,11 +632,35 @@ impl ScriptHost {
             let scripts = scene.get::<Scripts>(object).cloned().unwrap_or_default();
             for (index, script) in scripts.0.iter().enumerate() {
                 let path = base_dir.join(&script.module);
-                if let Err(error) = self.load_file(object, index, &path, script, scene, time, input) {
+                if let Err(error) = self.instantiate_file(object, index, &path, script, scene, time, input) {
                     self.faults.push(ScriptFault { object, script: script.display_name(), error });
                 }
             }
         }
+        // Every script of the scene is loaded before any starts.
+        for (object, index, error) in self.run_starts(scene, time, input) {
+            let script = scene.get::<Scripts>(object).and_then(|s| s.0.get(index).map(ScriptRef::display_name)).unwrap_or_default();
+            self.faults.push(ScriptFault { object, script, error });
+        }
+    }
+
+    /// Loads several module files (the scripts of a placed prefab), then runs their inits and
+    /// starts together, as `load_scene` does. Returns the scripts that could not load or start.
+    pub fn load_files(
+        &mut self,
+        scripts: &[(StableId, usize, PathBuf, ScriptRef)],
+        scene: &mut Scene,
+        time: f64,
+        input: &Arc<Input>,
+    ) -> Vec<(StableId, usize, ScriptError)> {
+        let mut failed = Vec::new();
+        for (object, index, path, script) in scripts {
+            if let Err(error) = self.instantiate_file(*object, *index, path, script, scene, time, input) {
+                failed.push((*object, *index, error));
+            }
+        }
+        failed.extend(self.run_starts(scene, time, input));
+        failed
     }
 
     /// Loads one module file as script `index` of `object` and runs its `bayleaf_start`.
@@ -651,6 +680,23 @@ impl ScriptHost {
         self.load_bytes(object, index, path, modified, &bytes, script, scene, time, input)
     }
 
+    /// Loads one module file without running its `bayleaf_start` (see `run_starts`).
+    #[allow(clippy::too_many_arguments)]
+    fn instantiate_file(
+        &mut self,
+        object: StableId,
+        index: usize,
+        path: &Path,
+        script: &ScriptRef,
+        scene: &mut Scene,
+        time: f64,
+        input: &Arc<Input>,
+    ) -> Result<(), ScriptError> {
+        let bytes = module_bytes(path)?;
+        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        self.instantiate(object, index, path, modified, &bytes, script, scene, time, input)
+    }
+
     /// The properties a module declares, with their defaults, in declaration order. Runs no script
     /// code but `bayleaf_describe`; a module without it declares nothing.
     pub fn describe(&self, name: &str, bytes: &[u8]) -> Result<Vec<(String, f32)>, ScriptError> {
@@ -668,9 +714,37 @@ impl ScriptHost {
         describe_instance(&mut store, &instance, name)
     }
 
-    /// Loads a module from memory; `path` names it in messages and for hot reload.
+    /// Loads a module from memory and runs its `bayleaf_start`; `path` names it in messages and for
+    /// hot reload.
     #[allow(clippy::too_many_arguments)]
     fn load_bytes(
+        &mut self,
+        object: StableId,
+        index: usize,
+        path: &Path,
+        modified: Option<SystemTime>,
+        bytes: &[u8],
+        script: &ScriptRef,
+        scene: &mut Scene,
+        time: f64,
+        input: &Arc<Input>,
+    ) -> Result<(), ScriptError> {
+        self.instantiate(object, index, path, modified, bytes, script, scene, time, input)?;
+        let mut result = Ok(());
+        for (o, i, error) in self.run_starts(scene, time, input) {
+            if (o, i) == (object, index) {
+                result = Err(error);
+            } else {
+                let script = self.instances.iter().find(|e| e.object == o && e.index == i).map(|e| e.script_name.clone()).unwrap_or_default();
+                self.faults.push(ScriptFault { object: o, script, error });
+            }
+        }
+        result
+    }
+
+    /// Loads a module from memory without running its `bayleaf_start`.
+    #[allow(clippy::too_many_arguments)]
+    fn instantiate(
         &mut self,
         object: StableId,
         index: usize,
@@ -712,25 +786,72 @@ impl ScriptHost {
         store.data_mut().properties = properties;
         let update = instance.get_typed_func::<f32, ()>(&store, "bayleaf_update").ok();
         let on_message = instance.get_typed_func::<f32, ()>(&store, "bayleaf_message").ok();
+        let init = instance.get_typed_func::<(), ()>(&store, "bayleaf_init").ok();
         let start = instance.get_typed_func::<(), ()>(&store, "bayleaf_start").ok();
 
         // Replace an earlier instance in the same slot (hot reload).
         self.instances.retain(|i| !(i.object == object && i.index == index));
         let script_name = script.display_name();
-        let mut entry = Instance { object, index, script_name, path: path.to_path_buf(), module_name, modified, store, update, on_message, stopped: false };
-        if let Some(start) = start {
-            let result = call(&mut entry, |store| start.call(store, ()));
-            self.collect(&mut entry);
-            after_call(scene, &mut entry, &mut self.requests, &mut self.messages, &mut self.property_writes);
+        self.instances.push(Instance {
+            object,
+            index,
+            script_name,
+            path: path.to_path_buf(),
+            module_name,
+            modified,
+            store,
+            update,
+            on_message,
+            stopped: false,
+            pending_init: init,
+            pending_start: start,
+        });
+        Ok(())
+    }
+
+    /// Runs `bayleaf_init` of every script loaded and not initialised yet, then `bayleaf_start` of
+    /// every script not started yet, each phase in load order and seeing all loaded scripts as the
+    /// phase began. Returns the scripts whose init or start failed (they are stopped).
+    fn run_starts(&mut self, scene: &mut Scene, time: f64, input: &Arc<Input>) -> Vec<(StableId, usize, ScriptError)> {
+        let mut failed = self.run_phase(scene, time, input, |entry| entry.pending_init.take());
+        failed.extend(self.run_phase(scene, time, input, |entry| entry.pending_start.take()));
+        failed
+    }
+
+    /// Runs the function `take` hands out for each running script.
+    fn run_phase(
+        &mut self,
+        scene: &mut Scene,
+        time: f64,
+        input: &Arc<Input>,
+        take: impl Fn(&mut Instance) -> Option<TypedFunc<(), ()>>,
+    ) -> Vec<(StableId, usize, ScriptError)> {
+        let world = WorldView::of(scene, self.script_values());
+        let mut failed = Vec::new();
+        let mut logs = Vec::new();
+        for entry in self.instances.iter_mut().filter(|e| !e.stopped) {
+            let Some(start) = take(entry) else { continue };
+            {
+                let state = entry.store.data_mut();
+                state.world = Arc::clone(&world);
+                state.transform = read_transform(scene, entry.object);
+                state.position = read_position(scene, entry.object);
+                state.transform_changed = false;
+                state.time = time;
+                state.input = Arc::clone(input);
+            }
+            let result = call(entry, |store| start.call(store, ()));
+            let script = entry.script_name.clone();
+            logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
+            after_call(scene, entry, &mut self.requests, &mut self.messages, &mut self.property_writes);
             if let Err(error) = result {
                 entry.stopped = true;
-                self.instances.push(entry);
-                return Err(error);
+                failed.push((entry.object, entry.index, error));
             }
         }
-        self.instances.push(entry);
+        self.push_logs(logs);
         self.apply_property_writes();
-        Ok(())
+        failed
     }
 
     /// Runs `bayleaf_update(dt)` on every running script and writes changed transforms back.
@@ -951,12 +1072,6 @@ impl ScriptHost {
     /// Log lines recorded since the last call.
     pub fn take_logs(&mut self) -> Vec<LogLine> {
         std::mem::take(&mut self.logs)
-    }
-
-    fn collect(&mut self, entry: &mut Instance) {
-        let script = entry.script_name.clone();
-        let lines: Vec<LogLine> = entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }).collect();
-        self.push_logs(lines);
     }
 
     fn push_logs(&mut self, lines: Vec<LogLine>) {
@@ -1497,6 +1612,13 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                 Ok(1)
             },
         )?;
+        linker.func_wrap("bayleaf", "name_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32, cap: i32| -> Result<i32, wasmi::Error> {
+            let name = caller.data().world.get(handle).map(|(_, name, _)| name.clone()).unwrap_or_default();
+            let cap = usize::try_from(cap).map_err(|_| fault(&mut caller, "name_of: the room must not be negative".to_owned()))?;
+            let bytes = name.as_bytes();
+            write_guest(&mut caller, out, &bytes[..bytes.len().min(cap)], "name_of")?;
+            Ok(i32::try_from(bytes.len()).unwrap_or(i32::MAX))
+        })?;
         linker.func_wrap("bayleaf", "count_with", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
             let kind = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("count_with: {m}")))?;
             Ok(i32::try_from(caller.data().world.with_kind(&kind).count()).unwrap_or(i32::MAX))

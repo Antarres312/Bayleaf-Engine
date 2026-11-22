@@ -52,6 +52,7 @@ pub(crate) struct Tokens {
     pub pin_bool: Color32,
     pub pin_any: Color32,
     pub pin_object: Color32,
+    pub pin_text: Color32,
 }
 
 pub(crate) const DARK: Tokens = Tokens {
@@ -86,6 +87,7 @@ pub(crate) const DARK: Tokens = Tokens {
     pin_bool: Color32::from_rgb(0xFF, 0x7B, 0x72),
     pin_any: Color32::from_rgb(0xC4, 0x9B, 0xFF),
     pin_object: Color32::from_rgb(0x4F, 0xD1, 0xC5),
+    pin_text: Color32::from_rgb(0xF2, 0x8F, 0xC6),
 };
 
 pub(crate) const LIGHT: Tokens = Tokens {
@@ -120,6 +122,7 @@ pub(crate) const LIGHT: Tokens = Tokens {
     pin_bool: Color32::from_rgb(0xC6, 0x28, 0x28),
     pin_any: Color32::from_rgb(0x7B, 0x3F, 0xC4),
     pin_object: Color32::from_rgb(0x00, 0x79, 0x72),
+    pin_text: Color32::from_rgb(0xB0, 0x2E, 0x78),
 };
 
 /// Corner radius of buttons and fields: nearly square, so short controls read as controls and not
@@ -318,6 +321,7 @@ mod tests {
             ("bool", t.pin_bool),
             ("any", t.pin_any),
             ("object", t.pin_object),
+            ("text", t.pin_text),
         ];
         for (pin, color) in pins {
             // Pins sit on node cards; links run over the canvas backdrop.

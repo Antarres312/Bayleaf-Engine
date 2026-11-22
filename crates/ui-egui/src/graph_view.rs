@@ -213,6 +213,7 @@ fn pin_color(t: &Tokens, ty: PinType) -> Color32 {
         PinType::Bool => t.pin_bool,
         PinType::Any => t.pin_any,
         PinType::Object => t.pin_object,
+        PinType::Text => t.pin_text,
     }
 }
 
@@ -1075,6 +1076,10 @@ fn pin_ui(
         // Flow pins are arrows, so they differ from data pins by shape as well as colour.
         let points = vec![center + vec2(-r, -r), center + vec2(r, 0.0), center + vec2(-r, r)];
         painter.add(egui::Shape::convex_polygon(points, if filled { color } else { t.surface }, Stroke::new(2.0, color)));
+    } else if pin.ty == PinType::Text {
+        // Text pins are squares.
+        let rect = Rect::from_center_size(center, vec2(r * 2.0, r * 2.0));
+        painter.rect(rect, 1.0, if filled { color } else { t.surface }, Stroke::new(2.0, color), egui::StrokeKind::Middle);
     } else if pin.ty == PinType::Object {
         // Object pins are diamonds.
         let d = r + 1.0;
@@ -1133,6 +1138,7 @@ fn pin_hint(pin: &PinDef) -> String {
         PinType::Bool => "true or false",
         PinType::Any => "a number or a vector, by what is linked",
         PinType::Object => "an object in the scene, or none",
+        PinType::Text => "letters, words and numbers as written",
     };
     format!("{}: {} ({meaning})", pin.label, pin.ty.label())
 }
@@ -1198,6 +1204,16 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
             if response.changed() {
                 requests.run("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": b }));
             }
+        }
+        PinType::Text => {
+            let default = match pin.default {
+                PinDefault::Text(text) => text,
+                _ => "",
+            };
+            let mut text = value_or(node, pin.name, json!(default)).as_str().unwrap_or(default).to_owned();
+            let response = ui.put(rect, egui::TextEdit::singleline(&mut text).font(egui::TextStyle::Small)).on_hover_text(&hint);
+            labelled(ui, &response, &name);
+            commit(&response, requests, || ("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": text })), key);
         }
         // An unlinked object input means the node's own choice (named in its settings, or this object).
         PinType::Flow | PinType::Object => {}

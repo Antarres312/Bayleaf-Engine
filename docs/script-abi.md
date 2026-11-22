@@ -12,7 +12,8 @@ so module-level state belongs to that one script slot. Any language that compile
 |---|---|---|---|
 | `memory` | linear memory | yes | the host reads and writes strings and transforms here |
 | `bayleaf_abi` | `() -> i32` | yes | at load; must return `1` |
-| `bayleaf_start` | `() -> ()` | no | once, when play mode starts or after a hot reload |
+| `bayleaf_init` | `() -> ()` | no | once, when the object is ready: scripts loaded together (a scene when play starts, a placed prefab) all run `bayleaf_init` before any runs `bayleaf_start` |
+| `bayleaf_start` | `() -> ()` | no | once, after every script loaded with it ran `bayleaf_init`: when play mode starts, or after a hot reload |
 | `bayleaf_update` | `(dt: f32) -> ()` | no | every simulation step; `dt` is in seconds |
 | `bayleaf_message` | `(value: f32) -> ()` | no | for each message sent to this object or to every object, after the step; `message_name` or `message_is` tell which |
 | `bayleaf_describe` | `() -> i64` | no | when the editor or play mode loads the module; returns `(ptr << 32) \| len` of UTF-8 JSON `{"properties": [["speed", 90.0], ...], "menu": "Light/Flicker"}`: the properties the editor shows, with defaults, and optionally where Add Component lists the script (1 to 4 names of up to 64 characters separated by `/`; without it, under Scripts), at most 64 KiB |
@@ -31,6 +32,7 @@ so module-level state belongs to that one script slot. Any language that compile
 | `mouse_down` | `(button: i32) -> i32` | `1` while the button is held: `0` left, `1` right, `2` middle |
 | `self_handle` | `() -> i32` | the handle of this script's object |
 | `find` | `(name_ptr: i32, name_len: i32) -> i32` | the handle of the first object with that name, in hierarchy order, or `0` |
+| `name_of` | `(handle: i32, out: i32, cap: i32) -> i32` | writes up to `cap` bytes of the object's UTF-8 name (as the step began) and returns its full length; `0` for no object |
 | `find_with` | `(kind_ptr: i32, kind_len: i32, index: i32) -> i32` | the handle of the `index`-th object (from 0, in hierarchy order, as the step began) that has a component (by its name or label: `pointLight`, `Point Light`), a tag, or runs a script (by its file name without the extension, or the name the Inspector shows); case, spaces, `_` and `-` are ignored. `0` when there is none |
 | `count_with` | `(kind_ptr: i32, kind_len: i32) -> i32` | how many objects `find_with` can find for that kind |
 | `component_get` | `(handle: i32, c_ptr: i32, c_len: i32, f_ptr: i32, f_len: i32, out: i32) -> i32` | writes 3 `f32`: a field of a component (by its name or label, as for `find_with`; the field by its name in scene files, such as `intensity`), as the step began: a number in the first, true/false as `1` or `0`, a vector or colour in all three. Returns `1` when the object has that component and field, else `0` (and writes zeros). An empty field asks whether the object has the component. The components are those visual scripts list (`visual::COMPONENTS`), or a script on the object by its name (as for `find_with`), whose properties are numbers |

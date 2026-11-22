@@ -19,6 +19,7 @@ mod raw {
         pub fn find(name_ptr: *const u8, name_len: usize) -> i32;
         pub fn find_with(kind_ptr: *const u8, kind_len: usize, index: i32) -> i32;
         pub fn count_with(kind_ptr: *const u8, kind_len: usize) -> i32;
+        pub fn name_of(handle: i32, out: *mut u8, cap: usize) -> i32;
         pub fn component_get(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, out: *mut f32) -> i32;
         pub fn component_set(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, value: *const f32) -> i32;
         pub fn transform_get_of(handle: i32, out: *mut f32);
@@ -81,6 +82,9 @@ mod raw {
         0
     }
     pub unsafe fn count_with(_: *const u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn name_of(_: i32, _: *mut u8, _: usize) -> i32 {
         0
     }
     pub unsafe fn component_get(_: i32, _: *const u8, _: usize, _: *const u8, _: usize, _: *mut f32) -> i32 {
@@ -221,6 +225,15 @@ pub(crate) fn find_with(kind: &str, index: i32) -> i32 {
 pub(crate) fn count_with(kind: &str) -> i32 {
     // SAFETY: the pointer and length describe `kind`; the host only reads.
     unsafe { raw::count_with(kind.as_ptr(), kind.len()) }
+}
+
+pub(crate) fn name_of(handle: i32) -> String {
+    // SAFETY: a null pointer with no room only asks for the length.
+    let len = unsafe { raw::name_of(handle, std::ptr::null_mut(), 0) };
+    let mut bytes = vec![0u8; usize::try_from(len).unwrap_or(0)];
+    // SAFETY: `bytes` has exactly `len` writable bytes, at most what the host writes.
+    unsafe { raw::name_of(handle, bytes.as_mut_ptr(), bytes.len()) };
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 pub(crate) fn component_get(handle: i32, component: &str, field: &str) -> Option<[f32; 3]> {

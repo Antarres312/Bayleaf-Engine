@@ -122,6 +122,11 @@ impl Object {
         usize::try_from(abi::count_with(kind)).unwrap_or(0)
     }
 
+    /// Its name, as the step began.
+    pub fn name(self) -> String {
+        abi::name_of(self.0)
+    }
+
     /// Whether it has a component whose fields scripts read (`Point Light`, `pointLight`).
     pub fn has(self, component: &str) -> bool {
         abi::component_get(self.0, component, "").is_some()
@@ -366,7 +371,11 @@ pub trait Script: Default + Send + 'static {
     /// for the Scripts folder, under the module's name.
     const MENU: &'static str = "";
 
-    /// Runs once when play mode starts (or after a hot reload).
+    /// Runs once when the script's object is ready: every script loaded with it (all of a scene
+    /// when play starts) runs `init` before any runs `start`.
+    fn init(&mut self) {}
+    /// Runs once after every script loaded with it ran `init`: when play mode starts, or after a
+    /// hot reload.
     fn start(&mut self) {}
     /// Runs every simulation step; `dt` is the step length in seconds.
     fn update(&mut self, dt: f32) {
@@ -394,6 +403,13 @@ macro_rules! script {
             static DESCRIPTION: ::std::sync::OnceLock<String> = ::std::sync::OnceLock::new();
             let text = DESCRIPTION.get_or_init(|| $crate::describe(<$ty as $crate::Script>::PROPERTIES, <$ty as $crate::Script>::MENU));
             $crate::pack(text)
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn bayleaf_init() {
+            let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
+            let script = state.get_or_insert_with(<$ty as ::core::default::Default>::default);
+            $crate::Script::init(script);
         }
 
         #[unsafe(no_mangle)]

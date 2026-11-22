@@ -84,6 +84,9 @@ that does not load or compile is reported in the Inspector, and `scene.render` l
 Add a `.bscript` file to an object like any script (Inspector, Add Component, Scripts). It runs like
 a `.wasm` script: same limits, same console, same hot reload when the file is saved during play.
 
+- **On Init** runs once when the object is ready. When play starts (or a prefab is placed), every
+  script loads first, then every script runs On Init, then every script runs On Start, so On Init
+  and On Start see all the others whatever the hierarchy order.
 - **On Start** and **On Update** begin chains of actions joined by flow links. On Update's
   **Step Seconds** output is the step length.
 - **Branch** continues with True or False.
@@ -144,6 +147,15 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
 - Position Of, Set Position Of, Send Message, Walk, Jump, Add Impulse, Set Velocity and **Destroy
   Object** take an Object input. Unlinked, they use the first object named in Object Name, else
   their own default (this object, or for Send Message every object).
+- **Text** pins (squares) carry text; an unlinked one is typed in the node. **Text**, **Join Text**,
+  **Text Length**, **Part of Text** (Start and Count in characters), **Find in Text** (the index in
+  characters, -1 when missing), **Replace Text**, **Upper Case**, **Lower Case** and **Trim Text**
+  work on it; **Same Text**, **Text Contains**, **Starts With** and **Ends With** compare it;
+  **Number to Text** and **Text to Number** (with Valid) convert; **Name Of** gives an object's name.
+  Characters are counted as written, so ż or ę count once; Upper and Lower Case change a to z only.
+  **Log** writes its message, then its linked Text, then its linked Value; **Find Object Named**
+  takes a linked Name. Text made while a script runs lives until that call ends: keep numbers, not
+  text, in variables.
 - Data nodes have no side effects. They are computed where an action needs them.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a

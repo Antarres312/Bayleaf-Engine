@@ -26,6 +26,12 @@ const fn vector(name: &'static str, label: &'static str, value: [f32; 3]) -> Pin
     PinDef::with(name, label, Vec3, PinDefault::Vec3(value))
 }
 
+const fn text(name: &'static str, label: &'static str, value: &'static str) -> PinDef {
+    PinDef::with(name, label, PinType::Text, PinDefault::Text(value))
+}
+
+const TEXT_OUT: &[PinDef] = &[pin("result", "Result", PinType::Text)];
+
 const RUN: PinDef = pin("run", "Run", Flow);
 const THEN: PinDef = pin("then", "Then", Flow);
 const MATH_OUT: &[PinDef] = &[pin("result", "Result", Any)];
@@ -70,7 +76,15 @@ pub const CATALOG: Catalog = Catalog {
     starter: &[("start", [40.0, 40.0]), ("update", [40.0, 200.0])],
     variant: fields::variant,
     nodes: &[
-        node("start", "On Start", "Events", "Runs once when play mode starts.", &[], &[THEN]),
+        node(
+            "init",
+            "On Init",
+            "Events",
+            "Runs once when the object is ready, before any script's On Start: every script of the scene runs On Init first.",
+            &[],
+            &[THEN],
+        ),
+        node("start", "On Start", "Events", "Runs once when play mode starts, after every script ran On Init.", &[], &[THEN]),
         node("update", "On Update", "Events", "Runs every simulation step.", &[], &[THEN, pin("dt", "Step Seconds", Float)]),
         NodeDef {
             kind: "message",
@@ -197,7 +211,7 @@ pub const CATALOG: Catalog = Catalog {
             label: "Log",
             category: "Actions",
             description: "Writes the message, and the value if one is linked, to the console.",
-            inputs: &[RUN, pin("value", "Value", Float)],
+            inputs: &[RUN, text("text", "Text", ""), pin("value", "Value", Float)],
             outputs: &[THEN],
             settings: &[SettingDef { name: "message", label: "Message", kind: SettingKind::Text("Hello") }],
             unique: false,
@@ -314,7 +328,7 @@ pub const CATALOG: Catalog = Catalog {
             label: "Find Object Named",
             category: "Find",
             description: "The first object with this name, in hierarchy order, as the step began. Found is false when there is none.",
-            inputs: &[],
+            inputs: &[text("named", "Name", "")],
             outputs: &[pin("object", "Object", PinType::Object), pin("found", "Found", Bool)],
             settings: &[SettingDef { name: "name", label: "Name", kind: SettingKind::Text("Player") }],
             unique: false,
@@ -566,6 +580,78 @@ pub const CATALOG: Catalog = Catalog {
         node("and", "And", "Logic", "True when both are true.", &[pin("a", "A", Bool), pin("b", "B", Bool)], &[pin("result", "Result", Bool)]),
         node("or", "Or", "Logic", "True when either is true.", &[pin("a", "A", Bool), pin("b", "B", Bool)], &[pin("result", "Result", Bool)]),
         node("not", "Not", "Logic", "True when the input is false.", &[pin("value", "Value", Bool)], &[pin("result", "Result", Bool)]),
+        node("text", "Text", "Text", "Text typed here.", &[text("value", "Value", "")], TEXT_OUT),
+        node("joinText", "Join Text", "Text", "A followed by B.", &[text("a", "A", ""), text("b", "B", "")], TEXT_OUT),
+        node("textLength", "Text Length", "Text", "How many characters the text has.", &[text("text", "Text", "")], &[pin("result", "Length", Float)]),
+        node("numberToText", "Number to Text", "Text", "The number as text, with up to three decimals.", &[number("value", "Value", Float, 0.0)], TEXT_OUT),
+        node(
+            "textToNumber",
+            "Text to Number",
+            "Text",
+            "The number the text spells, such as -2.5 (spaces around it are fine). Valid is false, and the number 0, when it spells none.",
+            &[text("text", "Text", "")],
+            &[pin("result", "Number", Float), pin("valid", "Valid", Bool)],
+        ),
+        node(
+            "sameText",
+            "Same Text",
+            "Text",
+            "True when A and B are the same text (upper and lower case differ).",
+            &[text("a", "A", ""), text("b", "B", "")],
+            &[pin("result", "Result", Bool)],
+        ),
+        node(
+            "textContains",
+            "Text Contains",
+            "Text",
+            "True when Part appears in the text.",
+            &[text("text", "Text", ""), text("part", "Part", "")],
+            &[pin("result", "Result", Bool)],
+        ),
+        node(
+            "startsWith",
+            "Starts With",
+            "Text",
+            "True when the text begins with Part.",
+            &[text("text", "Text", ""), text("part", "Part", "")],
+            &[pin("result", "Result", Bool)],
+        ),
+        node(
+            "endsWith",
+            "Ends With",
+            "Text",
+            "True when the text ends with Part.",
+            &[text("text", "Text", ""), text("part", "Part", "")],
+            &[pin("result", "Result", Bool)],
+        ),
+        node(
+            "findText",
+            "Find in Text",
+            "Text",
+            "Where Part first appears in the text, counted in characters from 0; -1 when it does not.",
+            &[text("text", "Text", ""), text("part", "Part", "")],
+            &[pin("result", "Index", Float)],
+        ),
+        node(
+            "textPart",
+            "Part of Text",
+            "Text",
+            "Count characters of the text from Start (0 is the first), cut short at its end.",
+            &[text("text", "Text", ""), number("start", "Start", Float, 0.0), number("count", "Count", Float, 1.0)],
+            TEXT_OUT,
+        ),
+        node(
+            "replaceText",
+            "Replace Text",
+            "Text",
+            "The text with every Find replaced by With.",
+            &[text("text", "Text", ""), text("find", "Find", ""), text("with", "With", "")],
+            TEXT_OUT,
+        ),
+        node("upperCase", "Upper Case", "Text", "The text with a to z made A to Z.", &[text("text", "Text", "")], TEXT_OUT),
+        node("lowerCase", "Lower Case", "Text", "The text with A to Z made a to z.", &[text("text", "Text", "")], TEXT_OUT),
+        node("trimText", "Trim Text", "Text", "The text without spaces, tabs and line breaks at its start and end.", &[text("text", "Text", "")], TEXT_OUT),
+        node("nameOf", "Name Of", "Text", "The name of the linked object, else this object.", &[TARGET], TEXT_OUT),
     ],
 };
 
@@ -573,8 +659,6 @@ pub const CATALOG: Catalog = Catalog {
 const MAX_TEXT: usize = 8 << 20;
 /// Where static text starts in the module's memory. Bytes 0..36 hold the transform.
 const DATA_START: u32 = 1024;
-/// Room after a log message for the number.
-const NUMBER_ROOM: u32 = 32;
 
 /// A compiled value: WebAssembly expressions that leave it on the stack.
 #[derive(Clone)]
@@ -584,6 +668,8 @@ enum Val {
     B(String),
     /// An object's handle (`i32`; 0 for none).
     O(String),
+    /// Text: `i64` of its address << 32 | its length in bytes, in this module's memory.
+    T(String),
 }
 
 /// What a Get, Try Get or Set Component node works on.
@@ -624,16 +710,18 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     graph.check(&CATALOG).map_err(|e| vec![Problem::graph(e.to_string())])?;
     let mut c = Compiler { graph, data: Vec::new(), next: DATA_START, properties: Vec::new(), globals: Vec::new() };
     let mut problems = Vec::new();
+    let mut init = String::new();
     let mut start = String::new();
     let mut update = String::new();
     let mut message = String::new();
     // Globals the events keep between steps.
     let mut state: Vec<String> = Vec::new();
     let mut events: Vec<&bayleaf_graph::Node> =
-        graph.nodes.iter().filter(|n| matches!(n.kind.as_str(), "start" | "update" | "message" | "keyPressed" | "actionPressed" | "timer")).collect();
+        graph.nodes.iter().filter(|n| matches!(n.kind.as_str(), "init" | "start" | "update" | "message" | "keyPressed" | "actionPressed" | "timer")).collect();
     events.sort_by_key(|n| n.id);
     for event in events {
         match c.chain(event.id, "then", 1) {
+            Ok(code) if event.kind == "init" => init.push_str(&code),
             Ok(code) if event.kind == "start" => start.push_str(&code),
             Ok(code) if event.kind == "update" => update.push_str(&code),
             Ok(code) if event.kind == "keyPressed" || event.kind == "actionPressed" => {
@@ -673,7 +761,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
             }
             Err(p) => problems.push(p),
         }
-        if start.len() + update.len() + message.len() > MAX_TEXT {
+        if init.len() + start.len() + update.len() + message.len() > MAX_TEXT {
             return Err(vec![Problem::graph("the script is too large; reuse fewer shared chains")]);
         }
     }
@@ -694,6 +782,9 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     let description = description.to_string();
     let (describe_at, describe_len) = c.text(description.as_bytes());
     let pages = c.next.div_ceil(65536).max(1);
+    // Text made while a call runs goes after the module's own data; each call starts it empty.
+    let heap = c.next.next_multiple_of(16);
+    let fresh = format!("    (global.set $heap (i32.const {heap}))\n");
 
     let mut out = String::new();
     out.push_str(PRELUDE);
@@ -733,10 +824,13 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         out,
         "  (func (export \"bayleaf_describe\") (result i64) (i64.or (i64.shl (i64.const {describe_at}) (i64.const 32)) (i64.const {describe_len})))"
     );
-    let _ = writeln!(out, "  (func (export \"bayleaf_start\")\n{start}  )");
-    let _ = writeln!(out, "  (func (export \"bayleaf_update\") (param $dt f32)\n    (global.set $dt (local.get $dt))\n{update}  )");
+    if graph.nodes.iter().any(|n| n.kind == "init") {
+        let _ = writeln!(out, "  (func (export \"bayleaf_init\")\n{fresh}{init}  )");
+    }
+    let _ = writeln!(out, "  (func (export \"bayleaf_start\")\n{fresh}{start}  )");
+    let _ = writeln!(out, "  (func (export \"bayleaf_update\") (param $dt f32)\n{fresh}    (global.set $dt (local.get $dt))\n{update}  )");
     if graph.nodes.iter().any(|n| n.kind == "message") {
-        let _ = writeln!(out, "  (func (export \"bayleaf_message\") (param $value f32)\n    (global.set $message (local.get $value))\n{message}  )");
+        let _ = writeln!(out, "  (func (export \"bayleaf_message\") (param $value f32)\n{fresh}    (global.set $message (local.get $value))\n{message}  )");
     }
     out.push_str(")\n");
     Ok(out)
@@ -773,6 +867,12 @@ impl Compiler<'_> {
     /// Places bytes in the module's memory and returns their address and length.
     fn text(&mut self, bytes: &[u8]) -> (u32, u32) {
         self.reserve(bytes, 0)
+    }
+
+    /// Text placed in memory, as a text value.
+    fn literal(&mut self, text: &str) -> String {
+        let (at, len) = self.text(text.as_bytes());
+        format!("(i64.const {})", (i64::from(at) << 32) | i64::from(len))
     }
 
     /// Places bytes followed by `room` free bytes.
@@ -894,17 +994,27 @@ impl Compiler<'_> {
         let vec3 = |c: &mut Self, name: &str| c.input(next, name).and_then(|v| as_vec(next, v));
         match n.kind.as_str() {
             "log" => {
+                // The message, then the linked text, then the linked number, with spaces between.
                 let message = self.setting_text(next, "message", "Hello");
-                if graph.link_into(next, "value").is_some() {
-                    let value = self.input(next, "value").and_then(|v| as_float(next, v))?;
-                    let mut bytes = message.into_bytes();
-                    bytes.push(b' ');
-                    let (at, len) = self.reserve(&bytes, NUMBER_ROOM);
-                    let _ = writeln!(code, "{indent}(call $log (i32.const {at}) (i32.add (i32.const {len}) (call $fmt {value} (i32.const {}))))", at + len);
-                } else {
-                    let (at, len) = self.text(message.as_bytes());
-                    let _ = writeln!(code, "{indent}(call $log (i32.const {at}) (i32.const {len}))");
+                let mut line = self.literal(&message);
+                let mut joined = !message.is_empty();
+                for (input, is_text) in [("text", true), ("value", false)] {
+                    if graph.link_into(next, input).is_none() {
+                        continue;
+                    }
+                    let part = if is_text {
+                        self.input(next, input).and_then(|v| as_text(next, v))?
+                    } else {
+                        format!("(call $num_text {})", self.input(next, input).and_then(|v| as_float(next, v))?)
+                    };
+                    if joined {
+                        let space = self.literal(" ");
+                        line = format!("(call $join {line} {space})");
+                    }
+                    line = format!("(call $join {line} {part})");
+                    joined = true;
                 }
+                let _ = writeln!(code, "{indent}(call $log_text {line})");
             }
             "setPosition" | "setRotation" | "setScale" | "moveBy" | "rotateBy" => {
                 let (input, offset, call) = match n.kind.as_str() {
@@ -1063,6 +1173,14 @@ impl Compiler<'_> {
         if let Some(link) = graph.link_into(node, pin) {
             return self.output(link.from.node, &link.from.pin);
         }
+        if pin_def.ty == PinType::Text {
+            let typed = graph.value(node, pin).and_then(|v| v.as_str()).map(str::to_owned);
+            let default = match pin_def.default {
+                PinDefault::Text(text) => text,
+                _ => "",
+            };
+            return Ok(Val::T(self.literal(typed.as_deref().unwrap_or(default))));
+        }
         if let Some(value) = graph.value(node, pin) {
             if let Some(v) = value.as_bool() {
                 return Ok(Val::B(format!("(i32.const {})", i32::from(v))));
@@ -1162,10 +1280,52 @@ impl Compiler<'_> {
                     }
                 }
             }
+            "text" => Val::T(self.input(node, "value").and_then(|v| as_text(node, v))?),
+            "joinText" | "sameText" | "textContains" | "startsWith" | "endsWith" | "findText" => {
+                let (first, second) = if matches!(n.kind.as_str(), "joinText" | "sameText") { ("a", "b") } else { ("text", "part") };
+                let a = self.input(node, first).and_then(|v| as_text(node, v))?;
+                let b = self.input(node, second).and_then(|v| as_text(node, v))?;
+                match n.kind.as_str() {
+                    "joinText" => Val::T(format!("(call $join {a} {b})")),
+                    "sameText" => Val::B(format!("(call $same {a} {b})")),
+                    "textContains" => Val::B(format!("(i32.ge_s (call $find_bytes {a} {b} (i32.const 0)) (i32.const 0))")),
+                    "startsWith" => Val::B(format!("(call $at {a} {b} (i32.const 0))")),
+                    "endsWith" => Val::B(format!("(call $ends {a} {b})")),
+                    _ => Val::F(format!("(f32.convert_i32_s (call $find_chars {a} {b}))")),
+                }
+            }
+            "textLength" => Val::F(format!("(f32.convert_i32_u (call $length {}))", self.input(node, "text").and_then(|v| as_text(node, v))?)),
+            "numberToText" => Val::T(format!("(call $num_text {})", self.input(node, "value").and_then(|v| as_float(node, v))?)),
+            "textToNumber" => {
+                let t = self.input(node, "text").and_then(|v| as_text(node, v))?;
+                if pin == "valid" { Val::B(format!("(call $is_number {t})")) } else { Val::F(format!("(call $number_or_zero {t})")) }
+            }
+            "upperCase" | "lowerCase" => {
+                let t = self.input(node, "text").and_then(|v| as_text(node, v))?;
+                Val::T(format!("(call $case {t} (i32.const {}))", i32::from(n.kind == "upperCase")))
+            }
+            "trimText" => Val::T(format!("(call $trim {})", self.input(node, "text").and_then(|v| as_text(node, v))?)),
+            "textPart" => {
+                let t = self.input(node, "text").and_then(|v| as_text(node, v))?;
+                let start = self.input(node, "start").and_then(|v| as_float(node, v))?;
+                let count = self.input(node, "count").and_then(|v| as_float(node, v))?;
+                Val::T(format!("(call $part {t} (call $index {start}) (call $index {count}))"))
+            }
+            "replaceText" => {
+                let t = self.input(node, "text").and_then(|v| as_text(node, v))?;
+                let find = self.input(node, "find").and_then(|v| as_text(node, v))?;
+                let with = self.input(node, "with").and_then(|v| as_text(node, v))?;
+                Val::T(format!("(call $replace {t} {find} {with})"))
+            }
+            "nameOf" => Val::T(format!("(call $name {})", self.target(node, Ok("(call $self_handle)"))?)),
             "thisObject" => Val::O("(call $self_handle)".to_owned()),
             "findNamed" => {
-                let (at, len) = self.named(node, "name", "name the object to find")?;
-                let found = format!("(call $find (i32.const {at}) (i32.const {len}))");
+                let found = if graph.link_into(node, "named").is_some() {
+                    format!("(call $find_text {})", self.input(node, "named").and_then(|v| as_text(node, v))?)
+                } else {
+                    let (at, len) = self.named(node, "name", "name the object to find")?;
+                    format!("(call $find (i32.const {at}) (i32.const {len}))")
+                };
                 if pin == "found" { Val::B(format!("(i32.ne {found} (i32.const 0))")) } else { Val::O(found) }
             }
             "findWith" => {
@@ -1249,7 +1409,7 @@ impl Compiler<'_> {
             "sine" => match self.input(node, "value")? {
                 Val::F(v) => Val::F(format!("(call $sin {v})")),
                 Val::V(v) => Val::V(v.map(|c| format!("(call $sin {c})"))),
-                Val::B(_) | Val::O(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
+                Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
             },
             "choose" => {
                 let condition = self.input(node, "condition").and_then(|v| as_bool(node, v))?;
@@ -1290,6 +1450,7 @@ fn as_float(node: u32, value: Val) -> Result<String, Problem> {
         Val::V(_) => Err(Problem::on(node, "this input takes a number but gets a vector; use Split Vector")),
         Val::B(_) => Err(Problem::on(node, "this input takes a number but gets true/false; use Choose")),
         Val::O(_) => Err(Problem::on(node, "this input takes a number but gets an object; use Position Of")),
+        Val::T(_) => Err(Problem::on(node, "this input takes a number but gets text; use Text to Number")),
     }
 }
 
@@ -1299,6 +1460,14 @@ fn as_vec(node: u32, value: Val) -> Result<[String; 3], Problem> {
         Val::F(f) => Ok([f.clone(), f.clone(), f]),
         Val::B(_) => Err(Problem::on(node, "this input takes a vector but gets true/false")),
         Val::O(_) => Err(Problem::on(node, "this input takes a vector but gets an object; use Position Of")),
+        Val::T(_) => Err(Problem::on(node, "this input takes a vector but gets text")),
+    }
+}
+
+fn as_text(node: u32, value: Val) -> Result<String, Problem> {
+    match value {
+        Val::T(text) => Ok(text),
+        _ => Err(Problem::on(node, "this input takes text; use Number to Text or Name Of")),
     }
 }
 
@@ -1332,6 +1501,7 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "count_with" (func $count_with (param i32 i32) (result i32)))
   (import "bayleaf" "component_get" (func $component_get (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "component_set" (func $component_set (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "name_of" (func $name_of (param i32 i32 i32) (result i32)))
   (import "bayleaf" "transform_get_of" (func $transform_get_of (param i32 i32)))
   (import "bayleaf" "transform_set_of" (func $transform_set_of (param i32 i32)))
   (import "bayleaf" "position_get_of" (func $position_get_of (param i32 i32)))
@@ -1357,6 +1527,7 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "pad_button" (func $pad_button (param i32) (result i32)))
   (global $dt (mut f32) (f32.const 0))
   (global $message (mut f32) (f32.const 0))
+  (global $heap (mut i32) (i32.const 0))
   (func (export "bayleaf_abi") (result i32) (i32.const 1))
   ;; Transform value i (0..8: position, rotation, scale).
   (func $t (param $i i32) (result f32)
@@ -1395,6 +1566,190 @@ const PRELUDE: &str = r#"(module
     (f32.store (i32.const 180) (local.get $y))
     (f32.store (i32.const 184) (local.get $z))
     (call $component_set (local.get $h) (local.get $c) (local.get $cl) (local.get $f) (local.get $fl) (i32.const 176)))
+  ;; Text is (address << 32) | length in bytes, in this module's memory. Text made while a call
+  ;; runs goes on a heap that each call starts empty; the memory grows when it needs to.
+  (func $alloc (param $n i32) (result i32) (local $p i32) (local $end i32)
+    (local.set $p (global.get $heap))
+    (local.set $end (i32.add (local.get $p) (local.get $n)))
+    (if (i32.gt_u (local.get $end) (i32.shl (memory.size) (i32.const 16)))
+      (then
+        (if (i32.lt_s (memory.grow (i32.add (i32.shr_u (i32.sub (local.get $end) (i32.shl (memory.size) (i32.const 16))) (i32.const 16)) (i32.const 1))) (i32.const 0))
+          (then unreachable))))
+    (global.set $heap (local.get $end))
+    (local.get $p))
+  (func $tp (param $t i64) (result i32) (i32.wrap_i64 (i64.shr_u (local.get $t) (i64.const 32))))
+  (func $tl (param $t i64) (result i32) (i32.wrap_i64 (local.get $t)))
+  (func $mk (param $p i32) (param $l i32) (result i64)
+    (i64.or (i64.shl (i64.extend_i32_u (local.get $p)) (i64.const 32)) (i64.extend_i32_u (local.get $l))))
+  (func $log_text (param $t i64) (call $log (call $tp (local.get $t)) (call $tl (local.get $t))))
+  (func $find_text (param $t i64) (result i32) (call $find (call $tp (local.get $t)) (call $tl (local.get $t))))
+  (func $join (param $a i64) (param $b i64) (result i64) (local $p i32)
+    (local.set $p (call $alloc (i32.add (call $tl (local.get $a)) (call $tl (local.get $b)))))
+    (memory.copy (local.get $p) (call $tp (local.get $a)) (call $tl (local.get $a)))
+    (memory.copy (i32.add (local.get $p) (call $tl (local.get $a))) (call $tp (local.get $b)) (call $tl (local.get $b)))
+    (call $mk (local.get $p) (i32.add (call $tl (local.get $a)) (call $tl (local.get $b)))))
+  ;; Whether the bytes of $b are at byte $at of $a.
+  (func $at (param $a i64) (param $b i64) (param $at i32) (result i32) (local $i i32)
+    (if (i32.or (i32.lt_s (local.get $at) (i32.const 0)) (i32.gt_u (i32.add (local.get $at) (call $tl (local.get $b))) (call $tl (local.get $a))))
+      (then (return (i32.const 0))))
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $i) (call $tl (local.get $b))))
+      (if (i32.ne (i32.load8_u (i32.add (i32.add (call $tp (local.get $a)) (local.get $at)) (local.get $i))) (i32.load8_u (i32.add (call $tp (local.get $b)) (local.get $i))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next)))
+    (i32.const 1))
+  (func $same (param $a i64) (param $b i64) (result i32)
+    (if (result i32) (i32.eq (call $tl (local.get $a)) (call $tl (local.get $b)))
+      (then (call $at (local.get $a) (local.get $b) (i32.const 0)))
+      (else (i32.const 0))))
+  (func $ends (param $a i64) (param $b i64) (result i32)
+    (call $at (local.get $a) (local.get $b) (i32.sub (call $tl (local.get $a)) (call $tl (local.get $b)))))
+  ;; The byte where $b first appears in $a, from byte $from, or -1.
+  (func $find_bytes (param $a i64) (param $b i64) (param $from i32) (result i32)
+    (block $none (loop $next
+      (br_if $none (i32.gt_s (i32.add (local.get $from) (call $tl (local.get $b))) (call $tl (local.get $a))))
+      (if (call $at (local.get $a) (local.get $b) (local.get $from)) (then (return (local.get $from))))
+      (local.set $from (i32.add (local.get $from) (i32.const 1)))
+      (br $next)))
+    (i32.const -1))
+  ;; Characters in the first $n bytes of $t: bytes that do not continue a UTF-8 character.
+  (func $chars (param $t i64) (param $n i32) (result i32) (local $i i32) (local $c i32)
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (if (i32.ne (i32.and (i32.load8_u (i32.add (call $tp (local.get $t)) (local.get $i))) (i32.const 192)) (i32.const 128))
+        (then (local.set $c (i32.add (local.get $c) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next)))
+    (local.get $c))
+  (func $length (param $t i64) (result i32) (call $chars (local.get $t) (call $tl (local.get $t))))
+  (func $find_chars (param $a i64) (param $b i64) (result i32) (local $at i32)
+    (local.set $at (call $find_bytes (local.get $a) (local.get $b) (i32.const 0)))
+    (if (result i32) (i32.lt_s (local.get $at) (i32.const 0))
+      (then (i32.const -1))
+      (else (call $chars (local.get $a) (local.get $at)))))
+  ;; The byte where character $n of $t starts (its length past the end).
+  (func $offset (param $t i64) (param $n i32) (result i32) (local $i i32) (local $c i32)
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $i) (call $tl (local.get $t))))
+      (if (i32.ne (i32.and (i32.load8_u (i32.add (call $tp (local.get $t)) (local.get $i))) (i32.const 192)) (i32.const 128))
+        (then
+          (if (i32.eq (local.get $c) (local.get $n)) (then (return (local.get $i))))
+          (local.set $c (i32.add (local.get $c) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next)))
+    (call $tl (local.get $t)))
+  ;; A count or position from a number: whole, from 0 to 2^30.
+  (func $index (param $v f32) (result i32) (local $i i32)
+    (local.set $i (i32.trunc_sat_f32_s (local.get $v)))
+    (select (i32.const 0) (select (i32.const 1073741824) (local.get $i) (i32.gt_s (local.get $i) (i32.const 1073741824))) (i32.lt_s (local.get $i) (i32.const 0))))
+  (func $part (param $t i64) (param $start i32) (param $count i32) (result i64) (local $a i32) (local $b i32)
+    (local.set $a (call $offset (local.get $t) (local.get $start)))
+    (local.set $b (call $offset (local.get $t) (i32.add (local.get $start) (local.get $count))))
+    (call $mk (i32.add (call $tp (local.get $t)) (local.get $a)) (i32.sub (local.get $b) (local.get $a))))
+  ;; A to Z (when $upper) or a to z.
+  (func $case (param $t i64) (param $upper i32) (result i64) (local $p i32) (local $i i32) (local $b i32)
+    (local.set $p (call $alloc (call $tl (local.get $t))))
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $i) (call $tl (local.get $t))))
+      (local.set $b (i32.load8_u (i32.add (call $tp (local.get $t)) (local.get $i))))
+      (if (local.get $upper)
+        (then (if (i32.le_u (i32.sub (local.get $b) (i32.const 97)) (i32.const 25)) (then (local.set $b (i32.sub (local.get $b) (i32.const 32))))))
+        (else (if (i32.le_u (i32.sub (local.get $b) (i32.const 65)) (i32.const 25)) (then (local.set $b (i32.add (local.get $b) (i32.const 32)))))))
+      (i32.store8 (i32.add (local.get $p) (local.get $i)) (local.get $b))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $next)))
+    (call $mk (local.get $p) (call $tl (local.get $t))))
+  (func $space (param $b i32) (result i32)
+    (i32.or (i32.eq (local.get $b) (i32.const 32)) (i32.le_u (i32.sub (local.get $b) (i32.const 9)) (i32.const 4))))
+  (func $trim (param $t i64) (result i64) (local $p i32) (local $l i32)
+    (local.set $p (call $tp (local.get $t)))
+    (local.set $l (call $tl (local.get $t)))
+    (block $front (loop $next
+      (br_if $front (i32.eqz (local.get $l)))
+      (br_if $front (i32.eqz (call $space (i32.load8_u (local.get $p)))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (local.set $l (i32.sub (local.get $l) (i32.const 1)))
+      (br $next)))
+    (block $back (loop $next
+      (br_if $back (i32.eqz (local.get $l)))
+      (br_if $back (i32.eqz (call $space (i32.load8_u (i32.sub (i32.add (local.get $p) (local.get $l)) (i32.const 1))))))
+      (local.set $l (i32.sub (local.get $l) (i32.const 1)))
+      (br $next)))
+    (call $mk (local.get $p) (local.get $l)))
+  (func $replace (param $t i64) (param $find i64) (param $with i64) (result i64) (local $count i32) (local $i i32) (local $at i32) (local $p i32) (local $w i32) (local $size i64)
+    (if (i32.eqz (call $tl (local.get $find))) (then (return (local.get $t))))
+    ;; Count the matches first, so the new text is made at its size.
+    (block $counted (loop $next
+      (local.set $at (call $find_bytes (local.get $t) (local.get $find) (local.get $i)))
+      (br_if $counted (i32.lt_s (local.get $at) (i32.const 0)))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      (local.set $i (i32.add (local.get $at) (call $tl (local.get $find))))
+      (br $next)))
+    (if (i32.eqz (local.get $count)) (then (return (local.get $t))))
+    (local.set $size
+      (i64.add (i64.extend_i32_u (call $tl (local.get $t)))
+        (i64.mul (i64.extend_i32_u (local.get $count)) (i64.sub (i64.extend_i32_u (call $tl (local.get $with))) (i64.extend_i32_u (call $tl (local.get $find)))))))
+    (if (i64.gt_s (local.get $size) (i64.const 1073741824)) (then unreachable))
+    (local.set $p (call $alloc (i32.wrap_i64 (local.get $size))))
+    (local.set $w (local.get $p))
+    (local.set $i (i32.const 0))
+    (block $done (loop $next
+      (local.set $at (call $find_bytes (local.get $t) (local.get $find) (local.get $i)))
+      (if (i32.lt_s (local.get $at) (i32.const 0)) (then (local.set $at (call $tl (local.get $t)))))
+      (memory.copy (local.get $w) (i32.add (call $tp (local.get $t)) (local.get $i)) (i32.sub (local.get $at) (local.get $i)))
+      (local.set $w (i32.add (local.get $w) (i32.sub (local.get $at) (local.get $i))))
+      (br_if $done (i32.ge_u (local.get $at) (call $tl (local.get $t))))
+      (memory.copy (local.get $w) (call $tp (local.get $with)) (call $tl (local.get $with)))
+      (local.set $w (i32.add (local.get $w) (call $tl (local.get $with))))
+      (local.set $i (i32.add (local.get $at) (call $tl (local.get $find))))
+      (br $next)))
+    (call $mk (local.get $p) (i32.sub (local.get $w) (local.get $p))))
+  (func $num_text (param $v f32) (result i64) (local $p i32)
+    (local.set $p (call $alloc (i32.const 32)))
+    (call $mk (local.get $p) (call $fmt (local.get $v) (local.get $p))))
+  ;; The number $t spells (spaces around it are fine), or NaN when it spells none.
+  (func $parse (param $t i64) (result f32) (local $p i32) (local $e i32) (local $b i32) (local $v f64) (local $scale f64) (local $neg i32) (local $digits i32) (local $dot i32)
+    (local.set $t (call $trim (local.get $t)))
+    (local.set $p (call $tp (local.get $t)))
+    (local.set $e (i32.add (local.get $p) (call $tl (local.get $t))))
+    (local.set $scale (f64.const 1))
+    (if (i32.lt_u (local.get $p) (local.get $e))
+      (then
+        (local.set $b (i32.load8_u (local.get $p)))
+        (if (i32.or (i32.eq (local.get $b) (i32.const 45)) (i32.eq (local.get $b) (i32.const 43)))
+          (then
+            (local.set $neg (i32.eq (local.get $b) (i32.const 45)))
+            (local.set $p (i32.add (local.get $p) (i32.const 1)))))))
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $p) (local.get $e)))
+      (local.set $b (i32.load8_u (local.get $p)))
+      (if (i32.eq (local.get $b) (i32.const 46))
+        (then
+          (if (local.get $dot) (then (return (f32.const nan))))
+          (local.set $dot (i32.const 1)))
+        (else
+          (if (i32.gt_u (i32.sub (local.get $b) (i32.const 48)) (i32.const 9)) (then (return (f32.const nan))))
+          (local.set $digits (i32.const 1))
+          (local.set $v (f64.add (f64.mul (local.get $v) (f64.const 10)) (f64.convert_i32_u (i32.sub (local.get $b) (i32.const 48)))))
+          (if (local.get $dot) (then (local.set $scale (f64.mul (local.get $scale) (f64.const 10)))))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br $next)))
+    (if (i32.eqz (local.get $digits)) (then (return (f32.const nan))))
+    (local.set $v (f64.div (local.get $v) (local.get $scale)))
+    (f32.demote_f64 (select (f64.neg (local.get $v)) (local.get $v) (local.get $neg))))
+  (func $is_number (param $t i64) (result i32) (local $v f32)
+    (local.set $v (call $parse (local.get $t)))
+    (f32.eq (local.get $v) (local.get $v)))
+  (func $number_or_zero (param $t i64) (result f32) (local $v f32)
+    (local.set $v (call $parse (local.get $t)))
+    (select (local.get $v) (f32.const 0) (f32.eq (local.get $v) (local.get $v))))
+  ;; The name of the object with handle $h.
+  (func $name (param $h i32) (result i64) (local $n i32) (local $p i32)
+    (local.set $n (call $name_of (local.get $h) (i32.const 0) (i32.const 0)))
+    (local.set $p (call $alloc (local.get $n)))
+    (drop (call $name_of (local.get $h) (local.get $p) (local.get $n)))
+    (call $mk (local.get $p) (local.get $n)))
   ;; Sets the position of the object with handle h.
   (func $set_position_of (param $h i32) (param $x f32) (param $y f32) (param $z f32)
     (call $transform_get_of (local.get $h) (i32.const 0))

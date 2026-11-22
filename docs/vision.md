@@ -163,6 +163,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
    categories that open on a click. Then: Get Component, Try Get Component and Set Component show the
    chosen component's fields as pins (`component_get`, `component_set`; `Object::field` and
    `Object::set_field` in the Rust SDK). Scripts are components there too: their properties become pins.
+   Then: On Init (`bayleaf_init`, `Script::init`): a scene's scripts all load, then all init, then
+   all start; Text pins and text nodes, and `name_of` (`Object::name`).
 7. **M6 Gameplay framework** as opt-in modules (`gameplay` feature of `bayleaf-engine`). Started:
    input actions in the project settings (named actions bound to keys, mouse, gamepad buttons and
    sticks; `action` in the ABI, Action and On Action Pressed nodes, the Input Actions panel); since

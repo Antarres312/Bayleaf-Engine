@@ -45,6 +45,8 @@ pub enum PinType {
     Any,
     /// An object in the scene (visual scripts), or none.
     Object,
+    /// Text (visual scripts).
+    Text,
 }
 
 impl PinType {
@@ -58,6 +60,7 @@ impl PinType {
             PinType::Bool => "True/False",
             PinType::Any => "Number or Vector",
             PinType::Object => "Object",
+            PinType::Text => "Text",
         }
     }
 
@@ -65,10 +68,10 @@ impl PinType {
     /// and colours; vectors and colours convert into each other. Whether an `Any` output really
     /// fits is checked when the graph is compiled.
     pub fn connects_to(self, to: PinType) -> bool {
-        use PinType::{Any, Bool, Color, Float, Flow, Object, Vec3};
+        use PinType::{Any, Bool, Color, Float, Flow, Object, Text, Vec3};
         match (self, to) {
-            (Flow, Flow) | (Bool, Bool) | (Object, Object) => true,
-            (Flow | Bool | Object, _) | (_, Flow | Bool | Object) => false,
+            (Flow, Flow) | (Bool, Bool) | (Object, Object) | (Text, Text) => true,
+            (Flow | Bool | Object | Text, _) | (_, Flow | Bool | Object | Text) => false,
             (Float | Vec3 | Color | Any, Float | Vec3 | Color | Any) => !(matches!(self, Vec3 | Color) && to == Float),
         }
     }
@@ -82,6 +85,7 @@ pub enum PinDefault {
     Vec3([f32; 3]),
     Color([f32; 3]),
     Bool(bool),
+    Text(&'static str),
     /// Filled in by the domain (for example the surface position in a material).
     Implicit(&'static str),
 }
@@ -906,6 +910,10 @@ fn check_value(def: &NodeDef, name: &str, value: &Value) -> Result<(), GraphErro
         PinType::Bool if value.is_boolean() => Ok(()),
         PinType::Bool => Err(bad("true or false")),
         PinType::Object => Err(GraphError::Refused(format!("{} · {name} takes an object only from a link", def.label))),
+        PinType::Text => match value.as_str() {
+            Some(text) if text.chars().count() <= MAX_TEXT => Ok(()),
+            _ => Err(bad(&format!("text of at most {MAX_TEXT} characters"))),
+        },
     }
 }
 

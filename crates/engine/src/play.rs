@@ -891,13 +891,17 @@ fn spawn_with(session: &mut Session, prefab: &str, place: impl FnOnce(&mut bayle
             started.push((object, index, script));
         }
     }
+    // Every script of the copy loads, then they all run On Init, then On Start.
+    let mut scripts = Vec::new();
     for (object, index, script) in started {
         let path = session.allowed(&base.join(&script.module), crate::confine::Access::Read).map_err(|e| e.to_string())?;
-        let Some(play) = session.play.as_mut() else { return Ok(id) };
-        if let Err(error) = play.host.load_file(object, index, &path, &script, &mut session.scene, play.time, &input) {
-            let who = session.scene.name(object).unwrap_or("Object").to_owned();
-            session.log(Level::Error, format!("[{who} · {}] {error}", script.display_name()));
-        }
+        scripts.push((object, index, path, script));
+    }
+    let Some(play) = session.play.as_mut() else { return Ok(id) };
+    for (object, index, error) in play.host.load_files(&scripts, &mut session.scene, play.time, &input) {
+        let who = session.scene.name(object).unwrap_or("Object").to_owned();
+        let script = scripts.iter().find(|(o, i, _, _)| (*o, *i) == (object, index)).map(|(_, _, _, s)| s.display_name()).unwrap_or_default();
+        session.log(Level::Error, format!("[{who} · {script}] {error}"));
     }
     Ok(id)
 }
