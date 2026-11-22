@@ -2,10 +2,11 @@
 //!
 //! Every change goes through the `graph.*` commands. Mouse: drag a node's title to move it, drag
 //! from a pin to another pin to link them (or into empty space to add a linked node), right-click
-//! the canvas to add a node, drag the background to pan, the mouse wheel to zoom, Ctrl + click to select
-//! several. Keyboard: Ctrl + Plus, Minus and 0 zoom in, out and to every node; Ctrl+C, Ctrl+V and
+//! the canvas to add a node, hold the right (or middle) button to pan, even over a node, the mouse
+//! wheel to zoom, drag the left button over the background to select the nodes in a box, Ctrl +
+//! click to select several. Keyboard: Ctrl + Plus, Minus and 0 zoom in, out and to every node; Ctrl+C, Ctrl+V and
 //! Ctrl+D copy, paste and duplicate the selected nodes; Tab moves
-//! between nodes, pins and fields; arrows move the focused node; Delete removes it; Enter on a pin
+//! between nodes, pins and fields; arrows move the focused node; Delete removes the selected nodes; Enter on a pin
 //! starts a link and Enter on a second pin completes it (Escape cancels). Comment boxes sit behind
 //! the nodes: their title moves them with the nodes inside (arrows), Ctrl + arrows resize, Enter
 //! edits the text. A material graph shows a preview of the material on a sphere.
@@ -77,7 +78,19 @@ pub(crate) struct GraphView {
     preview: Option<Preview>,
     /// What a search node can look for, gathered each frame while a script graph is shown.
     search: SearchChoices,
+    /// Nodes being dragged: where the pointer was on the canvas when the drag began, and where
+    /// each moving node was then, so they follow the pointer exactly.
+    moving: Option<Moving>,
+    /// A selection box being dragged on the background, from this point on the screen.
+    boxing: Option<Pos2>,
+    /// The graph was last clicked, dragged in or selected from, and nothing outside it since, so
+    /// Delete and the clipboard keys act on its selected nodes.
+    pub(crate) active: bool,
 }
+
+/// Nodes being dragged: where the pointer was on the canvas when the drag began, and each moving
+/// node's position then.
+type Moving = (Pos2, Vec<(u32, [f32; 2])>);
 
 /// The components, project scripts and scene tags a Find Object With, Count Objects With or For
 /// Each Object With node can name.
@@ -157,6 +170,9 @@ impl Default for GraphView {
             focus_node: None,
             shown: None,
             focused: false,
+            moving: None,
+            boxing: None,
+            active: false,
             editing_comment: None,
             focus_comment: None,
             show_preview: true,
@@ -549,49 +565,64 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
     zoom_keys(editor, ui, graph, catalog, view);
     view.focused = false;
     let mut hovered_pin: Option<PinPick> = None;
+    let area = ui.available_rect_before_wrap();
+    // Holding the right button pans, wherever the drag starts (over a node too); a right click
+    // without moving still opens the menus.
+    let (right_down, pressed_in, moved) =
+        ui.input(|i| (i.pointer.button_down(egui::PointerButton::Secondary), i.pointer.press_origin().is_some_and(|p| area.contains(p)), i.pointer.delta()));
+    if right_down && pressed_in && moved != Vec2::ZERO && area.width() > 0.0 {
+        view.scene_rect = view.scene_rect.translate(-moved * (view.scene_rect.width() / area.width()));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
     let mut scene_rect = view.scene_rect;
-    // The mouse wheel zooms around the pointer; dragging the background pans.
-    let response = egui::Scene::new().zoom_range(ZOOM_RANGE).scroll_zooms(true).show(ui, &mut scene_rect, |ui| {
-        let to_scene = ui.ctx().layer_transform_from_global(ui.layer_id()).unwrap_or_default();
-        let zoom = 1.0 / to_scene.scaling.max(1e-3);
-        paint_dots(ui, t, zoom);
-        // Comments under everything, so the nodes in them stay on top.
-        for comment in &graph.comments {
-            comment_ui(ui, t, graph, catalog, comment, gesture, zoom, view, &mut requests);
-        }
-        // Links under the nodes.
-        for link in &graph.links {
-            let ends = graph.node(link.from.node).zip(graph.node(link.to.node)).and_then(|(from, to)| {
-                let (fd, td) = (catalog.def_of(from)?, catalog.def_of(to)?);
-                let ty = fd.output(&link.from.pin)?.ty;
-                Some((pin_pos(from, fd, &link.from.pin, true)?, pin_pos(to, td, &link.to.pin, false)?, ty))
-            });
-            if let Some((a, b, ty)) = ends {
-                paint_link(ui.painter(), a, b, pin_color(t, ty), if ty == PinType::Flow { 3.0 } else { 2.0 });
+    // The mouse wheel zooms around the pointer and the middle button pans; the left button on the
+    // background draws a selection box.
+    let response =
+        egui::Scene::new().zoom_range(ZOOM_RANGE).scroll_zooms(true).drag_pan_buttons(egui::DragPanButtons::MIDDLE).show(ui, &mut scene_rect, |ui| {
+            let to_scene = ui.ctx().layer_transform_from_global(ui.layer_id()).unwrap_or_default();
+            let zoom = 1.0 / to_scene.scaling.max(1e-3);
+            paint_dots(ui, t, zoom);
+            // Comments under everything, so the nodes in them stay on top.
+            for comment in &graph.comments {
+                comment_ui(ui, t, graph, catalog, comment, gesture, view, &mut requests);
             }
-        }
-        let mut problem_nodes: Vec<u32> = problems.iter().filter_map(|p| p.node).collect();
-        problem_nodes.dedup();
-        for node in &graph.nodes {
-            if let Some(def) = catalog.def_of(node) {
-                node_ui(ui, t, graph, catalog, node, def, problem_nodes.contains(&node.id), gesture, zoom, view, &mut requests, &mut hovered_pin);
+            // Links under the nodes.
+            for link in &graph.links {
+                let ends = graph.node(link.from.node).zip(graph.node(link.to.node)).and_then(|(from, to)| {
+                    let (fd, td) = (catalog.def_of(from)?, catalog.def_of(to)?);
+                    let ty = fd.output(&link.from.pin)?.ty;
+                    Some((pin_pos(from, fd, &link.from.pin, true)?, pin_pos(to, td, &link.to.pin, false)?, ty))
+                });
+                if let Some((a, b, ty)) = ends {
+                    paint_link(ui.painter(), a, b, pin_color(t, ty), if ty == PinType::Flow { 3.0 } else { 2.0 });
+                }
             }
-        }
-        // The link being dragged follows the pointer.
-        if let Some(drag) = &view.drag
-            && let Some(start) = graph.node(drag.pin.node).and_then(|n| pin_pos(n, catalog.def_of(n)?, &drag.pin.pin, drag.output))
-            && let Some(pointer) = ui.ctx().pointer_hover_pos()
-        {
-            let end = to_scene * pointer;
-            let (a, b) = if drag.output { (start, end) } else { (end, start) };
-            paint_link(ui.painter(), a, b, pin_color(t, drag.ty), 2.0);
-        }
-        to_scene
-    });
+            let mut problem_nodes: Vec<u32> = problems.iter().filter_map(|p| p.node).collect();
+            problem_nodes.dedup();
+            for node in &graph.nodes {
+                if let Some(def) = catalog.def_of(node) {
+                    node_ui(ui, t, graph, catalog, node, def, problem_nodes.contains(&node.id), gesture, view, &mut requests, &mut hovered_pin);
+                }
+            }
+            // The link being dragged follows the pointer.
+            if let Some(drag) = &view.drag
+                && let Some(start) = graph.node(drag.pin.node).and_then(|n| pin_pos(n, catalog.def_of(n)?, &drag.pin.pin, drag.output))
+                && let Some(pointer) = ui.ctx().pointer_hover_pos()
+            {
+                let end = to_scene * pointer;
+                let (a, b) = if drag.output { (start, end) } else { (end, start) };
+                paint_link(ui.painter(), a, b, pin_color(t, drag.ty), 2.0);
+            }
+            to_scene
+        });
     view.scene_rect = scene_rect;
     let to_scene = response.inner;
     let canvas_response = response.response;
     canvas_response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Graph canvas"));
+    // The canvas reports where it is on the screen; its response is measured in canvas units.
+    ui.ctx().accesskit_node_builder(canvas_response.id, |node| {
+        node.set_bounds(egui::accesskit::Rect { x0: area.min.x.into(), y0: area.min.y.into(), x1: area.max.x.into(), y1: area.max.y.into() });
+    });
 
     // Dropping a dragged link: onto a pin links it, into empty space offers a linked new node.
     if let Some(drag) = view.drag.clone()
@@ -611,6 +642,20 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
     if canvas_response.clicked() {
         view.selected.clear();
         view.picked = None;
+        view.active = true;
+    }
+    box_select(ui, graph, catalog, &canvas_response, area, to_scene, view);
+    // A press anywhere outside the canvas hands the keys back to the rest of the editor.
+    if ui.input(|i| i.pointer.any_pressed() && i.pointer.press_origin().is_some_and(|p| !area.contains(p))) {
+        view.active = false;
+    }
+    // Delete removes the selected nodes while the graph is active and no node or pin has the
+    // keyboard (a focused node removes them itself).
+    if view.active && !view.focused && !view.selected.is_empty() && !ui.ctx().text_edit_focused() && ui.input(|i| i.key_pressed(egui::Key::Delete)) {
+        for id in std::mem::take(&mut view.selected) {
+            requests.merge("graph.node.remove", json!({ "node": id }), format!("graph delete {gesture}"));
+        }
+        requests.end_gesture = true;
     }
     if canvas_response.secondary_clicked()
         && let Some(pointer) = ui.ctx().pointer_interact_pos()
@@ -635,6 +680,34 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
     if let Some(picked) = &view.picked {
         editor.status =
             crate::i18n::tf("Linking from pin {pin}: press Enter on the pin to link to, or Escape to cancel", &[("pin", &picked.pin.pin.to_string())]);
+    }
+}
+
+/// Dragging the left button over the background draws a box; the nodes it touches when released
+/// become the selection (added to it with Ctrl or Shift). The graph then takes Delete and the clipboard keys.
+fn box_select(ui: &egui::Ui, graph: &Graph, catalog: &Catalog, canvas: &egui::Response, area: Rect, to_scene: egui::emath::TSTransform, view: &mut GraphView) {
+    let t = theme::tokens(ui);
+    if canvas.drag_started_by(egui::PointerButton::Primary) {
+        view.boxing = ui.input(|i| i.pointer.press_origin());
+    }
+    let Some(start) = view.boxing else { return };
+    let Some(pointer) = ui.ctx().pointer_latest_pos() else { return };
+    let screen = Rect::from_two_pos(start, pointer);
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, ui.scope_id().with("selection box"))).with_clip_rect(area);
+    painter.rect(screen, 2.0, t.accent.gamma_multiply(0.15), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    if canvas.drag_stopped_by(egui::PointerButton::Primary) || !ui.input(|i| i.pointer.primary_down()) {
+        view.boxing = None;
+        let area = Rect::from_two_pos(to_scene * start, to_scene * pointer);
+        let inside: Vec<u32> = graph.nodes.iter().filter(|n| catalog.def_of(n).is_some_and(|def| node_rect(n, def).intersects(area))).map(|n| n.id).collect();
+        if !ui.input(|i| i.modifiers.command || i.modifiers.shift) {
+            view.selected.clear();
+        }
+        for id in inside {
+            if !view.selected.contains(&id) {
+                view.selected.push(id);
+            }
+        }
+        view.active = true;
     }
 }
 
@@ -724,7 +797,6 @@ fn comment_ui(
     catalog: &Catalog,
     comment: &bayleaf_engine::graph::Comment,
     gesture: u64,
-    zoom: f32,
     view: &mut GraphView,
     requests: &mut Requests,
 ) {
@@ -790,8 +862,8 @@ fn comment_ui(
             }
         }
     };
-    if title.dragged() {
-        let delta = title.drag_delta() * zoom;
+    if title.dragged_by(egui::PointerButton::Primary) {
+        let delta = title.drag_delta();
         if delta != Vec2::ZERO {
             move_by(delta, requests, Some(format!("graph move {gesture}")));
         }
@@ -858,7 +930,7 @@ fn comment_ui(
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
     }
     if handle.dragged() {
-        let delta = handle.drag_delta() * zoom;
+        let delta = handle.drag_delta();
         if delta != Vec2::ZERO {
             requests.merge(
                 "graph.comment.set",
@@ -882,7 +954,6 @@ fn node_ui(
     def: &NodeDef,
     has_problem: bool,
     gesture: u64,
-    zoom: f32,
     view: &mut GraphView,
     requests: &mut Requests,
     hovered_pin: &mut Option<PinPick>,
@@ -928,6 +999,7 @@ fn node_ui(
         view.focus_node = None;
     }
     let toggle = ui.input(|i| i.modifiers.command);
+    let primary_drag_started = title.drag_started_by(egui::PointerButton::Primary);
     if title.clicked() && toggle {
         // Ctrl + click adds the node to the selection or takes it out.
         if selected {
@@ -935,21 +1007,38 @@ fn node_ui(
         } else {
             view.selected.push(node.id);
         }
-    } else if title.clicked() || ((title.drag_started() || title.gained_focus()) && !selected) {
+    } else if title.clicked() || ((primary_drag_started || title.gained_focus()) && !selected) {
         view.selected = vec![node.id];
     }
-    if title.dragged() {
-        let delta = title.drag_delta() * zoom;
-        if delta != Vec2::ZERO {
-            // Dragging a selected node moves every selected node, as one undo step.
-            let moving = if view.selected.contains(&node.id) { view.selected.clone() } else { vec![node.id] };
-            for moved in moving.iter().filter_map(|id| graph.node(*id)) {
-                let position = [moved.position[0] + delta.x, moved.position[1] + delta.y];
-                requests.merge("graph.node.move", json!({ "node": moved.id, "position": position }), format!("graph move {}", gesture));
+    // Clicking or dragging a node gives it the keyboard, so Delete and the arrows act on the graph.
+    if title.clicked() || primary_drag_started {
+        title.request_focus();
+    }
+    // Only the left button moves nodes; the right one pans the canvas.
+    let pointer = ui.ctx().pointer_interact_pos().map(|p| ui.ctx().layer_transform_from_global(ui.layer_id()).unwrap_or_default() * p);
+    let anchor = ui.input(|i| i.pointer.press_origin()).map(|p| ui.ctx().layer_transform_from_global(ui.layer_id()).unwrap_or_default() * p);
+    if title.clicked() || primary_drag_started {
+        view.active = true;
+    }
+    if primary_drag_started && let Some(pointer) = anchor {
+        // Dragging a selected node moves every selected node, as one undo step.
+        let moving = if view.selected.contains(&node.id) { view.selected.clone() } else { vec![node.id] };
+        view.moving = Some((pointer, moving.iter().filter_map(|id| graph.node(*id)).map(|n| (n.id, n.position)).collect()));
+    }
+    if title.dragged_by(egui::PointerButton::Primary)
+        && let (Some(pointer), Some((anchor, starts))) = (pointer, &view.moving)
+    {
+        // Each node goes where it was plus how far the pointer went on the canvas, so it keeps up at any zoom.
+        let delta = pointer - *anchor;
+        for (id, start) in starts {
+            let position = [start[0] + delta.x, start[1] + delta.y];
+            if graph.node(*id).is_some_and(|n| n.position != position) {
+                requests.merge("graph.node.move", json!({ "node": id, "position": position }), format!("graph move {}", gesture));
             }
         }
     }
-    if title.drag_stopped() {
+    if title.drag_stopped_by(egui::PointerButton::Primary) {
+        view.moving = None;
         requests.end_gesture = true;
     }
     view.focused |= title.has_focus();

@@ -856,7 +856,7 @@ impl Editor {
             return;
         }
         // While a graph node or pin has focus, plain keys such as Delete and the arrows belong to the graph.
-        let graph_keys = self.graph_view.focused;
+        let graph_keys = self.graph_view.focused || (self.graph_view.active && self.session.graph().is_some());
         // Likewise a file in the Project panel: Delete moves the file, not the selected object.
         let panel_keys = graph_keys || self.project.focused;
         // F2 renames the selected object in place, in the hierarchy.

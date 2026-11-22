@@ -1189,7 +1189,8 @@ fn the_script_panel_declares_variables_and_their_nodes_pick_one_from_a_list() {
     assert!(graph(&harness).variable("number").is_some(), "the menu declares a number variable");
     harness.get_by_label("Set number").click();
     harness.run();
-    let set = graph(&harness).nodes.iter().find(|n| n.kind == "setVariable").map(|n| n.id).expect("Set places a node");
+    let set =
+        graph(&harness).nodes.iter().find(|n| n.kind == "setVariable").map(|n| n.id).unwrap_or_else(|| panic!("Set places a node: {}", harness.state().status));
     assert_eq!(graph(&harness).value(set, "name").and_then(|v| v.as_str()), Some("number"));
     // Renaming the variable in the panel renames it on its nodes.
     harness.get_by_label("Name of variable number").focus();
@@ -1666,4 +1667,92 @@ fn the_pseudo_language_marks_menus_tabs_cards_and_command_labels() {
     harness.state_mut().set_language("xx-unknown");
     harness.run();
     assert!(harness.query_by_label("File").is_some() && harness.query_by_label("⟦File⟧").is_none());
+}
+
+/// Drags with the left button from `from` to `to` in a few steps.
+fn left_drag(harness: &mut Harness<'static, Editor>, from: egui::Pos2, to: egui::Pos2) {
+    harness.hover_at(from);
+    harness.drag_at(from);
+    harness.run();
+    for step in 1..=6 {
+        harness.hover_at(from + (to - from) * (step as f32 / 6.0));
+        harness.run();
+    }
+    harness.drop_at(to);
+    harness.run();
+}
+
+#[test]
+fn a_dragged_node_keeps_up_with_the_pointer_when_zoomed_and_delete_removes_it() {
+    let mut harness = graph_harness("script");
+    let log = harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "log", "position": [300, 40] }), None).unwrap()["node"].as_u64().unwrap();
+    harness.run();
+    harness.get_by_label("Fit All").click();
+    harness.run();
+    // Zoomed in, a canvas unit is bigger than a screen pixel.
+    harness.get_by_label_contains("On Start node 1").focus();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Equals);
+    harness.run();
+    let name = format!("Log node {log}");
+    let before = harness.get_by_label_contains(&name).rect();
+    let from = before.left_center() + egui::vec2(12.0, 0.0);
+    left_drag(&mut harness, from, from + egui::vec2(60.0, 30.0));
+    let after = harness.get_by_label_contains(&name).rect();
+    let moved = after.min - before.min;
+    assert!((moved - egui::vec2(60.0, 30.0)).length() < 1.5, "the node moved as far as the pointer: {moved:?}");
+
+    // The dragged node has the keyboard: Delete removes it, not a scene object.
+    harness.key_press(egui::Key::Delete);
+    harness.run();
+    assert!(graph(&harness).node(log as u32).is_none(), "{}", harness.state().status);
+}
+
+#[test]
+fn the_left_button_on_the_background_selects_a_box_and_the_right_one_pans_even_over_a_node() {
+    let mut harness = graph_harness("script");
+    harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "log", "position": [300, 40] }), None);
+    harness.run();
+    harness.get_by_label("Fit All").click();
+    harness.run();
+
+    // The right button held over a node moves the view, not the node.
+    let positions = |h: &Harness<'static, Editor>| graph(h).nodes.iter().map(|n| n.position).collect::<Vec<_>>();
+    let before = positions(&harness);
+    let title = harness.get_by_label_contains("On Start node 1").rect();
+    let from = title.left_center() + egui::vec2(12.0, 0.0);
+    let to = from + egui::vec2(-50.0, 40.0);
+    harness.hover_at(from);
+    harness.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Secondary, pressed: true, modifiers: egui::Modifiers::NONE });
+    harness.run();
+    for step in 1..=6 {
+        harness.hover_at(from + (to - from) * (step as f32 / 6.0));
+        harness.run();
+    }
+    harness.event(egui::Event::PointerButton { pos: to, button: egui::PointerButton::Secondary, pressed: false, modifiers: egui::Modifiers::NONE });
+    harness.run();
+    assert_eq!(positions(&harness), before, "no node moved");
+    let panned = harness.get_by_label_contains("On Start node 1").rect().min - title.min;
+    assert!((panned - (to - from)).length() < 1.5, "the canvas followed the pointer: {panned:?}");
+
+    // A box over the whole canvas selects every node; Delete then removes them.
+    harness.get_by_label("Fit All").click();
+    harness.run();
+    let canvas = harness.get_by_label("Graph canvas").rect();
+    left_drag(&mut harness, canvas.left_top() + egui::vec2(4.0, 4.0), canvas.right_bottom() - egui::vec2(4.0, 4.0));
+    harness.key_press(egui::Key::Delete);
+    harness.run();
+    assert!(graph(&harness).nodes.is_empty(), "every node was in the box: {}", harness.state().status);
+}
+
+#[test]
+fn a_whole_number_variable_does_not_widen_the_script_panel() {
+    let mut harness = graph_harness("script");
+    let canvas = harness.get_by_label("Graph canvas").rect();
+    harness.get_by_label("Add Variable").click();
+    harness.run();
+    harness.get_by_label("Whole Number").click();
+    harness.run_steps(10);
+    assert!(graph(&harness).variable("whole").is_some());
+    assert_eq!(harness.get_by_label("Graph canvas").rect().left(), canvas.left(), "the panel beside the canvas kept its width");
 }

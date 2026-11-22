@@ -61,10 +61,12 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
             ui.push_id(("variable", &variable.name), |ui| {
                 egui::Frame::new().fill(t.panel).corner_radius(theme::SECTION_RADIUS).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    let width = ui.available_width();
-                    ui.horizontal(|ui| {
+                    // The type on the right, the name field in what is left, so a long type name never
+                    // makes the row (and the panel) wider.
+                    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(tl(variable.ty.label())).small().color(t.text_muted));
                         let text = panel.renaming.entry(variable.name.clone()).or_insert_with(|| variable.name.clone());
-                        let field = ui.add_sized([(width - 70.0).max(40.0), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(text));
+                        let field = ui.add_sized([ui.available_width().max(40.0), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(text));
                         ui.ctx().accesskit_node_builder(field.id, |node| {
                             node.set_label(crate::i18n::tf("Name of variable {name}", &[("name", &variable.name.to_string())]))
                         });
@@ -77,9 +79,8 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                         } else if !field.has_focus() {
                             *text = variable.name.clone();
                         }
-                        ui.label(egui::RichText::new(variable.ty.label()).small().color(t.text_muted));
                     });
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(egui::RichText::new(tl("Starts at")).color(t.text_muted));
                         if let Some(start) = start_editor(ui, variable.ty, &variable.start, &variable.name) {
                             let key = format!("variable start {} {}", variable.name, editor.gesture);
@@ -113,7 +114,7 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
         }
         ui.menu_button(tl("Add Variable"), |ui| {
             for ty in VariableType::ALL {
-                if ui.button(ty.label()).clicked() {
+                if ui.button(tl(ty.label())).clicked() {
                     let stem = match ty {
                         VariableType::Number => "number",
                         VariableType::Vector => "vector",
