@@ -214,8 +214,9 @@ or two behind; `gpuMeasured` is false where the graphics device gives none (some
 them and write only zeros), and both are null before a view has drawn. `HeadlessGpu` and the
 windows take `WGPU_BACKEND` and `WGPU_POWER_PREF` to choose another adapter.
 
-Files come into a project with `asset.import` (`{files, folder?}`): models (`.glb`, or `.gltf` with
-the files it names, which then get a folder of their own), images (`.png`, `.jpg`) and sounds. Each is
+Files come into a project with `asset.import` (`{files, folder?}`): models (`.glb`, or `.gltf` or `.obj` with
+the files it names, which then get a folder of their own), images (`.png`, `.jpg`, `.exr`) and sounds
+(WAV, Ogg Vorbis, FLAC, MP3 and others). Each is
 read first, so a file that cannot be read says why and nothing is copied; a name already taken gets
 a number, and a file already in the project stays where it is. The files must be inside the read
 roots. Models and images get import settings beside them (`robot.glb.bimport`), read with

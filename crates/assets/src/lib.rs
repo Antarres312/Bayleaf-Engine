@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 pub mod import;
+mod neutral;
 
 /// Largest image side, in pixels.
 pub const MAX_IMAGE_SIDE: u32 = 8192;
@@ -50,6 +51,8 @@ pub struct MeshData {
     pub material: Option<ModelMaterial>,
     /// Runs of triangles that share a material, in index order. A model with one material has one.
     pub parts: Vec<MeshPart>,
+    /// What was left out or repaired while reading (an image that could not be read, for one).
+    pub warnings: Vec<String>,
 }
 
 /// Triangles `indices[first..first + count]` and the material they use.
@@ -99,10 +102,10 @@ fn read_limited(path: &Path) -> Result<(Vec<u8>, Option<SystemTime>), String> {
 }
 
 /// File extensions of the images this crate reads.
-pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
+pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "exr"];
 
-/// Reads a PNG or JPEG file. The kind comes from the file's first bytes, not its name. Its
-/// import settings apply.
+/// Reads a PNG, JPEG or OpenEXR file. The kind comes from the file's first bytes, not its name.
+/// Its import settings apply.
 pub fn load_image(path: &Path) -> Result<Image, String> {
     let settings = import::ImportSettings::read_for(path)?;
     let (bytes, modified) = read_limited(path)?;
@@ -158,9 +161,54 @@ fn linear_to_srgb(v: f32) -> f32 {
     if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 }
 }
 
-/// Decodes PNG or JPEG bytes into RGBA. The id is left at 0.
+/// Decodes PNG, JPEG or OpenEXR bytes into RGBA. The id is left at 0.
 pub fn decode_image(bytes: &[u8]) -> Result<Image, String> {
-    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) { decode_jpeg(bytes) } else { decode_png(bytes) }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        decode_jpeg(bytes)
+    } else if bytes.starts_with(&EXR_MAGIC) {
+        decode_exr(bytes)
+    } else {
+        decode_png(bytes)
+    }
+}
+
+/// The first bytes of an OpenEXR file.
+const EXR_MAGIC: [u8; 4] = [0x76, 0x2f, 0x31, 0x01];
+
+/// Most pixels an OpenEXR picture may have (8192 × 8192).
+const MAX_EXR_PIXELS: u64 = 1 << 26;
+
+/// An OpenEXR picture's colour: the part with the most colour channels, its R, G, B and A (or Y
+/// as grey). Its values are linear light; like every image here it is kept as 8-bit sRGB, so
+/// values above 1 are clipped to white.
+pub fn decode_exr(bytes: &[u8]) -> Result<Image, String> {
+    use craft_exr::decode;
+    let mut limits = decode::Limits::default();
+    limits.max_pixels = MAX_EXR_PIXELS;
+    limits.max_bytes = MAX_EXR_PIXELS * 20;
+    let parts = decode::parts(bytes, &limits).map_err(|e| e.to_string())?;
+    let index = decode::pick_part(&parts).ok_or("the picture has no colour channels")?;
+    let part_name = parts.iter().find(|p| p.index == index).and_then(|p| p.name.clone());
+    let named = |channel: &str| craft_exr::channels::part_channel_name(part_name.as_deref(), channel);
+    let wanted = ["R", "G", "B", "A", "Y"].map(named);
+    let keep = |name: &str| wanted.iter().any(|w| w == name);
+    let fill = |name: &str| if name == wanted[3] { 1.0 } else { 0.0 };
+    let part = decode::decode_display_part(bytes, index, &keep, &fill, &limits).map_err(|e| e.to_string())?;
+    let (width, height) = (part.info.display_window.width, part.info.display_window.height);
+    let pixels = width as usize * height as usize;
+    let channel = |name: &str| part.channels.iter().find(|c| c.name == name).map(|c| c.samples.as_slice()).filter(|s| s.len() == pixels);
+    let grey = channel(&wanted[4]);
+    let [r, g, b] = [0, 1, 2].map(|i| channel(&wanted[i]).or(grey));
+    let (Some(r), Some(g), Some(b)) = (r, g, b) else { return Err("the picture has no R, G and B (or Y) channels".to_owned()) };
+    let alpha = channel(&wanted[3]);
+    let to_byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let mut rgba = Vec::with_capacity(pixels * 4);
+    for i in 0..pixels {
+        let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+        rgba.extend([r[i], g[i], b[i]].map(|v| to_byte(linear_to_srgb(finite(v).clamp(0.0, 1.0)))));
+        rgba.push(alpha.map_or(255, |a| to_byte(finite(a[i]))));
+    }
+    Ok(Image { id: 0, width, height, rgba, mipmaps: true })
 }
 
 /// Decodes JPEG bytes into RGBA (JPEG has no transparency, so alpha is 255). The id is left at 0.
@@ -206,9 +254,13 @@ pub fn decode_png(bytes: &[u8]) -> Result<Image, String> {
     Ok(Image { id: 0, width: frame.width, height: frame.height, rgba, mipmaps: true })
 }
 
-/// The files a glTF 2.0 model names beside it (buffers and images), relative to its folder, each
-/// once, in the order the model names them. A `.glb` with everything inside names none.
+/// The files a model names beside it (glTF buffers and images, OBJ material libraries and
+/// images), relative to its folder, each once, in the order the model names them. A `.glb` with
+/// everything inside names none.
 pub fn model_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    if neutral::reads(&extension_of(path)) {
+        return neutral::model_files(path);
+    }
     let (bytes, _) = read_limited(path)?;
     let gltf = gltf::Gltf::from_slice(&bytes).map_err(|e| format!("{}: not a glTF 2.0 model: {e}", path.display()))?;
     let mut uris: Vec<&str> = Vec::new();
@@ -232,9 +284,24 @@ pub fn model_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-/// Reads a glTF 2.0 model: a `.glb` file, or a `.gltf` file with its buffers in files beside it.
-/// Its import settings apply: the scale, and turning a Z-up model to Y up.
+/// File extensions of the models this crate reads.
+pub const MODEL_EXTENSIONS: &[&str] = &["glb", "gltf", "obj"];
+
+fn extension_of(path: &Path) -> String {
+    path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default()
+}
+
+/// Reads a model: glTF 2.0 (a `.glb` file, or a `.gltf` file with its buffers in files beside it),
+/// or Wavefront OBJ with its material libraries. Its import settings apply: the scale, and
+/// turning a Z-up model to Y up.
 pub fn load_model(path: &Path) -> Result<MeshData, String> {
+    if neutral::reads(&extension_of(path)) {
+        return neutral::load_model(path);
+    }
+    load_gltf(path)
+}
+
+fn load_gltf(path: &Path) -> Result<MeshData, String> {
     let settings = import::ImportSettings::read_for(path)?.and_then(|s| s.model).unwrap_or_default();
     let (bytes, modified) = read_limited(path)?;
     let gltf = gltf::Gltf::from_slice(&bytes).map_err(|e| format!("{}: not a glTF 2.0 model: {e}", path.display()))?;
@@ -266,6 +333,7 @@ pub fn load_model(path: &Path) -> Result<MeshData, String> {
         max: [0.0; 3],
         material: None,
         parts: Vec::new(),
+        warnings: Vec::new(),
     };
     let scene = gltf.default_scene().or_else(|| gltf.scenes().next()).ok_or_else(|| format!("{}: the model has no scene", path.display()))?;
     // Runs of indices and the glTF material each uses.

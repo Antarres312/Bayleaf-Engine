@@ -2304,6 +2304,10 @@ fn files_brought_in_are_checked_copied_with_their_settings_and_placed() {
     std::fs::write(outside.join("logo.png"), include_bytes!("../../../assets/brand/bayleaf-logo.png")).unwrap();
     std::fs::write(outside.join("broken.png"), b"not an image").unwrap();
     std::fs::write(outside.join("crate.obj"), b"v 0 0 0").unwrap();
+    std::fs::write(outside.join("crate.fbx"), b"Kaydara FBX Binary").unwrap();
+    // A model with its material library and image beside it.
+    std::fs::write(outside.join("box.obj"), "mtllib box.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl Lit\nf 1 2 3\n").unwrap();
+    std::fs::write(outside.join("box.mtl"), "newmtl Lit\nKd 1 1 1\nmap_Kd logo.png\n").unwrap();
     std::fs::write(outside.join("tone.wav"), wav_bytes()).unwrap();
     write_gltf_with_files(&outside);
     let before = files_under(&project.join("assets"));
@@ -2312,14 +2316,18 @@ fn files_brought_in_are_checked_copied_with_their_settings_and_placed() {
     let broken = registry.execute(&mut session, "asset.import", &json!({"files": [outside.join("logo.png"), outside.join("broken.png")], "folder": "assets"}));
     assert!(broken.unwrap_err().to_string().contains("broken.png"));
     let obj = registry.execute(&mut session, "asset.import", &json!({"files": [outside.join("crate.obj")], "folder": "assets"})).unwrap_err().to_string();
-    assert!(obj.contains("glTF"), "says what to bring instead: {obj}");
+    assert!(obj.contains("crate.obj"), "an OBJ with nothing to draw is refused: {obj}");
+    let fbx = registry.execute(&mut session, "asset.import", &json!({"files": [outside.join("crate.fbx")], "folder": "assets"})).unwrap_err().to_string();
+    assert!(fbx.contains("glTF"), "says what to bring instead: {fbx}");
     assert_eq!(files_under(&project.join("assets")), before);
 
-    let files = [outside.join("logo.png"), outside.join("tri.gltf"), outside.join("tone.wav")];
+    let files = [outside.join("logo.png"), outside.join("tri.gltf"), outside.join("tone.wav"), outside.join("box.obj")];
     let done = registry.execute(&mut session, "asset.import", &json!({"files": files, "folder": "assets"})).unwrap();
     let paths: Vec<&str> = done["imported"].as_array().unwrap().iter().map(|i| i["path"].as_str().unwrap()).collect();
-    assert_eq!(paths, ["assets/logo.png", "assets/tri/tri.gltf", "assets/tone.wav"]);
-    for file in ["assets/logo.png.bimport", "assets/tri/tri.bin", "assets/tri/tex/logo.png", "assets/tri/tri.gltf.bimport"] {
+    assert_eq!(paths, ["assets/logo.png", "assets/tri/tri.gltf", "assets/tone.wav", "assets/box/box.obj"]);
+    for file in
+        ["assets/logo.png.bimport", "assets/tri/tri.bin", "assets/tri/tex/logo.png", "assets/tri/tri.gltf.bimport", "assets/box/box.mtl", "assets/box/logo.png"]
+    {
         assert!(project.join(file).is_file(), "{file} came in");
     }
     assert!(!project.join("assets/tone.wav.bimport").exists(), "sounds have no settings yet");

@@ -30,7 +30,7 @@ impl Kind {
     pub fn of(path: &Path) -> Option<Self> {
         let extension = path.extension()?.to_str()?.to_ascii_lowercase();
         match extension.as_str() {
-            "glb" | "gltf" => Some(Kind::Model),
+            e if bayleaf_render::assets::MODEL_EXTENSIONS.contains(&e) => Some(Kind::Model),
             e if bayleaf_render::assets::IMAGE_EXTENSIONS.contains(&e) => Some(Kind::Image),
             e if SOUND_EXTENSIONS.contains(&e) => Some(Kind::Sound),
             _ => None,
@@ -51,16 +51,15 @@ fn not_importable(path: &Path) -> String {
     let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
     let extension = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
     match extension.as_str() {
-        "obj" | "fbx" | "dae" | "blend" | "3ds" | "stl" | "ply" => {
-            format!("{name}: .{extension} models are not read yet; export the model as glTF (.glb) and bring that in")
+        "fbx" | "dae" | "blend" | "3ds" | "stl" | "ply" => {
+            format!("{name}: .{extension} models are not read yet; export the model as glTF (.glb) or OBJ and bring that in")
         }
-        "ktx2" | "exr" | "hdr" | "webp" | "tga" | "bmp" | "tif" | "tiff" | "gif" | "dds" | "psd" => {
-            format!("{name}: .{extension} images are not read yet; save it as PNG or JPEG")
+        "ktx2" | "hdr" | "webp" | "tga" | "bmp" | "tif" | "tiff" | "gif" | "dds" | "psd" => {
+            format!("{name}: .{extension} images are not read yet; save it as PNG, JPEG or OpenEXR")
         }
-        "flac" => format!("{name}: FLAC sounds are not read yet; save it as WAV or Ogg Vorbis"),
         "" => format!("{name}: a file without an extension cannot be brought in"),
         _ => format!(
-            "{name}: .{extension} files cannot be brought in; models are glTF (.glb, .gltf), images PNG or JPEG, sounds {}",
+            "{name}: .{extension} files cannot be brought in; models are glTF (.glb, .gltf) or OBJ, images PNG, JPEG or OpenEXR, sounds {}",
             SOUND_EXTENSIONS.iter().map(|e| e.to_ascii_uppercase()).collect::<Vec<_>>().join(", ")
         ),
     }

@@ -9,9 +9,13 @@ publish = false
 
 [dependencies]
 bayleaf-core = { workspace = true }
-craft-audio = { workspace = true, features = ["decode-native", "vorbis-decode"] }
+craft-audio = { workspace = true, features = ["decode-native", "vorbis-decode", "flac-decode"] }
 craft-audio-dsp = { workspace = true }
 cpal = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# A FLAC file to decode, written in the test.
+craft-audio = { workspace = true, features = ["flac-encode"] }

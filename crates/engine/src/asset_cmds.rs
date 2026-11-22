@@ -174,8 +174,8 @@ fn asset_kind(path: &Path) -> &'static str {
         Some("bui") => "Interface",
         Some("bstyle") => "Interface Style",
         Some("bproject") => "Project",
-        Some("glb" | "gltf") => "Model",
-        Some("png" | "jpg" | "jpeg") => "Image",
+        Some(e) if bayleaf_render::assets::MODEL_EXTENSIONS.contains(&e) => "Model",
+        Some(e) if bayleaf_render::assets::IMAGE_EXTENSIONS.contains(&e) => "Image",
         _ => "File",
     }
 }

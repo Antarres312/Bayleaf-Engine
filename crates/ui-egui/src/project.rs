@@ -97,8 +97,8 @@ impl Kind {
             Some(bayleaf_engine::scene::post::EXTENSION) => Kind::PostProcessing,
             Some(bayleaf_interface::LAYOUT_EXTENSION) => Kind::Interface,
             Some(bayleaf_interface::STYLE_EXTENSION) => Kind::InterfaceStyle,
-            Some("png" | "jpg" | "jpeg" | "webp" | "ktx2") => Kind::Image,
-            Some("glb" | "gltf") => Kind::Model,
+            Some("png" | "jpg" | "jpeg" | "exr" | "webp" | "ktx2") => Kind::Image,
+            Some(ext) if bayleaf_engine::render::assets::MODEL_EXTENSIONS.contains(&ext) => Kind::Model,
             Some(ext) if bayleaf_engine::scene::components::SOUND_EXTENSIONS.contains(&ext) => Kind::Sound,
             _ => Kind::Other,
         }

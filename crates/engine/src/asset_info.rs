@@ -81,8 +81,8 @@ pub fn describe(session: &Session, path: &Path) -> Info {
     let extension = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let mut result = match extension.as_str() {
-        "png" | "jpg" | "jpeg" => image(path),
-        "glb" | "gltf" => model(path),
+        e if bayleaf_render::assets::IMAGE_EXTENSIONS.contains(&e) => image(path),
+        e if bayleaf_render::assets::MODEL_EXTENSIONS.contains(&e) => model(path),
         "bscene" => scene(path),
         "bprefab" => prefab(session, path),
         "bmaterial" | "bscript" => graph(path, &extension),
@@ -126,6 +126,9 @@ fn image(path: &Path) -> Info {
             info.row("Size", format!("{} × {} pixels", image.width, image.height));
             let opaque = image.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255);
             info.row("Transparency", if opaque { "None" } else { "Yes" });
+            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exr")) {
+                info.row("Range", "Kept at 8 bits per channel: light brighter than 1 shows as white");
+            }
         }
         Err(e) => info.problems.push(e),
     }
@@ -149,6 +152,7 @@ fn model(path: &Path) -> Info {
                 let normal = if m.normal.is_some() { ", a normal map" } else { "" };
                 info.row("Material", format!("its own colour, {image}{normal}, metallic {:.2}, roughness {:.2}", m.metallic, m.roughness));
             }
+            info.problems.extend(mesh.warnings.iter().cloned());
         }
         Err(e) => info.problems.push(e),
     }

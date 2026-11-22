@@ -414,9 +414,12 @@ No crate below L6 may use egui, eframe, winit or rfd.
      on the Project panel's folders, the Scene view and the hierarchy, `scene.file.place`,
      `scene.image.apply`, and import settings for a model's scale and up axis and an image's
      mipmaps, in the Inspector. Windows gives no pointer position with a drop until the pointer
-     moves, so a drop there waits a moment for one and otherwise goes into the open folder. Still to
-     do: OBJ and FBX models, KTX2 and EXR images, FLAC sounds, compression and colour space for
-     images, streamed sounds, and a model's animations.)
+     moves, so a drop there waits a moment for one and otherwise goes into the open folder. OBJ
+     models with their MTL libraries and images (craft-mesh), OpenEXR images (craft-exr; kept at 8
+     bits, so light above 1 clips) and FLAC sounds (craft-audio) are read. Waiting: FBX, which
+     craft-mesh reads through craft-zip, whose `zip` brings `constant_time_eq` (CC0-1.0 OR MIT-0 OR
+     Apache-2.0; MIT-0 is not on the licence list); KTX2, which no craft-libs crate reads yet. Still
+     to do: compression and colour space for images, streamed sounds, and a model's animations.)
    - **Fix: material previews draw only the sphere.** The material pictures (Project panel tiles,
      the Inspector, the Graph panel's preview) show the sky behind the sphere. Draw them with a
      transparent background instead, so only the sphere shows over the panel; the sphere is still

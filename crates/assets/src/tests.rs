@@ -209,3 +209,46 @@ fn an_image_without_mipmaps_in_its_settings_says_so() {
     assert!(!load_image(&path).unwrap().mipmaps);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn an_exr_picture_s_linear_light_becomes_srgb_and_broken_ones_are_refused() {
+    // 2 x 1: linear half grey, then black, as an uncompressed OpenEXR file.
+    let linear: [f32; 256] = std::array::from_fn(|i| i as f32 / 255.0);
+    let rgba = [128, 128, 128, 255, 0, 0, 0, 255];
+    let exr = craft_exr::rgba8::write_rgba8(&rgba, 2, 1, true, craft_exr::rgba8::Compression::None, &linear).unwrap();
+    let image = decode_image(&exr).unwrap();
+    assert_eq!((image.width, image.height), (2, 1));
+    let grey = image.rgba[0];
+    assert!(grey > 170 && grey < 200, "linear half grey is stored as its sRGB number: {grey}");
+    assert_eq!(&image.rgba[4..7], &[0, 0, 0]);
+    assert!(decode_image(&exr[..exr.len() / 2]).is_err(), "a cut file is refused");
+}
+
+#[test]
+fn an_obj_model_reads_its_material_library_and_image_beside_it() {
+    let dir = temp_dir("obj");
+    // A square of two triangles, its material red with an image, and a second part with none.
+    std::fs::write(
+        dir.join("square.obj"),
+        "mtllib square.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nusemtl Red\nf 1/1 2/2 3/3 4/4\nusemtl Missing\nf 1/1 3/3 4/4\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("square.mtl"), "newmtl Red\nKd 1 0 0\nmap_Kd red.png\nnewmtl Missing\nKd 0 0 1\nmap_Kd C:\\Artists\\gone.png\n").unwrap();
+    std::fs::write(dir.join("red.png"), png_bytes()).unwrap();
+    let model = load_model(&dir.join("square.obj")).unwrap();
+    assert_eq!(model.indices.len(), 9, "a quad becomes two triangles, then one more");
+    assert_eq!(model.parts.len(), 2, "one run per material");
+    let red = model.parts[0].material.as_ref().unwrap();
+    assert!(red.base_color[0] > 0.9 && red.base_color[2] < 0.1 && red.image.is_some(), "{red:?}");
+    assert!(model.parts[1].material.as_ref().unwrap().image.is_none());
+    assert!(model.warnings.iter().any(|w| w.contains("gone.png")), "an image that is not there is said: {:?}", model.warnings);
+    let mut files = super::model_files(&dir.join("square.obj")).unwrap();
+    files.sort();
+    assert_eq!(files, [PathBuf::from("red.png"), PathBuf::from("square.mtl")], "what an export copies with it");
+    // Broken and hostile models are refused with a reason.
+    std::fs::write(dir.join("bad.obj"), "v 0 0 0\nf 1 2 3\n").unwrap();
+    assert!(load_model(&dir.join("bad.obj")).is_err(), "a face naming vertices that are not there");
+    std::fs::write(dir.join("empty.obj"), "# nothing\n").unwrap();
+    assert!(load_model(&dir.join("empty.obj")).is_err(), "a model with nothing to draw");
+    std::fs::remove_dir_all(&dir).ok();
+}

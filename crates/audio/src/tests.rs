@@ -105,3 +105,21 @@ fn silent_audio_reads_clips_once_and_keeps_time() {
     assert_eq!(audio.with(|m| m.voices().len()), 0, "done after its quarter second");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_flac_file_decodes_like_any_other_clip() {
+    use craft_audio::flac::{Encoder, EncoderConfig, STREAMINFO_OFFSET};
+    // Half a second of a mono tone at 16 kHz, 16 bits.
+    let tone: Vec<i32> = (0..8_000).map(|i| ((f64::from(i) * 0.05).sin() * 16_000.0) as i32).collect();
+    let mut encoder = Encoder::new(EncoderConfig::new(16_000, 1, 16)).unwrap();
+    let mut file = encoder.header(&[]);
+    file.extend(encoder.encode(&[&tone]).unwrap());
+    file.extend(encoder.finish());
+    let at = STREAMINFO_OFFSET as usize;
+    file[at..at + 34].copy_from_slice(&encoder.streaminfo());
+    let decoded = Clip::decode(&file, "flac", 16_000).unwrap();
+    assert!(decoded.frames().abs_diff(8_000) < 50, "half a second: {} frames", decoded.frames());
+    let loudest = decoded.left.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    assert!(loudest > 0.4 && loudest <= 1.0, "16-bit samples come out between -1 and 1: {loudest}");
+    assert!(Clip::decode(&file[..20], "flac", 16_000).is_err(), "a cut file is an error");
+}

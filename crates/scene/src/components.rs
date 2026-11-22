@@ -172,7 +172,7 @@ impl SceneComponent for Mesh {
         unit_range("metallic", &[self.metallic])?;
         unit_range("roughness", &[self.roughness])?;
         file_field("material", &self.material, &["bmaterial"])?;
-        file_field("model", &self.model, &["glb", "gltf"])
+        file_field("model", &self.model, &["glb", "gltf", "obj"])
     }
 
     fn options(field: &str) -> &'static [&'static str] {
@@ -830,7 +830,7 @@ impl SceneComponent for Collider {
 }
 
 /// The file extensions an Audio Source's clip may have.
-pub const SOUND_EXTENSIONS: &[&str] = &["wav", "ogg", "mp3", "aif", "aiff", "opus", "m4a", "aac"];
+pub const SOUND_EXTENSIONS: &[&str] = &["wav", "ogg", "flac", "mp3", "aif", "aiff", "opus", "m4a", "aac"];
 
 /// A sound the object plays in play mode: from its own place when spatial, heard from the first
 /// camera (quieter with distance, from the side it is on), or the same everywhere.

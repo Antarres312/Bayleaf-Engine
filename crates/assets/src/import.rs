@@ -76,7 +76,7 @@ impl Imported {
     pub fn of(path: &Path) -> Option<Self> {
         let extension = path.extension()?.to_str()?.to_ascii_lowercase();
         match extension.as_str() {
-            "glb" | "gltf" => Some(Imported::Model),
+            e if crate::MODEL_EXTENSIONS.contains(&e) => Some(Imported::Model),
             e if crate::IMAGE_EXTENSIONS.contains(&e) => Some(Imported::Image),
             _ => None,
         }

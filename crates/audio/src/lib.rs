@@ -28,7 +28,7 @@ pub const SILENT_RATE: u32 = 48_000;
 /// Largest sound file read, in bytes.
 pub const MAX_FILE_BYTES: u64 = 256 << 20;
 /// The file extensions clips are read from.
-pub const EXTENSIONS: &[&str] = &["wav", "ogg", "mp3", "aif", "aiff", "opus", "m4a", "aac"];
+pub const EXTENSIONS: &[&str] = &["wav", "ogg", "flac", "mp3", "aif", "aiff", "opus", "m4a", "aac"];
 
 /// A decoded sound, stereo at the mixer's rate.
 #[derive(Debug)]
@@ -44,6 +44,11 @@ impl Clip {
         let (source_rate, mut channels) = if extension.eq_ignore_ascii_case("ogg") {
             let decoded = craft_audio::vorbis::decoder::decode_ogg(bytes).map_err(|e| e.to_string())?;
             (decoded.sample_rate, decoded.channels)
+        } else if extension.eq_ignore_ascii_case("flac") {
+            let decoded = craft_audio::flac::decode(bytes).map_err(|e| e.to_string())?;
+            // Whole numbers of the stream's bit depth, to -1 to 1.
+            let scale = 1.0 / (1u64 << (decoded.info.bits_per_sample.clamp(1, 32) - 1)) as f32;
+            (decoded.info.sample_rate, decoded.channels.into_iter().map(|c| c.into_iter().map(|v| v as f32 * scale).collect()).collect())
         } else {
             let (_, buffer) = craft_audio::decode(bytes, Some(extension)).map_err(|e| e.to_string())?;
             (buffer.sample_rate, buffer.channels)
