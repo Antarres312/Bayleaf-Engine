@@ -275,6 +275,18 @@ impl Object {
         abi::ui_remove(self.0, name)
     }
 
+    /// The value of the element named `element` in the object's Interface as it shows now (a
+    /// toggle's 0 or 1, a slider's number, a bound game value); `None` when it has no such element.
+    pub fn interface_value(self, element: &str) -> Option<f64> {
+        abi::ui_value(self.0, element)
+    }
+
+    /// The text of the element named `element` as it shows now (what the player typed into a text
+    /// field, too); `None` when it has no such element.
+    pub fn interface_text(self, element: &str) -> Option<String> {
+        abi::ui_text(self.0, element)
+    }
+
     /// Shows or hides an element of the object's Interface, or the whole interface when `element`
     /// is empty.
     pub fn show_interface(self, element: &str, visible: bool) -> bool {

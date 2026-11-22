@@ -38,6 +38,8 @@ mod raw {
         pub fn ui_add(handle: i32, parent_ptr: *const u8, parent_len: usize, what_ptr: *const u8, what_len: usize, name_ptr: *const u8, name_len: usize)
         -> i32;
         pub fn ui_remove(handle: i32, name_ptr: *const u8, name_len: usize) -> i32;
+        pub fn ui_value(handle: i32, name_ptr: *const u8, name_len: usize) -> f64;
+        pub fn ui_text(handle: i32, name_ptr: *const u8, name_len: usize, out: *mut u8, cap: usize) -> i32;
         pub fn sound_play(handle: i32) -> i32;
         pub fn sound_stop(handle: i32) -> i32;
         pub fn sound_play_at(path_ptr: *const u8, path_len: usize, x: f32, y: f32, z: f32, volume: f32) -> i32;
@@ -371,6 +373,30 @@ mod raw {
             x.call("ui_remove", &[I32(handle), at, len(name.len())])?.i32()
         })
         .unwrap_or(0)
+    }
+    pub unsafe fn ui_value(handle: i32, name_ptr: *const u8, name_len: usize) -> f64 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(name_ptr, name_len) };
+        run(|x| {
+            let at = x.put(name)?;
+            x.call("ui_value", &[I32(handle), at, len(name.len())])?.f64()
+        })
+        .unwrap_or(f64::NAN)
+    }
+    pub unsafe fn ui_text(handle: i32, name_ptr: *const u8, name_len: usize, out: *mut u8, cap: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(name_ptr, name_len) };
+        let (full, data) = run(|x| {
+            let at = x.put(name)?;
+            let room = x.room(cap)?;
+            let full = x.call("ui_text", &[I32(handle), at, len(name.len()), room, len(cap)])?.i32()?;
+            let got = usize::try_from(full).unwrap_or(0).min(cap);
+            Some((full, x.get(room, got)?))
+        })
+        .unwrap_or((-1, Vec::new()));
+        // SAFETY: callers pass `cap` writable bytes at `out`.
+        unsafe { bytes_out(out, cap, &data) }
+        full
     }
     pub unsafe fn ui_show(handle: i32, name_ptr: *const u8, name_len: usize, visible: i32) -> i32 {
         // SAFETY: the safe wrappers pass a live slice.
@@ -773,6 +799,26 @@ pub(crate) fn ui_add(handle: i32, parent: &str, what: &str, name: &str) -> bool 
 pub(crate) fn ui_remove(handle: i32, name: &str) -> bool {
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::ui_remove(handle, name.as_ptr(), name.len()) != 0 }
+}
+
+pub(crate) fn ui_value(handle: i32, element: &str) -> Option<f64> {
+    // SAFETY: the pointer and length describe `element`; the host only reads.
+    let value = unsafe { raw::ui_value(handle, element.as_ptr(), element.len()) };
+    (!value.is_nan()).then_some(value)
+}
+
+pub(crate) fn ui_text(handle: i32, element: &str) -> Option<String> {
+    let mut room = vec![0u8; 256];
+    // SAFETY: `room` has `room.len()` writable bytes; the name is read only.
+    let full = unsafe { raw::ui_text(handle, element.as_ptr(), element.len(), room.as_mut_ptr(), room.len()) };
+    let full = usize::try_from(full).ok()?;
+    if full > room.len() {
+        room = vec![0u8; full];
+        // SAFETY: as above, with room for the whole text.
+        unsafe { raw::ui_text(handle, element.as_ptr(), element.len(), room.as_mut_ptr(), room.len()) };
+    }
+    room.truncate(full);
+    String::from_utf8(room).ok()
 }
 
 pub(crate) fn ui_show(handle: i32, element: &str, visible: bool) -> bool {

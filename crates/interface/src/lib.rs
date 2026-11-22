@@ -125,7 +125,8 @@ pub struct Element {
     /// A part's layout file (`.bui`), relative to the project folder.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub layout: String,
-    /// A toggle's state (0 or 1), a slider's number, a progress bar's fill (0 to 1).
+    /// A toggle's state (0 or 1), a slider's number, a progress bar's fill (0 to 1), how far a
+    /// list is scrolled (points).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub value: f64,
     /// A slider's range.

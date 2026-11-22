@@ -51,6 +51,9 @@ pub(crate) struct Play {
     pub(crate) told_streaming: bool,
     /// What scripts and the player changed of each object's Interface.
     pub(crate) interfaces: std::collections::HashMap<bayleaf_core::StableId, crate::interface::InterfaceState>,
+    /// Each Interface's layout as read this play (with its parts in place), by object, with the
+    /// file it came from; `None` when it did not read.
+    pub(crate) interface_roots: std::collections::HashMap<bayleaf_core::StableId, (String, Option<bayleaf_interface::Element>)>,
 }
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
@@ -345,6 +348,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         time: 0.0,
         particles: bayleaf_particles::Particles::new(),
         interfaces: std::collections::HashMap::new(),
+        interface_roots: std::collections::HashMap::new(),
         paused: false,
         since_reload_check: 0.0,
         loaded: Vec::new(),
@@ -716,6 +720,9 @@ fn step_parts(session: &mut Session, dt: f32) {
         }
         #[cfg(all(feature = "physics", feature = "gameplay"))]
         drive_players(play, &mut session.scene, &input);
+        // Scripts read the interfaces as they show at the step's start.
+        crate::interface::refresh_values(session);
+        let Some(play) = session.play.as_mut() else { return };
         let scripts = std::time::Instant::now();
         play.host.update(&mut session.scene, dt, play.time, &input);
         session.profiler.add(Part::Scripts, scripts.elapsed());

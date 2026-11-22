@@ -193,6 +193,11 @@ impl ScriptHost {
         each!(&mut self.0, host => host.set_grounded(grounded))
     }
 
+    /// The interface elements as they show, as scripts read them (`ui_value`, `ui_text`).
+    pub fn set_interface_values(&mut self, values: crate::InterfaceValues) {
+        each!(&mut self.0, host => host.set_interface_values(values))
+    }
+
     pub fn notify(&mut self, scene: &mut Scene, contacts: &[(StableId, &str, StableId)], time: f64, input: &Arc<Input>) {
         each!(&mut self.0, host => host.notify(scene, contacts, time, input))
     }

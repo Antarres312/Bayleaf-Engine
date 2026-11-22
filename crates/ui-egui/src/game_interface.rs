@@ -26,6 +26,14 @@ pub struct GameInterfaces {
     images: HashMap<PathBuf, (Option<SystemTime>, Option<egui::TextureHandle>)>,
     /// A text field's text while the player types, by object and element name.
     typing: HashMap<(StableId, String), String>,
+    /// How far each list is scrolled, in points, by object and the list's name (or its place
+    /// among the elements, for a list without one).
+    scroll: HashMap<(StableId, String), f32>,
+}
+
+/// A list's key in [`GameInterfaces::scroll`]: its name, else its place in the tree.
+fn list_key(element: &bayleaf_interface::Element, index: usize) -> String {
+    if element.name.is_empty() { format!("#{index}") } else { element.name.clone() }
 }
 
 struct Cached {
@@ -144,7 +152,23 @@ pub(crate) fn show_list(
                 continue;
             }
         };
-        let root = bayleaf_engine::interface::shown(&loaded.root, state, game.as_ref());
+        let mut root = bayleaf_engine::interface::shown(&loaded.root, state, game.as_ref());
+        // Lists show where the player scrolled them.
+        {
+            let mut index = 0;
+            let mut pending = vec![&mut root];
+            while let Some(element) = pending.pop() {
+                if element.kind == bayleaf_interface::Kind::List
+                    && let Some(offset) = cache.scroll.get(&(object, list_key(element, index)))
+                {
+                    element.value = f64::from(*offset);
+                }
+                index += 1;
+                pending.extend(element.children.iter_mut().rev());
+            }
+        }
+        let list_index: HashMap<*const bayleaf_interface::Element, usize> =
+            root.walk().into_iter().enumerate().map(|(i, e)| (std::ptr::from_ref(e), i)).collect();
         cache.load_images(ui.ctx(), &base, &root);
         let placed = {
             let measure = Measure { painter: &painter, images: &cache.images, base: &base };
@@ -160,6 +184,24 @@ pub(crate) fn show_list(
             }
             let drawing = Drawing { painter: &painter, area, object, base: &base, interactive };
             draw(ui, &drawing, index, item, cache, &mut inputs);
+            // A list that holds more than it shows scrolls under the wheel, with a bar along its side.
+            if let Some([offset, most]) = item.scroll {
+                let clip = to_screen(item.clip, area);
+                if interactive && pointer.is_some_and(|p| clip.contains(p)) {
+                    let wheel = ui.input(|i| i.smooth_scroll_delta.y);
+                    if wheel != 0.0 {
+                        let key = list_key(item.element, list_index.get(&std::ptr::from_ref(item.element)).copied().unwrap_or(index));
+                        cache.scroll.insert((object, key), (offset - wheel).clamp(0.0, most));
+                    }
+                }
+                let rect = to_screen(item.rect, area);
+                let shown = rect.height() / (rect.height() + most);
+                let bar = egui::Rect::from_min_size(
+                    egui::pos2(rect.right() - 5.0, rect.top() + (rect.height() - rect.height() * shown) * (offset / most)),
+                    egui::vec2(4.0, rect.height() * shown),
+                );
+                painter.with_clip_rect(clip).rect_filled(bar, 2.0, color32(item.style.accent, item.style.opacity * 0.8));
+            }
         }
     }
     for (object, element, input) in inputs {

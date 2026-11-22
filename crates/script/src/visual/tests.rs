@@ -527,6 +527,16 @@ fn every_node_kind_compiles_and_runs() {
     b.link(show, "then", add, "run");
     let remove_element = b.node("removeInterfaceElement", json!({}));
     b.link(add, "then", remove_element, "run");
+    // Reading the interface: a value and a text, logged.
+    let read_value = b.node("interfaceValue", json!({ "element": "Volume" }));
+    let read_text = b.node("interfaceText", json!({ "element": "Name" }));
+    let read_log = b.node("log", json!({ "message": "read" }));
+    b.link(remove_element, "then", read_log, "run");
+    b.link(read_value, "value", read_log, "value");
+    b.link(read_text, "text", read_log, "text");
+    let found_gate = b.node("branch", json!({}));
+    b.link(read_log, "then", found_gate, "run");
+    b.link(read_value, "found", found_gate, "condition");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }

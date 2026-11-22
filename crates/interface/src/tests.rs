@@ -246,3 +246,23 @@ fn controls_and_boxes_with_a_background_take_the_pointer_and_the_style_can_say_o
     assert!(!blocks(Kind::Panel, &[("background", "#000000"), ("pointer", "pass")], ""), "the style lets it through");
     assert!(blocks(Kind::Text, &[("pointer", "block")], ""), "the style takes it");
 }
+
+#[test]
+fn a_list_scrolls_by_its_value_no_further_than_what_it_holds() {
+    let mut list = element(Kind::List, "Scores", &[("height", "100px"), ("width", "200px")]);
+    list.children = (0..10).map(|i| element(Kind::Panel, &format!("Entry {i}"), &[("height", "30px")])).collect();
+    let at = |list: &Element| {
+        let all = layout(list, &[], [800.0, 600.0], 1.0, &Monospace);
+        (placed(&all, "Entry 0").rect.y, placed(&all, "Scores").scroll)
+    };
+    let (top, scroll) = at(&list);
+    let [offset, most] = scroll.expect("it holds more than it shows");
+    assert_eq!(offset, 0.0);
+    assert!(most > 200.0, "ten entries of 30 and their gaps, in 100");
+    list.value = 50.0;
+    let (moved, _) = at(&list);
+    assert!((top - moved - 50.0).abs() < 0.01, "scrolled up by 50");
+    list.value = 10_000.0;
+    let (_, scroll) = at(&list);
+    assert_eq!(scroll.unwrap()[0], most, "no further than the end");
+}

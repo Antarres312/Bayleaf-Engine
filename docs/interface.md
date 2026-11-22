@@ -42,7 +42,8 @@ Each element has a `kind` and may have:
 
 Kinds: `panel` (a box, its children in a column unless its style says otherwise), `row`, `column`,
 `text`, `image`, `button`, `toggle`, `slider`, `textField`, `list` (a column that cuts off entries
-past its bottom), `progress`, and `part` (below).
+past its bottom and scrolls: under the mouse wheel while the game plays, or by its `value`, in points,
+with a bar along its side), `progress`, and `part` (below).
 
 ## Parts
 
@@ -165,6 +166,9 @@ Scripts change elements with `ui_set_text`, `ui_set_value` and `ui_show`, and bu
 while the game plays with `ui_add` (a new element of a kind, or a part from a layout file, into a
 named element) and `ui_remove` (`docs/script-abi.md`); in the Rust SDK, `Object::set_interface_text`,
 `set_interface_value`, `show_interface`, `add_interface_element` and `remove_interface_element`.
+They read an element as it shows (what scripts and the player changed, bound values, what was
+typed into a text field) with `ui_value` and `ui_text` (Rust: `Object::interface_value` and
+`interface_text`; visual scripts: **Interface Value** and **Interface Text**).
 Visual scripts have the same in the Interface category: **On Interface Pressed** and **On Interface
 Changed** (Value is the new value), **Set Interface Text**, **Set Interface Value**, **Show
 Interface**, **Add Interface Element** (What is a kind or a `.bui` file; the new element is named by
@@ -189,6 +193,5 @@ field, as the player would. `asset.create` makes a layout (`interface`) or a sty
 ## Not yet
 
 Editing style files in the panel (they are edited as text for now), dragging elements in the tree,
-interfaces on surfaces in the world, moving the focus with a gamepad, reading an element's
-value or text from a script, changing a part's inner text in the bigger layout's file (scripts set
-it while playing), scrolling lists, and right-to-left text.
+moving the focus with a gamepad, changing a part's inner text in the bigger layout's file (scripts
+set it while playing), and right-to-left text.

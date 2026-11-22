@@ -116,6 +116,7 @@ pub struct ScriptHost {
     messages: Vec<Message>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
+    interface: Arc<crate::InterfaceValues>,
     input_maps: actions::SharedInput,
     state: SharedState,
     /// A loaded script reads or sets component fields, so each step takes their values along.
@@ -141,6 +142,7 @@ impl ScriptHost {
             messages: Vec::new(),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
+            interface: Arc::new(crate::InterfaceValues::new()),
             input_maps: actions::SharedInput::default(),
             state: SharedState::default(),
             reads_fields: false,
@@ -430,6 +432,7 @@ impl ScriptHost {
                 state.world = Arc::clone(&world);
                 state.velocities = Arc::clone(&self.velocities);
                 state.grounded = Arc::clone(&self.grounded);
+                state.interface = Arc::clone(&self.interface);
                 state.input_maps = Arc::clone(&self.input_maps);
                 state.state = Arc::clone(&self.state);
             }
@@ -507,6 +510,7 @@ impl ScriptHost {
                     state.world = Arc::clone(&world);
                     state.velocities = Arc::clone(&self.velocities);
                     state.grounded = Arc::clone(&self.grounded);
+                    state.interface = Arc::clone(&self.interface);
                     state.input_maps = Arc::clone(&self.input_maps);
                     state.state = Arc::clone(&self.state);
                     state.message = Some(message.name.clone());
@@ -600,6 +604,11 @@ impl ScriptHost {
     /// The characters standing on something, as scripts see them in the next calls.
     pub fn set_grounded(&mut self, grounded: impl IntoIterator<Item = StableId>) {
         self.grounded = Arc::new(grounded.into_iter().collect());
+    }
+
+    /// The interface elements as they show, as scripts read them in the next calls.
+    pub fn set_interface_values(&mut self, values: crate::InterfaceValues) {
+        self.interface = Arc::new(values);
     }
 
     /// Tells scripts about physics contacts: each `(object, name, other)` becomes a message called
@@ -1307,6 +1316,28 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                     return Err(fault(&mut caller, "ui_set_value: the value must be a finite number".to_owned()));
                 }
                 interface_request(&mut caller, "ui_set_value", handle, (name_ptr, name_len), crate::InterfaceChange::Value(value))
+            },
+        )?;
+        linker.func_wrap("bayleaf", "ui_value", |mut caller: Caller<'_, HostState>, handle: i32, name_ptr: i32, name_len: i32| -> Result<f64, Error> {
+            let name = read_text(&mut caller, name_ptr, name_len, 64).map_err(|m| fault(&mut caller, format!("ui_value: {m}")))?;
+            let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                return Err(fault(&mut caller, format!("ui_value: there is no object with handle {handle}")));
+            };
+            Ok(caller.data().interface.get(&(object, name)).map_or(f64::NAN, |(value, _)| *value))
+        })?;
+        linker.func_wrap(
+            "bayleaf",
+            "ui_text",
+            |mut caller: Caller<'_, HostState>, handle: i32, name_ptr: i32, name_len: i32, out: i32, cap: i32| -> Result<i32, Error> {
+                let name = read_text(&mut caller, name_ptr, name_len, 64).map_err(|m| fault(&mut caller, format!("ui_text: {m}")))?;
+                let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                    return Err(fault(&mut caller, format!("ui_text: there is no object with handle {handle}")));
+                };
+                let Some(text) = caller.data().interface.get(&(object, name)).map(|(_, text)| text.clone()) else { return Ok(-1) };
+                let cap = usize::try_from(cap).map_err(|_| fault(&mut caller, "ui_text: the room must not be negative".to_owned()))?;
+                let bytes = text.as_bytes();
+                write_guest(&mut caller, out, &bytes[..bytes.len().min(cap)], "ui_text")?;
+                Ok(i32::try_from(bytes.len()).unwrap_or(i32::MAX))
             },
         )?;
         linker.func_wrap(

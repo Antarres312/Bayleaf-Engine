@@ -184,11 +184,53 @@ impl Session {
                 (format!("changed:{element}"), length)
             }
         };
+        // The scripts hearing it read the interface as it now is.
+        refresh_values(self);
         let input = std::sync::Arc::clone(&self.input);
         let Some(play) = self.play.as_mut() else { return Ok(()) };
         play.host.send(&mut self.scene, object, &message, value, play.time, &input);
         crate::play::after_message(self);
         Ok(())
+    }
+}
+
+/// Every interface's named elements as they show (with what scripts and the player changed and
+/// bound game values), for scripts to read with `ui_value` and `ui_text`. Each layout is read
+/// once a play (again when an Interface names another file).
+pub(crate) fn refresh_values(session: &mut Session) {
+    if session.play.is_none() {
+        return;
+    }
+    let scene = &session.scene;
+    let objects: Vec<(StableId, String)> = scene
+        .world_matrices()
+        .into_iter()
+        .filter_map(|(id, _)| scene.get::<bayleaf_scene::components::Interface>(id).filter(|c| !c.layout.is_empty()).map(|c| (id, c.layout.clone())))
+        .collect();
+    let base = session.script_dir();
+    let game = session.game_state();
+    let mut values = bayleaf_script::InterfaceValues::new();
+    for (id, layout) in objects {
+        let cached = session.play.as_ref().and_then(|p| p.interface_roots.get(&id)).filter(|(path, _)| *path == layout).map(|(_, root)| root.clone());
+        let root = match cached {
+            Some(root) => root,
+            None => {
+                let allow = |p: &Path| session.allowed(p, Access::Read).map_err(|e| e.to_string());
+                let read = load_with(&base, &layout, &allow).map(|l| l.root).ok();
+                if let Some(play) = session.play.as_mut() {
+                    play.interface_roots.insert(id, (layout.clone(), read.clone()));
+                }
+                read
+            }
+        };
+        let Some(root) = root else { continue };
+        let now = shown(&root, session.interface_state(id), game.as_ref());
+        for element in now.walk().into_iter().filter(|e| !e.name.is_empty()) {
+            values.insert((id, element.name.clone()), (element.value, element.text.clone()));
+        }
+    }
+    if let Some(play) = session.play.as_mut() {
+        play.host.set_interface_values(values);
     }
 }
 

@@ -2598,3 +2598,64 @@ fn several_graphs_stay_open_and_undo_goes_back_in_the_graph_each_step_was_made_i
     assert_eq!(session.graphs().len(), 1);
     assert_eq!(session.graph().unwrap().id, material);
 }
+
+#[test]
+fn scripts_read_what_the_player_typed_and_set_in_the_interface() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-interface-read-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params).unwrap();
+    let layout = json!({
+        "format": "bayleaf.interface", "version": 1,
+        "root": { "kind": "column", "children": [
+            { "kind": "text", "name": "Title", "text": "Who?" },
+            { "kind": "textField", "name": "Name" },
+            { "kind": "slider", "name": "Volume", "max": 1.0 },
+            { "kind": "progress", "name": "Bar" }
+        ] }
+    });
+    run(&mut session, "ui.layout.set", json!({"path": "form.bui", "layout": layout}));
+    // Typing a name puts it in the title; moving the slider fills the bar to match.
+    run(&mut session, "graph.new", json!({"domain": "script"}));
+    let typed = node(&registry, &mut session, "interfaceChanged");
+    let name = node(&registry, &mut session, "interfaceText");
+    let title = node(&registry, &mut session, "setInterfaceText");
+    let moved = node(&registry, &mut session, "interfaceChanged");
+    let volume = node(&registry, &mut session, "interfaceValue");
+    let bar = node(&registry, &mut session, "setInterfaceValue");
+    for (n, setting, value) in [
+        (typed, "element", "Name"),
+        (name, "element", "Name"),
+        (title, "element", "Title"),
+        (moved, "element", "Volume"),
+        (volume, "element", "Volume"),
+        (bar, "element", "Bar"),
+    ] {
+        run(&mut session, "graph.node.set", json!({"node": n, "name": setting, "value": value}));
+    }
+    run(&mut session, "graph.link.add", pins(typed, "then", title, "run"));
+    run(&mut session, "graph.link.add", pins(name, "text", title, "text"));
+    run(&mut session, "graph.link.add", pins(moved, "then", bar, "run"));
+    run(&mut session, "graph.link.add", pins(volume, "value", bar, "value"));
+    run(&mut session, "graph.save", json!({"path": dir.join("form.bscript")}));
+    let id = create(
+        &registry,
+        &mut session,
+        json!({"name": "Form", "components": {"interface": {"layout": "form.bui", "visible": true, "order": 0}, "scripts": [{"module": "form.bscript"}]}}),
+    );
+    let shown = |session: &mut Session, element: &str| {
+        let state = registry.execute(session, "play.ui.state", &json!({"id": id})).unwrap();
+        state["elements"].as_array().unwrap().iter().find(|e| e["name"] == element).cloned().unwrap()
+    };
+    run(&mut session, "play.start", Value::Null);
+    run(&mut session, "play.ui.change", json!({"id": id, "element": "Name", "text": "Ada"}));
+    assert_eq!(shown(&mut session, "Title")["text"], "Ada", "{:?}", session.console());
+    run(&mut session, "play.ui.change", json!({"id": id, "element": "Volume", "value": 0.4}));
+    run(&mut session, "play.step", json!({"seconds": 0.02}));
+    let filled = shown(&mut session, "Bar")["value"].as_f64().unwrap();
+    assert!((filled - 0.4).abs() < 1e-5, "the bar follows the slider: {filled}");
+    run(&mut session, "play.stop", Value::Null);
+    std::fs::remove_dir_all(&dir).ok();
+}

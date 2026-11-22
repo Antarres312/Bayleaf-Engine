@@ -60,6 +60,9 @@ pub struct Placed<'a> {
     pub clip: Rect,
     /// The index of its parent in the placed list.
     pub parent: Option<usize>,
+    /// A list that holds more than it shows: how far it is scrolled, and how far it can be (in
+    /// points along its direction).
+    pub scroll: Option<[f32; 2]>,
 }
 
 struct Node<'a> {
@@ -189,7 +192,7 @@ fn outer_size(node: &Node<'_>, width: Option<f32>, parent_w: f32, parent_h: f32,
 fn place<'a>(node: &Node<'a>, rect: Rect, clip: Rect, parent: Option<usize>, measure: &dyn TextMeasure, out: &mut Vec<Placed<'a>>) {
     let index = out.len();
     let clip = rect.intersect(&clip);
-    out.push(Placed { element: node.element, style: node.style.clone(), rect, clip, parent });
+    out.push(Placed { element: node.element, style: node.style.clone(), rect, clip, parent, scroll: None });
     if node.children.is_empty() {
         return;
     }
@@ -249,8 +252,17 @@ fn place<'a>(node: &Node<'a>, rect: Rect, clip: Rect, parent: Option<usize>, mea
         Justify::SpaceBetween if node.children.len() > 1 => (0.0, left_over / (node.children.len() - 1) as f32),
         Justify::SpaceBetween => (0.0, 0.0),
     };
-    // A list's entries past its box are cut off there.
+    // A list's entries past its box are cut off there, and it scrolls by its value (in points).
     let child_clip = if node.element.kind == Kind::List { inner.intersect(&clip) } else { clip };
+    if node.element.kind == Kind::List {
+        let content = sizes.iter().map(|s| s[0]).sum::<f32>() + gaps;
+        let most = (content - inner_main).max(0.0);
+        let offset = (node.element.value as f32).clamp(0.0, most);
+        cursor -= offset;
+        if most > 0.0 {
+            out[index].scroll = Some([offset, most]);
+        }
+    }
     for (child, size) in node.children.iter().zip(sizes) {
         let align = child.style.align_self.unwrap_or(style.align_items);
         let fixed_cross = if row { child.style.height } else { child.style.width };

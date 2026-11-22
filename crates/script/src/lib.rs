@@ -73,6 +73,10 @@ pub enum ScriptError {
     Unavailable(String),
 }
 
+/// Each object's named interface elements as they show: their value and their text, by object and
+/// element name. The engine fills it before scripts run.
+pub type InterfaceValues = std::collections::HashMap<(StableId, String), (f64, String)>;
+
 /// What a script changes in an Interface element while the game plays.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InterfaceChange {
@@ -491,6 +495,8 @@ struct HostState<L> {
     message: Option<String>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
+    /// Interface elements as they show, for `ui_value` and `ui_text`.
+    interface: Arc<InterfaceValues>,
     input_maps: actions::SharedInput,
     state: SharedState,
     transform: [f32; 9],
@@ -521,6 +527,7 @@ impl<L> HostState<L> {
             message: None,
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
+            interface: Arc::new(InterfaceValues::new()),
             input_maps: actions::SharedInput::default(),
             state: SharedState::default(),
             transform,

@@ -146,7 +146,8 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   change an element (Show Interface with no Element shows or hides it all); **Add Interface
   Element** builds the interface while playing, adding an element of a kind or a part from a `.bui`
   file, named by its Name input, into the element named in Into; **Remove Interface Element** takes
-  one away.
+  one away. **Interface Value** and **Interface Text** read an element as it shows (Found says
+  whether there is one).
 - **Gamepad Stick**, **Gamepad Trigger** and **Gamepad Button Held** read the first connected gamepad
   (see `docs/script-abi.md` for the button names).
 - **Send Message** sends a message name and a number to the scripts of the first object with the

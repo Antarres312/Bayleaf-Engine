@@ -765,6 +765,26 @@ pub const CATALOG: Catalog = Catalog {
             unique: false,
         },
         NodeDef {
+            kind: "interfaceValue",
+            label: "Interface Value",
+            category: "Interface",
+            description: "The value of the element named in Element as it shows now: a toggle's 0 or 1, a slider's number, a bound game value. Found is false when the interface has no such element. Which interface: the linked object's, else the first object named in Object Name, else this object's.",
+            inputs: &[TARGET],
+            outputs: &[pin("value", "Value", Float), pin("found", "Found", Bool)],
+            settings: &[ELEMENT, OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "interfaceText",
+            label: "Interface Text",
+            category: "Interface",
+            description: "The text of the element named in Element as it shows now, what the player typed into a text field too; empty when there is no such element. Which interface: as Interface Value.",
+            inputs: &[TARGET],
+            outputs: &[pin("text", "Text", PinType::Text)],
+            settings: &[ELEMENT, OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
             kind: "removeInterfaceElement",
             label: "Remove Interface Element",
             category: "Interface",
@@ -2055,6 +2075,17 @@ impl Compiler<'_> {
                 Val::T(format!("(call $replace {t} {find} {with})"))
             }
             "nameOf" => Val::T(format!("(call $name {})", self.target(node, Ok("(call $self_handle)"))?)),
+            "interfaceValue" | "interfaceText" => {
+                let handle = self.target(node, Ok("(call $self_handle)"))?;
+                let (at, len) = self.named(node, "element", "name the element")?;
+                match (n.kind.as_str(), pin) {
+                    ("interfaceText", _) => Val::T(format!("(call $ui_text_of {handle} (i32.const {at}) (i32.const {len}))")),
+                    (_, "found") => Val::B(format!(
+                        "(f64.eq (call $ui_value {handle} (i32.const {at}) (i32.const {len})) (call $ui_value {handle} (i32.const {at}) (i32.const {len})))"
+                    )),
+                    _ => Val::F(format!("(call $ui_value_or_zero {handle} (i32.const {at}) (i32.const {len}))")),
+                }
+            }
             "thisObject" => Val::O("(call $self_handle)".to_owned()),
             "findNamed" => {
                 let found = if graph.link_into(node, "named").is_some() {
@@ -2428,6 +2459,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "ui_show" (func $ui_show (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "ui_add" (func $ui_add (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "ui_remove" (func $ui_remove (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "ui_value" (func $ui_value (param i32 i32 i32) (result f64)))
+  (import "bayleaf" "ui_text" (func $ui_text_get (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "character_walk" (func $character_walk (param i32 f32 f32 f32) (result i32)))
   (import "bayleaf" "character_jump" (func $character_jump (param i32 f32) (result i32)))
   (import "bayleaf" "character_grounded" (func $character_grounded (param i32) (result i32)))
@@ -2500,6 +2533,17 @@ const PRELUDE: &str = r#"(module
     (drop (call $ui_set_text (local.get $h) (local.get $np) (local.get $nl) (call $tp (local.get $t)) (call $tl (local.get $t)))))
   (func $ui_add_named (param $h i32) (param $pp i32) (param $pl i32) (param $wp i32) (param $wl i32) (param $t i64)
     (drop (call $ui_add (local.get $h) (local.get $pp) (local.get $pl) (local.get $wp) (local.get $wl) (call $tp (local.get $t)) (call $tl (local.get $t)))))
+  ;; An element's value as a number, 0 when the interface has no such element.
+  (func $ui_value_or_zero (param $h i32) (param $np i32) (param $nl i32) (result f32) (local $v f64)
+    (local.set $v (call $ui_value (local.get $h) (local.get $np) (local.get $nl)))
+    (if (result f32) (f64.eq (local.get $v) (local.get $v)) (then (f32.demote_f64 (local.get $v))) (else (f32.const 0))))
+  ;; An element's text, empty when the interface has no such element.
+  (func $ui_text_of (param $h i32) (param $np i32) (param $nl i32) (result i64) (local $n i32) (local $p i32)
+    (local.set $n (call $ui_text_get (local.get $h) (local.get $np) (local.get $nl) (i32.const 0) (i32.const 0)))
+    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))
+    (local.set $p (call $alloc (local.get $n)))
+    (drop (call $ui_text_get (local.get $h) (local.get $np) (local.get $nl) (local.get $p) (local.get $n)))
+    (call $mk (local.get $p) (local.get $n)))
   (func $ui_remove_named (param $h i32) (param $t i64)
     (drop (call $ui_remove (local.get $h) (call $tp (local.get $t)) (call $tl (local.get $t)))))
   (func $join (param $a i64) (param $b i64) (result i64) (local $p i32)

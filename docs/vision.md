@@ -350,8 +350,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
      `ui.element.*`. Parts: a layout used inside another (a character menu in the main display),
      saved from the panel with Save as Part; scripts and visual scripts build the interface while
      playing (Add and Remove Interface Element, a kind or a part), and visual scripts have the
-     interface events and changes. Still to do: editing style files in the panel, gamepad focus,
-     reading values from scripts, scrolling lists.)
+     interface events and changes. Lists scroll, and scripts read values and text (`ui_value`, `ui_text`, Interface Value
+     and Interface Text). Still to do: editing style files in the panel, gamepad focus.)
    - **Particle systems.** A Particle Emitter component: when and how many particles start (a rate,
      bursts, a shape to start on: point, sphere, cone, box, a mesh's surface), how they live (life
      length, speed, gravity, drag, size and colour over their life as curves and gradients,
