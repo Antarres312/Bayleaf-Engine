@@ -29,6 +29,10 @@ pub(crate) struct World {
     collector: rp::ChannelEventCollector,
     /// Time not yet stepped.
     pending: f32,
+    /// Joints made, by the object whose Joint asked for them, with the settings they were made with.
+    joints: HashMap<StableId, (rp::ImpulseJointHandle, Joint)>,
+    /// A fixed body at the origin that joints to the world hold on to, once one does.
+    ground: Option<rp::RigidBodyHandle>,
 }
 
 fn vector(v: DVec3) -> rp::Vector {
@@ -61,6 +65,8 @@ impl World {
             events,
             collector: rp::ChannelEventCollector::new(collision_send, force_send, tear_send),
             pending: 0.0,
+            joints: HashMap::new(),
+            ground: None,
         };
         physics.sync_objects(scene);
         // Scene queries (raycasts) work before the first step: a step of no time fills them in.
@@ -111,6 +117,7 @@ impl World {
             self.owners.insert(collider_handle, id);
             self.bodies.insert(id, Body { handle, kind: settings.kind, scale, character: None });
         }
+        self.sync_joints(scene);
     }
 
     pub(crate) fn step(&mut self, scene: &mut Scene, dt: f32) -> Vec<Contact> {
@@ -332,4 +339,129 @@ fn collider_for(shape: &Collider, scale: DVec3) -> rp::ColliderBuilder {
         .restitution(real(f64::from(shape.restitution)))
         .sensor(shape.trigger)
         .active_events(rp::ActiveEvents::COLLISION_EVENTS)
+}
+
+/// The joint a Joint component asks for, between the object's body (world matrix `world1`) and
+/// what it holds on to (`world2`; `None` for the world, a fixed body at the origin).
+fn joint_data(settings: &Joint, world1: DMat4, world2: Option<DMat4>) -> rp::GenericJoint {
+    let (_, rotation1, position1) = world1.to_scale_rotation_translation();
+    let anchor_world = world1.transform_point3(DVec3::from(settings.anchor.map(f64::from)));
+    let anchor1 = rotation1.inverse() * (anchor_world - position1);
+    let axis1 = DVec3::from(settings.axis.map(f64::from)).normalize_or(DVec3::Y);
+    let (rotation2, position2) = world2.map_or((DQuat::IDENTITY, DVec3::ZERO), |w| {
+        let (_, r, t) = w.to_scale_rotation_translation();
+        (r, t)
+    });
+    let anchor2 = rotation2.inverse() * (anchor_world - position2);
+    let axis2 = rotation2.inverse() * (rotation1 * axis1);
+    // Rapier measures the second body against the first: the object is the second, so a slider's
+    // limits and a motor's speed are the object's own movement.
+    let mut data = match settings.kind {
+        JointKind::Fixed => rp::FixedJointBuilder::new().build().data,
+        JointKind::Hinge => rp::RevoluteJointBuilder::new(vector(axis2)).build().data,
+        JointKind::Ball => rp::SphericalJointBuilder::new().build().data,
+        JointKind::Slider => rp::PrismaticJointBuilder::new(vector(axis2)).build().data,
+    };
+    match settings.kind {
+        JointKind::Fixed => {
+            // Held in the turn they have now, too.
+            let turn = rotation2.inverse() * rotation1;
+            let rotation = rp::Rotation::from_xyzw(real(turn.x), real(turn.y), real(turn.z), real(turn.w));
+            data.set_local_frame1(rp::Pose::from_parts(vector(anchor2), rotation));
+            data.set_local_frame2(rp::Pose::from_parts(vector(anchor1), rp::Rotation::IDENTITY));
+        }
+        JointKind::Hinge | JointKind::Slider => {
+            data.set_local_axis1(vector(axis2));
+            data.set_local_axis2(vector(axis1));
+            data.set_local_anchor1(vector(anchor2));
+            data.set_local_anchor2(vector(anchor1));
+        }
+        JointKind::Ball => {
+            data.set_local_anchor1(vector(anchor2));
+            data.set_local_anchor2(vector(anchor1));
+        }
+    }
+    drive(&mut data, settings);
+    data
+}
+
+/// How hard a motor pulls toward its speed (Rapier's velocity factor), within its force.
+const MOTOR_STRENGTH: f64 = 10.0;
+
+/// A hinge's or slider's limits and motor, from the component: degrees for a hinge, units for a slider.
+fn drive(data: &mut rp::GenericJoint, settings: &Joint) {
+    let (axis, unit) = match settings.kind {
+        JointKind::Hinge => (rp::JointAxis::AngX, std::f64::consts::PI / 180.0),
+        JointKind::Slider => (rp::JointAxis::LinX, 1.0),
+        JointKind::Fixed | JointKind::Ball => return,
+    };
+    // Without limits or a motor the axis is left free: Rapier counts a limit or motor once it is set.
+    if settings.limited {
+        data.set_limits(axis, [real(f64::from(settings.lower) * unit), real(f64::from(settings.upper) * unit)]);
+    } else {
+        data.limit_axes.remove(axis.into());
+    }
+    if settings.motor_force == 0.0 {
+        data.motor_axes.remove(axis.into());
+    } else {
+        data.set_motor_velocity(axis, real(f64::from(settings.motor_speed) * unit), real(MOTOR_STRENGTH));
+        data.set_motor_max_force(axis, real(f64::from(settings.motor_force)));
+    }
+}
+
+/// Whether two Joint components make the same joint, differing at most in limits and motor.
+fn same_joint(a: &Joint, b: &Joint) -> bool {
+    a.kind == b.kind && a.connected == b.connected && a.anchor == b.anchor && a.axis == b.axis
+}
+
+impl World {
+    /// Joints for objects that have a Joint and a body, once what they hold on to has a body (or
+    /// at once, for the world). Changed limits and motors apply to the joint; other changes make
+    /// it again where the bodies are now.
+    fn sync_joints(&mut self, scene: &Scene) {
+        let stale: Vec<StableId> = self.joints.keys().filter(|id| !self.bodies.contains_key(id) || scene.get::<Joint>(**id).is_none()).copied().collect();
+        for id in stale {
+            if let Some((handle, _)) = self.joints.remove(&id) {
+                self.world.impulse_joints.remove(handle, true);
+            }
+        }
+        let wanted: Vec<(StableId, Joint)> = self.bodies.keys().filter_map(|id| scene.get::<Joint>(*id).map(|j| (*id, j.clone()))).collect();
+        if wanted.is_empty() {
+            return;
+        }
+        let objects = scene.world_matrices();
+        for (id, settings) in wanted {
+            if let Some((handle, made)) = self.joints.get(&id).cloned() {
+                if made == settings {
+                    continue;
+                }
+                if same_joint(&made, &settings) {
+                    if let Some(joint) = self.world.impulse_joints.get_mut(handle, true) {
+                        drive(&mut joint.data, &settings);
+                    }
+                    self.joints.insert(id, (handle, settings));
+                    continue;
+                }
+                self.world.impulse_joints.remove(handle, true);
+                self.joints.remove(&id);
+            }
+            let Some(&(_, world1)) = objects.iter().find(|(o, _)| *o == id) else { continue };
+            let Some(body1) = self.bodies.get(&id).map(|b| b.handle) else { continue };
+            let (body2, world2) = if settings.connected.trim().is_empty() {
+                (self.ground(), None)
+            } else {
+                // The first other object with that name, once it has a body.
+                let Some(&(other, world2)) = objects.iter().find(|(o, _)| *o != id && scene.name(*o) == Some(settings.connected.trim())) else { continue };
+                let Some(body2) = self.bodies.get(&other).map(|b| b.handle) else { continue };
+                (body2, Some(world2))
+            };
+            let handle = self.world.impulse_joints.insert(body2, body1, joint_data(&settings, world1, world2), true);
+            self.joints.insert(id, (handle, settings));
+        }
+    }
+
+    /// A fixed body at the origin that joints to the world hold on to.
+    fn ground(&mut self) -> rp::RigidBodyHandle {
+        *self.ground.get_or_insert_with(|| self.world.bodies.insert(rp::RigidBodyBuilder::fixed()))
+    }
 }

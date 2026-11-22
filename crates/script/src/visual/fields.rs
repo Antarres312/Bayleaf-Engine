@@ -144,6 +144,17 @@ pub const COMPONENTS: &[ComponentNodes] = &[
             ("cameraHeight", "Camera Height", Float),
         ]
     ),
+    component!(
+        "joint",
+        "Joint",
+        [
+            ("motorSpeed", "Motor Speed", Float),
+            ("motorForce", "Motor Force", Float),
+            ("limited", "Limited", Bool),
+            ("lower", "Lower", Float),
+            ("upper", "Upper", Float),
+        ]
+    ),
     component!("gameRules", "Game Rules", [("respawn", "Respawn", Bool), ("respawnHeight", "Respawn Height", Float), ("timeLimit", "Time Limit", Float)]),
 ];
 

@@ -206,7 +206,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    gravity, and choose single or double precision physics. Then: a Character component (a walking capsule that scripts steer, with steps, slopes,
    sliding and jumps), collider and character outlines in the scene view (a Colliders switch shows
    all), script raycasts against colliders' exact shapes, and `physics.raycast` for agents (scene
-   format version 9). Still open: joints.
+   format version 9). Then: a Joint component (fixed, hinge, ball, slider) holds a body to another
+   object, by name, or to the world, with limits and a motor whose speed scripts can change (Set
+   Component; scene format version 13).
 
 ## Open questions
 

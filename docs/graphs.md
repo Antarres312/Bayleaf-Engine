@@ -141,7 +141,7 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   sets the fields that have a link, after the step; the others are left unchanged. Changing
   Component changes the pins and drops links to fields the node no longer has. The components are
   Transform, Mesh, Sprite, Camera, the lights, Environment, Rigid Body, Collider, Character, Player
-  Control and Game Rules, with their number, vector, colour and true/false fields. Physics reads
+  Control, Game Rules and Joint (its motor and limits), with their number, vector, colour and true/false fields. Physics reads
   Rigid Body, Collider and Character when play starts, so Set Component refuses them.
   A script is a component too: pick it from the Scripts in the list, or drag it from the Project
   panel onto Component, and its properties become number pins (the node keeps their names in its

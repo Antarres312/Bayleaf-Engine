@@ -14,7 +14,7 @@ use std::sync::mpsc::{Receiver, channel};
 use bayleaf_core::StableId;
 use bayleaf_core::math::{DMat4, DQuat, DVec3};
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{BodyKind, CharacterBody, Collider, ColliderShape, RigidBody, Transform};
+use bayleaf_scene::components::{BodyKind, CharacterBody, Collider, ColliderShape, Joint, JointKind, RigidBody, Transform};
 
 /// Length of one physics step, in seconds.
 pub const STEP: f32 = 1.0 / 60.0;
@@ -64,8 +64,8 @@ pub const SINGLE_PRECISION_RANGE: f64 = 10_000.0;
 
 mod single {
     use super::{
-        BodyKind, CharacterBody, Collider, ColliderShape, Contact, ContactKind, DMat4, DQuat, DVec3, HashMap, MAX_STEPS_PER_FRAME, Receiver, RigidBody, STEP,
-        Scene, StableId, Transform, channel,
+        BodyKind, CharacterBody, Collider, ColliderShape, Contact, ContactKind, DMat4, DQuat, DVec3, HashMap, Joint, JointKind, MAX_STEPS_PER_FRAME, Receiver,
+        RigidBody, STEP, Scene, StableId, Transform, channel,
     };
     use rapier3d::control as ctl;
     use rapier3d::prelude as rp;
@@ -85,8 +85,8 @@ mod single {
 
 mod double {
     use super::{
-        BodyKind, CharacterBody, Collider, ColliderShape, Contact, ContactKind, DMat4, DQuat, DVec3, HashMap, MAX_STEPS_PER_FRAME, Receiver, RigidBody, STEP,
-        Scene, StableId, Transform, channel,
+        BodyKind, CharacterBody, Collider, ColliderShape, Contact, ContactKind, DMat4, DQuat, DVec3, HashMap, Joint, JointKind, MAX_STEPS_PER_FRAME, Receiver,
+        RigidBody, STEP, Scene, StableId, Transform, channel,
     };
     use rapier3d_f64::control as ctl;
     use rapier3d_f64::prelude as rp;

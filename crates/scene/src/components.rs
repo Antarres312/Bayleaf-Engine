@@ -664,6 +664,92 @@ impl SceneComponent for Collider {
     }
 }
 
+/// How a joint lets its object move against what it holds on to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JointKind {
+    /// Held fast, as if glued.
+    #[default]
+    Fixed,
+    /// Turns about the axis only, like a door.
+    Hinge,
+    /// Turns every way about the anchor, like a shoulder.
+    Ball,
+    /// Slides along the axis only, like a drawer.
+    Slider,
+}
+
+/// Holds the object's physics body to another object's, or to the world, at the anchor. Physics
+/// makes it when play starts (or when the object or the other one appears) and updates its motor
+/// and limits when they change.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Joint {
+    pub kind: JointKind,
+    /// The object it holds on to, by name (the first with that name); empty for the world.
+    pub connected: String,
+    /// Where it holds, in the object's own space.
+    pub anchor: [f32; 3],
+    /// The hinge's turning axis or the slider's direction, in the object's own space.
+    pub axis: [f32; 3],
+    /// Whether movement stops at Lower and Upper: degrees for a hinge, world units for a slider.
+    pub limited: bool,
+    pub lower: f32,
+    pub upper: f32,
+    /// A hinge or slider driven at this speed: degrees or units per second, the object's own turning
+    /// or sliding along the axis (0 holds it still, as a brake).
+    pub motor_speed: f32,
+    /// The most force (or turning force) the motor uses; 0 for no motor.
+    pub motor_force: f32,
+}
+
+impl Default for Joint {
+    fn default() -> Self {
+        Self {
+            kind: JointKind::Hinge,
+            connected: String::new(),
+            anchor: [0.0; 3],
+            axis: [0.0, 1.0, 0.0],
+            limited: false,
+            lower: -45.0,
+            upper: 45.0,
+            motor_speed: 0.0,
+            motor_force: 0.0,
+        }
+    }
+}
+
+impl SceneComponent for Joint {
+    const NAME: &'static str = "joint";
+    const LABEL: &'static str = "Joint";
+    const MENU: &'static str = "Physics/Joint";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        let finite = |v: &[f32]| v.iter().all(|x| x.is_finite() && x.abs() <= 1.0e6);
+        if !finite(&self.anchor) || !finite(&self.axis) || !finite(&[self.lower, self.upper, self.motor_speed, self.motor_force]) {
+            return Err("joint values must be finite numbers of at most a million".to_owned());
+        }
+        if self.axis.iter().map(|a| a * a).sum::<f32>() < 1.0e-6 {
+            return Err("the axis must not be zero".to_owned());
+        }
+        if self.lower > self.upper {
+            return Err("lower must not be more than upper".to_owned());
+        }
+        if self.motor_force < 0.0 {
+            return Err("motorForce must be 0 or more".to_owned());
+        }
+        if self.connected.chars().count() > 256 {
+            return Err("connected must be a name of at most 256 characters".to_owned());
+        }
+        Ok(())
+    }
+
+    fn options(field: &str) -> &'static [&'static str] {
+        if field == "kind" { &["fixed", "hinge", "ball", "slider"] } else { &[] }
+    }
+}
+
 /// A walking character for play mode: an upright capsule that scripts steer and jump, which
 /// climbs steps and gentle slopes, slides along walls and falls under gravity. It needs no Rigid
 /// Body or Collider.

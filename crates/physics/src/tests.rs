@@ -206,3 +206,103 @@ fn rays_hit_colliders_but_not_triggers_or_the_caster() {
         assert!(physics.raycast(bayleaf_core::math::DVec3::new(0.0, 10.0, 0.0), down, 3.0, None).is_none(), "nothing within 3 units");
     }
 }
+
+fn joint(kind: &str, connected: &str, anchor: [f32; 3], axis: [f32; 3]) -> serde_json::Value {
+    json!({"kind": kind, "connected": connected, "anchor": anchor, "axis": axis, "limited": false, "lower": -45, "upper": 45, "motorSpeed": 0, "motorForce": 0})
+}
+
+/// A box with a Rigid Body, a Collider and `joint`, at `position`.
+fn jointed(scene: &mut Scene, name: &str, joint: serde_json::Value, position: [f32; 3]) -> StableId {
+    let body = json!({
+        "rigidBody": {"kind": "dynamic", "mass": 1, "gravityScale": 1, "lockRotation": false},
+        "collider": {"shape": "box", "size": [1, 1, 1], "friction": 0.5, "restitution": 0, "trigger": false},
+        "joint": joint,
+    });
+    object(scene, name, body, position, [1.0; 3])
+}
+
+fn world_point(scene: &Scene, id: StableId, local: [f64; 3]) -> bayleaf_core::math::DVec3 {
+    scene.world_matrix(id).unwrap().transform_point3(local.into())
+}
+
+#[test]
+fn a_hinge_to_the_world_keeps_its_anchor_while_the_box_swings_down() {
+    for precision in [Precision::Single, Precision::Double] {
+        let mut scene = Scene::new();
+        // Hinged at its left edge about Z, like a door on its side.
+        let door = jointed(&mut scene, "Door", joint("hinge", "", [-0.5, 0.0, 0.0], [0.0, 0.0, 1.0]), [0.0, 2.0, 0.0]);
+        let anchor = world_point(&scene, door, [-0.5, 0.0, 0.0]);
+        let mut physics = Physics::build(&scene, GRAVITY, precision);
+        let (mut lowest, mut drift) = (f64::MAX, 0.0f64);
+        for _ in 0..60 {
+            physics.step(&mut scene, STEP);
+            lowest = lowest.min(y(&scene, door));
+            drift = drift.max(world_point(&scene, door, [-0.5, 0.0, 0.0]).distance(anchor));
+        }
+        // A pendulum: it swings down through the bottom (centre 0.5 below the hinge) and back up.
+        assert!(drift < 0.05, "the hinge holds: it moved {drift}");
+        assert!(lowest < 1.6 && lowest > 1.3, "the box swings down about it, no further: lowest y = {lowest}");
+    }
+}
+
+#[test]
+fn a_fixed_joint_carries_one_box_with_another_and_a_slider_stops_at_its_limit() {
+    let mut scene = Scene::new();
+    // Weightless, so only the push moves them.
+    let leader = object(
+        &mut scene,
+        "Leader",
+        json!({"rigidBody": {"kind": "dynamic", "mass": 1, "gravityScale": 0, "lockRotation": false}, "collider": {"shape": "box", "size": [1, 1, 1], "friction": 0.5, "restitution": 0, "trigger": false}}),
+        [0.0, 5.0, 0.0],
+        [1.0; 3],
+    );
+    let follower = jointed(&mut scene, "Follower", joint("fixed", "Leader", [0.0; 3], [0.0, 1.0, 0.0]), [2.0, 5.0, 0.0]);
+    scene.set_component(follower, "rigidBody", json!({"kind": "dynamic", "mass": 1, "gravityScale": 0, "lockRotation": false})).unwrap();
+    // A slider hanging under gravity, free to slide down half a unit along Y.
+    let mut slider = joint("slider", "", [0.0; 3], [0.0, 1.0, 0.0]);
+    slider["limited"] = json!(true);
+    slider["lower"] = json!(-0.5);
+    slider["upper"] = json!(0.0);
+    let drawer = jointed(&mut scene, "Drawer", slider, [10.0, 5.0, 0.0]);
+    let mut physics = Physics::build(&scene, GRAVITY, Precision::Single);
+    physics.apply_impulse(leader, [3.0, 0.0, 0.0]);
+    for _ in 0..60 {
+        physics.step(&mut scene, STEP);
+    }
+    let leader_x = scene.get::<Transform>(leader).unwrap().position[0];
+    let follower_x = scene.get::<Transform>(follower).unwrap().position[0];
+    assert!(leader_x > 0.5, "the push moved the leader: x = {leader_x}");
+    assert!((follower_x - leader_x - 2.0).abs() < 0.1, "the follower kept its place beside it: {leader_x} and {follower_x}");
+    let drop = 5.0 - y(&scene, drawer);
+    assert!(drop > 0.4 && drop < 0.6, "the drawer slid down to its limit: {drop}");
+}
+
+#[test]
+fn a_hinge_motor_turns_the_box_and_follows_a_changed_speed() {
+    let mut scene = Scene::new();
+    let mut motorised = joint("hinge", "", [0.0; 3], [0.0, 1.0, 0.0]);
+    motorised["motorSpeed"] = json!(90);
+    motorised["motorForce"] = json!(100);
+    let wheel = jointed(&mut scene, "Wheel", motorised, [0.0, 5.0, 0.0]);
+    scene.set_component(wheel, "rigidBody", json!({"kind": "dynamic", "mass": 1, "gravityScale": 0, "lockRotation": false})).unwrap();
+    let mut physics = Physics::build(&scene, GRAVITY, Precision::Single);
+    let yaw = |scene: &Scene| scene.get::<Transform>(wheel).unwrap().rotation[1];
+    for _ in 0..30 {
+        physics.step(&mut scene, STEP);
+    }
+    let turned = yaw(&scene);
+    assert!(turned > 20.0, "the motor turns it the way it says: {turned}");
+    // Stopping the motor, while playing, is seen by the joint.
+    let mut stopped: serde_json::Value = scene.component(wheel, "joint").unwrap();
+    stopped["motorSpeed"] = json!(0);
+    stopped["motorForce"] = json!(1000);
+    scene.set_component(wheel, "joint", stopped).unwrap();
+    for _ in 0..30 {
+        physics.step(&mut scene, STEP);
+    }
+    let before = yaw(&scene);
+    for _ in 0..30 {
+        physics.step(&mut scene, STEP);
+    }
+    assert!((yaw(&scene) - before).abs() < 10.0, "at speed 0 the motor holds it still: {before} then {}", yaw(&scene));
+}

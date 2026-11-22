@@ -35,5 +35,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Whole Number (pin type, node and variable), To Whole Number, Rounding, Nearest, Down, Up, Toward Zero, Remainder, Whole Number Variable, Set Whole Number Variable | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Load Scene, Unload Scene, Add to This Scene, Scene File | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Read Console, List Assets (command labels) | not yet | Not checked yet | Generic terms; same |
+| Joint, Fixed, Hinge, Ball, Slider, Connected, Anchor, Axis, Limited, Lower, Upper, Motor Speed, Motor Force | not yet | Not checked yet | Generic physics terms; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.
