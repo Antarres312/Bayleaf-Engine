@@ -371,6 +371,8 @@ pub enum Prompt {
     OpenProject,
     /// `{"folder"}`: a folder to write into.
     Folder,
+    /// The front end shows a window of its own for the command's choices (Export Game).
+    Dialog,
     /// A form of named values, sent as an object of them.
     Fields(&'static [PromptField]),
 }

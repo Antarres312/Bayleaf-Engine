@@ -1773,3 +1773,57 @@ fn a_project_exports_as_a_game_folder_that_runs_without_the_editor() {
     assert!(registry.execute(&mut session, "project.export", &json!({"folder": base.join("elsewhere"), "player": player})).is_err());
     std::fs::remove_dir_all(&base).ok();
 }
+
+#[test]
+fn the_export_check_says_what_stops_an_export_for_each_platform_and_script_mode() {
+    use crate::export::{Platform, ScriptMode};
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let base = std::env::temp_dir().join(format!("bayleaf-export-check-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let project = base.join("Checked");
+    registry.execute(&mut session, "project.new", &json!({"path": project})).unwrap();
+    let player = base.join("player-program");
+    std::fs::write(&player, b"the player").unwrap();
+    // A built Rust script with its source beside the visual one the starter project has.
+    std::fs::create_dir_all(project.join("scripts/mover/src")).unwrap();
+    std::fs::write(project.join("scripts/mover/Cargo.toml"), "[package]").unwrap();
+    std::fs::write(project.join("scripts/mover/src/lib.rs"), "// source").unwrap();
+    std::fs::write(project.join("scripts/mover.wasm"), b"\0asm\x01\0\0\0").unwrap();
+    let check = |session: &mut Session, platform: Platform, mode: ScriptMode| {
+        registry.execute(session, "project.export.check", &json!({"platform": platform, "mode": mode, "player": player})).unwrap()
+    };
+    let errors = |report: &Value| -> Vec<String> {
+        report["findings"].as_array().unwrap().iter().filter(|f| f["severity"] == "error").map(|f| f["message"].as_str().unwrap().to_owned()).collect()
+    };
+
+    let here = check(&mut session, Platform::current(), ScriptMode::Interpreted);
+    assert_eq!(here["ready"], true, "a fresh project exports for this system, interpreted: {here}");
+    let elsewhere = Platform::ALL.into_iter().find(|p| *p != Platform::current()).unwrap();
+    assert!(errors(&check(&mut session, elsewhere, ScriptMode::Interpreted)).iter().any(|e| e.contains("not available yet")), "other systems say so");
+    let compiled = check(&mut session, Platform::current(), ScriptMode::Compiled);
+    assert_eq!(compiled["ready"], false, "a mode this version cannot export is not ready");
+    let native = check(&mut session, Platform::current(), ScriptMode::Native);
+    let runs = |path: &str| native["scripts"].as_array().unwrap().iter().find(|s| s["path"] == path).map(|s| s["runs"].clone()).unwrap();
+    assert_eq!(runs("scripts/mover.wasm"), json!("native"), "a Rust script with its source would be native");
+    assert_eq!(runs("scripts/spin.bscript"), json!("compiled"), "a visual script would stay compiled WebAssembly");
+
+    // A broken visual script, an unbuilt Rust script and a file a scene names that is gone.
+    std::fs::write(project.join("scripts/broken.bscript"), "{ not a graph").unwrap();
+    std::fs::create_dir_all(project.join("scripts/unbuilt/src")).unwrap();
+    std::fs::write(project.join("scripts/unbuilt/Cargo.toml"), "[package]").unwrap();
+    let material = std::fs::read_dir(project.join("materials")).unwrap().flatten().next().unwrap().path();
+    std::fs::remove_file(&material).unwrap();
+    let broken = check(&mut session, Platform::current(), ScriptMode::Interpreted);
+    let found = errors(&broken);
+    assert!(found.iter().any(|e| e.contains("broken.bscript")), "{found:?}");
+    assert!(found.iter().any(|e| e.contains("unbuilt") && e.contains("not built")), "{found:?}");
+    assert!(found.iter().any(|e| e.contains("not in the project")), "{found:?}");
+
+    // The export refuses what the check refuses, and writes nothing.
+    let out = base.join("out");
+    let refused = registry.execute(&mut session, "project.export", &json!({"folder": out, "player": player}));
+    assert!(matches!(&refused, Err(CommandError::Failed(m)) if m.contains("cannot be exported yet")), "{refused:?}");
+    assert!(!out.exists());
+    std::fs::remove_dir_all(&base).ok();
+}

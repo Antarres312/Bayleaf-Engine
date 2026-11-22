@@ -16,8 +16,9 @@ pub const PROJECT_FORMAT: &str = "bayleaf.project";
 pub const PROJECT_EXTENSION: &str = "bproject";
 /// Version 2 added `settings`; version 3 moved the input actions into an Input Map asset
 /// (`settings.input.map`); version 4 added the editor preferences (`settings.editor`); version 5 added the game's icon
-/// (`settings.game.icon`). Older files still open; opening one moves its actions.
-pub(crate) const PROJECT_VERSION: u32 = 5;
+/// (`settings.game.icon`); version 6 the script mode per platform (`settings.game.scriptModes`).
+/// Older files still open; opening one moves its actions.
+pub(crate) const PROJECT_VERSION: u32 = 6;
 
 /// A project file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -53,6 +54,9 @@ pub struct GameSettings {
     /// A PNG image, relative to the project folder, for the game's window; empty for the engine's.
     #[serde(default)]
     pub icon: String,
+    /// How exported games run their scripts, per platform; a platform not listed interprets them.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub script_modes: std::collections::BTreeMap<crate::export::Platform, crate::export::ScriptMode>,
 }
 
 /// How the editor shows this project. Play mode does not read these.

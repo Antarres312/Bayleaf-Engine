@@ -3,13 +3,15 @@
 //! project's scenes, assets and scripts. Visual scripts are compiled now, so the game starts
 //! without compiling them; Rust script sources, build output and saved values stay behind.
 //!
-//! Today a game is exported for the system the editor runs on, with the player program as it was
-//! built (with every module the apps turn on); other systems and leaving unused modules out are
-//! still to come, and the command says so.
+//! `project.export.check` tells, without writing anything, whether the project can be exported for
+//! a platform with its scripts run in a mode, and why not. Today a game is exported for the system
+//! the editor runs on, with its scripts interpreted, and with the player program as it was built
+//! (with every module the apps turn on); other systems, the other script modes and leaving unused
+//! modules out are still to come, and the check says so.
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::confine::Access;
@@ -39,27 +41,47 @@ const SKIPPED_FOLDERS: &[&str] = &["target", "saves", "node_modules"];
 /// Most files one export copies.
 const MAX_FILES: usize = 100_000;
 
+/// Export needs an open project, outside play mode.
+fn exportable(session: &Session) -> Result<(), String> {
+    not_playing(session)?;
+    if session.project_dir().is_some() { Ok(()) } else { Err("open a project first".to_owned()) }
+}
+
 pub(crate) fn commands() -> Vec<CommandSpec> {
-    vec![CommandSpec {
-        id: "project.export",
-        label: "Export Game…",
-        menu: "File/Export Game…",
-        shortcut: "",
-        params: "{folder, player?}: writes the open project as a game into a new folder named after it inside folder: the player program under the game's name, and its scenes, assets and scripts in a game folder beside it (visual scripts compiled; Rust sources, build output and saved values left out). player is the player program to use (default: bayleaf-player beside this program). Exports for this computer's system only; returns {path, program, files, compiled, skipped}",
-        prompt: Prompt::Folder,
-        mutates: Mutates::No,
-        enabled: |s| {
-            not_playing(s)?;
-            if s.project_dir().is_some() { Ok(()) } else { Err("open a project first".to_owned()) }
+    vec![
+        CommandSpec {
+            id: "project.export",
+            label: "Export Game…",
+            menu: "File/Export Game…",
+            shortcut: "",
+            params: "{folder, platform?, mode?, player?}: writes the open project as a game into a new folder named after it inside folder: the player program under the game's name, and its scenes, assets and scripts in a game folder beside it (visual scripts compiled; Rust sources, build output and saved values left out). platform is windows, linux, mac or web (default: this computer's); mode is how scripts run: interpreted, compiled or native (default: the project's choice for the platform). Refused, with the reasons, when project.export.check finds an error; returns {path, program, files, compiled, skipped}",
+            prompt: Prompt::Dialog,
+            mutates: Mutates::No,
+            enabled: exportable,
+            run: export_command,
         },
-        run: export_command,
-    }]
+        CommandSpec {
+            id: "project.export.check",
+            label: "Check Export",
+            menu: "",
+            shortcut: "",
+            params: "{platform?, mode?, player?}: whether the open project can be exported for platform with its scripts run in mode (defaults as for project.export), without writing anything; returns {platform, mode, ready, findings: [{severity: error|warning|note, message, file?}], scripts: [{path, kind, runs, note}], files}",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: exportable,
+            run: check_command,
+        },
+    ]
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExportParams {
     folder: PathBuf,
+    #[serde(default)]
+    platform: Option<Platform>,
+    #[serde(default)]
+    mode: Option<ScriptMode>,
     #[serde(default)]
     player: Option<PathBuf>,
 }
@@ -128,20 +150,15 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
         .unwrap_or_else(|| "Game".to_owned());
     let name = file_name(&name);
 
-    // The player program: given, else the one built beside this program.
-    let player = match p.player {
-        Some(path) => session.allowed(&path, Access::Read)?,
-        None => {
-            let here = std::env::current_exe().map_err(|e| CommandError::Failed(format!("cannot find this program: {e}")))?;
-            here.with_file_name(format!("bayleaf-player{}", std::env::consts::EXE_SUFFIX))
-        }
-    };
-    if !player.is_file() {
-        return Err(CommandError::Failed(format!(
-            "the player program {} is not there; build it first (cargo build -p bayleaf-player), or give its path as player",
-            player.display()
-        )));
+    // Nothing is written unless the check finds no error.
+    let platform = p.platform.unwrap_or_else(Platform::current);
+    let mode = p.mode.unwrap_or_else(|| chosen_mode(session, platform));
+    let report = check(session, platform, mode, p.player.as_deref())?;
+    if !report.ready {
+        let errors: Vec<&str> = report.findings.iter().filter(|f| f.severity == Severity::Error).map(|f| f.message.as_str()).collect();
+        return Err(CommandError::Failed(format!("the game cannot be exported yet: {}", errors.join(" "))));
     }
+    let player = player_program(session, p.player.as_deref())?;
 
     let out = session.allowed(&p.folder.join(&name), Access::Write)?;
     if out.starts_with(&project) {
@@ -186,6 +203,351 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
         "compiled": shown(&compiled.iter().map(|(f, _)| f.clone()).collect::<Vec<_>>()),
         "skipped": shown(&left),
     }))
+}
+
+/// A system a game can be exported for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Platform {
+    Windows,
+    Linux,
+    Mac,
+    Web,
+}
+
+impl Platform {
+    pub const ALL: [Platform; 4] = [Platform::Windows, Platform::Linux, Platform::Mac, Platform::Web];
+
+    /// English name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            Platform::Windows => "Windows",
+            Platform::Linux => "Linux",
+            Platform::Mac => "macOS",
+            Platform::Web => "Web",
+        }
+    }
+
+    /// The word commands and project files use: `windows`, `linux`, `mac` or `web`.
+    pub fn code(self) -> &'static str {
+        match self {
+            Platform::Windows => "windows",
+            Platform::Linux => "linux",
+            Platform::Mac => "mac",
+            Platform::Web => "web",
+        }
+    }
+
+    /// The system this program runs on.
+    pub fn current() -> Platform {
+        if cfg!(target_os = "windows") {
+            Platform::Windows
+        } else if cfg!(target_os = "macos") {
+            Platform::Mac
+        } else if cfg!(target_arch = "wasm32") {
+            Platform::Web
+        } else {
+            Platform::Linux
+        }
+    }
+}
+
+/// How an exported game runs its scripts (docs/vision.md, M8).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScriptMode {
+    /// WebAssembly run by an interpreter: starts at once and reloads while playing; slowest.
+    #[default]
+    Interpreted,
+    /// The same WebAssembly, still sandboxed, compiled to machine code: close to native speed.
+    Compiled,
+    /// Rust scripts built into the player, with no sandbox: fastest, for trusted code.
+    Native,
+}
+
+impl ScriptMode {
+    pub const ALL: [ScriptMode; 3] = [ScriptMode::Interpreted, ScriptMode::Compiled, ScriptMode::Native];
+
+    /// English name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            ScriptMode::Interpreted => "Interpreted",
+            ScriptMode::Compiled => "Compiled to machine code",
+            ScriptMode::Native => "Native",
+        }
+    }
+
+    /// What the mode gives and what it gives up.
+    pub fn summary(self) -> &'static str {
+        match self {
+            ScriptMode::Interpreted => "Scripts start at once and stay sandboxed; the slowest of the modes.",
+            ScriptMode::Compiled => "The same sandboxed scripts, compiled to machine code: close to native speed, with the same limits and faults.",
+            ScriptMode::Native => {
+                "Rust scripts built into the game with no sandbox: the fastest, for code you trust; a native script can do anything a program can, and a fault in it stops the game."
+            }
+        }
+    }
+
+    /// Whether this version of the engine can export games in this mode.
+    pub fn available(self) -> bool {
+        self == ScriptMode::Interpreted
+    }
+}
+
+/// How serious a finding of the export check is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Severity {
+    /// The game cannot be exported this way.
+    Error,
+    /// The game exports, but something may not be as meant.
+    Warning,
+    /// Worth knowing.
+    Note,
+}
+
+/// One thing the export check found.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Finding {
+    pub severity: Severity,
+    pub message: String,
+    /// The project file it is about, relative to the project folder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+}
+
+/// How one script of the project would run in the chosen mode.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ScriptPlan {
+    /// The module, relative to the project folder.
+    pub path: String,
+    /// `visual`, `rust` (built from a Rust crate in the project) or `module` (WebAssembly only).
+    pub kind: &'static str,
+    /// The mode it would run in.
+    pub runs: ScriptMode,
+    pub note: String,
+}
+
+/// What `project.export.check` found for a platform and a mode.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Report {
+    pub platform: Platform,
+    pub mode: ScriptMode,
+    /// No errors: the game can be exported this way.
+    pub ready: bool,
+    pub findings: Vec<Finding>,
+    pub scripts: Vec<ScriptPlan>,
+    /// Files the game would take along.
+    pub files: usize,
+}
+
+/// The script mode Project Settings choose for `platform`.
+pub fn chosen_mode(session: &Session, platform: Platform) -> ScriptMode {
+    crate::project_cmds::settings_of(session).game.script_modes.get(&platform).copied().unwrap_or_default()
+}
+
+/// The player program to copy: `given`, else the one built beside this program.
+fn player_program(session: &Session, given: Option<&Path>) -> Result<PathBuf, CommandError> {
+    match given {
+        Some(path) => session.allowed(path, Access::Read),
+        None => {
+            let here = std::env::current_exe().map_err(|e| CommandError::Failed(format!("cannot find this program: {e}")))?;
+            Ok(here.with_file_name(format!("bayleaf-player{}", std::env::consts::EXE_SUFFIX)))
+        }
+    }
+}
+
+/// File extensions a scene or prefab may name a file of the project by.
+const REFERENCED_EXTENSIONS: &[&str] = &[
+    "bscene",
+    "bprefab",
+    "bmaterial",
+    "bscript",
+    "wasm",
+    "binput",
+    "glb",
+    "gltf",
+    "png",
+    "jpg",
+    "jpeg",
+    "wav",
+    "ogg",
+    "mp3",
+    "aif",
+    "aiff",
+    "opus",
+    "m4a",
+    "aac",
+];
+
+/// Every text in a scene file's components that names a project file, by its extension.
+fn referenced_files(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(text) => {
+            let lower = text.to_ascii_lowercase();
+            if !text.is_empty() && REFERENCED_EXTENSIONS.iter().any(|e| lower.ends_with(&format!(".{e}"))) {
+                out.push(text.clone());
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|v| referenced_files(v, out)),
+        Value::Object(map) => map.values().for_each(|v| referenced_files(v, out)),
+        _ => {}
+    }
+}
+
+/// The newest change to a Rust script crate's sources (`src`, `Cargo.toml`).
+fn newest_source(dir: &Path) -> Option<std::time::SystemTime> {
+    let mut newest = std::fs::metadata(dir.join("Cargo.toml")).and_then(|m| m.modified()).ok();
+    let mut pending = vec![dir.join("src")];
+    while let Some(folder) = pending.pop() {
+        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
+                newest = newest.max(Some(modified));
+            }
+        }
+    }
+    newest
+}
+
+/// Whether the game can be exported for `platform` with its scripts run in `mode`, and what it would
+/// take: the platform and mode this version supports, the player program, the main scene, visual
+/// scripts that compile, Rust scripts built from their latest sources, files the scenes name, and
+/// how each script would run.
+pub fn check(session: &Session, platform: Platform, mode: ScriptMode, player: Option<&Path>) -> Result<Report, CommandError> {
+    let project = session.project_dir().map(Path::to_path_buf).ok_or_else(|| CommandError::Failed("open a project first".to_owned()))?;
+    let project = session.allowed(&project, Access::Read)?;
+    let mut findings = Vec::new();
+    let mut found = |severity: Severity, message: String, file: Option<String>| findings.push(Finding { severity, message, file });
+    let relative = |path: &Path| path.strip_prefix(&project).unwrap_or(path).to_string_lossy().replace('\\', "/");
+
+    if platform != Platform::current() {
+        found(
+            Severity::Error,
+            format!(
+                "Export for {} is not available yet: this version exports games for the system the editor runs on ({}).",
+                platform.label(),
+                Platform::current().label()
+            ),
+            None,
+        );
+    }
+    if !mode.available() {
+        found(Severity::Error, format!("{} is not available yet in this version; choose Interpreted to export now.", mode.label()), None);
+    }
+    match player_program(session, player) {
+        Ok(path) if path.is_file() => {}
+        Ok(path) => found(
+            Severity::Error,
+            format!("The player program {} is not there; build it first (cargo build --release -p bayleaf-player).", path.display()),
+            None,
+        ),
+        Err(e) => found(Severity::Error, e.to_string(), None),
+    }
+    // The scene the game starts with.
+    let file =
+        crate::project_cmds::project_file_in(&project).and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    match file.as_ref().and_then(|f| f["mainScene"].as_str()).filter(|s| !s.is_empty()) {
+        Some(main) if project.join(main).is_file() => {}
+        Some(main) => found(Severity::Error, format!("The main scene {main} is not there."), Some(main.to_owned())),
+        None => found(Severity::Error, "The project names no main scene to start with.".to_owned(), None),
+    }
+
+    let (files, _) = gather(&project)?;
+    let mut scripts = Vec::new();
+    for path in &files {
+        let full = project.join(path);
+        let shown = relative(&full);
+        let extension = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        if extension == bayleaf_script::VISUAL_EXTENSION {
+            if let Err(e) = bayleaf_script::module_bytes(&full) {
+                found(Severity::Error, format!("{shown} does not compile: {e}"), Some(shown.clone()));
+            }
+            let (runs, note) = match mode {
+                ScriptMode::Native => (ScriptMode::Compiled, "a visual script stays compiled WebAssembly until visual scripts can be native"),
+                other => (other, ""),
+            };
+            scripts.push(ScriptPlan { path: shown, kind: "visual", runs, note: note.to_owned() });
+        } else if extension == "wasm" {
+            let crate_dir = full.with_extension("");
+            let from_source = crate_dir.join("Cargo.toml").is_file();
+            if from_source
+                && let (Some(source), Ok(built)) = (newest_source(&crate_dir), std::fs::metadata(&full).and_then(|m| m.modified()))
+                && source > built
+            {
+                found(Severity::Warning, format!("{shown} is older than its Rust source; build it again to export the latest."), Some(shown.clone()));
+            }
+            let (runs, note) = match (mode, from_source) {
+                (ScriptMode::Native, true) => (ScriptMode::Native, "built into the game from its Rust source"),
+                (ScriptMode::Native, false) => (ScriptMode::Compiled, "no Rust source in the project, so it stays compiled WebAssembly"),
+                (other, _) => (other, ""),
+            };
+            scripts.push(ScriptPlan { path: shown, kind: if from_source { "rust" } else { "module" }, runs, note: note.to_owned() });
+        }
+    }
+    // Rust script crates whose module was never built.
+    let mut pending = vec![project.clone()];
+    while let Some(folder) = pending.pop() {
+        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if path.join("Cargo.toml").is_file() {
+                let module = path.with_extension("wasm");
+                if !module.is_file() {
+                    found(
+                        Severity::Error,
+                        format!("The Rust script {} is not built yet; build it (Build Script) before exporting.", relative(&path)),
+                        Some(relative(&path)),
+                    );
+                }
+            } else if !skipped_folder(&path) {
+                pending.push(path);
+            }
+        }
+    }
+    // Files the scenes and prefabs name that are not in the project.
+    for path in files.iter().filter(|f| f.extension().is_some_and(|e| e == bayleaf_scene::doc::EXTENSION || e == crate::prefab_cmds::PREFAB_EXTENSION)) {
+        let shown = relative(&project.join(path));
+        let Some(value) = std::fs::read_to_string(project.join(path)).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else {
+            found(Severity::Error, format!("{shown} cannot be read."), Some(shown));
+            continue;
+        };
+        let mut named = Vec::new();
+        referenced_files(&value["objects"], &mut named);
+        named.sort();
+        named.dedup();
+        for missing in named.into_iter().filter(|n| !project.join(n).is_file()) {
+            found(Severity::Error, format!("{shown} uses {missing}, which is not in the project."), Some(shown.clone()));
+        }
+    }
+    if mode == ScriptMode::Interpreted && findings.iter().all(|f| f.severity != Severity::Error) {
+        findings.push(Finding { severity: Severity::Note, message: ScriptMode::Interpreted.summary().to_owned(), file: None });
+    }
+    let ready = findings.iter().all(|f| f.severity != Severity::Error);
+    Ok(Report { platform, mode, ready, findings, scripts, files: files.len() })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckParams {
+    #[serde(default)]
+    platform: Option<Platform>,
+    #[serde(default)]
+    mode: Option<ScriptMode>,
+    #[serde(default)]
+    player: Option<PathBuf>,
+}
+
+fn check_command(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: CheckParams = parse(params)?;
+    let platform = p.platform.unwrap_or_else(Platform::current);
+    let mode = p.mode.unwrap_or_else(|| chosen_mode(session, platform));
+    let report = check(session, platform, mode, p.player.as_deref())?;
+    serde_json::to_value(report).map_err(|e| CommandError::Failed(e.to_string()))
 }
 
 /// The project of a game exported beside `program`: the project file in its `game` folder.

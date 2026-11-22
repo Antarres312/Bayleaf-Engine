@@ -268,3 +268,8 @@ fn game_section(ui: &mut egui::Ui, t: &theme::Tokens, images: &[String], setting
         );
     });
 }
+
+/// Reads the settings again the next time the panel shows, after something else changed them.
+pub(crate) fn forget(editor: &mut Editor) {
+    editor.project_settings.settings = None;
+}

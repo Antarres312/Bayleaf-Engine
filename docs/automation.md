@@ -131,8 +131,13 @@ Rust script, which `script.build` refuses for agents because it runs the crate's
 `scene.script.setProperty` takes a value of the property's type: a number, `true`/`false`, three numbers or text
 (an object property's object name); `null` goes back to the script's default.
 
-`project.export` (`{folder, player?}`) writes the open project as a game into a new folder inside
-`folder`, named after the game: the player program under the game's name, and a `game` folder of
-its scenes, assets and scripts (visual scripts compiled). The folder must be inside the write roots;
-`player` (default: `bayleaf-player` beside the running program) must be readable. It exports for the
-system it runs on only.
+`project.export` (`{folder, platform?, mode?, player?}`) writes the open project as a game into a new
+folder inside `folder`, named after the game: the player program under the game's name, and a `game`
+folder of its scenes, assets and scripts (visual scripts compiled). The folder must be inside the
+write roots; `player` (default: `bayleaf-player` beside the running program) must be readable.
+`platform` is `windows`, `linux`, `mac` or `web` (default: this computer's) and `mode` how scripts
+run: `interpreted`, `compiled` or `native` (default: the project's choice for the platform,
+`settings.game.scriptModes`). `project.export.check` (same params, without `folder`) writes nothing
+and returns `{ready, findings, scripts, files}`: each finding an `error`, `warning` or `note` with
+its message and file, and how each script would run. The export refuses while the check finds an
+error. Today only this computer's system and `interpreted` export; the check says so for the rest.

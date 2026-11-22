@@ -29,6 +29,7 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Whole Number Property, True/False Property, Vector Property, Color Property, Text Property, Object Property, Default | not yet | Not checked yet | Generic terms; same |
 | Negate, Set Property, Set Whole Number Property, Set True/False Property, Set Vector Property, Set Color Property, Set Text Property, Set Object Property, New Property | not yet | Not checked yet | Generic terms; same |
 | Functions, Function, Return, Call Function, Add Function, Inputs, Outputs, Add Input, Add Output, Call | not yet | Not checked yet | Generic programming terms; same |
+| Platform, Scripts, Interpreted, Compiled to machine code, Native, Check, Check Again, Export, Folder | not yet | Not checked yet | Generic terms in the Export Game window; same |
 | Export Game, Game, Icon | not yet | Not checked yet | Generic terms; same |
 | Object (pin type), This Object, Find Object Named, Find Object With, Count Objects With, For Each Object With, Destroy Object, Object Name, Component, Tag or Script, Found, Each, Index, Find (category) | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Preferences, Hide file extensions, Project Panel (settings section) | not yet | Not checked yet | Generic editor terms; same |

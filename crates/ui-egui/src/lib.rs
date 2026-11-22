@@ -9,6 +9,7 @@
 pub mod brand;
 mod console;
 mod dock;
+mod export_window;
 mod file_inspector;
 mod fonts;
 mod game_view;
@@ -85,6 +86,8 @@ pub struct Editor {
     close_asked: bool,
     /// The form a command asks with, while it is open.
     form: Option<Form>,
+    /// The Export Game window, while it is open.
+    export_window: Option<export_window::ExportWindow>,
     /// The interface language setting (Window > Language).
     language: String,
     /// The language the fonts were last installed for.
@@ -131,6 +134,7 @@ impl Default for Editor {
             copy_out: None,
             close_asked: false,
             form: None,
+            export_window: None,
             language: "en".to_owned(),
             fonts_language: "en",
             close_confirmed: false,
@@ -189,6 +193,7 @@ impl Editor {
             ui.ctx().copy_text(text);
         }
         self.show_form(ui.ctx());
+        export_window::show(self, ui.ctx());
         self.guard_close(ui.ctx());
         if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
             self.selected = self.also_selected.pop();
@@ -930,6 +935,13 @@ impl Editor {
                 Some(path) => json!({ "path": path }),
                 None => return,
             },
+            // Export Game has a window of its own for its choices.
+            Prompt::Dialog => {
+                if id == "project.export" {
+                    self.export_window = Some(export_window::ExportWindow::new(self));
+                }
+                return;
+            }
             Prompt::Folder => match rfd::FileDialog::new().set_title(tl("Choose the folder to export the game into")).pick_folder() {
                 Some(path) => json!({ "folder": path }),
                 None => return,

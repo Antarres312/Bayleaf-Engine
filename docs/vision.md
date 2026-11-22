@@ -258,8 +258,31 @@ No crate below L6 may use egui, eframe, winit or rfd.
    player program under that name and a `game` folder of the project's scenes, assets and scripts
    (visual scripts compiled at export; Rust sources, build output and saved values left behind),
    which the player runs when started without a path; Project Settings > Game chooses the window
-   icon (project format 5). Still open: other systems than the one exporting, a player built with
+   icon (project format 5). Then: the Export Game window (platform, script mode per platform in
+   Project Settings, project format 6, folder) shows `project.export.check`: whether this platform
+   and mode can export, the main scene, visual scripts that compile, Rust scripts built from their
+   latest sources, files scenes name that are missing, and how each script would run; the export
+   refuses while it finds an error. Still open: other systems than the one exporting, a player built with
    only the game's modules, the program file's own icon, and the script modes.
+10. **M9 Scene settings and lighting** (not started).
+   - **The scene as the hierarchy's root.** The hierarchy shows one top row named after the
+     scene (its file name, or Untitled), holding every top object. It is not an object, so it
+     cannot be moved, deleted or copied, and objects can be dropped on it to move them to the top.
+   - **The scene in the Inspector.** Selecting that row shows the same thing as selecting the
+     scene's file in the Project panel: what the file holds (objects, components, the files it
+     uses) and the scene's own settings, edited through `scene.settings.*` commands, so agents can
+     change them too.
+   - **Lighting as an asset.** A lighting asset (a file of its own, name still to choose and record
+     in `docs/feature-names.md`) holds what a scene's light looks like: the sky colours, the light
+     around everything, fog, and the sun's direction, colour and strength where the scene has no
+     Directional Light of its own. A scene names one in its settings, and several scenes can share
+     one, so changing the file changes them all. The Project panel makes new ones, and the
+     Inspector edits one when its file is selected or from the scene's settings.
+   - **Moving old scenes.** An Environment component in an older scene becomes a lighting asset
+     beside the scene, which the scene then names; the scene format version goes up.
+   - **Project quality.** Project Settings > Graphics holds what applies to every scene: shadow
+     resolution, how many cascades the sun's shadow has and how far they reach, and how many
+     lights cast shadows at once. These values are fixed in the renderer today.
 
 ## Open questions
 

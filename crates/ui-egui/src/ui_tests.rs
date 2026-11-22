@@ -1841,3 +1841,33 @@ fn functions_are_added_given_inputs_and_called_from_the_script_panel() {
     assert_eq!(graph(&harness).value(call, "inputs"), Some(&json!([])), "removing the input takes the pin off every node");
     assert!(harness.query_by_label_contains("this visual script compiles").is_some(), "{}", harness.state().status);
 }
+
+#[test]
+fn export_game_opens_its_own_window_that_checks_the_project_for_the_chosen_mode() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-export-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir.join("Game") }), None);
+    harness.run();
+    harness.get_by_label("File").click();
+    harness.run();
+    harness.query_all_by_label_contains("Export Game…").next().expect("File > Export Game").click();
+    harness.run_steps(3);
+    assert!(harness.query_by_label_contains("How each script would run").is_some(), "the window lists the check's findings and scripts");
+
+    // A mode this version cannot export yet: the check says so and Export stays off.
+    harness.query_all_by_label_contains("Native (not available yet)").next().expect("the modes, with what is not available yet").click();
+    harness.run_steps(3);
+    assert!(harness.query_all_by_label_contains("Error: Native is not available yet").next().is_some(), "errors are named as errors, not only coloured");
+    harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export").click();
+    harness.run_steps(2);
+    assert!(harness.query_all_by_label_contains("xported").next().is_none(), "nothing exports while the check finds errors");
+    let platform = bayleaf_engine::export::Platform::current();
+    let chosen = bayleaf_engine::export::chosen_mode(&harness.state().session, platform);
+    assert_eq!(chosen, bayleaf_engine::export::ScriptMode::Native, "the choice is kept in the project's settings for this system");
+
+    harness.get_by_label("Close").click();
+    harness.run_steps(2);
+    assert!(harness.state().export_window.is_none(), "Close closes the window");
+    std::fs::remove_dir_all(&dir).ok();
+}
