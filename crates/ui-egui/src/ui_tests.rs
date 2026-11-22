@@ -2649,3 +2649,61 @@ fn with_a_gpu_a_visual_script_adds_a_saved_part_to_the_display() {
     harness.run_steps(2);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn with_a_gpu_clicking_a_panel_with_on_click_reaches_the_scripts() {
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-on-click-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let editor = harness.state_mut();
+    editor.dispatch("project.new", &json!({ "path": dir }), None);
+    // A treasure chest drawn as a panel with a label: not a button, but it answers a click.
+    let layout = json!({
+        "format": "bayleaf.interface", "version": 1,
+        "root": { "kind": "column", "name": "Screen",
+            "style": { "width": "100%", "height": "100%", "padding": "24px", "gap": "12px", "alignItems": "center" },
+            "children": [
+                { "kind": "text", "name": "Title", "text": "Click the chest", "style": { "fontSize": "26px" } },
+                { "kind": "panel", "name": "Chest", "onClick": "openChest",
+                  "style": { "width": "160px", "height": "100px", "background": "#8a5a2be6", "radius": "10px", "alignItems": "center", "justify": "center" },
+                  "children": [ { "kind": "text", "text": "Chest" } ] }
+            ] }
+    });
+    editor.dispatch("ui.layout.set", &json!({ "path": "chest.bui", "layout": layout }), None);
+    editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
+    let add_node = |editor: &mut Editor, kind: &str, x: f32| {
+        editor.dispatch("graph.node.add", &json!({ "kind": kind, "position": [x, 40.0] }), None).unwrap()["node"].as_u64().unwrap()
+    };
+    let on_message = add_node(editor, "message", 40.0);
+    let set = add_node(editor, "setInterfaceText", 320.0);
+    for (node, setting, value) in [(on_message, "message", json!("openChest")), (set, "element", json!("Title")), (set, "text", json!("You found 50 gold"))] {
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": setting, "value": value }), None);
+    }
+    editor.dispatch("graph.link.add", &json!({ "from": { "node": on_message, "pin": "then" }, "to": { "node": set, "pin": "run" } }), None);
+    editor.dispatch("graph.save", &json!({ "path": dir.join("chest.bscript") }), None);
+    let components = json!({ "interface": { "layout": "chest.bui", "visible": true, "order": 0 }, "scripts": [{ "module": "chest.bscript" }] });
+    editor.dispatch("scene.object.create", &json!({ "name": "HUD", "components": components }), None);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(4);
+
+    // The panel reads as a button by its name, and a click on it reaches the script.
+    let chest = harness
+        .query_all(egui_kittest::kittest::By::new().predicate(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("Chest")))
+        .next()
+        .expect("the clickable panel is a button in the accessibility tree");
+    chest.click();
+    harness.run_steps(3);
+    assert!(harness.query_by_label("You found 50 gold").is_some(), "{}", harness.state().status);
+    let shown = picture(&mut harness);
+    keep_for_review(&shown, "interface-on-click");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(2);
+    // The chest picked in the Interface panel, its On Click field showing, for review.
+    harness.state_mut().open_interface(&dir.join("chest.bui"));
+    harness.state_mut().interface_view.selected = vec![1];
+    harness.run_steps(3);
+    assert!(harness.query_by_label("On Click").is_some(), "the panel shows the On Click field");
+    let panel = picture(&mut harness);
+    keep_for_review(&panel, "interface-on-click-field");
+    std::fs::remove_dir_all(&dir).ok();
+}

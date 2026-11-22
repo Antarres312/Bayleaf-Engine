@@ -140,8 +140,9 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   only the first ending counts, and every script then gets the message `gameWon` or `gameLost`.
 - **Raycast** sends a ray and gives whether it hit another object's shape or sprite, how far, and where.
 - **Interface** nodes work on an object's Interface (`docs/interface.md`): **On Interface Pressed**
-  and **On Interface Changed** run when the player presses a button or changes a toggle, slider or
-  text field named in Element; **Set Interface Text**, **Set Interface Value** and **Show Interface**
+  and **On Interface Changed** run when the player presses a button (or any element with On Click)
+  or changes a toggle, slider or text field named in Element; **On Message** hears an element's own
+  On Click message; **Set Interface Text**, **Set Interface Value** and **Show Interface**
   change an element (Show Interface with no Element shows or hides it all); **Add Interface
   Element** builds the interface while playing, adding an element of a kind or a part from a `.bui`
   file, named by its Name input, into the element named in Into; **Remove Interface Element** takes

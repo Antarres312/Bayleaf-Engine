@@ -52,6 +52,8 @@ pub enum Input {
     Changed(f64),
     /// A text field holds new text.
     Typed(String),
+    /// An element with On Click was clicked: its message, sent as it is.
+    Clicked(String),
 }
 
 /// A layout file read, with its parts put in place and every style file it and its parts name.
@@ -153,13 +155,25 @@ impl Session {
     /// object's scripts get `pressed:<name>` or `changed:<name>` with the new value.
     pub fn interface_input(&mut self, object: StableId, element: &str, input: Input) -> Result<(), String> {
         crate::play::playing(self)?;
-        if element.is_empty() || element.len() > bayleaf_interface::MAX_NAME {
+        if let Input::Clicked(message) = input {
+            if message.is_empty() || message.len() > bayleaf_script::MAX_MESSAGE_NAME {
+                return Err("an On Click message has 1 to 64 bytes".to_owned());
+            }
+            let input = std::sync::Arc::clone(&self.input);
+            let Some(play) = self.play.as_mut() else { return Err("play mode is not running".to_owned()) };
+            play.host.send(&mut self.scene, object, &message, 0.0, play.time, &input);
+            crate::play::after_message(self);
+            return Ok(());
+        }
+        // Names inside parts are `<part>/<name>`, longer than names in a file.
+        if element.is_empty() || element.len() > bayleaf_interface::MAX_PART_NAME {
             return Err("name the element".to_owned());
         }
         let Some(play) = self.play.as_mut() else { return Err("play mode is not running".to_owned()) };
         let state = play.interfaces.entry(object).or_default().elements.entry(element.to_owned()).or_default();
         let (message, value) = match input {
             Input::Pressed => (format!("pressed:{element}"), 0.0),
+            Input::Clicked(_) => return Ok(()),
             Input::Changed(value) => {
                 state.value = Some(value);
                 (format!("changed:{element}"), value as f32)
@@ -281,7 +295,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "ui.element.set",
             "Edit Interface Element",
-            "{path, at, element: {kind?, name?, classes?, text?, image?, value?, min?, max?, bind?, style?}}: changes the given fields of the element at at; style replaces the element's whole style",
+            "{path, at, element: {kind?, name?, classes?, text?, image?, layout?, onClick?, value?, min?, max?, bind?, style?}}: changes the given fields of the element at at; style replaces the element's whole style",
             element_set,
         ),
         spec(
@@ -306,7 +320,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "play.ui.press",
             "Press Interface Element",
-            "{id, element}: while playing, presses a button (its scripts get pressed:<name>) or flips a toggle (changed:<name>), as the player would",
+            "{id, element}: while playing, presses a button or an element with On Click (its scripts get pressed:<name>, and the On Click message) or flips a toggle (changed:<name>), as the player would",
             play_press,
         ),
         spec(
@@ -618,9 +632,19 @@ fn play_press(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     let input = match element.kind {
         Kind::Button => Input::Pressed,
         Kind::Toggle => Input::Changed(if element.value != 0.0 { 0.0 } else { 1.0 }),
-        other => return Err(CommandError::BadParams(format!("{:?} is a {}; only buttons and toggles are pressed", p.element, other.name()))),
+        _ if !element.on_click.is_empty() => Input::Pressed,
+        other => {
+            return Err(CommandError::BadParams(format!(
+                "{:?} is a {} without On Click; only buttons, toggles and elements with On Click are pressed",
+                p.element,
+                other.name()
+            )));
+        }
     };
     session.interface_input(p.id, &p.element, input).map_err(CommandError::Failed)?;
+    if !element.on_click.is_empty() {
+        session.interface_input(p.id, &p.element, Input::Clicked(element.on_click.clone())).map_err(CommandError::Failed)?;
+    }
     Ok(json!({}))
 }
 

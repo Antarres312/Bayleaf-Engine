@@ -35,6 +35,7 @@ Each element has a `kind` and may have:
 | `image` | An image file (PNG or JPEG), relative to the project folder |
 | `value` | A toggle's state (0 or 1), a slider's number, a progress bar's fill (0 to 1) |
 | `min`, `max` | A slider's range (0 and 1 when left out) |
+| `onClick` | The message the object's scripts get when the player clicks it, such as `openInventory`; any kind can have it (a panel, an image, a text), and it then answers the pointer and the keyboard as a button does |
 | `bind` | Shows a game state value with no script: `game:<name>`, or `player:<name>` for the first player. Text and buttons show it as text; other kinds take it as their value |
 | `style` | Its own style properties, applied last |
 | `children` | The elements inside it; only panels, rows, columns and lists hold others |
@@ -132,7 +133,9 @@ the pointer, Space or Enter, and moves a focused slider with the arrow keys. Eac
 accessibility tree with its role and its text. What the player does reaches the scripts of the
 object that has the Interface:
 
-- `pressed:<name>` when a button is pressed (value 0);
+- `pressed:<name>` when a button, or any named element with `onClick`, is pressed (value 0);
+- the `onClick` message of the element clicked, as written (value 0), so several elements can
+  share one handler: On Message in a visual script, `Script::message` in Rust;
 - `changed:<name>` when a toggle, slider or text field changes, with the new value (a text field's
   value is its length in characters).
 

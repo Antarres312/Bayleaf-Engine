@@ -2520,3 +2520,44 @@ fn a_part_saved_from_a_menu_is_added_to_the_display_by_a_visual_script() {
     run(&mut session, "play.stop", Value::Null).unwrap();
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn any_element_with_on_click_sends_its_message_to_the_scripts() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-interface-click-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params);
+    run(&mut session, "asset.create", json!({"kind": "interface", "folder": "", "name": "menu"})).unwrap();
+    // A plain panel that opens a menu when clicked.
+    let at = run(&mut session, "ui.element.add", json!({"path": "menu.bui", "kind": "panel"})).unwrap()["at"].clone();
+    run(&mut session, "ui.element.set", json!({"path": "menu.bui", "at": at, "element": {"name": "Chest", "onClick": "openMenu"}})).unwrap();
+    assert!(
+        run(&mut session, "ui.element.set", json!({"path": "menu.bui", "at": at, "element": {"onClick": "x".repeat(65)}})).is_err(),
+        "a message name is at most 64 bytes"
+    );
+
+    // A visual script: On Message openMenu sets the title.
+    run(&mut session, "graph.new", json!({"domain": "script"})).unwrap();
+    let on_message = node(&registry, &mut session, "message");
+    let set = node(&registry, &mut session, "setInterfaceText");
+    for (n, name, value) in [(on_message, "message", json!("openMenu")), (set, "element", json!("Title")), (set, "text", json!("Chest opened"))] {
+        run(&mut session, "graph.node.set", json!({"node": n, "name": name, "value": value})).unwrap();
+    }
+    run(&mut session, "graph.link.add", pins(on_message, "then", set, "run")).unwrap();
+    run(&mut session, "graph.save", json!({"path": dir.join("chest.bscript")})).unwrap();
+    let id = create(
+        &registry,
+        &mut session,
+        json!({"name": "HUD", "components": {"interface": {"layout": "menu.bui", "visible": true, "order": 0}, "scripts": [{"module": "chest.bscript"}]}}),
+    );
+    run(&mut session, "play.start", Value::Null).unwrap();
+    run(&mut session, "play.ui.press", json!({"id": id, "element": "Chest"})).unwrap();
+    let state = run(&mut session, "play.ui.state", json!({"id": id})).unwrap();
+    let title = state["elements"].as_array().unwrap().iter().find(|e| e["name"] == "Title").unwrap()["text"].clone();
+    assert_eq!(title, "Chest opened", "{:?}", session.console());
+    assert!(run(&mut session, "play.ui.press", json!({"id": id, "element": "Title"})).is_err(), "text without On Click is not pressed");
+    run(&mut session, "play.stop", Value::Null).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}

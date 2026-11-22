@@ -81,6 +81,7 @@ fn fields(element: &Element) -> serde_json::Map<String, Value> {
         ("text", json!("")),
         ("image", json!("")),
         ("layout", json!("")),
+        ("onClick", json!("")),
         ("bind", json!("")),
         ("style", json!({})),
     ] {
@@ -354,6 +355,9 @@ fn element_fields(ui: &mut egui::Ui, t: &theme::Tokens, draft: &mut Element, is_
         }
         if !draft.kind.holds_children() {
             done |= text_row(ui, t, "Bind", &mut draft.bind, "game:score or player:health");
+        }
+        if draft.kind != Kind::TextField {
+            done |= text_row(ui, t, "On Click", &mut draft.on_click, "A message for the scripts, such as openMenu");
         }
         let mut classes = draft.classes.join(" ");
         crate::value_editor::row(ui, t, "Classes", |ui, label, width| {

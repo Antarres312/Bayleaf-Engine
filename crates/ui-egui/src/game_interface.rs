@@ -257,7 +257,9 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
     let fade = |c: Color| color32(c, style.opacity);
     let id = ui.scope_id().with(("game interface", object, index));
     let label = if element.text.is_empty() { element.name.clone() } else { element.text.clone() };
-    let control = interactive && element.kind.is_control() && element.kind != Kind::TextField;
+    // Any element with On Click answers the pointer and the keyboard, as a button does.
+    let clickable = interactive && !element.on_click.is_empty() && element.kind != Kind::TextField;
+    let control = clickable || (interactive && element.kind.is_control() && element.kind != Kind::TextField);
     let response = if control {
         let sense = if element.kind == Kind::Slider { egui::Sense::click_and_drag() } else { egui::Sense::click() };
         Some(ui.interact(clip, id, sense))
@@ -270,7 +272,10 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
 
     // The box: its fill, lighter while hovered and darker while held, and its border.
     let mut fill = fade(style.background);
-    if let Some(r) = response.as_ref().filter(|_| control && element.kind == Kind::Button) {
+    if let Some(r) = response.as_ref().filter(|_| control && (element.kind == Kind::Button || clickable)) {
+        if r.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
         if r.is_pointer_button_down_on() {
             fill = fill.gamma_multiply(0.75);
         } else if r.hovered() || r.has_focus() {
@@ -396,6 +401,16 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
         Kind::Panel | Kind::Row | Kind::Column | Kind::List | Kind::Part => {}
     }
 
+    // A click on an element with On Click: `pressed:<name>` for one with a name (a button already
+    // sent it, a toggle sent its change), then its own message.
+    if let Some(r) = response.as_ref().filter(|_| clickable)
+        && r.clicked()
+    {
+        if !element.name.is_empty() && !matches!(element.kind, Kind::Button | Kind::Toggle) {
+            inputs.push((object, element.name.clone(), Input::Pressed));
+        }
+        inputs.push((object, element.name.clone(), Input::Clicked(element.on_click.clone())));
+    }
     let Some(response) = response else { return };
     if control && response.has_focus() {
         painter.rect_stroke(rect.expand(2.0), style.radius, egui::Stroke::new(2.0, fade(style.accent)), egui::StrokeKind::Outside);
@@ -403,6 +418,8 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
     let enabled = control;
     response.widget_info(|| match element.kind {
         Kind::Button => egui::WidgetInfo::labeled(egui::Role::Button, enabled, &label),
+        // A clickable panel, image or text reads as the button it acts as.
+        _ if clickable && !matches!(element.kind, Kind::Toggle | Kind::Slider) => egui::WidgetInfo::labeled(egui::Role::Button, true, &label),
         Kind::Toggle => egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, element.value != 0.0, &label),
         Kind::Slider => egui::WidgetInfo::slider(enabled, element.value, &label),
         Kind::Progress => egui::WidgetInfo::slider(false, element.value, &label),

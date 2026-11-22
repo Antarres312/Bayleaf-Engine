@@ -118,6 +118,10 @@ pub struct Element {
     /// An image file (PNG or JPEG), relative to the project folder.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub image: String,
+    /// The message the object's scripts get when the player clicks this element (any kind: a
+    /// panel, an image, a text...), such as `openInventory`; empty for none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub on_click: String,
     /// A part's layout file (`.bui`), relative to the project folder.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub layout: String,
@@ -161,6 +165,7 @@ impl Element {
             text: String::new(),
             image: String::new(),
             layout: String::new(),
+            on_click: String::new(),
             value: 0.0,
             min: 0.0,
             max: 1.0,
@@ -300,6 +305,9 @@ fn check_element(element: &Element) -> Result<(), String> {
     if element.classes.len() > 16 || element.classes.iter().any(|c| c.is_empty() || c.len() > 64 || c.contains(char::is_whitespace)) {
         return Err(format!("{what}: at most 16 classes, each 1 to 64 characters without spaces"));
     }
+    if element.on_click.len() > 64 || element.on_click.chars().any(char::is_control) {
+        return Err(format!("{what}: onClick is a message name of at most 64 bytes, without control characters"));
+    }
     match (element.kind, element.layout.is_empty()) {
         (Kind::Part, true) => return Err(format!("{what}: a part names its layout file (.bui)")),
         (Kind::Part, false) if element.layout.len() > 512 || !element.layout.to_ascii_lowercase().ends_with(&format!(".{LAYOUT_EXTENSION}")) => {
@@ -356,7 +364,7 @@ pub fn expand(layout: &Layout, load: &mut dyn FnMut(&str) -> Result<Layout, Stri
 }
 
 /// Longest name of an element inside a part, so `pressed:<name>` stays a message name.
-const MAX_PART_NAME: usize = 56;
+pub const MAX_PART_NAME: usize = 56;
 
 fn expand_in(element: &mut Element, load: &mut dyn FnMut(&str) -> Result<Layout, String>, out: &mut Expanded, open: &mut Vec<String>) -> Result<(), String> {
     if element.kind == Kind::Part {
