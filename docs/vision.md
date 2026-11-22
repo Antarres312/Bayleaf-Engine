@@ -321,6 +321,86 @@ No crate below L6 may use egui, eframe, winit or rfd.
      that draw freely (their own widgets, not only these options) need a plugin model first: what
      they may touch, how they are sandboxed and loaded; that is decided before this part is built.
 
+11. **M10 Game interface, effects and getting content in** (not started).
+   - **Game interface.** Games build their menus and HUD from a document of their own: a layout
+     file (`.bui`) of nested elements (panels, rows and columns, text, images, buttons, toggles,
+     sliders, text fields, lists, progress bars) and a style file (`.bstyle`) of rules that pick
+     elements by kind, name or class and set their look. Layout is flexible boxes only (direction,
+     gap, padding, grow and shrink, alignment, fixed or percentage sizes), so a layout reads the
+     same way every time; styles cascade in one plain order (kind, class, name, inline) with no
+     selectors beyond that, and every value has a unit written out. An Interface component puts a
+     layout on screen (over the game, or on a surface in the world). Scripts and visual scripts
+     find elements by name, read and set their text and values, show and hide them, and get
+     messages when a button is pressed or a value changes; values can also bind to a property or a
+     game state value with no script. An editor panel edits a layout visually (the element tree,
+     a live preview at chosen screen sizes, the selected element's style) and writes the same files,
+     through `ui.*` commands. The interface is keyboard and gamepad navigable with focus moving
+     between elements, text goes through the font stack with right-to-left left for later, and the
+     player reads the layout for the platform's accessibility tree.
+   - **Particle systems.** A Particle Emitter component: when and how many particles start (a rate,
+     bursts, a shape to start on: point, sphere, cone, box, a mesh's surface), how they live (life
+     length, speed, gravity, drag, size and colour over their life as curves and gradients,
+     rotation), and how they draw (camera-facing sprites with a texture or a flipbook, stretched
+     along their motion, or small meshes; blended or added). Simulated on the CPU first, drawn
+     instanced; local or world space, looping or once, and Play, Pause and Restart in the Scene
+     view with the emitter selected. Scripts start, stop and burst emitters. A material graph can
+     be a particle's material.
+   - **Export for the web, and Linux options.** The Web platform: the player built for
+     `wasm32-unknown-unknown` with WebGPU (WebGL2 where it is missing), the game's files packed
+     beside it, and an `index.html` that loads it; scripts interpreted, saves in the browser's
+     storage, sound after the first click, as browsers require. The Export window's check lists
+     what does not work on the web (native scripts, compiled mode, threads). Linux: export from
+     Windows for Linux once the player can be built there (or pick a prebuilt Linux player), with
+     a `.desktop` file and the game's icon, Wayland and X11 both, and an option for an AppImage.
+   - **Post-processing.** A Post-processing asset named by the camera or the scene's settings: tone
+     mapping (with exposure), bloom, colour adjustment (contrast, saturation, a lookup texture),
+     vignette, fog by depth, ambient occlusion in screen space, and an antialiasing choice beyond
+     MSAA. Each effect is on or off with its settings, applied in a fixed order, and the Scene view
+     can show the result or the plain picture. Project Settings > Graphics sets which effects the
+     game may use at all.
+   - **Material nodes for stylised shading (a cel-shaded look).** What is missing: the light's
+     direction, colour and shadow at the point (for each light, and the main one), the view
+     direction, Dot Product, Normalize, Step, Smoothstep, Lerp, Posterize (bands), Remap, Power,
+     Saturate, Split and Combine (vectors), Texture sampled at a computed coordinate (for a ramp
+     texture), Screen Position, and a Custom Lighting output that replaces the engine's lighting
+     with the graph's own result. An outline option on the material draws the back faces grown
+     along their normals in a colour, with a width. An example toon material ships with the
+     engine to show them together.
+   - **Editing prefabs on their own.** Opening a prefab (double-click it, or Open Prefab on an
+     instance) swaps the Scene view and the hierarchy to the prefab's own space for a while: only
+     its objects, around the origin, with a bar saying which prefab is open and buttons to save it
+     and go back. The open scene stays as it was underneath, with its selection and undo history;
+     edits to the prefab have their own undo, saving writes the prefab file and every instance in
+     the scene updates, keeping its own overrides. Nested prefabs open one inside another, with
+     the bar showing the path back.
+   - **A basic profiler.** A Profiler panel shows, frame by frame, how long each part took: scripts
+     (each script, the slowest first), physics, streaming, sound, extraction and drawing on the
+     CPU, and the GPU's time where the adapter can measure it; with the frame rate, draw calls,
+     triangles and memory for meshes and images. It records while playing, keeps the last few
+     thousand frames as a graph, and pauses on a click to look at one frame. `profile.*` commands
+     give the same numbers to agents, and the player can write them to a file.
+   - **Bringing content in: dragging a file in just works.** Dropping files from the system onto
+     the Project panel copies them into the project (into the folder under the pointer), and onto
+     the Scene view or the hierarchy also places them: a model becomes an object with its meshes,
+     materials made from its textures and its animations kept; an image dropped on an object
+     becomes its material's texture; a sound becomes a Sound Source. Each imported file keeps
+     import settings beside it (scale and axes for models, compression, mipmaps and colour space for
+     images, streaming or loaded for sounds), shown in the Inspector and applied again when the
+     file changes. Formats: glTF/GLB first, then OBJ and FBX where a library allows it under the
+     licence list; PNG, JPEG, KTX2, EXR for images; WAV, OGG, FLAC, MP3 for sound. A file that
+     cannot be read says why, and nothing half-imported stays behind.
+   - **Fix: material previews draw only the sphere.** The material pictures (Project panel tiles,
+     the Inspector, the Graph panel's preview) show the sky behind the sphere. Draw them with a
+     transparent background instead, so only the sphere shows over the panel; the sphere is still
+     lit by the same sky light. A GPU test checks the corners of a preview are transparent and its
+     centre is not.
+   - **Fix: the Export window grows too wide with Native chosen.** Choosing Native makes the window
+     much wider than it opens, so the folder row's Choose… button is out of sight until the window
+     is widened by hand. Long texts (the check's findings, the notes on how each script runs, paths)
+     wrap to the window's width instead of widening it, and the folder field gives way so the
+     button always shows. A UI test chooses each mode at the window's opening size and checks the
+     Choose… button lies inside the window.
+
 ## Open questions
 
 - Physics: integrate an allowlisted crate or write our own?
