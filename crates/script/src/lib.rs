@@ -228,6 +228,8 @@ const MAX_REQUESTS_PER_CALL: usize = 64;
 const MAX_MESSAGES_PER_CALL: usize = 64;
 /// Longest message name, in bytes.
 pub const MAX_MESSAGE_NAME: usize = 64;
+/// Most objects one script keeps with `object_ref`.
+pub const MAX_OBJECT_REFS: usize = 4096;
 /// `send`'s handle for every object.
 pub const EVERY_OBJECT: i32 = -1;
 
@@ -422,6 +424,9 @@ struct HostState {
     outbox: Vec<Message>,
     /// Script properties this call set on other objects.
     property_writes: Vec<PropertyWrite>,
+    /// Objects this script keeps in Object variables, by `object_ref` number (index + 1). They outlast
+    /// the step, unlike handles.
+    refs: Vec<StableId>,
     /// The name of the message being delivered, during `bayleaf_message`.
     message: Option<String>,
     velocities: Arc<Velocities>,
@@ -449,6 +454,7 @@ impl HostState {
             requests: Vec::new(),
             outbox: Vec::new(),
             property_writes: Vec::new(),
+            refs: Vec::new(),
             message: None,
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
@@ -1612,6 +1618,23 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                 Ok(1)
             },
         )?;
+        linker.func_wrap("bayleaf", "object_ref", |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, wasmi::Error> {
+            let Some((id, _)) = caller.data().world.object(handle) else { return Ok(0) };
+            let state = caller.data_mut();
+            let index = match state.refs.iter().position(|r| *r == id) {
+                Some(index) => index,
+                None if state.refs.len() < MAX_OBJECT_REFS => {
+                    state.refs.push(id);
+                    state.refs.len() - 1
+                }
+                None => return Err(fault(&mut caller, format!("object_ref: a script keeps at most {MAX_OBJECT_REFS} objects"))),
+            };
+            Ok(i32::try_from(index + 1).unwrap_or(0))
+        })?;
+        linker.func_wrap("bayleaf", "object_of", |caller: Caller<'_, HostState>, reference: i32| -> i32 {
+            let state = caller.data();
+            usize::try_from(reference).ok().and_then(|r| r.checked_sub(1)).and_then(|i| state.refs.get(i)).map_or(0, |id| state.world.handle_of(*id))
+        })?;
         linker.func_wrap("bayleaf", "name_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32, cap: i32| -> Result<i32, wasmi::Error> {
             let name = caller.data().world.get(handle).map(|(_, name, _)| name.clone()).unwrap_or_default();
             let cap = usize::try_from(cap).map_err(|_| fault(&mut caller, "name_of: the room must not be negative".to_owned()))?;

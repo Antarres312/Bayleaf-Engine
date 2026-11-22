@@ -20,6 +20,8 @@ mod raw {
         pub fn find_with(kind_ptr: *const u8, kind_len: usize, index: i32) -> i32;
         pub fn count_with(kind_ptr: *const u8, kind_len: usize) -> i32;
         pub fn name_of(handle: i32, out: *mut u8, cap: usize) -> i32;
+        pub fn object_ref(handle: i32) -> i32;
+        pub fn object_of(reference: i32) -> i32;
         pub fn component_get(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, out: *mut f32) -> i32;
         pub fn component_set(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, value: *const f32) -> i32;
         pub fn transform_get_of(handle: i32, out: *mut f32);
@@ -85,6 +87,12 @@ mod raw {
         0
     }
     pub unsafe fn name_of(_: i32, _: *mut u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn object_ref(_: i32) -> i32 {
+        0
+    }
+    pub unsafe fn object_of(_: i32) -> i32 {
         0
     }
     pub unsafe fn component_get(_: i32, _: *const u8, _: usize, _: *const u8, _: usize, _: *mut f32) -> i32 {
@@ -225,6 +233,16 @@ pub(crate) fn find_with(kind: &str, index: i32) -> i32 {
 pub(crate) fn count_with(kind: &str) -> i32 {
     // SAFETY: the pointer and length describe `kind`; the host only reads.
     unsafe { raw::count_with(kind.as_ptr(), kind.len()) }
+}
+
+pub(crate) fn object_ref(handle: i32) -> i32 {
+    // SAFETY: plain numbers in and out.
+    unsafe { raw::object_ref(handle) }
+}
+
+pub(crate) fn object_of(reference: i32) -> i32 {
+    // SAFETY: plain numbers in and out.
+    unsafe { raw::object_of(reference) }
 }
 
 pub(crate) fn name_of(handle: i32) -> String {

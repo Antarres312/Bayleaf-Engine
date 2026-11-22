@@ -90,6 +90,17 @@ pub fn mouse_down(button: Button) -> bool {
     abi::mouse_down(button as i32)
 }
 
+/// An object kept from step to step, from [`Object::keep`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Kept(i32);
+
+impl Kept {
+    /// The object in this step, or `None` once it is gone.
+    pub fn object(self) -> Option<Object> {
+        Some(abi::object_of(self.0)).filter(|h| *h != 0).map(Object)
+    }
+}
+
 /// Another object of the scene, as it was when the step began. Handles last for one step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Object(i32);
@@ -125,6 +136,11 @@ impl Object {
     /// Its name, as the step began.
     pub fn name(self) -> String {
         abi::name_of(self.0)
+    }
+
+    /// A way to find this object again in later steps (handles last one step): see [`Kept`].
+    pub fn keep(self) -> Option<Kept> {
+        Some(abi::object_ref(self.0)).filter(|r| *r != 0).map(Kept)
     }
 
     /// Whether it has a component whose fields scripts read (`Point Light`, `pointLight`).

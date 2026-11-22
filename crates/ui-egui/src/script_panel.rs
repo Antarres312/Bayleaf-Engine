@@ -48,8 +48,10 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
     theme::headed(t, "Variables").show(ui, |ui| {
         if graph.variables.is_empty() {
             ui.add(
-                egui::Label::new(egui::RichText::new("Numbers, vectors and true/false values this script keeps, per object.").small().color(t.text_muted))
-                    .wrap(),
+                egui::Label::new(
+                    egui::RichText::new("Numbers, vectors, true/false, text, objects and colours this script keeps, per object.").small().color(t.text_muted),
+                )
+                .wrap(),
             );
         }
         for variable in &graph.variables {
@@ -108,6 +110,9 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                         VariableType::Number => "number",
                         VariableType::Vector => "vector",
                         VariableType::TrueFalse => "flag",
+                        VariableType::Text => "text",
+                        VariableType::Object => "object",
+                        VariableType::Color => "color",
                     };
                     let name = free_name(stem, |n| graph.variable(n).is_some());
                     editor.dispatch("graph.variable.add", &json!({ "name": name, "type": ty }), None);
@@ -142,6 +147,23 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
             let field = ui.checkbox(&mut b, "");
             ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
             field.changed().then(|| json!(b))
+        }
+        VariableType::Text => {
+            let mut text = start.as_str().unwrap_or_default().to_owned();
+            let field = ui.add(egui::TextEdit::singleline(&mut text).char_limit(bayleaf_engine::graph::MAX_TEXT).desired_width(ui.available_width()));
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
+            field.changed().then(|| json!(text))
+        }
+        // An object variable starts as none: it is set while the game plays.
+        VariableType::Object => {
+            ui.label(egui::RichText::new("none, until set in play").color(theme::tokens(ui).text_muted));
+            None
+        }
+        VariableType::Color => {
+            let mut rgb: [f32; 3] = std::array::from_fn(|i| start[i].as_f64().unwrap_or(1.0) as f32);
+            let field = ui.color_edit_button_rgb(&mut rgb);
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
+            field.changed().then(|| json!(rgb))
         }
     }
 }

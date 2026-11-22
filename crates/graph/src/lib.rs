@@ -349,10 +349,15 @@ pub enum VariableType {
     Number,
     Vector,
     TrueFalse,
+    Text,
+    /// An object of the scene; it starts as none and is set while the game plays.
+    Object,
+    Color,
 }
 
 impl VariableType {
-    pub const ALL: [VariableType; 3] = [VariableType::Number, VariableType::Vector, VariableType::TrueFalse];
+    pub const ALL: [VariableType; 6] =
+        [VariableType::Number, VariableType::Vector, VariableType::TrueFalse, VariableType::Text, VariableType::Object, VariableType::Color];
 
     /// English name shown to people.
     pub fn label(self) -> &'static str {
@@ -360,6 +365,9 @@ impl VariableType {
             VariableType::Number => "Number",
             VariableType::Vector => "Vector",
             VariableType::TrueFalse => "True/False",
+            VariableType::Text => "Text",
+            VariableType::Object => "Object",
+            VariableType::Color => "Color",
         }
     }
 
@@ -369,16 +377,22 @@ impl VariableType {
             VariableType::Number => Value::from(0.0),
             VariableType::Vector => serde_json::json!([0.0, 0.0, 0.0]),
             VariableType::TrueFalse => Value::Bool(false),
+            VariableType::Text => Value::from(""),
+            VariableType::Object => Value::Null,
+            VariableType::Color => serde_json::json!([1.0, 1.0, 1.0]),
         }
     }
 
-    /// Whether `value` fits this type: a finite number, three finite numbers, or true or false.
+    /// Whether `value` fits this type: a finite number, three finite numbers (a vector or a colour),
+    /// true or false, text of at most [`MAX_TEXT`] characters, or none for an object.
     pub fn fits(self, value: &Value) -> bool {
         let number = |v: &Value| v.as_f64().is_some_and(|f| f.is_finite() && f.abs() < f64::from(f32::MAX));
         match self {
             VariableType::Number => number(value),
-            VariableType::Vector => value.as_array().is_some_and(|a| a.len() == 3 && a.iter().all(number)),
+            VariableType::Vector | VariableType::Color => value.as_array().is_some_and(|a| a.len() == 3 && a.iter().all(number)),
             VariableType::TrueFalse => value.is_boolean(),
+            VariableType::Text => value.as_str().is_some_and(|t| t.chars().count() <= MAX_TEXT),
+            VariableType::Object => value.is_null(),
         }
     }
 }

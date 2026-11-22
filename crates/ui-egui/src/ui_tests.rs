@@ -1537,3 +1537,29 @@ fn dragging_an_object_onto_a_folder_makes_a_prefab_there() {
     assert!(dir.join("things").join("Crate 2.bprefab").is_file(), "a second one does not overwrite the first");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn text_and_object_variables_are_added_in_the_panel_with_their_own_start_values() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label("Add Variable").click();
+    harness.run();
+    harness.get_by_label("Text").click();
+    harness.run();
+    let declared = |harness: &Harness<'static, Editor>, name: &str| graph(harness).variable(name).map(|v| (v.ty, v.start.clone()));
+    assert_eq!(declared(&harness, "text"), Some((bayleaf_engine::graph::VariableType::Text, json!(""))));
+    harness.get_by_label("Start of text").focus();
+    harness.run();
+    harness.get_by_label("Start of text").type_text("Ready");
+    harness.run();
+    assert_eq!(declared(&harness, "text").map(|(_, start)| start), Some(json!("Ready")), "the start is typed in the panel");
+    harness.get_by_label("Set text").click();
+    harness.run();
+    assert!(graph(&harness).nodes.iter().any(|n| n.kind == "setTextVariable"), "Set places a Set Text Variable node");
+
+    harness.get_by_label("Add Variable").click();
+    harness.run();
+    // "Object" is also the menu bar's Object menu: take the entry in the Add Variable menu below it.
+    harness.query_all_by_label("Object").find(|n| n.rect().top() > 60.0).expect("the Object entry").click();
+    harness.run();
+    assert_eq!(declared(&harness, "object"), Some((bayleaf_engine::graph::VariableType::Object, serde_json::Value::Null)), "an object starts as none");
+}

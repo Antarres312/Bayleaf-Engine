@@ -377,11 +377,34 @@ fn every_node_kind_compiles_and_runs() {
     b.link(text_gate, "true", text_log, "run");
     b.link(swapped, "result", text_log, "text");
     b.link(where_in, "result", text_log, "value");
+    // Text, object and colour variables.
+    let keep_text = b.node("setTextVariable", json!({ "value": "kept" }));
+    let keep_object = b.node("setObjectVariable", json!({}));
+    let keep_color = b.node("setColorVariable", json!({}));
+    b.link(keep_text, "then", keep_object, "run");
+    b.link(keep_object, "then", keep_color, "run");
+    b.link(me, "object", keep_object, "value");
+    let read_text = b.node("textVariable", json!({}));
+    let read_object = b.node("objectVariable", json!({}));
+    let read_color = b.node("colorVariable", json!({}));
+    b.link(read_color, "value", keep_color, "value");
+    let object_name = b.node("nameOf", json!({}));
+    b.link(read_object, "value", object_name, "target");
+    let both_texts = b.node("joinText", json!({}));
+    b.link(read_text, "value", both_texts, "a");
+    b.link(object_name, "result", both_texts, "b");
+    let kept_gate = b.node("branch", json!({}));
+    b.link(keep_color, "then", kept_gate, "run");
+    b.link(read_object, "found", kept_gate, "condition");
+    let kept_log = b.node("log", json!({ "message": "kept" }));
+    b.link(kept_gate, "false", kept_log, "run");
+    b.link(both_texts, "result", kept_log, "text");
     let by_name = b.node("findNamed", json!({}));
     b.link(me_named, "result", by_name, "named");
     let named_gate = b.node("branch", json!({}));
     b.link(text_log, "then", named_gate, "run");
     b.link(by_name, "found", named_gate, "condition");
+    b.link(named_gate, "true", keep_text, "run");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -990,4 +1013,69 @@ fn text_nodes_join_measure_search_cut_replace_and_convert() {
             "name Scripted",
         ]
     );
+}
+
+/// Object, text and colour variables keep their values from step to step; an object variable says
+/// when its object is gone, and a text variable cuts long text at a character.
+#[test]
+fn object_text_and_color_variables_last_from_step_to_step() {
+    let mut b = Builder::new();
+    b.0.add_variable("note", bayleaf_graph::VariableType::Text, Some(json!("Hi"))).unwrap();
+    b.0.add_variable("tint", bayleaf_graph::VariableType::Color, Some(json!([0.5, 0.25, 1.0]))).unwrap();
+    // On Start: keep the Box, and a text of 256 groups "aéé" (5 bytes each, 1280 bytes).
+    let start = b.node("start", json!({}));
+    let found = b.node("findNamed", json!({ "name": "Box" }));
+    let keep = b.node("setObjectVariable", json!({ "name": "box" }));
+    b.link(start, "then", keep, "run");
+    b.link(found, "object", keep, "value");
+    let long = b.node("replaceText", json!({ "text": "x".repeat(256), "find": "x", "with": "aéé" }));
+    let keep_long = b.node("setTextVariable", json!({ "name": "long" }));
+    b.link(keep, "then", keep_long, "run");
+    b.link(long, "result", keep_long, "value");
+    // On Update: say whether the Box is still there, the note, the long text's length and the tint.
+    let update = b.node("update", json!({}));
+    let read = b.node("objectVariable", json!({ "name": "box" }));
+    let there = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    b.link(read, "found", there, "condition");
+    let log = b.node("log", json!({ "message": "box" }));
+    b.link(update, "then", log, "run");
+    b.link(there, "result", log, "value");
+    let note = b.node("textVariable", json!({ "name": "note" }));
+    let said = b.node("log", json!({ "message": "note" }));
+    b.link(log, "then", said, "run");
+    b.link(note, "value", said, "text");
+    let long_now = b.node("textVariable", json!({ "name": "long" }));
+    let length = b.node("textLength", json!({}));
+    b.link(long_now, "value", length, "text");
+    let measured = b.node("log", json!({ "message": "long" }));
+    b.link(said, "then", measured, "run");
+    b.link(length, "result", measured, "value");
+    let tint = b.node("colorVariable", json!({ "name": "tint" }));
+    let green = b.node("split", json!({}));
+    b.link(tint, "value", green, "vector");
+    let shade = b.node("log", json!({ "message": "green" }));
+    b.link(measured, "then", shade, "run");
+    b.link(green, "y", shade, "value");
+    let bytes = b.bytes();
+
+    let mut scene = Scene::new();
+    let id = scene.create_object(None, "Scripted").unwrap();
+    let crate_box = scene.create_object(None, "Box").unwrap();
+    let script = ScriptRef { module: "keeper.bscript".into(), properties: BTreeMap::new() };
+    let input = Arc::new(Input::default());
+    let mut host = ScriptHost::new();
+    host.load_bytes(id, 0, Path::new("keeper.bscript"), None, &bytes, &script, &mut scene, 0.0, &input).unwrap();
+    host.update(&mut scene, 0.1, 0.1, &input);
+    // A new object before the Box changes its handle, which the variable outlasts; then it goes.
+    scene.create_object(None, "Newcomer").unwrap();
+    scene.reparent(crate_box, None, Some(2)).unwrap();
+    host.update(&mut scene, 0.1, 0.2, &input);
+    scene.delete_object(crate_box).unwrap();
+    host.update(&mut scene, 0.1, 0.3, &input);
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    // 204 whole groups (1020 bytes), then "a" and one "é": 1023 bytes, cut before the next "é".
+    let step = |there: &str| [format!("box {there}"), "note Hi".to_owned(), "long 614".to_owned(), "green 0.25".to_owned()];
+    let expected: Vec<String> = [step("1"), step("1"), step("0")].concat();
+    assert_eq!(lines, expected);
 }

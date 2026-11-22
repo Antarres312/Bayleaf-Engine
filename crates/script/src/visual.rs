@@ -46,6 +46,11 @@ const STATE_NAME: SettingDef = SettingDef { name: "name", label: "Name", kind: S
 const STATE_SCOPE: SettingDef = SettingDef { name: "scope", label: "Scope", kind: SettingKind::Choice(&["Game", "Player", "This Object", "Saved"]) };
 const STATE_PLAYER: SettingDef = SettingDef { name: "player", label: "Player", kind: SettingKind::Text("") };
 const FLAG: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("done") };
+const TEXT_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("label") };
+const OBJECT_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("thing") };
+const COLOR_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("tint") };
+/// Most bytes a text variable keeps; longer text is cut at a character.
+pub const TEXT_VARIABLE_BYTES: u32 = 1024;
 /// The object an action works on or a value is read from, from a search or This Object; when it is not
 /// linked, the node uses the object named in Object Name (or its own default).
 const TARGET: PinDef = pin("target", "Object", PinType::Object);
@@ -184,6 +189,66 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[],
             outputs: &[pin("value", "Value", Bool)],
             settings: &[FLAG],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setTextVariable",
+            label: "Set Text Variable",
+            category: "Variables",
+            description: "Keeps text under a name, for this script on this object (up to 1024 bytes; longer text is cut). It starts as the Variables panel says, or empty.",
+            inputs: &[RUN, text("value", "Value", "")],
+            outputs: &[THEN],
+            settings: &[TEXT_VARIABLE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "textVariable",
+            label: "Text Variable",
+            category: "Variables",
+            description: "The text Set Text Variable last kept under this name, or what it starts as.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", PinType::Text)],
+            settings: &[TEXT_VARIABLE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setObjectVariable",
+            label: "Set Object Variable",
+            category: "Variables",
+            description: "Keeps an object under a name, for this script on this object, from step to step. It starts as none.",
+            inputs: &[RUN, pin("value", "Value", PinType::Object)],
+            outputs: &[THEN],
+            settings: &[OBJECT_VARIABLE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "objectVariable",
+            label: "Object Variable",
+            category: "Variables",
+            description: "The object Set Object Variable last kept under this name; none (Found false) before that, or once the object is gone.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", PinType::Object), pin("found", "Found", Bool)],
+            settings: &[OBJECT_VARIABLE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setColorVariable",
+            label: "Set Color Variable",
+            category: "Variables",
+            description: "Keeps a colour under a name, for this script on this object. It starts as the Variables panel says, or white.",
+            inputs: &[RUN, PinDef::with("value", "Value", PinType::Color, PinDefault::Color([1.0; 3]))],
+            outputs: &[THEN],
+            settings: &[COLOR_VARIABLE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "colorVariable",
+            label: "Color Variable",
+            category: "Variables",
+            description: "The colour Set Color Variable last kept under this name, or what it starts as.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", PinType::Color)],
+            settings: &[COLOR_VARIABLE],
             unique: false,
         },
         NodeDef {
@@ -688,6 +753,8 @@ struct Compiler<'g> {
     properties: Vec<(String, f32)>,
     /// Globals actions need (the object and index of a For Each), declared once each.
     globals: Vec<String>,
+    /// Each text variable's buffer and starting length, by name.
+    text_vars: std::collections::BTreeMap<String, (u32, u32)>,
 }
 
 /// Compiles a visual script into a WebAssembly module.
@@ -697,6 +764,9 @@ pub fn variable_kinds(ty: VariableType) -> [&'static str; 2] {
         VariableType::Number => ["variable", "setVariable"],
         VariableType::Vector => ["vectorVariable", "setVectorVariable"],
         VariableType::TrueFalse => ["flag", "setFlag"],
+        VariableType::Text => ["textVariable", "setTextVariable"],
+        VariableType::Object => ["objectVariable", "setObjectVariable"],
+        VariableType::Color => ["colorVariable", "setColorVariable"],
     }
 }
 
@@ -708,7 +778,25 @@ pub fn compile(graph: &Graph) -> Result<Vec<u8>, Vec<Problem>> {
 /// The WebAssembly text of a visual script.
 pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     graph.check(&CATALOG).map_err(|e| vec![Problem::graph(e.to_string())])?;
-    let mut c = Compiler { graph, data: Vec::new(), next: DATA_START, properties: Vec::new(), globals: Vec::new() };
+    let mut c =
+        Compiler { graph, data: Vec::new(), next: DATA_START, properties: Vec::new(), globals: Vec::new(), text_vars: std::collections::BTreeMap::new() };
+    // Text variables keep their text in a buffer of their own, holding what they start as.
+    let mut starts: std::collections::BTreeMap<String, String> = graph
+        .nodes
+        .iter()
+        .filter(|n| variable_kinds(VariableType::Text).contains(&n.kind.as_str()))
+        .map(|n| (c.setting_text(n.id, "name", "label"), String::new()))
+        .collect();
+    starts.extend(graph.variables.iter().filter(|v| v.ty == VariableType::Text).map(|v| (v.name.clone(), v.start.as_str().unwrap_or_default().to_owned())));
+    for (name, start) in starts {
+        let mut end = start.len().min(TEXT_VARIABLE_BYTES as usize);
+        while !start.is_char_boundary(end) {
+            end -= 1;
+        }
+        let bytes = &start.as_bytes()[..end];
+        let (at, len) = c.reserve(bytes, TEXT_VARIABLE_BYTES - end as u32);
+        c.text_vars.insert(name, (at, len));
+    }
     let mut problems = Vec::new();
     let mut init = String::new();
     let mut start = String::new();
@@ -808,6 +896,18 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     }
     for (name, start) in named(VariableType::TrueFalse, "done") {
         let _ = writeln!(out, "  (global $flag_{name} (mut i32) (i32.const {}))", i32::from(start.as_bool().unwrap_or(false)));
+    }
+    for (name, start) in named(VariableType::Color, "tint") {
+        let start = if start.is_array() { start } else { VariableType::Color.zero() };
+        for (index, part) in ["r", "g", "b"].into_iter().enumerate() {
+            let _ = writeln!(out, "  (global $col_{name}_{part} (mut f32) (f32.const {:?}))", number(&start[index]));
+        }
+    }
+    for (name, _) in named(VariableType::Object, "thing") {
+        let _ = writeln!(out, "  (global $obj_{name} (mut i32) (i32.const 0))");
+    }
+    for (name, (_, len)) in &c.text_vars {
+        let _ = writeln!(out, "  (global $txt_{name} (mut i32) (i32.const {len}))");
     }
     for global in state.iter().chain(&c.globals) {
         let _ = writeln!(out, "  {global}");
@@ -1142,6 +1242,23 @@ impl Compiler<'_> {
                 let _ =
                     writeln!(code, "{indent}(global.set $vec_{name}_x {x})\n{indent}(global.set $vec_{name}_y {y})\n{indent}(global.set $vec_{name}_z {z})");
             }
+            "setTextVariable" => {
+                let name = self.setting_text(next, "name", "label");
+                let at = self.text_vars.get(&name).map_or(0, |(at, _)| *at);
+                let value = self.input(next, "value").and_then(|v| as_text(next, v))?;
+                let _ = writeln!(code, "{indent}(global.set $txt_{name} (call $keep (i32.const {at}) (i32.const {TEXT_VARIABLE_BYTES}) {value}))");
+            }
+            "setObjectVariable" => {
+                let name = self.setting_text(next, "name", "thing");
+                let value = self.input(next, "value").and_then(|v| as_object(next, v))?;
+                let _ = writeln!(code, "{indent}(global.set $obj_{name} (call $object_ref {value}))");
+            }
+            "setColorVariable" => {
+                let name = self.setting_text(next, "name", "tint");
+                let [r, g, b] = vec3(self, "value")?;
+                let _ =
+                    writeln!(code, "{indent}(global.set $col_{name}_r {r})\n{indent}(global.set $col_{name}_g {g})\n{indent}(global.set $col_{name}_b {b})");
+            }
             "setFlag" => {
                 let name = self.setting_text(next, "name", "done");
                 let value = self.input(next, "value").and_then(|v| as_bool(next, v))?;
@@ -1217,6 +1334,20 @@ impl Compiler<'_> {
                 Val::V(["x", "y", "z"].map(|axis| format!("(global.get $vec_{name}_{axis})")))
             }
             "flag" => Val::B(format!("(global.get $flag_{})", self.setting_text(node, "name", "done"))),
+            "textVariable" => {
+                let name = self.setting_text(node, "name", "label");
+                let at = self.text_vars.get(&name).map_or(0, |(at, _)| *at);
+                Val::T(format!("(call $mk (i32.const {at}) (global.get $txt_{name}))"))
+            }
+            "objectVariable" => {
+                let name = self.setting_text(node, "name", "thing");
+                let handle = format!("(call $object_of (global.get $obj_{name}))");
+                if pin == "found" { Val::B(format!("(i32.ne {handle} (i32.const 0))")) } else { Val::O(handle) }
+            }
+            "colorVariable" => {
+                let name = self.setting_text(node, "name", "tint");
+                Val::V(["r", "g", "b"].map(|part| format!("(global.get $col_{name}_{part})")))
+            }
             "variable" => Val::F(format!("(global.get $var_{})", self.setting_text(node, "name", "count"))),
             "number" => Val::F(lit(self.setting_number(node, "value", 1.0))),
             "vector" => {
@@ -1502,6 +1633,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "component_get" (func $component_get (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "component_set" (func $component_set (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "name_of" (func $name_of (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "object_ref" (func $object_ref (param i32) (result i32)))
+  (import "bayleaf" "object_of" (func $object_of (param i32) (result i32)))
   (import "bayleaf" "transform_get_of" (func $transform_get_of (param i32 i32)))
   (import "bayleaf" "transform_set_of" (func $transform_set_of (param i32 i32)))
   (import "bayleaf" "position_get_of" (func $position_get_of (param i32 i32)))
@@ -1705,6 +1838,19 @@ const PRELUDE: &str = r#"(module
       (local.set $i (i32.add (local.get $at) (call $tl (local.get $find))))
       (br $next)))
     (call $mk (local.get $p) (i32.sub (local.get $w) (local.get $p))))
+  ;; Copies $t into the $cap bytes at $dst, cut at a character when it is longer; returns the length kept.
+  (func $keep (param $dst i32) (param $cap i32) (param $t i64) (result i32) (local $n i32)
+    (local.set $n (call $tl (local.get $t)))
+    (if (i32.gt_u (local.get $n) (local.get $cap))
+      (then
+        (local.set $n (local.get $cap))
+        (block $cut (loop $back
+          (br_if $cut (i32.eqz (local.get $n)))
+          (br_if $cut (i32.ne (i32.and (i32.load8_u (i32.add (call $tp (local.get $t)) (local.get $n))) (i32.const 192)) (i32.const 128)))
+          (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+          (br $back)))))
+    (memory.copy (local.get $dst) (call $tp (local.get $t)) (local.get $n))
+    (local.get $n))
   (func $num_text (param $v f32) (result i64) (local $p i32)
     (local.set $p (call $alloc (i32.const 32)))
     (call $mk (local.get $p) (call $fmt (local.get $v) (local.get $p))))

@@ -54,8 +54,9 @@ not change what the graph compiles to. Each has an `id`, `text` (at most 2000 ch
 `position` (its top-left corner) and a `size` of at least 120 × 60. A graph without comments leaves
 the field out. Limit: 500 comments.
 
-A visual script may also have `variables`: each with a `name`, a `type` (`number`, `vector` or
-`trueFalse`) and a `start` value that fits the type. A graph without them leaves the field out.
+A visual script may also have `variables`: each with a `name`, a `type` (`number`, `vector`,
+`trueFalse`, `text`, `object` or `color`) and a `start` value that fits the type (text of at most 256
+characters; `null` for an object). A graph without them leaves the field out.
 Limit: 256 variables. Version 1 files, which have no variables, still open.
 
 A visual script may also have a `menu`: where Add Component lists it, folders then its name
@@ -93,9 +94,13 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
 - **Property** nodes declare numbers that the Inspector shows per object, with a default.
 - **Set Variable** keeps a number under a name and **Variable** reads it; **Set Vector Variable**
   and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False
-  Variable** for true or false. Each script on each object has its own variables. A variable declared
-  in the script's Variables panel starts at its **Starts at** value; one only named on nodes starts at
-  0 (0, 0, 0 for a vector, false for true/false).
+  Variable** for true or false. **Set Text Variable** and **Text Variable** keep text (up to 1024 bytes;
+  longer text is cut at a character), **Set Object Variable** and **Object Variable** an object (with
+  Found: false before it is set and once the object is gone; unlike other object values it lasts from
+  step to step), **Set Color Variable** and **Color Variable** a colour. Each script on each object has
+  its own variables. A variable declared in the script's Variables panel starts at its **Starts at**
+  value; one only named on nodes starts at 0 (0, 0, 0 for a vector, false for true/false, empty text,
+  white for a colour). An object variable always starts as none.
 - **Action** gives an input action's value by its kind (a trigger 1 in the step it goes down, held 1
   while down, value how far it is pressed) and whether it is down; **On Action Pressed** runs once
   when it goes down. Name it `Jump` for the active map or `Player/Jump`; only the active map's
