@@ -1377,6 +1377,43 @@ fn a_file_field_takes_a_dragged_file_of_its_kind_and_refuses_others() {
 }
 
 #[test]
+fn an_object_dragged_from_the_hierarchy_onto_a_script_field_fills_it_and_keeps_the_inspector() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-object-field-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = json!({ "format": "bayleaf.graph", "version": 1, "domain": "script", "nodes": [
+        { "id": 1, "kind": "objectProperty", "position": [0.0, 0.0], "values": { "name": "target" } }] });
+    let module = dir.join("follow.bscript");
+    std::fs::write(&module, serde_json::to_string_pretty(&script).unwrap()).unwrap();
+    let mut harness = harness();
+    create_named(&mut harness, "Goal");
+    let params = json!({ "name": "Follower", "components": { "scripts": [{ "module": module.to_string_lossy().replace('\\', "/") }] } });
+    harness.state_mut().dispatch("scene.object.create", &params, None);
+    harness.run();
+    let follower = harness.state().selected.expect("the new object is selected");
+    let target = |harness: &Harness<'static, Editor>| {
+        let scripts = harness.state().session.scene().get::<bayleaf_engine::scene::components::Scripts>(follower).unwrap().clone();
+        scripts.0[0].properties.get("target").and_then(|v| v.text()).map(str::to_owned)
+    };
+    let from = harness.get_by_label("Goal").rect().center();
+    let to = harness.get_by_label("Target").rect().center();
+    harness.hover_at(from);
+    harness.drag_at(from);
+    harness.run();
+    for step in 1..=6 {
+        harness.hover_at(from + (to - from) * (step as f32 / 6.0));
+        harness.run();
+        assert_eq!(harness.state().selected, Some(follower), "the drag leaves the Inspector on the script's object");
+    }
+    harness.drop_at(to);
+    harness.run();
+    assert_eq!(target(&harness).as_deref(), Some("Goal"), "the dropped object fills the field");
+    assert_eq!(harness.state().selected, Some(follower));
+    assert_eq!(harness.state().session.scene().children(None).len(), 2, "nothing moved in the hierarchy");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn dragging_a_script_property_from_its_default_keeps_going_and_reset_turns_on_and_off() {
     let mut harness = harness();
     let bob = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo/scripts/bob.bscript");

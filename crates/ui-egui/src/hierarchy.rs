@@ -268,17 +268,16 @@ fn draggable_row(ui: &mut egui::Ui, id: StableId, name: &str, prefab: bool, stat
         state.selected = Some(id);
         state.renaming = Some(Rename { id, text: String::new(), focused: false });
     }
-    // Select on press, like a click, so a click with a little hand movement still selects.
-    if !adds && response.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_pressed()) && !is_selected {
+    // A drag leaves the selection alone, so the Inspector keeps showing what it showed: an object
+    // can then be dragged onto one of its fields (a script's object property).
+    if response.drag_started_by(egui::PointerButton::Primary) {
+        egui::DragAndDrop::set_payload(ui.ctx(), Dragged(id));
+    }
+    // A press that turned into a drag but ends on its own row was a click with a moving hand
+    // (or a slow click): it selects.
+    if !adds && response.drag_stopped_by(egui::PointerButton::Primary) && ui.ctx().pointer_interact_pos().is_some_and(|p| response.rect.contains(p)) {
         state.selected = Some(id);
         state.also.clear();
-    }
-    if response.drag_started_by(egui::PointerButton::Primary) {
-        if !is_selected {
-            state.also.clear();
-        }
-        state.selected = Some(id);
-        egui::DragAndDrop::set_payload(ui.ctx(), Dragged(id));
     }
     if response.dragged_by(egui::PointerButton::Primary)
         && let Some(pointer) = ui.ctx().pointer_interact_pos()
