@@ -8,6 +8,7 @@ use std::sync::Arc;
 use bayleaf_scene::components::{Camera, DirectionalLight, Environment, Mesh, PointLight, Projection, Shape, SpotLight, Sprite};
 
 use bayleaf_assets::{Image, MeshData};
+use bayleaf_scene::lighting::Lighting;
 
 use crate::material::CompiledMaterial;
 
@@ -17,6 +18,10 @@ pub trait AssetSource {
     fn material(&mut self, path: &str) -> Option<Arc<CompiledMaterial>>;
     fn image(&mut self, path: &str) -> Option<Arc<Image>>;
     fn model(&mut self, path: &str) -> Option<Arc<MeshData>>;
+    /// A lighting asset (`.blight`) the scene's settings name.
+    fn lighting(&mut self, _path: &str) -> Option<Arc<Lighting>> {
+        None
+    }
 }
 
 /// Reads materials, images and models from files, relative to `base`, through caches that
@@ -55,6 +60,9 @@ impl AssetSource for FileAssets<'_> {
     }
     fn model(&mut self, path: &str) -> Option<Arc<MeshData>> {
         self.load(path, |s, full| s.cache.model(full))
+    }
+    fn lighting(&mut self, path: &str) -> Option<Arc<Lighting>> {
+        self.load(path, |s, full| s.materials.lighting(full))
     }
 }
 
@@ -298,12 +306,16 @@ pub fn extract(scene: &Scene, camera: CameraView, options: FrameOptions) -> Fram
 pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, assets: &mut dyn AssetSource) -> Frame {
     let mut items = Vec::new();
     let mut lights = Vec::new();
-    let mut environment: Option<&Environment> = None;
+    // The scene's lighting asset, else (in scenes not yet moved to one) its first Environment.
+    let lighting = Some(scene.settings().lighting.as_str()).filter(|p| !p.is_empty()).and_then(|path| assets.lighting(path));
+    let mut environment: Option<Environment> = lighting.as_ref().map(|l| l.environment());
+    let mut has_sun = false;
     for (id, world) in scene.world_matrices() {
         let world = camera.relative(world);
         if environment.is_none() {
-            environment = scene.get::<Environment>(id);
+            environment = scene.get::<Environment>(id).cloned();
         }
+        has_sun |= scene.get::<DirectionalLight>(id).is_some();
         if let Some(mesh) = scene.get::<Mesh>(id) {
             let material = if mesh.material.is_empty() { None } else { assets.material(&mesh.material) };
             let model = if mesh.model.is_empty() { None } else { assets.model(&mesh.model) };
@@ -383,6 +395,12 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
             lights.push(LightItem { kind: LightKind::Spot, position, direction, radiance, range: light.range, cos_outer, cos_inner, shadows: light.shadows });
         }
     }
+    // The lighting asset's sun lights a scene that has no Directional Light of its own.
+    if let Some(sun) = lighting.as_ref().map(|l| &l.sun).filter(|sun| sun.enabled && !has_sun) {
+        let turn = bayleaf_scene::components::Transform { rotation: sun.rotation, ..Default::default() }.matrix().as_mat4();
+        let direction = turn.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Y);
+        lights.push(LightItem::directional(direction, Vec3::from(sun.color) * sun.intensity, sun.shadows));
+    }
     // Sun-like lights first, then the lights nearest the camera, as many as the shader takes.
     lights.sort_by(|a, b| {
         let rank = |l: &LightItem| if l.kind == LightKind::Directional { 0.0 } else { 1.0 + l.position.distance_squared(camera.position) };
@@ -393,6 +411,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
     if lights.is_empty() {
         lights.push(FALLBACK_LIGHT);
     }
+    let environment = environment.as_ref();
     let (ambient, ambient_ground, clear_color, sky) = match environment {
         Some(env) => environment_light(env),
         None => (DEFAULT_AMBIENT, DEFAULT_AMBIENT * 0.35, DEFAULT_CLEAR, None),

@@ -68,6 +68,8 @@ enum Kind {
     Material,
     /// An Input Map (`.binput`): input actions in maps.
     InputMap,
+    /// A lighting asset (`.blight`): a scene's sky, light around everything, fog and sun.
+    Lighting,
     Image,
     /// A sound file an Audio Source plays.
     Sound,
@@ -84,6 +86,7 @@ impl Kind {
             Some("bscript") => Kind::VisualScript,
             Some("bmaterial") => Kind::Material,
             Some(bayleaf_engine::input_cmds::INPUT_EXTENSION) => Kind::InputMap,
+            Some(bayleaf_engine::scene::lighting::EXTENSION) => Kind::Lighting,
             Some("png" | "jpg" | "jpeg" | "webp" | "ktx2") => Kind::Image,
             Some("glb" | "gltf") => Kind::Model,
             Some(ext) if bayleaf_engine::scene::components::SOUND_EXTENSIONS.contains(&ext) => Kind::Sound,
@@ -103,6 +106,7 @@ impl Kind {
             Kind::VisualScript => "Visual Script",
             Kind::Material => "Material",
             Kind::InputMap => "Input Map",
+            Kind::Lighting => "Lighting",
             Kind::Image => "Image",
             Kind::Sound => "Sound",
             Kind::Other => "File",
@@ -188,6 +192,11 @@ impl ProjectView {
         self.files_of(&[Kind::InputMap])
     }
 
+    /// Every lighting asset in the project, as paths relative to the project folder.
+    pub(crate) fn lighting_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::Lighting])
+    }
+
     /// Every 3D model (`.glb`, `.gltf`) in the project.
     pub(crate) fn model_files(&self) -> Vec<String> {
         self.files_of(&[Kind::Model])
@@ -259,13 +268,14 @@ impl ProjectView {
 }
 
 /// What the Create panel offers: the kind, its name, what it is, and the name a new one starts with.
-const CREATABLE: [(AssetKind, &str, &str, &str); 6] = [
+const CREATABLE: [(AssetKind, &str, &str, &str); 7] = [
     (AssetKind::Folder, "Folder", "A folder to sort files into", "New Folder"),
     (AssetKind::Scene, "Scene", "A level or screen, with a camera and a light", "New Scene"),
     (AssetKind::Material, "Material", "How a surface looks, as a graph", "New Material"),
     (AssetKind::VisualScript, "Visual Script", "Behaviour as a graph of nodes", "New Visual Script"),
     (AssetKind::Script, "Rust Script", "Behaviour in Rust, built to WebAssembly", "New Script"),
     (AssetKind::InputMap, "Input Map", "Actions in maps for keys, mouse and gamepads", "New Input Map"),
+    (AssetKind::Lighting, "Lighting", "A scene's sky, light, fog and sun, shared by the scenes that name it", "New Lighting"),
 ];
 
 /// The lowercase name of a kind, for "New â¦" prompts.
@@ -277,6 +287,7 @@ fn kind_name(kind: AssetKind) -> &'static str {
         AssetKind::VisualScript => "visual script",
         AssetKind::Script => "script",
         AssetKind::InputMap => "input map",
+        AssetKind::Lighting => "lighting",
     }
 }
 
@@ -289,6 +300,7 @@ fn kind_icon(kind: AssetKind) -> Kind {
         AssetKind::VisualScript => Kind::VisualScript,
         AssetKind::Script => Kind::ScriptSource,
         AssetKind::InputMap => Kind::InputMap,
+        AssetKind::Lighting => Kind::Lighting,
     }
 }
 
@@ -642,7 +654,7 @@ fn create(editor: &mut Editor, naming: &Naming, name: &str) -> Result<PathBuf, S
         AssetKind::Material | AssetKind::VisualScript => editor.open_graph(&path),
         AssetKind::Script => editor.build_script(&path),
         // An Input Map opens in the Inspector, where its actions are edited.
-        AssetKind::InputMap => editor.inspect_file(path.clone()),
+        AssetKind::InputMap | AssetKind::Lighting => editor.inspect_file(path.clone()),
         AssetKind::Folder | AssetKind::Scene => {}
     }
     Ok(path)
@@ -1162,7 +1174,7 @@ fn default_action(entry: &Entry) -> Option<Action> {
     let path = entry.path.clone();
     match entry.kind {
         // A click already shows an Input Map in the Inspector, where it is edited.
-        Kind::Folder | Kind::InputMap => None,
+        Kind::Folder | Kind::InputMap | Kind::Lighting => None,
         Kind::Scene | Kind::Project => Some(Action::OpenScene(path)),
         Kind::Material | Kind::VisualScript => Some(Action::OpenGraph(path)),
         Kind::Prefab => Some(Action::PlacePrefab(path)),
@@ -1262,7 +1274,7 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             painter.circle(center, s * 0.36, t.surface_active, stroke(t.pin_color));
             painter.circle_filled(center + egui::vec2(-s * 0.1, -s * 0.1), s * 0.14, t.pin_color);
         }
-        Kind::Script | Kind::ScriptSource | Kind::VisualScript | Kind::InputMap | Kind::Image | Kind::Sound | Kind::Other => {
+        Kind::Script | Kind::ScriptSource | Kind::VisualScript | Kind::InputMap | Kind::Lighting | Kind::Image | Kind::Sound | Kind::Other => {
             // A page with a folded corner.
             let fold = s * 0.22;
             let (l, r, top, bottom) = (rect.left() + s * 0.18, rect.right() - s * 0.18, rect.top() + s * 0.08, rect.bottom() - s * 0.08);
@@ -1271,6 +1283,7 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                 Kind::Script | Kind::ScriptSource => t.axis_z,
                 Kind::VisualScript => t.pin_any,
                 Kind::InputMap => t.pin_bool,
+                Kind::Lighting => t.warning,
                 Kind::Image => t.axis_y,
                 Kind::Sound => t.pin_text,
                 _ => t.text_muted,
@@ -1293,6 +1306,17 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                     for (x, y) in [(0.0, 0.0), (0.58, 0.0), (0.0, 0.64), (0.58, 0.64)] {
                         let min = inner.min + inner.size() * egui::vec2(x, y);
                         painter.rect_stroke(egui::Rect::from_min_size(min, key), 2.0, stroke(accent), egui::StrokeKind::Inside);
+                    }
+                }
+                Kind::Lighting if s >= 24.0 => {
+                    // A sun: a disc with rays.
+                    let center = inner.center();
+                    let radius = inner.width().min(inner.height()) * 0.22;
+                    painter.circle_filled(center, radius, accent);
+                    for i in 0..8 {
+                        let angle = i as f32 * std::f32::consts::TAU / 8.0;
+                        let dir = egui::vec2(angle.cos(), angle.sin());
+                        painter.line_segment([center + dir * radius * 1.4, center + dir * radius * 2.0], stroke(accent));
                     }
                 }
                 Kind::Script if s >= 24.0 => {

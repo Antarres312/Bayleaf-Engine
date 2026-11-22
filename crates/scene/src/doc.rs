@@ -15,8 +15,9 @@ pub const FORMAT: &str = "bayleaf.scene";
 /// `characterBody`; version 10 added `playerControl`; version 11
 /// added `gameRules` and `playerStart`; version 12 added `inputMap`; version 13 added `joint`; version 14 added
 /// `audioSource`; version 15 added `streamedArea`; version 16 lets
-/// script properties be true/false, three numbers or text. Older files still load.
-pub const VERSION: u32 = 16;
+/// script properties be true/false, three numbers or text; version 17 added the scene's `settings` (its lighting
+/// asset), into which opening an older scene moves its Environment component. Older files still load.
+pub const VERSION: u32 = 17;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.
@@ -25,6 +26,9 @@ pub const EXTENSION: &str = "bscene";
 pub struct SceneDoc {
     pub format: String,
     pub version: u32,
+    /// The scene's own settings (version 17).
+    #[serde(default, skip_serializing_if = "crate::lighting::SceneSettings::is_default")]
+    pub settings: crate::lighting::SceneSettings,
     pub objects: Vec<ObjectDoc>,
 }
 

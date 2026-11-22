@@ -735,3 +735,38 @@ fn the_ground_grid_shows_when_it_is_on_near_and_far_from_the_centre() {
         assert!(changed(&with, &without) > 64, "the grid draws lines on the ground around {at:?}");
     }
 }
+
+/// Gives one lighting asset for every lighting path.
+struct OneLighting(Arc<bayleaf_scene::lighting::Lighting>);
+
+impl crate::AssetSource for OneLighting {
+    fn material(&mut self, _: &str) -> Option<Arc<crate::CompiledMaterial>> {
+        None
+    }
+    fn image(&mut self, _: &str) -> Option<Arc<bayleaf_assets::Image>> {
+        None
+    }
+    fn model(&mut self, _: &str) -> Option<Arc<bayleaf_assets::MeshData>> {
+        None
+    }
+    fn lighting(&mut self, _: &str) -> Option<Arc<bayleaf_scene::lighting::Lighting>> {
+        Some(Arc::clone(&self.0))
+    }
+}
+
+#[test]
+fn a_lighting_asset_gives_the_sky_and_a_sun_where_the_scene_has_none() {
+    let mut scene = Scene::new();
+    let mut settings = scene.settings().clone();
+    settings.lighting = "day.blight".to_owned();
+    scene.set_settings(settings).unwrap();
+    let lighting = bayleaf_scene::lighting::Lighting::default();
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 50.0, 1.0);
+    let frame = extract_with(&scene, camera, OPTIONS, &mut OneLighting(Arc::new(lighting.clone())));
+    assert!(frame.sky.is_some(), "the asset's sky shows");
+    assert_eq!(frame.lights.len(), 1, "its sun lights a scene without a Directional Light");
+    // A scene with its own sun keeps it alone.
+    object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3}), [0.0; 3], [0.0; 3]);
+    let frame = extract_with(&scene, camera, OPTIONS, &mut OneLighting(Arc::new(lighting)));
+    assert_eq!(frame.lights.len(), 1, "the scene's own Directional Light, not the asset's sun as well");
+}

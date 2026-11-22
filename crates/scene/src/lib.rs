@@ -8,6 +8,7 @@
 
 pub mod components;
 pub mod doc;
+pub mod lighting;
 pub mod registry;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -57,11 +58,34 @@ pub struct Scene {
     entities: HashMap<StableId, Entity>,
     parents: HashMap<StableId, Option<StableId>>,
     children: HashMap<Option<StableId>, Vec<StableId>>,
+    /// The scene's own settings (its lighting asset).
+    settings: lighting::SceneSettings,
 }
 
 impl Default for Scene {
     fn default() -> Self {
-        Self { world: World::new(), registry: ComponentRegistry::builtin(), entities: HashMap::new(), parents: HashMap::new(), children: HashMap::new() }
+        Self {
+            world: World::new(),
+            registry: ComponentRegistry::builtin(),
+            entities: HashMap::new(),
+            parents: HashMap::new(),
+            children: HashMap::new(),
+            settings: lighting::SceneSettings::default(),
+        }
+    }
+}
+
+impl Scene {
+    /// The scene's own settings.
+    pub fn settings(&self) -> &lighting::SceneSettings {
+        &self.settings
+    }
+
+    /// Changes the scene's own settings, after checking them.
+    pub fn set_settings(&mut self, settings: lighting::SceneSettings) -> Result<(), SceneError> {
+        settings.validate().map_err(|message| SceneError::InvalidValue { component: "settings".to_owned(), message })?;
+        self.settings = settings;
+        Ok(())
     }
 }
 
@@ -272,7 +296,7 @@ impl Scene {
             objects.push(ObjectDoc { id, parent: self.parent(id), components });
             stack.extend(self.children(Some(id)).iter().rev());
         }
-        SceneDoc { format: doc::FORMAT.to_owned(), version: doc::VERSION, objects }
+        SceneDoc { format: doc::FORMAT.to_owned(), version: doc::VERSION, settings: self.settings.clone(), objects }
     }
 
     /// Builds a scene from plain data. Parents must come before their children.
@@ -291,6 +315,7 @@ impl Scene {
             scene_doc
         };
         let mut scene = Self::new();
+        scene.set_settings(scene_doc.settings.clone())?;
         for object in &scene_doc.objects {
             if scene.contains(object.id) {
                 return Err(SceneError::Format(format!("object {} appears twice", object.id)));

@@ -19,7 +19,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Create Asset",
             menu: "",
             shortcut: "",
-            params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\" | \"inputMap\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
+            params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\" | \"inputMap\" | \"lighting\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: always,
@@ -161,6 +161,7 @@ fn asset_kind(path: &Path) -> &'static str {
         Some("bscript") => "Visual Script",
         Some("wasm") => "Script",
         Some("binput") => "Input Map",
+        Some("blight") => "Lighting",
         Some("bproject") => "Project",
         Some("glb" | "gltf") => "Model",
         Some("png" | "jpg" | "jpeg") => "Image",
@@ -243,6 +244,8 @@ pub enum AssetKind {
     Script,
     /// An Input Map: input actions in maps (`.binput`), starting with a game's usual controls.
     InputMap,
+    /// A lighting asset (`.blight`): the sky, the light around everything, fog and a sun.
+    Lighting,
 }
 
 impl AssetKind {
@@ -254,6 +257,7 @@ impl AssetKind {
             AssetKind::Material => Some(bayleaf_render::material::CATALOG.extension),
             AssetKind::VisualScript => Some(bayleaf_script::visual::CATALOG.extension),
             AssetKind::InputMap => Some(crate::input_cmds::INPUT_EXTENSION),
+            AssetKind::Lighting => Some(bayleaf_scene::lighting::EXTENSION),
         }
     }
 }
@@ -305,6 +309,7 @@ fn asset_create(session: &mut Session, params: &Value) -> Result<Value, CommandE
         AssetKind::Material => std::fs::write(&path, bayleaf_graph::Graph::new(&bayleaf_render::material::CATALOG).to_json()).map_err(failed)?,
         AssetKind::VisualScript => std::fs::write(&path, bayleaf_graph::Graph::new(&bayleaf_script::visual::CATALOG).to_json()).map_err(failed)?,
         AssetKind::InputMap => std::fs::write(&path, crate::input_cmds::InputAsset::starter().to_text()).map_err(failed)?,
+        AssetKind::Lighting => std::fs::write(&path, bayleaf_scene::lighting::Lighting::default().to_text()).map_err(failed)?,
     }
     Ok(json!({ "path": path }))
 }

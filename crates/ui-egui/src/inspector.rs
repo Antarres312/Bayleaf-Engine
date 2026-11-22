@@ -44,7 +44,14 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let t = theme::tokens(ui);
     let Some(id) = editor.selected else {
         if editor.scene_selected {
-            empty_state(ui, "Untitled scene", "Save the scene to see what its file holds here.");
+            // An unsaved scene: its settings, and a word on its file.
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(tl("Untitled scene")).heading());
+                ui.label(egui::RichText::new(tl("Save the scene to see what its file holds here.")).small().color(t.text_muted));
+                ui.add_space(theme::SECTION_GAP);
+                crate::scene_settings::show(editor, ui);
+            });
         } else {
             empty_state(ui, "Nothing selected", "Select an object in the hierarchy or click it in the scene view.");
         }

@@ -443,7 +443,12 @@ pub struct MaterialLibrary {
     live: Option<(PathBuf, Result<Arc<CompiledMaterial>, String>)>,
     /// The graph `live` was compiled from, so an unchanged graph is not compiled again.
     live_graph: Option<Graph>,
+    /// Lighting files, read once and again when the file changes.
+    lightings: HashMap<PathBuf, LightingEntry>,
 }
+
+/// A lighting file as last read: when it changed, and what it held or why it did not read.
+type LightingEntry = (Option<SystemTime>, Result<Arc<bayleaf_scene::lighting::Lighting>, String>);
 
 struct Entry {
     modified: Option<SystemTime>,
@@ -453,6 +458,21 @@ struct Entry {
 impl MaterialLibrary {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A lighting file (`.blight`), read again when it changes on disk.
+    pub fn lighting(&mut self, path: &Path) -> Result<Arc<bayleaf_scene::lighting::Lighting>, String> {
+        let key = normalize(path);
+        let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
+        if let Some((seen, result)) = self.lightings.get(&key)
+            && *seen == modified
+            && modified.is_some()
+        {
+            return result.clone();
+        }
+        let result = bayleaf_scene::lighting::Lighting::load(&key).map(Arc::new).map_err(|e| e.to_string());
+        self.lightings.insert(key, (modified, result.clone()));
+        result
     }
 
     /// Uses `graph` for `path` instead of the file, or stops with `None`.

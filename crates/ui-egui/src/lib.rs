@@ -23,6 +23,7 @@ mod inspector;
 mod markdown_view;
 mod project;
 mod project_settings;
+mod scene_settings;
 mod scene_view;
 mod script_info;
 mod script_panel;

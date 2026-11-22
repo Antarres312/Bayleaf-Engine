@@ -28,11 +28,13 @@ pub(crate) struct Inspected {
     input: Option<Result<crate::input_editor::Draft, String>>,
     /// Shows a Markdown file's text as written instead of formatted.
     show_source: bool,
+    /// A lighting asset as read, or why it could not be.
+    lighting: Option<Result<bayleaf_engine::scene::lighting::Lighting, String>>,
 }
 
 impl Inspected {
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path, info: Info::default(), modified: None, texture: None, markdown: None, show_source: false, input: None }
+        Self { path, info: Info::default(), modified: None, texture: None, markdown: None, show_source: false, input: None, lighting: None }
     }
 
     /// Reads the file again when it changed since it was last read.
@@ -45,6 +47,8 @@ impl Inspected {
             self.markdown = if crate::markdown_view::is_markdown(&self.path) { crate::markdown_view::read(&self.path) } else { None };
             let is_input = self.path.extension().is_some_and(|e| e == bayleaf_engine::input_cmds::INPUT_EXTENSION);
             self.input = is_input.then(|| bayleaf_engine::input_cmds::read_asset(editor_session, &self.path).map(|a| crate::input_editor::Draft::of(&a)));
+            let is_lighting = self.path.extension().is_some_and(|e| e == bayleaf_engine::scene::lighting::EXTENSION);
+            self.lighting = is_lighting.then(|| bayleaf_engine::scene::lighting::Lighting::load(&self.path).map_err(|e| e.to_string()));
         }
     }
 }
@@ -65,6 +69,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let shown_path = file.path.strip_prefix(editor.session.script_dir()).map_or_else(|_| file.path.clone(), Path::to_path_buf);
     let mut action = None;
     let mut save_input = None;
+    let mut changed_lighting = None;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(4.0);
@@ -75,6 +80,17 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
 
         if file.info.kind == "Image" {
             image_preview(ui, &mut file, &name);
+        }
+        // The open scene's own settings, under its file.
+        if editor.session.scene_path() == Some(file.path.as_path()) {
+            crate::scene_settings::show(editor, ui);
+            ui.add_space(theme::SECTION_GAP);
+        }
+        // A lighting asset is edited here; every scene that names it changes.
+        if let Some(Ok(lighting)) = file.lighting.as_mut()
+            && crate::scene_settings::lighting_editor(ui, lighting)
+        {
+            changed_lighting = Some(lighting.clone());
         }
 
         theme::section(t).show(ui, |ui| {
@@ -152,8 +168,17 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     {
         file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
     }
+    // An edited lighting asset is written; its new time on disk is taken, so it is not read back.
+    if let Some(lighting) = changed_lighting
+        && editor.dispatch("lighting.set", &serde_json::json!({ "path": file.path, "lighting": lighting }), None).is_some()
+    {
+        file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
+    }
     let path = file.path.clone();
-    editor.inspected_file = Some(file);
+    // Something on the card (Edit on the scene's lighting) may have chosen another file to show.
+    if editor.inspected_file.is_none() {
+        editor.inspected_file = Some(file);
+    }
     match action {
         Some(Action::OpenScene) => editor.open_scene(&path),
         Some(Action::OpenGraph) => editor.open_graph(&path),

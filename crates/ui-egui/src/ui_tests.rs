@@ -1945,3 +1945,37 @@ fn the_scene_heads_the_hierarchy_takes_dropped_objects_to_the_top_and_shows_in_t
     assert_eq!(harness.state().session.scene().object_count(), 2, "the scene is not an object to delete");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn the_scene_s_settings_name_a_lighting_asset_the_inspector_edits() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-lighting-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir.join("Lit") }), None);
+    harness.state_mut().project.rescan_soon();
+    harness.run_steps(3);
+    let project = dir.join("Lit");
+    // The scene's row shows its settings: the starter project's lighting asset.
+    harness.get_by_label("main scene").click();
+    harness.run();
+    assert!(harness.query_by_label_contains("Scene Settings").is_some());
+    harness.get_by_label("Edit lighting").click();
+    harness.run();
+    harness.run_steps(2);
+    // Its file in the Inspector: a change is written to the file.
+    let before = bayleaf_engine::scene::lighting::Lighting::load(&project.join("scenes/daylight.blight")).unwrap();
+    harness.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Show Sky").click();
+    harness.run();
+    let after = bayleaf_engine::scene::lighting::Lighting::load(&project.join("scenes/daylight.blight")).unwrap();
+    assert_ne!(before.show_sky, after.show_sky, "unticking Show Sky changes the file");
+
+    // Back on the scene: the engine's light, then New makes an asset beside the scene and uses it.
+    harness.state_mut().dispatch("scene.settings.set", &json!({ "lighting": "" }), None);
+    harness.get_by_label("main scene").click();
+    harness.run();
+    harness.get_by_label("New lighting").click();
+    harness.run();
+    let named = harness.state().session.scene().settings().lighting.clone();
+    assert!(named.ends_with(".blight") && project.join(&named).is_file(), "a new asset the scene names: {named}");
+    std::fs::remove_dir_all(&dir).ok();
+}

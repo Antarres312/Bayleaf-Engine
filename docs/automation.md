@@ -141,3 +141,9 @@ run: `interpreted`, `compiled` or `native` (default: the project's choice for th
 and returns `{ready, findings, scripts, files}`: each finding an `error`, `warning` or `note` with
 its message and file, and how each script would run. The export refuses while the check finds an
 error. Today only this computer's system and `interpreted` export; the check says so for the rest.
+
+`scene.settings` returns the open scene's own settings (`{lighting}`) and `scene.settings.set`
+(`{lighting?}`) changes them, as an undo step. A lighting asset (`.blight`) holds a scene's sky,
+light around everything, fog and a sun for scenes without a Directional Light: `lighting.get`
+(`{path}`) reads one and `lighting.set` (`{path, lighting}`) writes it, inside the write roots;
+`asset.create` with kind `lighting` makes one.

@@ -13,6 +13,7 @@ pub mod confine;
 pub mod export;
 mod graph_cmds;
 pub mod input_cmds;
+mod lighting_cmds;
 mod play;
 pub mod prefab_cmds;
 pub mod project_cmds;
@@ -303,8 +304,14 @@ impl Session {
     fn replace_scene(&mut self, scene: Scene, path: Option<PathBuf>) -> Vec<String> {
         self.scene = scene;
         self.set_scene_path(path);
-        let problems = prefab_cmds::refresh_all(self);
+        let mut problems = prefab_cmds::refresh_all(self);
         self.dirty = false;
+        // An older scene's Environment moves into a lighting asset; the scene is then changed.
+        if let Some((level, message, changed)) = lighting_cmds::move_environment(self) {
+            self.dirty = changed;
+            self.log(level, message.clone());
+            problems.push(message);
+        }
         self.forget(|s| matches!(s, Snapshot::Scene(_)));
         problems
     }
@@ -439,6 +446,7 @@ impl CommandRegistry {
         commands.extend(sound::commands());
         commands.extend(stream::commands());
         commands.extend(export::commands());
+        commands.extend(lighting_cmds::commands());
         commands.extend(graph_cmds::commands());
         commands.extend(project_cmds::commands());
         commands.extend(prefab_cmds::commands());

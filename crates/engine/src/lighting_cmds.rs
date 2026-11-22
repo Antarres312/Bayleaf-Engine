@@ -1,0 +1,146 @@
+//! A scene's settings (`scene.settings`, `scene.settings.set`) and lighting assets (`lighting.get`,
+//! `lighting.set`), and moving an older scene's Environment component into a lighting asset when
+//! the scene opens.
+
+use std::path::{Path, PathBuf};
+
+use bayleaf_scene::components::Environment;
+use bayleaf_scene::lighting::{self, Lighting, Sun};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use crate::confine::Access;
+use crate::{CommandError, CommandSpec, Level, Mutates, Prompt, Session, always, parse};
+
+pub(crate) fn commands() -> Vec<CommandSpec> {
+    let spec = |id, label, params, mutates, run| CommandSpec { id, label, menu: "", shortcut: "", params, prompt: Prompt::None, mutates, enabled: always, run };
+    vec![
+        spec("scene.settings", "Scene Settings", "none; returns the open scene's own settings: {lighting}", Mutates::No, settings_get),
+        spec(
+            "scene.settings.set",
+            "Change Scene Settings",
+            "{lighting?}: the lighting asset (.blight, relative to the project folder; empty for the engine's light) the scene uses; returns the settings",
+            Mutates::Scene,
+            settings_set,
+        ),
+        spec(
+            "lighting.get",
+            "Read Lighting",
+            "{path}: a lighting asset (.blight); returns {lighting: {skyColor, horizonColor, groundColor, ambient, showSky, fogDistance, sun: {enabled, rotation, color, intensity, shadows}}}",
+            Mutates::No,
+            lighting_get,
+        ),
+        spec(
+            "lighting.set",
+            "Change Lighting",
+            "{path, lighting}: writes a lighting asset (the whole lighting, as lighting.get returns it); every scene that names it changes",
+            Mutates::No,
+            lighting_set,
+        ),
+    ]
+}
+
+fn settings_get(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    parse::<crate::play::NoParams>(params)?;
+    serde_json::to_value(session.scene.settings()).map_err(|e| CommandError::Failed(e.to_string()))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsParams {
+    #[serde(default)]
+    lighting: Option<String>,
+}
+
+fn settings_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: SettingsParams = parse(params)?;
+    let mut settings = session.scene.settings().clone();
+    if let Some(lighting) = p.lighting {
+        settings.lighting = lighting.trim().replace('\\', "/");
+    }
+    settings.validate().map_err(CommandError::BadParams)?;
+    session.scene.set_settings(settings)?;
+    serde_json::to_value(session.scene.settings()).map_err(|e| CommandError::Failed(e.to_string()))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PathParams {
+    path: PathBuf,
+}
+
+/// A lighting asset's path, relative to the project folder or absolute, checked for `access`.
+fn lighting_path(session: &Session, path: &Path, access: Access) -> Result<PathBuf, CommandError> {
+    if !path.to_string_lossy().to_ascii_lowercase().ends_with(&format!(".{}", lighting::EXTENSION)) {
+        return Err(CommandError::BadParams(format!("give a .{} file", lighting::EXTENSION)));
+    }
+    session.allowed(&session.script_dir().join(path), access)
+}
+
+fn lighting_get(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: PathParams = parse(params)?;
+    let path = lighting_path(session, &p.path, Access::Read)?;
+    let lighting = Lighting::load(&path)?;
+    Ok(json!({ "lighting": lighting }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetParams {
+    path: PathBuf,
+    lighting: Lighting,
+}
+
+fn lighting_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: SetParams = parse(params)?;
+    p.lighting.validate().map_err(CommandError::BadParams)?;
+    let path = lighting_path(session, &p.path, Access::Write)?;
+    p.lighting.save(&path)?;
+    Ok(json!({ "path": path }))
+}
+
+/// A file name in `dir` from `stem` that is not taken yet: `stem.blight`, `stem 2.blight`, …
+fn free_path(dir: &Path, stem: &str) -> PathBuf {
+    (1..)
+        .map(|n| dir.join(if n == 1 { format!("{stem}.{}", lighting::EXTENSION) } else { format!("{stem} {n}.{}", lighting::EXTENSION) }))
+        .find(|p| !p.exists())
+        .unwrap_or_else(|| dir.join(format!("{stem}.{}", lighting::EXTENSION)))
+}
+
+/// Moves an older scene's Environment component into a lighting asset beside the scene, which the
+/// scene then names, and takes the component away; the scene is left changed, for saving. A scene
+/// that already names a lighting asset only loses its Environment. Says what it did, or why it
+/// left the scene as it was; `None` when the scene has no Environment.
+pub(crate) fn move_environment(session: &mut Session) -> Option<(Level, String, bool)> {
+    let found: Vec<_> = session.scene.world_matrices().into_iter().map(|(id, _)| id).filter(|id| session.scene.get::<Environment>(*id).is_some()).collect();
+    let first = session.scene.get::<Environment>(*found.first()?)?.clone();
+    if session.scene.settings().lighting.is_empty() {
+        let scene_path = session.scene_path()?.to_path_buf();
+        let dir = scene_path.parent()?.to_path_buf();
+        let stem = scene_path.file_stem().map_or_else(|| "Scene".to_owned(), |s| s.to_string_lossy().into_owned());
+        let target = free_path(&dir, &format!("{stem} lighting"));
+        let target = match session.allowed(&target, Access::Write) {
+            Ok(path) => path,
+            Err(e) => return Some((Level::Info, format!("The scene's Environment stays as it is: its lighting asset cannot be written ({e})."), false)),
+        };
+        // The old scene's own lights stay its light: the asset's sun is off.
+        let moved = Lighting::from_environment(&first, Sun { enabled: false, ..Sun::default() });
+        if let Err(e) = moved.save(&target) {
+            return Some((Level::Error, format!("The scene's Environment stays as it is: {e}"), false));
+        }
+        let relative = target.strip_prefix(session.script_dir()).unwrap_or(&target).to_string_lossy().replace('\\', "/");
+        let mut settings = session.scene.settings().clone();
+        settings.lighting = relative.clone();
+        if session.scene.set_settings(settings).is_err() {
+            return None;
+        }
+        for id in &found {
+            let _ = session.scene.remove_component(*id, "environment");
+        }
+        return Some((Level::Info, format!("Moved the scene's Environment into the lighting asset {relative}; save the scene to keep it."), true));
+    }
+    for id in &found {
+        let _ = session.scene.remove_component(*id, "environment");
+    }
+    Some((Level::Info, "The scene names a lighting asset, so its old Environment was taken away; save the scene to keep it.".to_owned(), true))
+}

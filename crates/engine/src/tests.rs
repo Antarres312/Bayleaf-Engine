@@ -1827,3 +1827,47 @@ fn the_export_check_says_what_stops_an_export_for_each_platform_and_script_mode(
     assert!(!out.exists());
     std::fs::remove_dir_all(&base).ok();
 }
+
+#[test]
+fn an_older_scene_s_environment_moves_into_a_lighting_asset_the_scene_then_names() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-lighting-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let old = json!({
+        "format": "bayleaf.scene", "version": 16,
+        "objects": [{ "id": "0b1f6e3a8c2d4e5f9a7b6c5d4e3f2a11", "parent": null, "components": {
+            "name": "Sky",
+            "environment": { "skyColor": [0.1, 0.2, 0.3], "horizonColor": [0.4, 0.5, 0.6], "groundColor": [0.2, 0.2, 0.2], "ambient": 2.0, "showSky": true, "fogDistance": 50.0 }
+        }}]
+    });
+    std::fs::write(dir.join("cave.bscene"), old.to_string()).unwrap();
+
+    registry.execute(&mut session, "scene.open", &json!({"path": dir.join("cave.bscene")})).unwrap();
+    let lighting = registry.execute(&mut session, "scene.settings", &Value::Null).unwrap()["lighting"].as_str().unwrap().to_owned();
+    assert!(lighting.ends_with(".blight") && dir.join(&lighting).is_file(), "a lighting asset beside the scene: {lighting}");
+    let moved = registry.execute(&mut session, "lighting.get", &json!({"path": dir.join(&lighting)})).unwrap();
+    assert_eq!(moved["lighting"]["ambient"], 2.0, "it keeps the Environment's light");
+    assert_eq!(moved["lighting"]["fogDistance"], 50.0);
+    let sky = bayleaf_core::StableId::parse_hex("0b1f6e3a8c2d4e5f9a7b6c5d4e3f2a11").unwrap();
+    assert!(session.scene().component(sky, "environment").is_err(), "the component is gone from the scene");
+    assert!(session.is_dirty(), "the scene changed, so it can be saved at the new version");
+
+    // Settings change as one undo step; a lighting file changes every scene that names it.
+    registry.execute(&mut session, "scene.settings.set", &json!({"lighting": ""})).unwrap();
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert_eq!(registry.execute(&mut session, "scene.settings", &Value::Null).unwrap()["lighting"], lighting.as_str());
+    let mut changed = moved["lighting"].clone();
+    changed["ambient"] = json!(0.5);
+    registry.execute(&mut session, "lighting.set", &json!({"path": dir.join(&lighting), "lighting": changed})).unwrap();
+    assert_eq!(registry.execute(&mut session, "lighting.get", &json!({"path": dir.join(&lighting)})).unwrap()["lighting"]["ambient"], 0.5);
+    assert!(registry.execute(&mut session, "lighting.set", &json!({"path": dir.join("cave.bscene"), "lighting": changed})).is_err(), "only .blight files");
+    assert!(registry.execute(&mut session, "scene.settings.set", &json!({"lighting": "notes.txt"})).is_err());
+
+    // Agents only write lighting inside their roots.
+    std::fs::create_dir_all(dir.join("elsewhere")).unwrap();
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), &[dir.join("elsewhere")]).unwrap()));
+    assert!(registry.execute(&mut session, "lighting.set", &json!({"path": dir.join(&lighting), "lighting": changed})).is_err());
+    std::fs::remove_dir_all(&dir).ok();
+}

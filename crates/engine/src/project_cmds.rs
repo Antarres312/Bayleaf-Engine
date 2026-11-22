@@ -318,6 +318,9 @@ fn project_new(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     };
     write(&format!("{file_stem}.{PROJECT_EXTENSION}"), &serde_json::to_string_pretty(&project).unwrap_or_default())?;
     write("scenes/main.bscene", MAIN_SCENE)?;
+    // The sky and light around everything; the Sun object is the scene's own sun.
+    let daylight = bayleaf_scene::lighting::Lighting { sun: bayleaf_scene::lighting::Sun { enabled: false, ..Default::default() }, ..Default::default() };
+    write("scenes/daylight.blight", &daylight.to_text())?;
     write("materials/ground.bmaterial", GROUND_MATERIAL)?;
     write("scripts/spin.bscript", SPIN_SCRIPT)?;
     write(STARTER_INPUT_MAP, &crate::input_cmds::InputAsset::starter().to_text())?;
@@ -401,10 +404,12 @@ fn project_info(session: &mut Session, params: &Value) -> Result<Value, CommandE
     Ok(json!({ "path": dir, "name": project.name, "mainScene": project.main_scene }))
 }
 
-/// The starting scene: a camera, the sun and sky, a checkered ground and a spinning cube.
+/// The starting scene: a camera, the sun, a checkered ground and a spinning cube, lit by
+/// `scenes/daylight.blight`.
 const MAIN_SCENE: &str = r#"{
   "format": "bayleaf.scene",
-  "version": 7,
+  "version": 17,
+  "settings": { "lighting": "scenes/daylight.blight" },
   "objects": [
     {
       "id": "0b1f6e3a8c2d4e5f9a7b6c5d4e3f2a10",
@@ -421,7 +426,6 @@ const MAIN_SCENE: &str = r#"{
       "components": {
         "name": "Sun",
         "directionalLight": { "color": [1.0, 0.96, 0.9], "intensity": 3.0 },
-        "environment": { "skyColor": [0.18, 0.36, 0.72], "horizonColor": [0.62, 0.72, 0.82], "groundColor": [0.22, 0.2, 0.18], "ambient": 1.0, "showSky": true },
         "transform": { "position": [0.0, 5.0, 0.0], "rotation": [-50.0, 30.0, 0.0], "scale": [1.0, 1.0, 1.0] }
       }
     },

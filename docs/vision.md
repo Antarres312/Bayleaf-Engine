@@ -264,7 +264,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    latest sources, files scenes name that are missing, and how each script would run; the export
    refuses while it finds an error. Still open: other systems than the one exporting, a player built with
    only the game's modules, the program file's own icon, and the script modes.
-10. **M9 Scene settings and lighting** (not started).
+10. **M9 Scene settings and lighting** (started: the grid is drawn again, Ctrl+S saves a graph in
+    use, the scene heads the hierarchy, and scenes name a lighting asset in their settings, scene
+    format version 17).
    - **The scene as the hierarchy's root.** The hierarchy shows one top row named after the
      scene (its file name, or Untitled), holding every top object. It is not an object, so it
      cannot be moved, deleted or copied, and objects can be dropped on it to move them to the top.

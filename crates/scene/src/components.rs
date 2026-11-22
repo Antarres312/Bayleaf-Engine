@@ -306,6 +306,8 @@ impl SceneComponent for Environment {
     const LABEL: &'static str = "Environment";
     const MENU: &'static str = "Rendering/Environment";
     const REMOVABLE: bool = true;
+    // Older scenes only: a lighting asset in the scene's settings holds this now.
+    const LISTED: bool = false;
 
     fn validate(&self) -> Result<(), String> {
         unit_range("skyColor", &self.sky_color)?;
