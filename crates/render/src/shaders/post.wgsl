@@ -2,7 +2,8 @@
 // display. With every effect off it is the colour as drawn, clamped.
 //
 // Tone mapping is the filmic curve fitted by Narkowicz (2015) to the ACES reference transform;
-// ambient occlusion compares the depth around each pixel, without normals; antialiasing finds
+// ambient occlusion samples the half sphere above each point (its surface's normal worked out
+// from the depth around it) and counts the samples that the visible surface hides; antialiasing finds
 // edges by the brightness of the neighbours and blends across them.
 
 struct Post {
@@ -109,29 +110,76 @@ fn world_at(uv: vec2<f32>, depth: f32) -> vec3<f32> {
     return w.xyz / w.w;
 }
 
-// How open the point at `uv` is: 1 open, less where nearer surfaces crowd round it.
+// The surface's normal at `uv` (a point `here`), from the points of the pixels beside it: on each
+// axis the nearer neighbour, so an edge behind or in front does not bend it. It faces the eye.
+fn normal_at(uv: vec2<f32>, here: vec3<f32>) -> vec3<f32> {
+    let px = post.d.yz;
+    let right = world_at(uv + vec2<f32>(px.x, 0.0), depth_at(uv + vec2<f32>(px.x, 0.0)));
+    let left = world_at(uv - vec2<f32>(px.x, 0.0), depth_at(uv - vec2<f32>(px.x, 0.0)));
+    let down = world_at(uv + vec2<f32>(0.0, px.y), depth_at(uv + vec2<f32>(0.0, px.y)));
+    let up = world_at(uv - vec2<f32>(0.0, px.y), depth_at(uv - vec2<f32>(0.0, px.y)));
+    let across = select(here - left, right - here, distance(right, here) < distance(here, left));
+    let along = select(here - up, down - here, distance(down, here) < distance(here, up));
+    var n = normalize(cross(along, across));
+    if (dot(n, globals.camera_pos.xyz - here) < 0.0) {
+        n = -n;
+    }
+    return n;
+}
+
+// Where world point `p` shows: its uv on the screen, and its distance from the eye.
+fn on_screen(p: vec3<f32>) -> vec3<f32> {
+    let clip = globals.view_proj * vec4<f32>(p, 1.0);
+    let ndc = clip.xy / max(clip.w, 1e-6);
+    return vec3<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, distance(p, globals.camera_pos.xyz));
+}
+
+// A number from 0 to 1 that changes from pixel to pixel, to turn each pixel's samples differently.
+fn pixel_noise(uv: vec2<f32>) -> f32 {
+    let p = floor(uv / post.d.yz);
+    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+}
+
+// How open the point at `uv` is: 1 open, less where surfaces nearby hide the half sphere above it
+// (a corner where a wall meets the floor, a crease, the ground under a low shape).
 fn openness(uv: vec2<f32>, depth: f32) -> f32 {
     let here = world_at(uv, depth);
+    let n = normal_at(uv, here);
+    let side = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.y) > 0.9);
+    let t = normalize(cross(side, n));
+    let b = cross(n, t);
+    let radius = post.c.w;
+    let turn = pixel_noise(uv) * 6.2831853;
+    // Lifted a little off the surface, so it does not hide itself.
+    let start = here + n * radius * 0.03;
     let distance_here = distance(here, globals.camera_pos.xyz);
-    // The radius in uv: the world radius as it looks from this far away.
-    let reach = clamp(post.c.w / max(distance_here, 0.01) * 0.5, 0.002, 0.1);
     var blocked = 0.0;
-    for (var i = 0; i < 12; i = i + 1) {
-        let angle = f32(i) * 2.39996;
-        let r = reach * (f32(i) + 1.0) / 12.0;
-        let offset = vec2<f32>(cos(angle), sin(angle)) * r * vec2<f32>(post.d.z / post.d.y, 1.0);
-        let d = depth_at(uv + offset);
+    for (var i = 0; i < 16; i = i + 1) {
+        let k = (f32(i) + 0.5) / 16.0;
+        // Spread over the half sphere: round it by the golden angle, from low to high.
+        let angle = f32(i) * 2.39996 + turn;
+        let height = 0.1 + 0.9 * fract(k * 7.0);
+        let flat_part = sqrt(1.0 - height * height);
+        let direction = t * (cos(angle) * flat_part) + b * (sin(angle) * flat_part) + n * height;
+        // Nearer samples count more often: closer surfaces darken more.
+        let reach = radius * mix(0.15, 1.0, k * k);
+        let sample = start + direction * reach;
+        let seen = on_screen(sample);
+        if (any(seen.xy < vec2<f32>(0.0)) || any(seen.xy > vec2<f32>(1.0))) {
+            continue;
+        }
+        let d = depth_at(seen.xy);
         if (d >= 1.0) {
             continue;
         }
-        let there = world_at(uv + offset, d);
-        let nearer = distance_here - distance(there, globals.camera_pos.xyz);
-        // Closer than this point, and not far in front of it (a shape far in front casts no occlusion).
-        if (nearer > 0.02 * post.c.w && nearer < post.c.w * 2.0) {
-            blocked = blocked + 1.0;
+        let surface = distance(world_at(seen.xy, d), globals.camera_pos.xyz);
+        // The visible surface there stands in front of the sample, and not far in front of this
+        // point (a shape far nearer the eye casts no occlusion here).
+        if (surface < seen.z - radius * 0.02) {
+            blocked = blocked + smoothstep(0.0, 1.0, radius / max(abs(distance_here - surface), 1e-4));
         }
     }
-    return 1.0 - post.c.z * blocked / 12.0;
+    return 1.0 - post.c.z * clamp(blocked / 16.0 * 1.5, 0.0, 1.0);
 }
 
 @fragment

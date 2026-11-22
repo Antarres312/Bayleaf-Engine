@@ -957,6 +957,9 @@ fn post_processing_effects_each_change_the_picture_as_they_say() {
     let crease = camera_pixel(&base.camera, Vec3::new(0.0, 0.02, 0.55), 96);
     let occluded = render(PostSettings { occlusion: 1.0, occlusion_radius: 0.4, ..PostSettings::default() });
     assert!(light(at(&occluded, crease)) + 15 < light(at(&plain, crease)), "the crease darkens");
+    // Open floor away from the cube does not hide itself: it keeps its light.
+    let open = camera_pixel(&base.camera, Vec3::new(1.6, 0.0, 1.4), 96);
+    assert!(light(at(&occluded, open)).abs_diff(light(at(&plain, open))) <= 6, "flat ground stays: {:?} {:?}", at(&occluded, open), at(&plain, open));
 
     // Antialiasing changes only edges: the middle of the cube stays.
     let smoothed = render(PostSettings { antialiasing: true, ..PostSettings::default() });
