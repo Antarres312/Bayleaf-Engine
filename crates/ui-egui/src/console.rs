@@ -12,7 +12,16 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let errors = editor.session.console().iter().filter(|l| l.level == Level::Error).count();
-        ui.label(egui::RichText::new(format!("{} lines, {errors} errors", editor.session.console().len())).color(t.text_muted));
+        ui.label(
+            egui::RichText::new(crate::i18n::tf(
+                "{lines}, {errors}",
+                &[
+                    ("lines", &crate::i18n::tn(editor.session.console().len() as u64, "{n} line", "{n} lines")),
+                    ("errors", &crate::i18n::tn(errors as u64, "{n} error", "{n} errors")),
+                ],
+            ))
+            .color(t.text_muted),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             clear = ui.add_enabled(!editor.session.console().is_empty(), egui::Button::new(tl("Clear"))).clicked();
         });

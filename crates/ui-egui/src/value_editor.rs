@@ -205,7 +205,7 @@ fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: 
                     if text_list
                         && ui
                             .add(egui::Button::new(tl("Remove")).min_size(egui::vec2(0.0, ROW_HEIGHT)))
-                            .on_hover_text(format!("Remove item {}", index + 1))
+                            .on_hover_text(crate::i18n::tf("Remove item {number}", &[("number", &(index + 1).to_string())]))
                             .clicked()
                     {
                         remove = Some(index);
@@ -317,7 +317,11 @@ fn edit_named_numbers(ui: &mut egui::Ui, map: &mut serde_json::Map<String, Value
                 if let Value::Number(n) = value {
                     outcome.merge(ui.push_id(name.as_str(), |ui| edit_number(ui, n, label.id, field_width)).inner);
                 }
-                if ui.add_sized([62.0, ROW_HEIGHT], egui::Button::new(tl("Remove"))).on_hover_text(format!("Remove {name}")).clicked() {
+                if ui
+                    .add_sized([62.0, ROW_HEIGHT], egui::Button::new(tl("Remove")))
+                    .on_hover_text(crate::i18n::tf("Remove {name}", &[("name", &name.to_string())]))
+                    .clicked()
+                {
                     remove = Some(name.clone());
                 }
             });
@@ -385,7 +389,7 @@ fn reset_button(ui: &mut egui::Ui, enabled: bool, name: &str) -> egui::Response 
         .add_enabled(enabled, egui::Button::new("").min_size(egui::vec2(ROW_HEIGHT, ROW_HEIGHT)))
         .on_hover_text(tl("Back to the script's default"))
         .on_disabled_hover_text(tl("This is the script's default"));
-    ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(format!("Reset {name}")));
+    ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(crate::i18n::tf("Reset {name}", &[("name", name)])));
     let t = theme::tokens(ui);
     let color = if enabled { t.text } else { t.text_muted.gamma_multiply(0.6) };
     // An arc of most of a circle, open at the top right, with an arrowhead at its end.

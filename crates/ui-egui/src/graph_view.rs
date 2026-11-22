@@ -103,7 +103,10 @@ fn refresh_script_fields(editor: &mut Editor, graph: &Graph, search: &SearchChoi
         let Some(name) = node.values.get("component").and_then(Value::as_str) else { continue };
         let Some((script, declared)) = search.scripts.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) else { continue };
         if *declared != kept && editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "fields", "value": declared }), None).is_some() {
-            editor.status = format!("Node {}: the properties of {script} changed, so its pins did too.", node.id);
+            editor.status = crate::i18n::tf(
+                "Node {id}: the properties of {script} changed, so its pins did too.",
+                &[("id", &node.id.to_string()), ("script", &script.to_string())],
+            );
         }
     }
 }
@@ -351,7 +354,7 @@ fn material_preview(editor: &mut Editor, ui: &egui::Ui, graph: &Graph, gpu: Opti
                     ui.painter().rect_filled(rect, theme::RADIUS, t.surface);
                     let text = message.unwrap_or_default();
                     ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, egui::FontId::proportional(12.0), t.text_muted);
-                    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, format!("Material preview: {text}")));
+                    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, crate::i18n::tf("Material preview: {text}", &[("text", text)])));
                 }
             }
         });
@@ -389,11 +392,10 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui, doc: &bayleaf_engine::GraphDo
     let t = theme::tokens(ui);
     egui::Frame::new().inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            let name = doc
-                .path
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .map_or_else(|| format!("Untitled {}", catalog.label.to_lowercase()), |n| n.to_string_lossy().into_owned());
+            let name = doc.path.as_ref().and_then(|p| p.file_name()).map_or_else(
+                || crate::i18n::tf("Untitled {kind}", &[("kind", &tl(catalog.label).to_lowercase().to_string())]),
+                |n| n.to_string_lossy().into_owned(),
+            );
             ui.label(egui::RichText::new(&name).strong().color(t.text));
             ui.label(egui::RichText::new(tl(catalog.label)).small().color(t.text_muted));
             if doc.dirty {
@@ -471,7 +473,10 @@ fn save_as(editor: &mut Editor, catalog: &Catalog) {
 fn problem_strip(ui: &mut egui::Ui, graph: &Graph, catalog: &Catalog, problems: &[Problem], view: &mut GraphView) {
     let t = theme::tokens(ui);
     if problems.is_empty() {
-        ui.label(egui::RichText::new(format!("Ready: this {} compiles.", catalog.label.to_lowercase())).color(t.text_muted));
+        ui.label(
+            egui::RichText::new(crate::i18n::tf("Ready: this {kind} compiles.", &[("kind", &tl(catalog.label).to_lowercase().to_string())]))
+                .color(t.text_muted),
+        );
         return;
     }
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -628,7 +633,8 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
         None => {}
     }
     if let Some(picked) = &view.picked {
-        editor.status = format!("Linking from pin {}: press Enter on the pin to link to, or Escape to cancel", picked.pin.pin);
+        editor.status =
+            crate::i18n::tf("Linking from pin {pin}: press Enter on the pin to link to, or Escape to cancel", &[("pin", &picked.pin.pin.to_string())]);
     }
 }
 
@@ -658,7 +664,7 @@ fn zoom_keys(editor: &mut Editor, ui: &egui::Ui, graph: &Graph, catalog: &Catalo
     } else {
         return;
     }
-    editor.status = format!("Graph zoom {:.0}%", area.width() / view.scene_rect.width() * 100.0);
+    editor.status = crate::i18n::tf("Graph zoom {zoom}%", &[("zoom", &format!("{:.0}", area.width() / view.scene_rect.width() * 100.0))]);
 }
 
 /// A view that shows every node, or the area around the origin for an empty graph.
@@ -729,7 +735,7 @@ fn comment_ui(
     painter.rect_filled(title_rect, egui::CornerRadius { nw: theme::CARD_RADIUS, ne: theme::CARD_RADIUS, sw: 0, se: 0 }, t.surface_hover);
     let id = ui.scope_id().with(("graph comment", comment.id));
     let first_line = comment.text.lines().next().unwrap_or_default().to_owned();
-    let name = if first_line.is_empty() { "Comment".to_owned() } else { format!("Comment: {first_line}") };
+    let name = if first_line.is_empty() { "Comment".to_owned() } else { crate::i18n::tf("Comment: {first_line}", &[("first_line", &first_line.to_string())]) };
 
     // Typing the text.
     if let Some((editing, mut text)) = view.editing_comment.clone()
@@ -842,7 +848,7 @@ fn comment_ui(
     // The corner handle resizes the box.
     let handle_rect = Rect::from_min_max(rect.max - vec2(COMMENT_HANDLE, COMMENT_HANDLE), rect.max);
     let handle = ui.interact(handle_rect, id.with("size"), Sense::drag());
-    handle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Resize {name}")));
+    handle.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tf("Resize {name}", &[("name", &name.to_string())])));
     screen_bounds(ui, &handle);
     let handle_color = if handle.hovered() || handle.dragged() { t.text } else { t.text_muted };
     for k in [4.0, 8.0, 12.0] {
@@ -908,7 +914,14 @@ fn node_ui(
     let id = ui.scope_id().with(("graph node", node.id));
     let title = ui.interact(title_rect, id, Sense::click_and_drag());
     let problem_note = if has_problem { ", has a problem" } else { "" };
-    title.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, format!("{} node {}{problem_note}", tl(def.label), node.id)));
+    title.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::Role::Button,
+            true,
+            selected,
+            crate::i18n::tf("{node} node {id}{problem_note}", &[("node", tl(def.label)), ("id", &node.id.to_string()), ("problem_note", problem_note)]),
+        )
+    });
     screen_bounds(ui, &title);
     if view.focus_node == Some(node.id) {
         title.request_focus();
@@ -1055,15 +1068,31 @@ fn pin_ui(
             .filter_map(|l| graph.node(l.from.node).map(|n| node_name(catalog, n)))
             .collect()
     };
-    let side = if output { "Output" } else { "Input" };
-    let linked = if links.is_empty() { "not linked".to_owned() } else { format!("linked {} {}", if output { "to" } else { "from" }, links.join(", ")) };
+    let side = if output { tl("Output") } else { tl("Input") };
+    let linked = if links.is_empty() {
+        tl("not linked").to_owned()
+    } else if output {
+        crate::i18n::tf("linked to {nodes}", &[("nodes", &links.join(", "))])
+    } else {
+        crate::i18n::tf("linked from {nodes}", &[("nodes", &links.join(", "))])
+    };
     let picked_here = view.picked.as_ref() == Some(&pick);
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::Role::Button,
             true,
             picked_here,
-            format!("{side} {} ({}) of {} {}, {linked}", tl(pin.label), pin.ty.label(), tl(def.label), node.id),
+            crate::i18n::tf(
+                "{side} {pin} ({type}) of {node} {id}, {linked}",
+                &[
+                    ("side", side),
+                    ("pin", tl(pin.label)),
+                    ("type", tl(pin.ty.label())),
+                    ("node", tl(def.label)),
+                    ("id", &node.id.to_string()),
+                    ("linked", &linked.to_string()),
+                ],
+            ),
         )
     });
     let response = response.on_hover_text(pin_hint(pin));
@@ -1147,7 +1176,7 @@ fn pin_hint(pin: &PinDef) -> String {
         PinType::Text => "letters, words and numbers as written",
         PinType::Int => "a whole number",
     };
-    format!("{}: {} ({meaning})", tl(pin.label), pin.ty.label())
+    crate::i18n::tf("{pin}: {type} ({meaning})", &[("pin", tl(pin.label)), ("type", tl(pin.ty.label())), ("meaning", meaning)])
 }
 
 fn node_name(catalog: &Catalog, node: &Node) -> String {
@@ -1165,7 +1194,7 @@ fn triple(value: &Value, default: [f32; 3]) -> [f32; 3] {
 
 fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rect: Rect, gesture: u64, requests: &mut Requests) {
     let key = format!("graph set {} {} {gesture}", node.id, pin.name);
-    let name = format!("{} of {} {}", tl(pin.label), tl(def.label), node.id);
+    let name = crate::i18n::tf("{pin} of {node} {id}", &[("pin", tl(pin.label)), ("node", tl(def.label)), ("id", &node.id.to_string())]);
     let hint = pin_hint(pin);
     match pin.ty {
         PinType::Float | PinType::Any => {
@@ -1281,7 +1310,7 @@ fn setting_row(
     ui.painter().text(pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, tl(setting.label), egui::FontId::proportional(13.0), t.text_muted);
     let field = Rect::from_min_max(pos2(row.left() + label_width, row.top() + 2.0), pos2(row.right(), row.bottom() - 2.0));
     let key = format!("graph set {} {} {gesture}", node.id, setting.name);
-    let name = format!("{} of node {}", tl(setting.label), node.id);
+    let name = crate::i18n::tf("{setting} of node {id}", &[("setting", tl(setting.label)), ("id", &node.id.to_string())]);
     // A variable node picks its variable from the script's own, of its type.
     if setting.name == "name"
         && let Some(ty) =
@@ -1406,7 +1435,14 @@ fn component_picker(ui: &mut egui::Ui, search: &SearchChoices, node: &Node, sett
             })
             .response
     });
-    labelled(ui, &response, &format!("{} of node {}: {current}", tl(setting.label), node.id));
+    labelled(
+        ui,
+        &response,
+        &crate::i18n::tf(
+            "{setting} of node {id}: {current}",
+            &[("setting", tl(setting.label)), ("id", &node.id.to_string()), ("current", &current.to_string())],
+        ),
+    );
     // A script dragged from the Project panel, when it declares properties.
     let declared = |module: &str| search.scripts.iter().any(|(n, p)| *n == script_name(module) && !p.is_empty());
     if let Some(module) = crate::value_editor::file_drop(ui, &response, |path| (path.ends_with(".bscript") || path.ends_with(".wasm")) && declared(path)) {
@@ -1456,7 +1492,14 @@ fn kind_picker(ui: &mut egui::Ui, search: &SearchChoices, node: &Node, setting: 
             })
             .response
     });
-    labelled(ui, &response, &format!("{} of node {}: {current}", tl(setting.label), node.id));
+    labelled(
+        ui,
+        &response,
+        &crate::i18n::tf(
+            "{setting} of node {id}: {current}",
+            &[("setting", tl(setting.label)), ("id", &node.id.to_string()), ("current", &current.to_string())],
+        ),
+    );
     if let Some(module) = crate::value_editor::file_drop(ui, &response, |path| path.ends_with(".bscript") || path.ends_with(".wasm")) {
         chosen = Some(script_name(&module));
     }
@@ -1505,7 +1548,11 @@ fn variable_picker(
                 if !names.is_empty() {
                     ui.separator();
                 }
-                if ui.button(tl("New Variable…")).on_hover_text(format!("Declare a new {} variable for this node", ty.label())).clicked() {
+                if ui
+                    .button(tl("New Variable…"))
+                    .on_hover_text(crate::i18n::tf("Declare a new {type} variable for this node", &[("type", tl(ty.label()))]))
+                    .clicked()
+                {
                     let stem = kinds[0];
                     let fresh =
                         (1..).map(|n| format!("{stem}{n}")).find(|n| graph.variable(n).is_none() && !names.contains(n)).unwrap_or_else(|| stem.to_owned());
@@ -1515,7 +1562,14 @@ fn variable_picker(
             })
             .response
     });
-    labelled(ui, &response, &format!("{} of node {}: {current}", tl(setting.label), node.id));
+    labelled(
+        ui,
+        &response,
+        &crate::i18n::tf(
+            "{setting} of node {id}: {current}",
+            &[("setting", tl(setting.label)), ("id", &node.id.to_string()), ("current", &current.to_string())],
+        ),
+    );
 }
 
 fn labelled(ui: &egui::Ui, response: &egui::Response, name: &str) {
@@ -1665,7 +1719,7 @@ fn copy_nodes(editor: &mut Editor, view: &GraphView) {
         let count = view.selected.len();
         editor.clipboard = Some(text.clone());
         editor.copy_out = Some(text);
-        editor.status = if count == 1 { "Copy: the node is on the clipboard".to_owned() } else { format!("Copy: {count} nodes are on the clipboard") };
+        editor.status = crate::i18n::tn(count as u64, "Copy: the node is on the clipboard", "Copy: {n} nodes are on the clipboard");
     }
 }
 
@@ -1698,7 +1752,7 @@ fn select_new(editor: &mut Editor, view: &mut GraphView, result: &Value) {
     view.focus_node = view.selected.first().copied();
     let skipped: Vec<&str> = result["skipped"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
     if !skipped.is_empty() {
-        editor.status = format!("{} left out: a graph has only one", skipped.join(", "));
+        editor.status = crate::i18n::tf("{nodes} left out: a graph has only one", &[("nodes", &(skipped.join(", ")).to_string())]);
     }
 }
 

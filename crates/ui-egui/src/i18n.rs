@@ -50,6 +50,12 @@ pub fn tf(template: &str, args: &[(&str, &str)]) -> String {
     craft_i18n::fmt(tl(template), args)
 }
 
+/// A count's wording in the editor's language: `one` and `other` are the English forms, with
+/// `{n}` for the number.
+pub fn tn(n: u64, one: &str, other: &str) -> String {
+    I18N.trn(CURRENT.get(), n, one, other)
+}
+
 /// Switches the editor to a language setting: [`AUTOMATIC`] for the system's language, or a code
 /// (`pl`, `pt-br`; `pseudo` in debug builds). An unknown code is English. Returns the code in use.
 pub fn set_language(setting: &str) -> &'static str {

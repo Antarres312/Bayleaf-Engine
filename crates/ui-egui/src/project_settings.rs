@@ -125,7 +125,9 @@ fn physics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectS
                         [64.0, ROW_HEIGHT - 4.0],
                         egui::DragValue::new(value).speed(0.05).range(-1000.0..=1000.0).max_decimals(2).prefix(format!("{axis} ")),
                     );
-                    ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Gravity {axis}, metres per second squared")));
+                    ui.ctx().accesskit_node_builder(field.id, |node| {
+                        node.set_label(crate::i18n::tf("Gravity {axis}, metres per second squared", &[("axis", axis)]))
+                    });
                 }
                 ui.label(egui::RichText::new(tl("m/s²")).color(t.text_muted));
             });
@@ -139,8 +141,8 @@ fn physics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectS
                     (PhysicsPrecision::Double, "Double", "About a third slower physics; exact far from the centre, for large worlds"),
                 ];
                 for (value, label, hint) in choices {
-                    let button = ui.add(egui::Button::selectable(settings.physics.precision == value, label)).on_hover_text(hint);
-                    ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(format!("{label} physics precision")));
+                    let button = ui.add(egui::Button::selectable(settings.physics.precision == value, tl(label))).on_hover_text(tl(hint));
+                    ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(crate::i18n::tf("{label} physics precision", &[("label", tl(label))])));
                     if button.clicked() {
                         settings.physics.precision = value;
                     }

@@ -177,7 +177,7 @@ impl Editor {
                 }
                 if let Some(note) = &self.automation_note {
                     // A visible sign that an agent can change the scene.
-                    theme::tag(ui, &format!("Agent control: {note}"), t.accent, t.on_accent);
+                    theme::tag(ui, &crate::i18n::tf("Agent control: {note}", &[("note", &note.to_string())]), t.accent, t.on_accent);
                 }
                 ui.label(egui::RichText::new(&self.status).color(t.text_muted));
             });
@@ -270,8 +270,8 @@ impl Editor {
         self.session.set_confinement(None);
         let label = self.registry.get(command).map_or(command, |c| c.label).trim_end_matches(['…', '.']);
         self.status = match &result {
-            Ok(_) => format!("Agent: {label}: done"),
-            Err(e) => format!("Agent: {label}: {e}"),
+            Ok(_) => crate::i18n::tf("Agent: {command}: done", &[("command", label)]),
+            Err(e) => crate::i18n::tf("Agent: {command}: {error}", &[("command", label), ("error", &e.to_string())]),
         };
         result
     }
@@ -367,8 +367,11 @@ impl Editor {
                 let name = dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned());
                 let here = self.session.project_dir() == Some(dir.as_path());
                 let button = ui.add_enabled(dir.is_dir() && !here, egui::Button::new(name)).on_hover_text(dir.display().to_string());
-                let button =
-                    if here { button.on_disabled_hover_text(tl("Open now")) } else { button.on_disabled_hover_text(format!("Not found: {}", dir.display())) };
+                let button = if here {
+                    button.on_disabled_hover_text(tl("Open now"))
+                } else {
+                    button.on_disabled_hover_text(crate::i18n::tf("Not found: {folder}", &[("folder", &dir.display().to_string())]))
+                };
                 if button.clicked() {
                     *open = Some(dir.clone());
                     ui.close();
@@ -569,12 +572,12 @@ impl Editor {
         let text = serde_json::to_string_pretty(&data).unwrap_or_default();
         self.clipboard = Some(text.clone());
         self.copy_out = Some(text);
-        let what = if roots.len() == 1 { "the object is".to_owned() } else { format!("{} objects are", roots.len()) };
+        let count = roots.len() as u64;
         if cut {
             self.for_each_selected("scene.object.delete");
-            self.status = format!("Cut: {what} on the clipboard");
+            self.status = crate::i18n::tn(count, "Cut: the object is on the clipboard", "Cut: {n} objects are on the clipboard");
         } else {
-            self.status = format!("Copy: {what} on the clipboard");
+            self.status = crate::i18n::tn(count, "Copy: the object is on the clipboard", "Copy: {n} objects are on the clipboard");
         }
     }
 
@@ -620,10 +623,10 @@ impl Editor {
         });
         match spawned {
             Ok(_) => {
-                self.status = format!("Building {name}…");
+                self.status = crate::i18n::tf("Building {name}…", &[("name", &name.to_string())]);
                 self.builds.push((name, receiver));
             }
-            Err(error) => self.status = format!("Build Script: {error}"),
+            Err(error) => self.status = crate::i18n::tf("Build Script: {error}", &[("error", &error.to_string())]),
         }
     }
 
@@ -645,11 +648,12 @@ impl Editor {
             match result {
                 Ok(built) => {
                     let module = built.module.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    self.status = format!("Built {name}: {module} is ready to add to objects");
+                    self.status =
+                        crate::i18n::tf("Built {name}: {module} is ready to add to objects", &[("name", &name.to_string()), ("module", &module.to_string())]);
                     self.session.log_line(bayleaf_engine::Level::Info, format!("Built {name} into {module}."));
                 }
                 Err(error) => {
-                    self.status = format!("{name} did not build; the console says why");
+                    self.status = crate::i18n::tf("{name} did not build; the console says why", &[("name", &name.to_string())]);
                     self.session.log_line(bayleaf_engine::Level::Error, format!("{name}: {error}"));
                 }
             }
@@ -774,11 +778,11 @@ impl Editor {
             if self.session.is_dirty() {
                 let name =
                     self.session.scene_path().and_then(|p| p.file_name()).map_or_else(|| "Untitled scene".to_owned(), |n| n.to_string_lossy().into_owned());
-                ui.label(egui::RichText::new(format!("Scene: {name}")).color(t.text));
+                ui.label(egui::RichText::new(crate::i18n::tf("Scene: {name}", &[("name", &name.to_string())])).color(t.text));
             }
             if let Some(graph) = self.session.graph().filter(|g| g.dirty) {
                 let name = graph.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| "Untitled graph".to_owned(), |n| n.to_string_lossy().into_owned());
-                ui.label(egui::RichText::new(format!("Graph: {name}")).color(t.text));
+                ui.label(egui::RichText::new(crate::i18n::tf("Graph: {name}", &[("name", &name.to_string())])).color(t.text));
             }
             ui.add_space(theme::GAP * 2.0);
             ui.horizontal(|ui| {
@@ -984,7 +988,7 @@ impl Editor {
                 Some(result)
             }
             Err(error) => {
-                self.status = format!("{label}: {error}");
+                self.status = crate::i18n::tf("{command}: {error}", &[("command", label), ("error", &error.to_string())]);
                 None
             }
         }

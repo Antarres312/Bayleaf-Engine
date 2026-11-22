@@ -122,8 +122,9 @@ checked and recorded in `docs/feature-names.md`. Product copy never names or com
 `CRAFT_I18N_DIR` names a craft-i18n checkout (`common.tsv` and `bayleaf.tsv` per locale); Window > Language
 chooses, and debug builds offer the pseudo language, which marks translated text.
 
-**Known departures.** AA 16 is only partly met: messages built with `format!` and the engine's own messages (errors,
-the console, the CLI) are still plain English, and right-to-left languages are not offered until the layout mirrors.
+**Known departures.** AA 16 is only partly met: the engine's own messages (command errors, the console, the CLI,
+what agents read) are plain English, also where the editor shows them inside a translated sentence, and
+right-to-left languages are not offered until the layout mirrors. Counts in editor messages use `tn`.
 Theme tokens live in `crates/ui-egui/src/theme.rs`, as each Craft app keeps its own; their contrast is tested there.
 The editor uses craft-ui (storytold/craft-libs at one pinned `rev`) for widget-state colours, headed sections,
 combo boxes and the font stack (`crates/ui-egui/src/fonts.rs`; set `CRAFT_FONTS_DIR` to a craft-fonts checkout to

@@ -109,16 +109,21 @@ pub(crate) fn show(ui: &mut egui::Ui, draft: &mut Draft) -> Option<InputAsset> {
                 ui.set_width(ui.available_width());
                 let width = ui.available_width();
                 let gap = ui.spacing().item_spacing.x;
-                let map_shown = if map.name.trim().is_empty() { format!("map {}", m + 1) } else { map.name.trim().to_owned() };
+                let map_shown =
+                    if map.name.trim().is_empty() { crate::i18n::tf("map {number}", &[("number", &(m + 1).to_string())]) } else { map.name.trim().to_owned() };
                 ui.horizontal(|ui| {
                     let field = ui.add_sized(
                         [(width - REMOVE_MAP_WIDTH - gap).max(40.0), ROW_HEIGHT - 4.0],
                         egui::TextEdit::singleline(&mut map.name).hint_text(tl("Map name")).font(egui::TextStyle::Button),
                     );
-                    ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Name of map {map_shown}")));
+                    ui.ctx().accesskit_node_builder(field.id, |node| {
+                        node.set_label(crate::i18n::tf("Name of map {map_shown}", &[("map_shown", &map_shown.to_string())]))
+                    });
                     changed |= field.changed();
                     let remove = ui.add_sized([REMOVE_MAP_WIDTH, ROW_HEIGHT - 4.0], egui::Button::new(tl("Remove Map")));
-                    ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(format!("Remove map {map_shown}")));
+                    ui.ctx().accesskit_node_builder(remove.id, |node| {
+                        node.set_label(crate::i18n::tf("Remove map {map_shown}", &[("map_shown", &map_shown.to_string())]))
+                    });
                     if remove.on_hover_text(tl("Remove this map and its actions")).clicked() {
                         change = Some(Change::RemoveMap(m));
                     }
@@ -133,7 +138,9 @@ pub(crate) fn show(ui: &mut egui::Ui, draft: &mut Draft) -> Option<InputAsset> {
                     ui.add_space(theme::SECTION_GAP);
                 }
                 let add = ui.button(tl("Add Action"));
-                ui.ctx().accesskit_node_builder(add.id, |node| node.set_label(format!("Add action to {map_shown}")));
+                ui.ctx().accesskit_node_builder(add.id, |node| {
+                    node.set_label(crate::i18n::tf("Add action to {map_shown}", &[("map_shown", &map_shown.to_string())]))
+                });
                 if add.on_hover_text(tl("A new action in this map")).clicked() {
                     change = Some(Change::AddAction(m));
                 }
@@ -166,7 +173,7 @@ pub(crate) fn show(ui: &mut egui::Ui, draft: &mut Draft) -> Option<InputAsset> {
         None => {}
     }
     if let Some(problem) = &draft.problem {
-        ui.add(egui::Label::new(egui::RichText::new(format!("Not saved: {problem}")).color(t.text)).wrap());
+        ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tf("Not saved: {problem}", &[("problem", &problem.to_string())])).color(t.text)).wrap());
     }
     if !changed {
         return None;
@@ -191,11 +198,15 @@ fn action_card(ui: &mut egui::Ui, t: &Tokens, map: &str, index: usize, row: &mut
         ui.set_width(ui.available_width());
         let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
-        let shown = if row.name.trim().is_empty() { format!("{map}/action {}", index + 1) } else { format!("{map}/{}", row.name.trim()) };
+        let shown = if row.name.trim().is_empty() {
+            crate::i18n::tf("{map}/action {number}", &[("map", map), ("number", &(index + 1).to_string())])
+        } else {
+            format!("{map}/{}", row.name.trim())
+        };
         ui.horizontal(|ui| {
             let name =
                 ui.add_sized([(width - KIND_WIDTH - gap).max(40.0), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(&mut row.name).hint_text(tl("Action name")));
-            ui.ctx().accesskit_node_builder(name.id, |node| node.set_label(format!("Name of {shown}")));
+            ui.ctx().accesskit_node_builder(name.id, |node| node.set_label(crate::i18n::tf("Name of {shown}", &[("shown", &shown.to_string())])));
             *changed |= name.changed();
             let current = KINDS.iter().find(|(k, ..)| *k == row.kind).map_or("Held", |(_, label, _)| label);
             let kind = craft_ui::ComboBox::from_id_salt("kind").width(KIND_WIDTH).selected_text(current).show_ui(ui, |ui| {
@@ -206,17 +217,19 @@ fn action_card(ui: &mut egui::Ui, t: &Tokens, map: &str, index: usize, row: &mut
                     }
                 }
             });
-            ui.ctx().accesskit_node_builder(kind.response.id, |node| node.set_label(format!("Kind of {shown}: {current}")));
+            ui.ctx().accesskit_node_builder(kind.response.id, |node| {
+                node.set_label(crate::i18n::tf("Kind of {shown}: {current}", &[("shown", &shown.to_string()), ("current", current)]))
+            });
         });
         ui.horizontal(|ui| {
             let bindings = ui.add_sized(
                 [(width - REMOVE_WIDTH - gap).max(40.0), ROW_HEIGHT - 4.0],
                 egui::TextEdit::singleline(&mut row.bindings).hint_text(tl("key:Space, pad:South")),
             );
-            ui.ctx().accesskit_node_builder(bindings.id, |node| node.set_label(format!("Bindings of {shown}")));
+            ui.ctx().accesskit_node_builder(bindings.id, |node| node.set_label(crate::i18n::tf("Bindings of {shown}", &[("shown", &shown.to_string())])));
             *changed |= bindings.changed();
             let button = ui.add_sized([REMOVE_WIDTH, ROW_HEIGHT - 4.0], egui::Button::new(tl("Remove")));
-            ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(format!("Remove {shown}")));
+            ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(crate::i18n::tf("Remove {shown}", &[("shown", &shown.to_string())])));
             remove = button.on_hover_text(tl("Remove this action")).clicked();
         });
     });

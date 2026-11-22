@@ -123,7 +123,12 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             match draft {
                 Ok(draft) => save_input = crate::input_editor::show(ui, draft),
                 Err(problem) => {
-                    ui.add(egui::Label::new(egui::RichText::new(format!("This Input Map does not read: {problem}")).color(t.text)).wrap());
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(crate::i18n::tf("This Input Map does not read: {problem}", &[("problem", &problem.to_string())])).color(t.text),
+                        )
+                        .wrap(),
+                    );
                 }
             }
         } else if file.markdown.is_some() {
@@ -176,7 +181,8 @@ fn image_preview(ui: &mut egui::Ui, file: &mut Inspected, name: &str) {
         let (rect, response) = ui.allocate_exact_size(shown, egui::Sense::hover());
         checkerboard(ui.painter(), rect, t.surface, t.surface_hover);
         ui.painter().image(texture.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
-        let label = format!("Preview of {name}, {} × {} pixels", size.x, size.y);
+        let label =
+            crate::i18n::tf("Preview of {name}, {width} × {height} pixels", &[("name", name), ("width", &size.x.to_string()), ("height", &size.y.to_string())]);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &label));
     });
     ui.add_space(6.0);
@@ -198,7 +204,7 @@ fn checkerboard(painter: &egui::Painter, rect: egui::Rect, a: egui::Color32, b: 
 fn file_size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
     if bytes < 1024 {
-        return format!("{bytes} bytes");
+        return crate::i18n::tf("{bytes} bytes", &[("bytes", &bytes.to_string())]);
     }
     let mut value = bytes as f64 / 1024.0;
     let mut unit = 0;
@@ -231,7 +237,11 @@ fn markdown_contents(ui: &mut egui::Ui, file: &mut Inspected) {
             crate::markdown_view::show(ui, flow);
         }
         if file.info.bytes > crate::markdown_view::MAX_BYTES {
-            ui.label(egui::RichText::new(format!("Only the first {} KB are shown.", crate::markdown_view::MAX_BYTES / 1024)).small().color(t.text_muted));
+            ui.label(
+                egui::RichText::new(crate::i18n::tf("Only the first {kb} KB are shown.", &[("kb", &(crate::markdown_view::MAX_BYTES / 1024).to_string())]))
+                    .small()
+                    .color(t.text_muted),
+            );
         }
     });
 }

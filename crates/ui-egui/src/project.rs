@@ -494,12 +494,12 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         }
         Some(Action::OpenExternal(path)) => {
             if let Err(error) = system_open(&path, false) {
-                editor.status = format!("Could not open {}: {error}", path.display());
+                editor.status = crate::i18n::tf("Could not open {path}: {error}", &[("path", &path.display().to_string()), ("error", &error.to_string())]);
             }
         }
         Some(Action::Reveal(path)) => {
             if let Err(error) = system_open(&path, true) {
-                editor.status = format!("Could not show {}: {error}", path.display());
+                editor.status = crate::i18n::tf("Could not show {path}: {error}", &[("path", &path.display().to_string()), ("error", &error.to_string())]);
             }
         }
         Some(Action::Refresh) => editor.project.scanned = None,
@@ -528,7 +528,7 @@ fn delete_dialog(editor: &mut Editor, ctx: &egui::Context) {
         ui.set_max_width(420.0);
         ui.heading(tl("Move to the Recycle Bin?"));
         ui.add_space(theme::GAP);
-        let what = if folder { format!("The folder {name} and everything in it") } else { name.clone() };
+        let what = if folder { crate::i18n::tf("The folder {name} and everything in it", &[("name", &name.to_string())]) } else { name.clone() };
         ui.add(egui::Label::new(egui::RichText::new(what).color(t.text)).wrap());
         ui.label(egui::RichText::new(tl("You can restore it from the Recycle Bin.")).color(t.text_muted));
         ui.add_space(theme::GAP * 2.0);
@@ -564,7 +564,7 @@ fn delete_dialog(editor: &mut Editor, ctx: &egui::Context) {
         if editor.inspected_file.as_ref().is_some_and(|f| f.path.starts_with(&path)) {
             editor.inspected_file = None;
         }
-        editor.status = format!("Moved {name} to the Recycle Bin.");
+        editor.status = crate::i18n::tf("Moved {name} to the Recycle Bin.", &[("name", &name.to_string())]);
     }
 }
 
@@ -576,8 +576,10 @@ fn name_field(ui: &mut egui::Ui, naming: &mut Option<Naming>, width: f32, outcom
     let Some(name) = naming.as_mut() else { return };
     let t = theme::tokens(ui);
     let label = match &name.target {
-        NameTarget::New { kind, .. } => format!("Name of the new {}", kind_name(*kind)),
-        NameTarget::Rename { path, .. } => format!("New name of {}", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+        NameTarget::New { kind, .. } => crate::i18n::tf("Name of the new {kind}", &[("kind", (tl(kind_name(*kind))))]),
+        NameTarget::Rename { path, .. } => {
+            crate::i18n::tf("New name of {name}", &[("name", &(path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()).to_string())])
+        }
     };
     let field =
         ui.add_sized([width, LIST_ROW + 2.0], egui::TextEdit::singleline(&mut name.text).margin(egui::vec2(4.0, 1.0)).align(egui::Align2::CENTER_CENTER));
@@ -713,7 +715,7 @@ fn create_panel(ui: &mut egui::Ui, folder: Option<&Path>, outcome: &mut Outcome)
         let button = ui.add(egui::Button::new((icon, job, egui::Atom::grow())).frame_when_inactive(false).min_size(egui::vec2(WIDTH, 36.0)));
         // The name says what is made; the description follows.
         ui.ctx().accesskit_node_builder(button.id, |node| {
-            node.set_label(format!("New {title}"));
+            node.set_label(crate::i18n::tf("New {title}", &[("title", title)]));
             node.set_description(what.to_owned());
         });
         if button.clicked() {
@@ -743,7 +745,11 @@ fn toolbar_right(ui: &mut egui::Ui, view: &mut ProjectView) {
         view.icon_size = size;
     }
     for (mode, label) in [(ViewMode::List, "List"), (ViewMode::Icons, "Icons")] {
-        if ui.add(egui::Button::selectable(view.mode == mode, label).small()).on_hover_text(format!("Show files as {}", label.to_lowercase())).clicked() {
+        if ui
+            .add(egui::Button::selectable(view.mode == mode, label).small())
+            .on_hover_text(crate::i18n::tf("Show files as {view}", &[("view", &tl(label).to_lowercase().to_string())]))
+            .clicked()
+        {
             view.mode = mode;
         }
     }
@@ -977,7 +983,7 @@ fn tile(ui: &mut egui::Ui, entry: &Entry, selected: bool, icon_size: f32, hide: 
     // Room for the icon, a little padding, and two lines of name below.
     let tile_size = egui::vec2((icon_size + 36.0).max(72.0), icon_size + 38.0);
     let (rect, response) = ui.allocate_exact_size(tile_size, egui::Sense::click_and_drag());
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, format!("{name}, {}", entry.kind.label())));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, format!("{name}, {}", tl(entry.kind.label()))));
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let fill = if selected {
@@ -1019,7 +1025,7 @@ fn list_row(ui: &mut egui::Ui, entry: &Entry, selected: bool, hide: bool) -> egu
         .min_size(egui::vec2(width, LIST_ROW))
         .sense(egui::Sense::click_and_drag());
     let response = ui.add(button);
-    ui.ctx().accesskit_node_builder(response.id, |node| node.set_label(format!("{name}, {}", entry.kind.label())));
+    ui.ctx().accesskit_node_builder(response.id, |node| node.set_label(format!("{name}, {}", tl(entry.kind.label()))));
     response.on_hover_text(&entry.name)
 }
 

@@ -65,7 +65,9 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                     ui.horizontal(|ui| {
                         let text = panel.renaming.entry(variable.name.clone()).or_insert_with(|| variable.name.clone());
                         let field = ui.add_sized([(width - 70.0).max(40.0), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(text));
-                        ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Name of variable {}", variable.name)));
+                        ui.ctx().accesskit_node_builder(field.id, |node| {
+                            node.set_label(crate::i18n::tf("Name of variable {name}", &[("name", &variable.name.to_string())]))
+                        });
                         if field.lost_focus() {
                             let typed = text.trim().to_owned();
                             if typed != variable.name {
@@ -87,17 +89,20 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                     ui.horizontal(|ui| {
                         let [get, set] = bayleaf_engine::script::visual::variable_kinds(variable.ty);
                         let read = ui.small_button(tl("Get")).on_hover_text(tl("Place a node that reads it"));
-                        ui.ctx().accesskit_node_builder(read.id, |node| node.set_label(format!("Get {}", variable.name)));
+                        ui.ctx().accesskit_node_builder(read.id, |node| node.set_label(crate::i18n::tf("Get {name}", &[("name", &variable.name.to_string())])));
                         if read.clicked() {
                             place(editor, get, at, &variable.name);
                         }
                         let write = ui.small_button(tl("Set")).on_hover_text(tl("Place a node that sets it"));
-                        ui.ctx().accesskit_node_builder(write.id, |node| node.set_label(format!("Set {}", variable.name)));
+                        ui.ctx()
+                            .accesskit_node_builder(write.id, |node| node.set_label(crate::i18n::tf("Set {name}", &[("name", &variable.name.to_string())])));
                         if write.clicked() {
                             place(editor, set, at, &variable.name);
                         }
                         let remove = ui.small_button(tl("Remove")).on_hover_text(tl("Its nodes keep working, starting from zero"));
-                        ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(format!("Remove variable {}", variable.name)));
+                        ui.ctx().accesskit_node_builder(remove.id, |node| {
+                            node.set_label(crate::i18n::tf("Remove variable {name}", &[("name", &variable.name.to_string())]))
+                        });
                         if remove.clicked() {
                             editor.dispatch("graph.variable.remove", &json!({ "name": variable.name }), None);
                         }
@@ -133,7 +138,7 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
         VariableType::Number => {
             let mut v = start.as_f64().unwrap_or(0.0);
             let field = ui.add(egui::DragValue::new(&mut v).speed(0.05).max_decimals(3));
-            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Start of {name}", &[("name", name)])));
             field.changed().then(|| json!(v))
         }
         VariableType::Vector => {
@@ -141,7 +146,7 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
             let mut changed = false;
             for (i, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
                 let field = ui.add(egui::DragValue::new(&mut v[i]).speed(0.05).max_decimals(2));
-                ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name} {axis}")));
+                ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Start of {name} {axis}", &[("name", name), ("axis", axis)])));
                 changed |= field.changed();
             }
             changed.then(|| json!(v))
@@ -149,19 +154,19 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
         VariableType::TrueFalse => {
             let mut b = start.as_bool().unwrap_or(false);
             let field = ui.checkbox(&mut b, "");
-            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Start of {name}", &[("name", name)])));
             field.changed().then(|| json!(b))
         }
         VariableType::WholeNumber => {
             let mut v = start.as_i64().and_then(|n| i32::try_from(n).ok()).unwrap_or(0);
             let field = ui.add(egui::DragValue::new(&mut v).speed(0.1));
-            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Start of {name}", &[("name", name)])));
             field.changed().then(|| json!(v))
         }
         VariableType::Text => {
             let mut text = start.as_str().unwrap_or_default().to_owned();
             let field = ui.add(egui::TextEdit::singleline(&mut text).char_limit(bayleaf_engine::graph::MAX_TEXT).desired_width(ui.available_width()));
-            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Start of {name}", &[("name", name)])));
             field.changed().then(|| json!(text))
         }
         // An object variable starts as none: it is set while the game plays.
@@ -172,7 +177,7 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
         VariableType::Color => {
             let mut rgb: [f32; 3] = std::array::from_fn(|i| start[i].as_f64().unwrap_or(1.0) as f32);
             let field = ui.color_edit_button_rgb(&mut rgb);
-            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Start of {name}", &[("name", name)])));
             field.changed().then(|| json!(rgb))
         }
     }
@@ -191,7 +196,7 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
             ui.horizontal(|ui| {
                 ui.label(&name);
                 let field = ui.add(egui::DragValue::new(&mut default).speed(0.05).max_decimals(3));
-                ui.ctx().accesskit_node_builder(field.id, |n| n.set_label(format!("Default of property {name}")));
+                ui.ctx().accesskit_node_builder(field.id, |n| n.set_label(crate::i18n::tf("Default of property {name}", &[("name", &name.to_string())])));
                 if field.changed() {
                     let key = format!("property default {} {}", node.id, editor.gesture);
                     editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "default", "value": default }), Some(&key));
@@ -223,7 +228,9 @@ fn script(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, pan
             };
         }
         if let Some(problem) = problem {
-            ui.add(egui::Label::new(egui::RichText::new(format!("Not set: {problem}")).small().color(t.text)).wrap());
+            ui.add(
+                egui::Label::new(egui::RichText::new(crate::i18n::tf("Not set: {problem}", &[("problem", &problem.to_string())])).small().color(t.text)).wrap(),
+            );
         }
         if !field.has_focus() && !field.changed() {
             panel.menu = None;

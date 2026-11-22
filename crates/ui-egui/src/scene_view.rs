@@ -150,9 +150,10 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
         ui.separator();
         for tool in gizmo::Tool::ALL {
             let key = tool.key().name();
-            let button = ui
-                .add(egui::Button::selectable(view.tool == tool, tool.label()))
-                .on_hover_text(format!("Drag the handles on the selected object to {} it ({key})", tool.label().to_lowercase()));
+            let button = ui.add(egui::Button::selectable(view.tool == tool, tool.label())).on_hover_text(crate::i18n::tf(
+                "Drag the handles on the selected object to {tool} it ({key})",
+                &[("tool", &tl(tool.label()).to_lowercase().to_string()), ("key", key)],
+            ));
             if button.clicked() {
                 view.tool = tool;
             }
@@ -183,7 +184,9 @@ pub(crate) fn play_controls(ui: &mut egui::Ui, session: &bayleaf_engine::Session
             command = Some("play.stop");
         }
         let state = if session.is_paused() { "Paused" } else { "Playing" };
-        ui.label(egui::RichText::new(format!("{state} · {:.1} s", session.play_time())).strong());
+        ui.label(
+            egui::RichText::new(crate::i18n::tf("{state} · {seconds} s", &[("state", state), ("seconds", &format!("{:.1}", session.play_time()))])).strong(),
+        );
     } else {
         let play = ui.add(egui::Button::new(egui::RichText::new(tl("Play")).color(t.on_accent)).fill(t.accent));
         if named(play, "Play scene").on_hover_text(tl("Run the scene's scripts (Ctrl+P)")).clicked() {

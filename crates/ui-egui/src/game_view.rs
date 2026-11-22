@@ -165,7 +165,10 @@ fn state_panel(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui) {
             match &saved {
                 Ok(saved) => values(ui, t, "Saved", saved),
                 Err(problem) => {
-                    ui.add(egui::Label::new(egui::RichText::new(format!("Not read: {problem}")).color(t.text)).wrap());
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(crate::i18n::tf("Not read: {problem}", &[("problem", &problem.to_string())])).color(t.text))
+                            .wrap(),
+                    );
                 }
             }
             if editor.session.project_dir().is_none() {

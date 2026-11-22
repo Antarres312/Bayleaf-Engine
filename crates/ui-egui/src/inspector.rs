@@ -80,10 +80,10 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             if response.changed() {
                 pending = Some(Pending::Set { component: "name", value: Value::String(edited) });
             }
-            ui.label(egui::RichText::new(format!("ID {}", &id.to_hex()[..8])).small().color(t.text_muted)).on_hover_text(id.to_hex());
+            ui.label(egui::RichText::new(crate::i18n::tf("ID {id}", &[("id", &id.to_hex()[..8])])).small().color(t.text_muted)).on_hover_text(id.to_hex());
             if selected_count > 1 {
                 // Say plainly what applies to all and what only to the object shown.
-                ui.add(egui::Label::new(egui::RichText::new(format!("{selected_count} objects selected. Delete, Duplicate, Copy and the handles in the scene view act on all of them; the fields below change only this one.")).small().color(t.text)).wrap());
+                ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tf("{selected_count} objects selected. Delete, Duplicate, Copy and the handles in the scene view act on all of them; the fields below change only this one.", &[("selected_count", &selected_count.to_string())])).small().color(t.text)).wrap());
             }
             ui.add_space(8.0);
         }
@@ -109,7 +109,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     let mut labels = overrides.clone();
                     labels.sort();
                     labels.dedup();
-                    format!("Own changes, kept when the file changes: {}", labels.join(", "))
+                    crate::i18n::tf("Own changes, kept when the file changes: {changes}", &[("changes", &(labels.join(", ")).to_string())])
                 };
                 ui.add(egui::Label::new(egui::RichText::new(summary).small().color(t.text_muted)).wrap());
                 ui.horizontal(|ui| {
@@ -164,7 +164,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             let title = card_data.script.display_name();
             let removed = card(ui, t, ("script card", index), &title, Some(&card_data.script.module), true, |ui| match &card_data.declared {
                 Err(message) => {
-                    ui.add(egui::Label::new(egui::RichText::new(format!("Warning: {message}")).color(t.warning)).wrap());
+                    ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tf("Warning: {message}", &[("message", &message.to_string())])).color(t.warning)).wrap());
                 }
                 Ok(declared) => {
                     let outcome = script_properties(ui, index, &card_data.script, declared, &mut pending);
@@ -307,8 +307,8 @@ fn card(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let button = ui.small_button(tl("Remove"));
                         // Several cards have a Remove button; the accessible name says which.
-                        button.ctx.accesskit_node_builder(button.id, |node| node.set_label(format!("Remove {title}")));
-                        if button.on_hover_text(format!("Remove {title}")).clicked() {
+                        button.ctx.accesskit_node_builder(button.id, |node| node.set_label(crate::i18n::tf("Remove {title}", &[("title", title)])));
+                        if button.on_hover_text(crate::i18n::tf("Remove {title}", &[("title", title)])).clicked() {
                             removed = true;
                         }
                     });
@@ -434,7 +434,9 @@ fn file_row(
         ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if field.editable && !current.is_empty() {
                 let edit = ui.add(egui::Button::new(tl("Edit")).min_size(egui::vec2(0.0, ROW_HEIGHT)));
-                ui.ctx().accesskit_node_builder(edit.id, |node| node.set_label(format!("Edit {}", field.label.to_lowercase())));
+                ui.ctx().accesskit_node_builder(edit.id, |node| {
+                    node.set_label(crate::i18n::tf("Edit {field}", &[("field", &tl(field.label).to_lowercase().to_string())]))
+                });
                 if edit.on_hover_text(tl("Open it in the graph editor")).clicked() {
                     *open = Some(base.join(current));
                 }
@@ -466,7 +468,7 @@ fn file_row(
         });
     });
     if let Some(problem) = &field.problem {
-        ui.add(egui::Label::new(egui::RichText::new(format!("Warning: {problem}")).color(t.warning)).wrap());
+        ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tf("Warning: {problem}", &[("problem", &problem.to_string())])).color(t.warning)).wrap());
     }
     chosen.filter(|c| c != current)
 }
@@ -492,7 +494,7 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
             none: "None (silent)",
             no_files: "No sound files (WAV, Ogg Vorbis, MP3…) in the project folder",
             files: editor.project.sound_files(),
-            problem: missing.then(|| format!("{} is not there", source.clip)),
+            problem: missing.then(|| crate::i18n::tf("{file} is not there", &[("file", &source.clip.to_string())])),
             editable: false,
         });
     }
@@ -505,7 +507,7 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
             none: "None (stays empty)",
             no_files: "No .bscene files in the project folder",
             files: editor.project.scene_files(),
-            problem: missing.then(|| format!("{} is not there", area.scene)),
+            problem: missing.then(|| crate::i18n::tf("{file} is not there", &[("file", &area.scene.to_string())])),
             editable: false,
         });
     }
@@ -567,7 +569,7 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
             none: "None (the project's Input Map)",
             no_files: "No .binput files in the project folder",
             files: editor.project.input_map_files(),
-            problem: missing.then(|| format!("{} is not there", component.asset)),
+            problem: missing.then(|| crate::i18n::tf("{file} is not there", &[("file", &component.asset.to_string())])),
             editable: true,
         });
     }

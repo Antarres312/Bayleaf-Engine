@@ -1649,6 +1649,7 @@ fn the_pseudo_language_marks_menus_tabs_cards_and_command_labels() {
     harness.state_mut().dispatch("scene.object.create", &json!({ "name": "Box" }), None);
     harness.run();
     assert!(harness.query_by_label("⟦File⟧").is_some(), "top menus");
+    assert!(harness.query_by_label_contains(": done⟧").is_some(), "messages built while running: {}", harness.state().status);
     assert!(harness.query_by_label("⟦Hierarchy⟧").is_some(), "panel tabs");
     harness.get_by_label("Box").click();
     harness.run();

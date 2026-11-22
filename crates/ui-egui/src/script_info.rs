@@ -29,7 +29,7 @@ impl ScriptInfo {
         let described = if path.exists() {
             bayleaf_engine::script::module_bytes(path).and_then(|bytes| self.host.describe_all(&name, &bytes)).map_err(|e| e.to_string())
         } else {
-            Err(format!("Script file not found: {}", path.display()))
+            Err(crate::i18n::tf("Script file not found: {path}", &[("path", &path.display().to_string())]))
         };
         self.cache.insert(path.to_path_buf(), (modified, described.clone()));
         described
