@@ -377,7 +377,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
      MSAA. Each effect is on or off with its settings, applied in a fixed order, and the Scene view
      can show the result or the plain picture. Project Settings > Graphics sets which effects the
      game may use at all. (Done: `.bpost` assets, effects in that order, and the colour lookup image
-     (`color.lookup`, with Make Neutral Lookup to start one).)
+     (`color.lookup`, with Make Neutral Lookup to start one). Antialiasing is Off, Fast or Fine, and
+     Project Settings > Graphics turns multisampling (4 samples a pixel) on or off.)
    - **Material nodes for stylised shading (a cel-shaded look).** What is missing: the light's
      direction, colour and shadow at the point (for each light, and the main one), the view
      direction, Dot Product, Normalize, Step, Smoothstep, Lerp, Posterize (bands), Remap, Power,

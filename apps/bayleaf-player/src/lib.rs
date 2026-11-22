@@ -56,6 +56,8 @@ struct Player {
     profile: Option<PathBuf>,
     /// How shadows are drawn, from the project's graphics settings.
     shadows: render::ShadowSettings,
+    /// Samples per pixel (Project Settings > Graphics > Multisampling).
+    samples: u32,
     /// The post-processing effects the project lets the game use.
     effects: render::EffectsAllowed,
 }
@@ -108,13 +110,14 @@ impl Player {
             self.failure = Some("The game stopped.".to_owned());
         }
 
+        let samples = self.samples;
         let view = self.gpu.get_or_insert_with(|| {
-            let target = RenderTarget::new(&gpu.device, width, height);
+            let target = RenderTarget::with_samples(&gpu.device, width, height, samples);
             let texture = gpu.renderer.write().register_native_texture(&gpu.device, target.view(), render::wgpu::FilterMode::Linear);
-            Gpu { renderer: Renderer::new(&gpu.device), target, texture }
+            Gpu { renderer: Renderer::with_samples(&gpu.device, samples), target, texture }
         });
         if view.target.size() != (width, height) {
-            view.target = RenderTarget::new(&gpu.device, width, height);
+            view.target = RenderTarget::with_samples(&gpu.device, width, height, samples);
             gpu.renderer.write().update_egui_texture_from_wgpu_texture(&gpu.device, view.target.view(), render::wgpu::FilterMode::Linear, view.texture);
         }
         let aspect = size.x / size.y;
@@ -262,7 +265,7 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
     }
     let options = eframe::NativeOptions { viewport, persist_window: false, wgpu_options: bayleaf_ui_egui::wgpu_configuration(), ..Default::default() };
     let graphics = bayleaf_engine::project_cmds::settings_of(&session).graphics;
-    let (shadows, effects) = (graphics.shadows(), graphics.effects.render());
+    let (shadows, effects, samples) = (graphics.shadows(), graphics.effects.render(), graphics.samples());
     let player = Player {
         session,
         materials: render::MaterialLibrary::default(),
@@ -272,6 +275,7 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
         interfaces: bayleaf_ui_egui::game_interface::GameInterfaces::default(),
         world: bayleaf_ui_egui::world_interface::WorldInterfaces::default(),
         shadows,
+        samples,
         effects,
         failure,
         fullscreen: args.fullscreen,

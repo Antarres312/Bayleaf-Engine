@@ -73,8 +73,13 @@ impl HeadlessGpu {
 
     /// Renders `frame` at `width` × `height` and reads the pixels back.
     pub fn render(&self, frame: &Frame, width: u32, height: u32) -> Result<Image, RenderError> {
-        let mut renderer = Renderer::new(&self.device);
-        let target = RenderTarget::new(&self.device, width, height);
+        self.render_with_samples(frame, width, height, crate::gpu::DEFAULT_SAMPLES)
+    }
+
+    /// [`Self::render`] with `samples` per pixel: 1 without multisampling.
+    pub fn render_with_samples(&self, frame: &Frame, width: u32, height: u32, samples: u32) -> Result<Image, RenderError> {
+        let mut renderer = Renderer::with_samples(&self.device, samples);
+        let target = RenderTarget::with_samples(&self.device, width, height, samples);
         renderer.render(&self.device, &self.queue, &target, frame);
         if let Some(error) = renderer.material_error() {
             return Err(RenderError::Gpu(format!("a material shader was refused: {error}")));

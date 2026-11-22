@@ -38,8 +38,8 @@ pub struct PostSettings {
     pub occlusion: f32,
     /// How far around a point occlusion looks, in world units.
     pub occlusion_radius: f32,
-    /// Smooths the remaining jagged edges of the finished picture.
-    pub antialiasing: bool,
+    /// How the remaining jagged edges of the finished picture are smoothed.
+    pub antialiasing: bayleaf_scene::post::Antialiasing,
 }
 
 impl Default for PostSettings {
@@ -58,7 +58,7 @@ impl Default for PostSettings {
             fog: None,
             occlusion: 0.0,
             occlusion_radius: 0.5,
-            antialiasing: false,
+            antialiasing: bayleaf_scene::post::Antialiasing::Off,
         }
     }
 }
@@ -99,7 +99,7 @@ impl PostRaw {
             ],
             fog: [fog_color[0], fog_color[1], fog_color[2], on],
             c: [finite(start, 0.0), finite(end, 1.0), finite(s.occlusion, 0.0).clamp(0.0, 1.0), finite(s.occlusion_radius, 0.5).max(0.01)],
-            d: [f32::from(u8::from(s.antialiasing)), 1.0 / width.max(1) as f32, 1.0 / height.max(1) as f32, f32::from(u8::from(s.bloom > 0.0))],
+            d: [s.antialiasing as u8 as f32, 1.0 / width.max(1) as f32, 1.0 / height.max(1) as f32, f32::from(u8::from(s.bloom > 0.0))],
             e: match s.lookup.as_deref().and_then(lookup_steps) {
                 Some(steps) => [finite(s.lookup_strength, 1.0).clamp(0.0, 1.0), steps as f32, 0.0, 0.0],
                 None => [0.0; 4],
@@ -172,14 +172,17 @@ fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType, multisample
 }
 
 impl Post {
-    pub(crate) fn new(device: &wgpu::Device, globals_layout: &wgpu::BindGroupLayout, shader_source: String) -> Self {
+    /// For a target of `samples` per pixel: its depth is read multisampled, or plain with 1 sample.
+    pub(crate) fn new(device: &wgpu::Device, globals_layout: &wgpu::BindGroupLayout, shader_source: String, samples: u32) -> Self {
+        let multisampled = samples > 1;
+        let shader_source = if multisampled { shader_source } else { shader_source.replace("texture_depth_multisampled_2d", "texture_depth_2d") };
         let float = wgpu::TextureSampleType::Float { filterable: true };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bayleaf post layout"),
             entries: &[
                 texture_entry(0, float, false),
                 texture_entry(1, float, false),
-                texture_entry(2, wgpu::TextureSampleType::Depth, true),
+                texture_entry(2, wgpu::TextureSampleType::Depth, multisampled),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,

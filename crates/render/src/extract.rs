@@ -393,7 +393,7 @@ pub fn post_settings(post: &bayleaf_scene::post::PostProcessing, allowed: &Effec
         s.occlusion = post.occlusion.strength;
         s.occlusion_radius = post.occlusion.radius;
     }
-    s.antialiasing = post.antialiasing && allowed.antialiasing;
+    s.antialiasing = if allowed.antialiasing { post.antialiasing } else { bayleaf_scene::post::Antialiasing::Off };
     s
 }
 

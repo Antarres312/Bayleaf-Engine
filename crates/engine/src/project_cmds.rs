@@ -18,8 +18,9 @@ pub const PROJECT_EXTENSION: &str = "bproject";
 /// (`settings.input.map`); version 4 added the editor preferences (`settings.editor`); version 5 added the game's icon
 /// (`settings.game.icon`); version 6 the script mode per platform (`settings.game.scriptModes`); version 7 the
 /// shadow quality (`settings.graphics`); version 8 the post-processing effects games may use
-/// (`settings.graphics.effects`). Older files still open; opening one moves its actions.
-pub(crate) const PROJECT_VERSION: u32 = 8;
+/// (`settings.graphics.effects`); version 9 multisampling on or off (`settings.graphics.multisampling`). Older
+/// files still open; opening one moves its actions.
+pub(crate) const PROJECT_VERSION: u32 = 9;
 
 /// A project file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -69,6 +70,10 @@ pub struct GraphicsSettings {
     /// The post-processing effects scenes may use at all.
     #[serde(default)]
     pub effects: EffectsAllowed,
+    /// Multisampling: each pixel's edges drawn from 4 samples (smooth edges, more GPU memory and
+    /// time); off draws one.
+    #[serde(default = "yes")]
+    pub multisampling: bool,
 }
 
 /// The post-processing effects a project lets its scenes use; each on unless turned off.
@@ -138,12 +143,18 @@ impl Default for GraphicsSettings {
             shadow_distance: shadows.reach,
             shadow_lights: shadows.lights,
             effects: EffectsAllowed::default(),
+            multisampling: true,
         }
     }
 }
 
 impl GraphicsSettings {
     /// The shadows the renderer draws for these settings.
+    /// Samples per pixel the views draw with.
+    pub fn samples(&self) -> u32 {
+        if self.multisampling { bayleaf_render::DEFAULT_SAMPLES } else { 1 }
+    }
+
     pub fn shadows(&self) -> bayleaf_render::ShadowSettings {
         bayleaf_render::ShadowSettings {
             resolution: self.shadow_resolution,

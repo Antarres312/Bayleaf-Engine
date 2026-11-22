@@ -16,7 +16,8 @@ pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrg
 /// The scene's own colour, before post-processing makes the displayed picture: high range, linear.
 pub(crate) const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const SAMPLES: u32 = 4;
+/// Samples per pixel of a target made with [`RenderTarget::new`]; 1 draws without multisampling.
+pub const DEFAULT_SAMPLES: u32 = 4;
 /// The selection mask: one channel, set where a selected shape is.
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
@@ -123,7 +124,9 @@ pub struct RenderTarget {
     height: u32,
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
-    msaa_view: wgpu::TextureView,
+    /// The multisampled colour, drawn into and resolved into `hdr_view`; none with 1 sample.
+    msaa_view: Option<wgpu::TextureView>,
+    samples: u32,
     /// The scene's colour resolved from the multisampled one, which post-processing reads.
     hdr_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
@@ -135,6 +138,13 @@ pub struct RenderTarget {
 
 impl RenderTarget {
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self::with_samples(device, width, height, DEFAULT_SAMPLES)
+    }
+
+    /// A target drawn with `samples` per pixel (multisampling): 1 for none, else 4 (the count every
+    /// device supports).
+    pub fn with_samples(device: &wgpu::Device, width: u32, height: u32, samples: u32) -> Self {
+        let samples = if samples <= 1 { 1 } else { 4 };
         let (width, height) = (width.max(1), height.max(1));
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let texture = |label, format, samples, usage| {
@@ -155,9 +165,9 @@ impl RenderTarget {
             1,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         );
-        let msaa = texture("bayleaf msaa", HDR_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let msaa = (samples > 1).then(|| texture("bayleaf msaa", HDR_FORMAT, samples, wgpu::TextureUsages::RENDER_ATTACHMENT));
         let hdr = texture("bayleaf scene colour", HDR_FORMAT, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
-        let depth = texture("bayleaf depth", DEPTH_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
+        let depth = texture("bayleaf depth", DEPTH_FORMAT, samples, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
         let bloom_views = (0..crate::post::BLOOM_LEVELS)
             .map(|level| {
                 let size = wgpu::Extent3d { width: (width >> (level + 1)).max(1), height: (height >> (level + 1)).max(1), depth_or_array_layers: 1 };
@@ -176,12 +186,12 @@ impl RenderTarget {
             })
             .collect();
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
-        let msaa_view = msaa.create_view(&wgpu::TextureViewDescriptor::default());
+        let msaa_view = msaa.map(|m| m.create_view(&wgpu::TextureViewDescriptor::default()));
         let hdr_view = hdr.create_view(&wgpu::TextureViewDescriptor::default());
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
         let mask = texture("bayleaf selection mask", MASK_FORMAT, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
         let mask_view = mask.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { width, height, color, color_view, msaa_view, hdr_view, depth_view, mask_view, bloom_views }
+        Self { width, height, color, color_view, msaa_view, samples, hdr_view, depth_view, mask_view, bloom_views }
     }
 
     pub(crate) fn hdr_view(&self) -> &wgpu::TextureView {
@@ -198,6 +208,11 @@ impl RenderTarget {
 
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// Samples per pixel: 1 without multisampling.
+    pub fn samples(&self) -> u32 {
+        self.samples
     }
 
     /// The resolved colour texture, for display or copying.
@@ -232,6 +247,8 @@ impl RenderTarget {
 
 /// Draws [`Frame`]s into [`RenderTarget`]s.
 pub struct Renderer {
+    /// Samples per pixel the pipelines draw with; a target of another count makes them again.
+    samples: u32,
     globals: wgpu::Buffer,
     globals_group: wgpu::BindGroup,
     layout: wgpu::PipelineLayout,
@@ -280,6 +297,13 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn new(device: &wgpu::Device) -> Self {
+        Self::with_samples(device, DEFAULT_SAMPLES)
+    }
+
+    /// A renderer for targets of `samples` per pixel. [`Self::render`] makes it again for a target
+    /// of another count.
+    pub fn with_samples(device: &wgpu::Device, samples: u32) -> Self {
+        let samples = if samples <= 1 { 1 } else { 4 };
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bayleaf globals"),
             size: std::mem::size_of::<Globals>() as u64,
@@ -404,16 +428,16 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(mesh_source(DEFAULT_SURFACE).into()),
         });
         let mut pipelines = HashMap::new();
-        pipelines.insert(0, Some((mesh_pipeline(device, &layout, &mesh_shader, false), mesh_pipeline(device, &layout, &mesh_shader, true))));
-        let grid = grid_pipeline(device, &layout, &grid_shader);
+        pipelines.insert(0, Some((mesh_pipeline(device, &layout, &mesh_shader, false, samples), mesh_pipeline(device, &layout, &mesh_shader, true, samples))));
+        let grid = grid_pipeline(device, &layout, &grid_shader, samples);
         let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("bayleaf sky shader"),
             source: wgpu::ShaderSource::Wgsl(with_common(include_str!("shaders/sky.wgsl")).into()),
         });
-        let sky = sky_pipeline(device, &layout, &sky_shader);
+        let sky = sky_pipeline(device, &layout, &sky_shader, samples);
         let (mask_pipeline, outline_pipeline, outline_layout) = outline_pipelines(device, &globals_layout);
-        let post = crate::post::Post::new(device, &globals_layout, with_common(include_str!("shaders/post.wgsl")));
-        let additive = HashMap::from([(0, additive_mesh_pipeline(device, &layout, &mesh_shader))]);
+        let post = crate::post::Post::new(device, &globals_layout, with_common(include_str!("shaders/post.wgsl")), samples);
+        let additive = HashMap::from([(0, additive_mesh_pipeline(device, &layout, &mesh_shader, samples))]);
 
         let meshes = Shape::ALL
             .iter()
@@ -467,6 +491,7 @@ impl Renderer {
             models: HashMap::new(),
             drawn: (0, 0),
             timer: None,
+            samples,
         }
     }
 
@@ -516,9 +541,10 @@ impl Renderer {
             label: Some("bayleaf material shader"),
             source: wgpu::ShaderSource::Wgsl(mesh_source(&material.surface).into()),
         });
-        let pipelines = (mesh_pipeline(device, &self.layout, &shader, false), mesh_pipeline(device, &self.layout, &shader, true));
-        let outline = material.outline.is_some().then(|| outline_mesh_pipeline(device, &self.layout, &shader));
-        let additive = additive_mesh_pipeline(device, &self.layout, &shader);
+        let samples = self.samples;
+        let pipelines = (mesh_pipeline(device, &self.layout, &shader, false, samples), mesh_pipeline(device, &self.layout, &shader, true, samples));
+        let outline = material.outline.is_some().then(|| outline_mesh_pipeline(device, &self.layout, &shader, samples));
+        let additive = additive_mesh_pipeline(device, &self.layout, &shader, samples);
         let entry = match pollster::block_on(scope.pop()) {
             None => {
                 if let Some(outline) = outline {
@@ -613,6 +639,11 @@ impl Renderer {
 
     /// Records and submits the commands that draw `frame` into `target`.
     pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, target: &RenderTarget, frame: &Frame) {
+        // Pipelines are made for one sample count: a target of another (multisampling turned on or
+        // off) needs them made again, and the images and models are uploaded again with them.
+        if target.samples() != self.samples {
+            *self = Self::with_samples(device, target.samples());
+        }
         // The shadow map as large as the settings ask, with a layer for each face the frame's
         // shadow-casting lights use (a sun one per cascade, a point light six).
         let settings = frame.shadows.clamped();
@@ -695,12 +726,14 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("bayleaf scene pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target.msaa_view,
+                    view: target.msaa_view.as_ref().unwrap_or(&target.hdr_view),
                     depth_slice: None,
-                    resolve_target: Some(&target.hdr_view),
+                    resolve_target: target.msaa_view.as_ref().map(|_| &target.hdr_view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color { r: f64::from(c.x), g: f64::from(c.y), b: f64::from(c.z), a: f64::from(c.w) }),
-                        store: wgpu::StoreOp::Discard,
+                        // The multisampled colour is resolved into the scene colour and then not needed;
+                        // without multisampling the pass draws into the scene colour itself, which stays.
+                        store: if target.msaa_view.is_some() { wgpu::StoreOp::Discard } else { wgpu::StoreOp::Store },
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -1217,28 +1250,26 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array
     9 => Float32x4, 10 => Float32x4, 12 => Float32x4,
 ];
 
-fn mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, transparent: bool) -> wgpu::RenderPipeline {
-    mesh_pipeline_with(device, layout, shader, transparent, false)
+fn mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, transparent: bool, samples: u32) -> wgpu::RenderPipeline {
+    mesh_pipeline_build(device, layout, shader, Kind { transparent, outline: false, additive: false }, samples)
 }
 
 /// Items that add their light (particles of fire and sparks): no depth written, colour added.
-fn additive_mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
-    mesh_pipeline_build(device, layout, shader, true, false, true)
+fn additive_mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, samples: u32) -> wgpu::RenderPipeline {
+    mesh_pipeline_build(device, layout, shader, Kind { transparent: true, outline: false, additive: true }, samples)
 }
 
 /// A material's outline: its back faces only (front faces culled), grown by `vs_outline`.
-fn outline_mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
-    mesh_pipeline_with(device, layout, shader, false, true)
+fn outline_mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, samples: u32) -> wgpu::RenderPipeline {
+    mesh_pipeline_build(device, layout, shader, Kind { transparent: false, outline: true, additive: false }, samples)
 }
 
-fn mesh_pipeline_with(
-    device: &wgpu::Device,
-    layout: &wgpu::PipelineLayout,
-    shader: &wgpu::ShaderModule,
+/// Which mesh pipeline: blended over what is behind, a material's outline, or added light.
+#[derive(Clone, Copy)]
+struct Kind {
     transparent: bool,
     outline: bool,
-) -> wgpu::RenderPipeline {
-    mesh_pipeline_build(device, layout, shader, transparent, outline, false)
+    additive: bool,
 }
 
 /// Light added to what is behind, weighted by the item's opacity.
@@ -1247,14 +1278,8 @@ const ADDITIVE: wgpu::BlendState = wgpu::BlendState {
     alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
 };
 
-fn mesh_pipeline_build(
-    device: &wgpu::Device,
-    layout: &wgpu::PipelineLayout,
-    shader: &wgpu::ShaderModule,
-    transparent: bool,
-    outline: bool,
-    additive: bool,
-) -> wgpu::RenderPipeline {
+fn mesh_pipeline_build(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, kind: Kind, samples: u32) -> wgpu::RenderPipeline {
+    let Kind { transparent, outline, additive } = kind;
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(if outline {
             "bayleaf material outline"
@@ -1291,7 +1316,7 @@ fn mesh_pipeline_build(
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
-        multisample: wgpu::MultisampleState { count: SAMPLES, ..wgpu::MultisampleState::default() },
+        multisample: wgpu::MultisampleState { count: samples, ..wgpu::MultisampleState::default() },
         fragment: Some(wgpu::FragmentState {
             module: shader,
             entry_point: Some(if outline { "fs_outline" } else { "fs_main" }),
@@ -1307,7 +1332,7 @@ fn mesh_pipeline_build(
     })
 }
 
-fn grid_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
+fn grid_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, samples: u32) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("bayleaf grid"),
         layout: Some(layout),
@@ -1327,7 +1352,7 @@ fn grid_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &
             // instead of flickering with it.
             bias: wgpu::DepthBiasState { constant: 64, slope_scale: 2.0, clamp: 0.0 },
         }),
-        multisample: wgpu::MultisampleState { count: SAMPLES, ..wgpu::MultisampleState::default() },
+        multisample: wgpu::MultisampleState { count: samples, ..wgpu::MultisampleState::default() },
         fragment: Some(wgpu::FragmentState {
             module: shader,
             entry_point: Some("fs_main"),
@@ -1543,7 +1568,7 @@ struct GpuImage {
 }
 
 /// The sky: drawn first, behind everything, without touching the depth buffer.
-fn sky_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
+fn sky_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, samples: u32) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("bayleaf sky"),
         layout: Some(layout),
@@ -1561,7 +1586,7 @@ fn sky_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &w
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
-        multisample: wgpu::MultisampleState { count: SAMPLES, ..wgpu::MultisampleState::default() },
+        multisample: wgpu::MultisampleState { count: samples, ..wgpu::MultisampleState::default() },
         fragment: Some(wgpu::FragmentState {
             module: shader,
             entry_point: Some("fs_main"),

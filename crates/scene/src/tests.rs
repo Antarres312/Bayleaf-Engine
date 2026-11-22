@@ -251,3 +251,15 @@ fn an_inspector_layout_is_checked_against_the_declared_properties() {
         assert!(error.contains(why), "{bad}: {error}");
     }
 }
+
+#[test]
+fn post_processing_antialiasing_reads_old_on_and_off_and_the_new_choices() {
+    use crate::post::{Antialiasing, PostProcessing};
+    let file = |version: u32, value: &str| format!(r#"{{"format": "bayleaf.post", "version": {version}, "post": {{"antialiasing": {value}}}}}"#);
+    assert_eq!(PostProcessing::from_text(&file(2, "true")).unwrap().antialiasing, Antialiasing::Fast, "on was the quick blend");
+    assert_eq!(PostProcessing::from_text(&file(2, "false")).unwrap().antialiasing, Antialiasing::Off);
+    assert_eq!(PostProcessing::from_text(&file(3, r#""fine""#)).unwrap().antialiasing, Antialiasing::Fine);
+    assert!(PostProcessing::from_text(&file(3, r#""best""#)).is_err(), "only off, fast or fine");
+    let written = PostProcessing { antialiasing: Antialiasing::Fine, ..PostProcessing::default() }.to_text();
+    assert!(written.contains(r#""antialiasing": "fine""#), "{written}");
+}

@@ -15,7 +15,7 @@ struct Post {
     fog: vec4<f32>,
     // x: fog start, y: fog end, z: occlusion strength, w: occlusion radius (world units)
     c: vec4<f32>,
-    // x: 1 with antialiasing, yz: one pixel in uv, w: 1 with bloom
+    // x: antialiasing (0 off, 1 fast, 2 fine), yz: one pixel in uv, w: 1 with bloom
     d: vec4<f32>,
     // x: colour lookup strength, y: its steps per side (0 without one)
     e: vec4<f32>,
@@ -182,6 +182,39 @@ fn openness(uv: vec2<f32>, depth: f32) -> f32 {
     return 1.0 - post.c.z * clamp(blocked / 16.0 * 1.5, 0.0, 1.0);
 }
 
+// The finished colour of the scene at `uv` (between pixels, filtered).
+fn graded_at(uv: vec2<f32>) -> vec3<f32> {
+    return graded(textureSampleLevel(scene_color, post_sampler, uv, 0.0).rgb, uv);
+}
+
+// Fine antialiasing: where the brightness of the diagonal neighbours differs enough to be an edge,
+// the colour is averaged along the edge's own direction (worked out from those neighbours), a
+// little and further; the further average is kept unless it strays past the neighbours' range.
+fn fine_edges(uv: vec2<f32>, here: vec3<f32>) -> vec3<f32> {
+    let px = post.d.yz;
+    let nw = luma(graded_at(uv + vec2<f32>(-px.x, -px.y)));
+    let ne = luma(graded_at(uv + vec2<f32>(px.x, -px.y)));
+    let sw = luma(graded_at(uv + vec2<f32>(-px.x, px.y)));
+    let se = luma(graded_at(uv + vec2<f32>(px.x, px.y)));
+    let m = luma(here);
+    let low = min(m, min(min(nw, ne), min(sw, se)));
+    let high = max(m, max(max(nw, ne), max(sw, se)));
+    if (high - low < max(0.0312, high * 0.125)) {
+        return here;
+    }
+    var along = vec2<f32>(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));
+    let reduce = max((nw + ne + sw + se) * 0.03125, 1.0 / 128.0);
+    let scale = 1.0 / (min(abs(along.x), abs(along.y)) + reduce);
+    along = clamp(along * scale, vec2<f32>(-8.0), vec2<f32>(8.0)) * px;
+    let near = 0.5 * (graded_at(uv + along * (1.0 / 3.0 - 0.5)) + graded_at(uv + along * (2.0 / 3.0 - 0.5)));
+    let far = near * 0.5 + 0.25 * (graded_at(uv - along * 0.5) + graded_at(uv + along * 0.5));
+    let far_luma = luma(far);
+    if (far_luma < low || far_luma > high) {
+        return near;
+    }
+    return far;
+}
+
 @fragment
 fn fs_post(in: FullOut) -> @location(0) vec4<f32> {
     let uv = in.uv;
@@ -198,7 +231,9 @@ fn fs_post(in: FullOut) -> @location(0) vec4<f32> {
         }
     }
     var c = graded(hdr.rgb, uv);
-    if (post.d.x > 0.5) {
+    if (post.d.x > 1.5) {
+        c = fine_edges(uv, c);
+    } else if (post.d.x > 0.5) {
         // Edges by brightness: blend a pixel with its neighbours where they differ sharply.
         let px = post.d.yz;
         let n = graded(textureSampleLevel(scene_color, post_sampler, uv - vec2<f32>(0.0, px.y), 0.0).rgb, uv);

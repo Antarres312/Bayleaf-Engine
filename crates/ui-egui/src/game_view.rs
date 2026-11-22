@@ -78,13 +78,14 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
     let size = ui.available_size().max(egui::vec2(16.0, 16.0));
     let ppp = ui.ctx().pixels_per_point();
     let (width, height) = ((size.x * ppp).round().max(1.0) as u32, (size.y * ppp).round().max(1.0) as u32);
+    let samples = crate::project_settings::current(editor).graphics.samples();
     let target = view.gpu.get_or_insert_with(|| {
-        let target = RenderTarget::new(&gpu.device, width, height);
+        let target = RenderTarget::with_samples(&gpu.device, width, height, samples);
         let texture = gpu.renderer.write().register_native_texture(&gpu.device, target.view(), bayleaf_render::wgpu::FilterMode::Linear);
-        Gpu { renderer: Renderer::new(&gpu.device), target, texture }
+        Gpu { renderer: Renderer::with_samples(&gpu.device, samples), target, texture }
     });
-    if target.target.size() != (width, height) {
-        target.target = RenderTarget::new(&gpu.device, width, height);
+    if target.target.size() != (width, height) || target.target.samples() != samples {
+        target.target = RenderTarget::with_samples(&gpu.device, width, height, samples);
         gpu.renderer.write().update_egui_texture_from_wgpu_texture(&gpu.device, target.target.view(), bayleaf_render::wgpu::FilterMode::Linear, target.texture);
     }
     let graphics = crate::project_settings::current(editor).graphics;

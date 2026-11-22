@@ -164,6 +164,8 @@ shadow map: 512, 1024, 2048 or 4096), `shadowCascades` (how many maps a sun's sh
 into by distance from the camera in a large scene, 1 to 4), `shadowDistance` (how far a sun's
 shadow reaches from the camera, in world units; 0 for the whole scene) and `shadowLights` (how
 many lights cast shadows at once, 1 to 4, sun-like lights first). Project format version 7.
+`multisampling` (on unless turned off; project format 9) draws each pixel's edges from 4 samples;
+off draws one, saving GPU memory and time.
 
 `play.message` (`{name, value?, id?}`) sends the scripts of object `id`, or of every object, a message
 while the game plays, as an Inspector button of a script does. A script's description may lay out its
@@ -180,7 +182,9 @@ While a prefab is open, play mode, saving the scene and opening another scene or
 A post-processing asset (`.bpost`) says what a camera does to the drawn picture: `toneMapping`
 (`enabled`, `exposure`), `bloom` (`enabled`, `strength`, `threshold`), `color` (`enabled`, `contrast`,
 `saturation`, `lookup`, `lookupStrength`), `vignette` (`enabled`, `strength`, `smoothness`), `depthFog` (`enabled`, `color`,
-`start`, `end`), `occlusion` (`enabled`, `strength`, `radius`) and `antialiasing`. `post.get`
+`start`, `end`), `occlusion` (`enabled`, `strength`, `radius`) and `antialiasing` (`off`, `fast`: each
+pixel blended with its neighbours where they differ sharply, or `fine`: along each edge's direction,
+sub-pixel steps too; post-processing version 3, where `true` and `false` still read as fast and off). `post.get`
 (`{path}`) reads one and `post.set` (`{path, post}`) writes it, inside the write roots; `asset.create`
 with kind `postProcessing` makes one. `scene.settings.set` takes `postProcessing` (the scene's asset),
 a Camera component's `postProcessing` field names its own (used by the Game view, the player and

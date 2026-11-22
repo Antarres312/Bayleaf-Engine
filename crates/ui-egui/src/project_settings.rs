@@ -220,6 +220,12 @@ fn graphics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut Project
     });
     ui.add_space(theme::GAP);
     ui.add_space(theme::SECTION_GAP);
+    theme::headed(t, "Edges").show(ui, |ui| {
+        ui.checkbox(&mut graphics.multisampling, tl("Multisampling (4 samples a pixel)"))
+            .on_hover_text(tl("Smooth edges of every shape as it is drawn; off saves GPU memory and time"));
+        note(ui, "A post-processing asset's Antialiasing smooths what is left, or does the work alone with multisampling off.");
+    });
+    ui.add_space(theme::SECTION_GAP);
     theme::headed(t, "Post-processing Effects").show(ui, |ui| {
         let effects = &mut graphics.effects;
         for (on, label) in [

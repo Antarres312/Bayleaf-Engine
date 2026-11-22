@@ -14,8 +14,9 @@ pub const EXTENSION: &str = "bpost";
 /// `format` of post-processing files.
 pub const FORMAT: &str = "bayleaf.post";
 /// Current post-processing file version.
-/// Version 2 adds the colour lookup image (`color.lookup`, `color.lookupStrength`).
-pub const VERSION: u32 = 2;
+/// Version 2 adds the colour lookup image (`color.lookup`, `color.lookupStrength`); version 3 makes
+/// `antialiasing` a choice (`off`, `fast`, `fine`; true and false still read as fast and off).
+pub const VERSION: u32 = 3;
 
 /// Every effect, each on or off with its settings.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -33,9 +34,43 @@ pub struct PostProcessing {
     pub depth_fog: DepthFog,
     #[serde(default)]
     pub occlusion: Occlusion,
-    /// Smooths the jagged edges left after the scene's own multisampling.
+    /// How the finished picture's jagged edges are smoothed, after the scene's own multisampling.
     #[serde(default)]
-    pub antialiasing: bool,
+    pub antialiasing: Antialiasing,
+}
+
+/// How a picture's remaining jagged edges are smoothed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Antialiasing {
+    #[default]
+    Off,
+    /// Each pixel blended with its four neighbours where they differ sharply: quick, a little soft.
+    Fast,
+    /// Along each edge's own direction, sub-pixel steps too: smoother edges and thin lines.
+    Fine,
+}
+
+impl<'de> Deserialize<'de> for Antialiasing {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Files before version 3 kept it on or off.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Stored {
+            OnOff(bool),
+            Named(String),
+        }
+        match Stored::deserialize(deserializer)? {
+            Stored::OnOff(true) => Ok(Antialiasing::Fast),
+            Stored::OnOff(false) => Ok(Antialiasing::Off),
+            Stored::Named(name) => match name.as_str() {
+                "off" => Ok(Antialiasing::Off),
+                "fast" => Ok(Antialiasing::Fast),
+                "fine" => Ok(Antialiasing::Fine),
+                other => Err(serde::de::Error::custom(format!("antialiasing is off, fast or fine, not {other:?}"))),
+            },
+        }
+    }
 }
 
 /// High-range colour onto the screen with a filmic curve, after exposure.

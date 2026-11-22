@@ -966,9 +966,41 @@ fn post_processing_effects_each_change_the_picture_as_they_say() {
     let open = camera_pixel(&base.camera, Vec3::new(1.6, 0.0, 1.4), 96);
     assert!(light(at(&occluded, open)).abs_diff(light(at(&plain, open))) <= 6, "flat ground stays: {:?} {:?}", at(&occluded, open), at(&plain, open));
 
-    // Antialiasing changes only edges: the middle of the cube stays.
-    let smoothed = render(PostSettings { antialiasing: true, ..PostSettings::default() });
-    assert_eq!(at(&smoothed, centre), at(&plain, centre));
+    // Antialiasing changes only edges, Fast and Fine alike: the middle of the cube stays.
+    use bayleaf_scene::post::Antialiasing;
+    for choice in [Antialiasing::Fast, Antialiasing::Fine] {
+        let smoothed = render(PostSettings { antialiasing: choice, ..PostSettings::default() });
+        assert_eq!(at(&smoothed, centre), at(&plain, centre), "{choice:?}");
+        let changed = smoothed.pixels.chunks(4).zip(plain.pixels.chunks(4)).filter(|(a, b)| a.iter().zip(*b).any(|(x, y)| x.abs_diff(*y) > 4)).count();
+        assert!(changed > 0, "{choice:?} softens the cube's edges");
+    }
+}
+
+#[test]
+fn a_target_without_multisampling_draws_the_same_scene_with_harder_edges() {
+    let Some(gpu) = gpu() else { return };
+    let mut scene = floor_scene(&[("directionalLight", json!({"color": [1, 1, 1], "intensity": 2}), [0.0, 5.0, 0.0], [-60.0, 20.0, 0.0])]);
+    object(&mut scene, "mesh", json!({"shape": "cube", "color": [1.0, 0.5, 0.1, 1], "metallic": 0, "roughness": 0.6}), [0.0, 0.5, 0.0], [0.0, 30.0, 0.0]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 2.5, 4.0), Vec3::new(0.0, 0.3, 0.0), 50.0, 1.0);
+    let frame = extract(&scene, camera, OPTIONS);
+    let four = gpu.render_with_samples(&frame, 96, 96, 4).unwrap();
+    let one = gpu.render_with_samples(&frame, 96, 96, 1).unwrap();
+    let centre = camera_pixel(&frame.camera, Vec3::new(0.0, 0.5, 0.5), 96);
+    let light = |p: [u8; 4]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+    assert!(light(one.pixel(centre.0, centre.1).unwrap()).abs_diff(light(four.pixel(centre.0, centre.1).unwrap())) <= 6, "the same scene");
+    // Multisampled edges step through in-between colours; without, they jump from side to side.
+    let jumps = |image: &crate::Image| {
+        let mut count = 0;
+        for y in 0..96 {
+            for x in 0..95 {
+                if light(image.pixel(x, y).unwrap()).abs_diff(light(image.pixel(x + 1, y).unwrap())) > 120 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    };
+    assert!(jumps(&one) > jumps(&four), "multisampling softens the cube's edges: {} hard steps without, {} with", jumps(&one), jumps(&four));
 }
 
 #[test]

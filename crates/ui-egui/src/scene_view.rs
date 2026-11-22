@@ -354,13 +354,14 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let (width, height) = ((size.x * ppp).round().max(1.0) as u32, (size.y * ppp).round().max(1.0) as u32);
     let aspect = size.x / size.y;
 
+    let samples = graphics.samples();
     let gpu_view = view.gpu.get_or_insert_with(|| {
-        let target = RenderTarget::new(&gpu.device, width, height);
+        let target = RenderTarget::with_samples(&gpu.device, width, height, samples);
         let texture = gpu.renderer.write().register_native_texture(&gpu.device, target.view(), bayleaf_render::wgpu::FilterMode::Linear);
-        GpuView { renderer: Renderer::new(&gpu.device), target, texture, preview: None }
+        GpuView { renderer: Renderer::with_samples(&gpu.device, samples), target, texture, preview: None }
     });
-    if gpu_view.target.size() != (width, height) {
-        gpu_view.target = RenderTarget::new(&gpu.device, width, height);
+    if gpu_view.target.size() != (width, height) || gpu_view.target.samples() != samples {
+        gpu_view.target = RenderTarget::with_samples(&gpu.device, width, height, samples);
         gpu.renderer.write().update_egui_texture_from_wgpu_texture(
             &gpu.device,
             gpu_view.target.view(),

@@ -449,7 +449,7 @@ fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandE
     let frame = bayleaf_render::extract_with(scene, camera, options, &mut assets);
     let warnings = assets.warnings;
     let gpu = bayleaf_render::HeadlessGpu::new().map_err(|e| CommandError::Failed(e.to_string()))?;
-    let image = gpu.render(&frame, p.width, p.height).map_err(|e| CommandError::Failed(e.to_string()))?;
+    let image = gpu.render_with_samples(&frame, p.width, p.height, graphics.samples()).map_err(|e| CommandError::Failed(e.to_string()))?;
     match path {
         Some(path) => {
             image.write_png(&path).map_err(|e| CommandError::Failed(e.to_string()))?;

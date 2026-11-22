@@ -273,8 +273,21 @@ pub(crate) fn post_editor(ui: &mut egui::Ui, post: &mut bayleaf_engine::scene::p
     });
     ui.add_space(theme::SECTION_GAP);
     theme::headed(t, "Antialiasing").show(ui, |ui| {
-        changed |= row(ui, t, "Smooth Edges", |ui, label, _| ui.checkbox(&mut post.antialiasing, "").labelled_by(label).changed());
-        note(ui, "Smooths the jagged edges the scene's own multisampling leaves.");
+        changed |= row(ui, t, "Smooth Edges", |ui, _, _| {
+            let mut picked = false;
+            ui.vertical(|ui| {
+                use bayleaf_engine::scene::post::Antialiasing;
+                for (choice, label, hint) in [
+                    (Antialiasing::Off, "Off", "Only the scene's own multisampling, if it is on"),
+                    (Antialiasing::Fast, "Fast", "Blends a pixel with its neighbours where they differ sharply: quick, a little soft"),
+                    (Antialiasing::Fine, "Fine", "Follows each edge's direction, sub-pixel steps and thin lines too: smoother, a little slower"),
+                ] {
+                    picked |= ui.radio_value(&mut post.antialiasing, choice, tl(label)).on_hover_text(tl(hint)).changed();
+                }
+            });
+            picked
+        });
+        note(ui, "Smooths the jagged edges the scene's own multisampling leaves (Project Settings > Graphics).");
     });
     changed
 }
