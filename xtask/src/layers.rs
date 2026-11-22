@@ -9,6 +9,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("bayleaf-scene", 2),
     ("bayleaf-assets", 2),
     ("bayleaf-graph", 2),
+    ("bayleaf-interface", 2),
     ("bayleaf-render", 3),
     ("bayleaf-script", 4),
     ("bayleaf-gameplay", 4),

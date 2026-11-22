@@ -19,7 +19,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Create Asset",
             menu: "",
             shortcut: "",
-            params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\" | \"inputMap\" | \"lighting\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
+            params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\" | \"inputMap\" | \"lighting\" | \"postProcessing\" | \"interface\" | \"interfaceStyle\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: always,
@@ -171,6 +171,8 @@ fn asset_kind(path: &Path) -> &'static str {
         Some("binput") => "Input Map",
         Some("blight") => "Lighting",
         Some("bpost") => "Post-processing",
+        Some("bui") => "Interface",
+        Some("bstyle") => "Interface Style",
         Some("bproject") => "Project",
         Some("glb" | "gltf") => "Model",
         Some("png" | "jpg" | "jpeg") => "Image",
@@ -263,6 +265,10 @@ pub enum AssetKind {
     Lighting,
     /// A post-processing asset (`.bpost`): what a camera does to the drawn picture.
     PostProcessing,
+    /// A game interface layout (`.bui`): a title and a button to start from.
+    Interface,
+    /// A style file for game interfaces (`.bstyle`).
+    InterfaceStyle,
 }
 
 impl AssetKind {
@@ -276,6 +282,8 @@ impl AssetKind {
             AssetKind::InputMap => Some(crate::input_cmds::INPUT_EXTENSION),
             AssetKind::Lighting => Some(bayleaf_scene::lighting::EXTENSION),
             AssetKind::PostProcessing => Some(bayleaf_scene::post::EXTENSION),
+            AssetKind::Interface => Some(bayleaf_interface::LAYOUT_EXTENSION),
+            AssetKind::InterfaceStyle => Some(bayleaf_interface::STYLE_EXTENSION),
         }
     }
 }
@@ -329,8 +337,22 @@ fn asset_create(session: &mut Session, params: &Value) -> Result<Value, CommandE
         AssetKind::InputMap => std::fs::write(&path, crate::input_cmds::InputAsset::starter().to_text()).map_err(failed)?,
         AssetKind::Lighting => std::fs::write(&path, bayleaf_scene::lighting::Lighting::default().to_text()).map_err(failed)?,
         AssetKind::PostProcessing => std::fs::write(&path, bayleaf_scene::post::PostProcessing::default().to_text()).map_err(failed)?,
+        AssetKind::Interface => std::fs::write(&path, bayleaf_interface::Layout::starter().to_text()).map_err(failed)?,
+        AssetKind::InterfaceStyle => std::fs::write(&path, starter_style().to_text()).map_err(failed)?,
     }
     Ok(json!({ "path": path }))
+}
+
+/// A new style file: one rule for buttons, to change from.
+fn starter_style() -> bayleaf_interface::StyleSheet {
+    let mut style = bayleaf_interface::StyleSheet::new();
+    style.rules.push(bayleaf_interface::Rule {
+        kind: Some(bayleaf_interface::Kind::Button),
+        class: None,
+        name: None,
+        set: [("background", "#2d3440e6"), ("radius", "6px"), ("padding", "8px 16px")].into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect(),
+    });
+    style
 }
 
 /// A new scene: a camera looking at the centre and a sun, so it shows something when played.

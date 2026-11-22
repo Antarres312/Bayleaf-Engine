@@ -49,6 +49,8 @@ pub(crate) struct Play {
     pub(crate) streamer: bayleaf_streaming::Streamer,
     /// Whether play mode already said Streamed Areas cannot work (no camera, or no streaming in this build).
     pub(crate) told_streaming: bool,
+    /// What scripts and the player changed of each object's Interface.
+    pub(crate) interfaces: std::collections::HashMap<bayleaf_core::StableId, crate::interface::InterfaceState>,
 }
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
@@ -342,6 +344,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         host,
         time: 0.0,
         particles: bayleaf_particles::Particles::new(),
+        interfaces: std::collections::HashMap::new(),
         paused: false,
         since_reload_check: 0.0,
         loaded: Vec::new(),
@@ -784,6 +787,12 @@ fn drain(session: &mut Session) {
 const MAX_OBJECTS: usize = 100_000;
 
 /// Does what scripts asked for in the last step: destroys and spawns, in order.
+/// After a message sent from outside a step: what its scripts asked for, and what they logged.
+pub(crate) fn after_message(session: &mut Session) {
+    apply_requests(session);
+    drain(session);
+}
+
 fn apply_requests(session: &mut Session) {
     let Some(play) = session.play.as_mut() else { return };
     for request in play.host.take_requests() {
@@ -841,6 +850,7 @@ fn apply_requests(session: &mut Session) {
                     bayleaf_script::ParticleAction::Burst(count) => play.particles.burst(&session.scene, object, count),
                 }
             }
+            Request::Interface { object, element, change, .. } => crate::interface::apply(session, object, element, change),
             Request::PlaySound { by, object } => {
                 if let Err(error) = crate::sound::play_object(session, object) {
                     sound_problem(session, by, object, &error);

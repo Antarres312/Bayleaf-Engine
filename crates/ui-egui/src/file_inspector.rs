@@ -106,6 +106,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         if file.info.kind == "Material" {
             material_picture(ui, &mut editor.thumbnails, &file.path, &name);
         }
+        if file.info.kind == "Interface" {
+            interface_preview(ui, editor, &file.path);
+        }
         // The open scene's own settings, under its file.
         if editor.session.scene_path() == Some(file.path.as_path()) {
             crate::scene_settings::show(editor, ui);
@@ -247,6 +250,36 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         Some(Action::BuildScript) => editor.build_script(&path),
         None => {}
     }
+}
+
+/// An interface layout as a game shows it, at a screen size chosen above it.
+fn interface_preview(ui: &mut egui::Ui, editor: &mut Editor, path: &Path) {
+    let t = theme::tokens(ui);
+    let screens = crate::game_interface::PREVIEW_SCREENS;
+    let chosen = editor.interface_preview_screen.min(screens.len() - 1);
+    crate::value_editor::row(ui, t, "Screen", |ui, label, width| {
+        craft_ui::ComboBox::from_id_salt("interface preview screen")
+            .selected_text(tl(screens[chosen].0))
+            .width(width)
+            .show_ui(ui, |ui| {
+                for (i, (name, _)) in screens.iter().enumerate() {
+                    if ui.selectable_label(i == chosen, tl(name)).clicked() {
+                        editor.interface_preview_screen = i;
+                    }
+                }
+            })
+            .response
+            .labelled_by(label);
+    });
+    let base = editor.session.script_dir();
+    let relative = path.strip_prefix(&base).unwrap_or(path).to_string_lossy().into_owned();
+    let screen = screens[editor.interface_preview_screen.min(screens.len() - 1)].1;
+    if let Err(problem) = crate::game_interface::preview(ui, ui.available_width(), screen, &base, &relative, &mut editor.game_interfaces) {
+        ui.add(
+            egui::Label::new(egui::RichText::new(crate::i18n::tf("This interface does not read: {problem}", &[("problem", &problem)])).color(t.text)).wrap(),
+        );
+    }
+    ui.add_space(theme::SECTION_GAP);
 }
 
 /// A model's scale and up axis, or an image's mipmaps. True when a change is finished (a drag let

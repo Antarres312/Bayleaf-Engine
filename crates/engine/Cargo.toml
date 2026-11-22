@@ -23,6 +23,7 @@ compiled-scripts = ["bayleaf-script/compiled"]
 [dependencies]
 bayleaf-core = { workspace = true }
 bayleaf-graph = { workspace = true }
+bayleaf-interface = { workspace = true }
 bayleaf-scene = { workspace = true }
 bayleaf-render = { workspace = true }
 bayleaf-script = { workspace = true }

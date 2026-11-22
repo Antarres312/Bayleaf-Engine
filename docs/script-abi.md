@@ -75,6 +75,9 @@ this: there is no list property type yet.
 | `particles_play` | `(handle: i32) -> i32` | starts the object's Particle Emitter after the step (a new cycle, with its burst); `1` when asked, `0` when this call already asked 64 times; Rust: `Object::play_particles` |
 | `particles_stop` | `(handle: i32) -> i32` | stops it starting particles (those alive live out their lives); as `particles_play`; Rust: `Object::stop_particles` |
 | `particles_burst` | `(handle: i32, count: i32) -> i32` | starts `count` particles at once (as many as it has room for); as `particles_play`; Rust: `Object::burst_particles` |
+| `ui_set_text` | `(handle: i32, name_ptr: i32, name_len: i32, text_ptr: i32, text_len: i32) -> i32` | sets the text of the element named so (up to 64 bytes) in the object's Interface after the step, up to 4096 bytes; `1` when asked, `0` when this call already asked 64 times; a name no element has changes nothing. Rust: `Object::set_interface_text` |
+| `ui_set_value` | `(handle: i32, name_ptr: i32, name_len: i32, value: f64) -> i32` | sets an element's value after the step: a toggle's state (0 or 1), a slider's number, a progress bar's fill (0 to 1); a value that is not finite is a fault; as `ui_set_text`; Rust: `Object::set_interface_value` |
+| `ui_show` | `(handle: i32, name_ptr: i32, name_len: i32, visible: i32) -> i32` | shows (`1`) or hides (`0`) an element after the step, or the whole interface when the name is empty; as `ui_set_text`; Rust: `Object::show_interface` |
 | `sound_play` | `(handle: i32) -> i32` | plays the object's Audio Source after the step; `1` when asked, `0` when this call already asked 64 times |
 | `sound_stop` | `(handle: i32) -> i32` | stops the sounds the object plays, after the step; `1` or `0` as above |
 | `sound_play_at` | `(path_ptr: i32, path_len: i32, x: f32, y: f32, z: f32, volume: f32) -> i32` | plays a sound file (relative to the project folder) once from a world position after the step, at a volume from 0 to 4; `1` or `0` as above |
@@ -107,6 +110,10 @@ step: `collision` and `collisionEnd` when colliders start and stop touching, `tr
 `triggerExit` when one of them is a trigger. The value is the other object's handle. When the game ends (`game_end`, or
 the time limit of the scene's Game Rules), every object's scripts get `gameWon` or `gameLost` once,
 with the value 0.
+
+An Interface sends its object's scripts `pressed:<name>` when the player presses one of its buttons
+(value 0), and `changed:<name>` when a toggle, slider or text field changes (the new value; a text
+field's length in characters). They arrive at once, between steps (`docs/interface.md`).
 
 Messages are delivered after every script's update in the step, in the order sent. Each script of
 the target object that exports `bayleaf_message` gets the call, with the same limits as any other

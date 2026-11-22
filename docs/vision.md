@@ -340,7 +340,14 @@ No crate below L6 may use egui, eframe, winit or rfd.
      a live preview at chosen screen sizes, the selected element's style) and writes the same files,
      through `ui.*` commands. The interface is keyboard and gamepad navigable with focus moving
      between elements, text goes through the font stack with right-to-left left for later, and the
-     player reads the layout for the platform's accessibility tree.
+     player reads the layout for the platform's accessibility tree. (Done: `bayleaf-interface` with
+     `.bui` and `.bstyle` files and the flexible-box layout, the Interface component over the game
+     in the Game view and the player, keyboard focus, `pressed:`/`changed:` messages, `ui_set_text`,
+     `ui_set_value` and `ui_show`, values bound to the game's state, `ui.*` and `play.ui.*`
+     commands, each element in the accessibility tree, and a preview at chosen screen sizes in the
+     Inspector; see `docs/interface.md`. Still to do: the visual editing panel (element tree and
+     style), interfaces on surfaces in the world, gamepad focus, reading values from scripts,
+     visual script nodes, scrolling lists.)
    - **Particle systems.** A Particle Emitter component: when and how many particles start (a rate,
      bursts, a shape to start on: point, sphere, cone, box, a mesh's surface), how they live (life
      length, speed, gravity, drag, size and colour over their life as curves and gradients,

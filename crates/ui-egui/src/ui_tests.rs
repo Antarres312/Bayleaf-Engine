@@ -2399,3 +2399,77 @@ fn triangle_glb() -> Vec<u8> {
     out.extend(&bin);
     out
 }
+
+#[test]
+fn with_a_gpu_a_game_interface_answers_the_player_and_reads_in_the_accessibility_tree() {
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-interface-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().dispatch("asset.create", &json!({ "kind": "interface", "folder": "", "name": "menu" }), None);
+    // The Start button's script changes the title.
+    let menu = wat::parse_str(
+        r#"(module
+            (import "bayleaf" "message_is" (func $is (param i32 i32) (result i32)))
+            (import "bayleaf" "self_handle" (func $self (result i32)))
+            (import "bayleaf" "ui_set_text" (func $text (param i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "pressed:Start")
+            (data (i32.const 120) "Title")
+            (data (i32.const 140) "Started")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param f32))
+            (func (export "bayleaf_message") (param f32)
+              (if (call $is (i32.const 100) (i32.const 13))
+                (then (drop (call $text (call $self) (i32.const 120) (i32.const 5) (i32.const 140) (i32.const 7)))))))"#,
+    )
+    .unwrap();
+    std::fs::write(dir.join("menu.wasm"), menu).unwrap();
+    let components = json!({ "interface": { "layout": "menu.bui", "visible": true, "order": 0 }, "scripts": [{ "module": "menu.wasm" }] });
+    harness.state_mut().dispatch("scene.object.create", &json!({ "name": "Menu", "components": components }), None);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(4);
+
+    let view = harness.get_by_label("Game view, playing").rect();
+    let button = harness
+        .query_all(egui_kittest::kittest::By::new().predicate(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("Start")))
+        .next()
+        .expect("the interface's Start button is in the accessibility tree");
+    assert!(view.contains_rect(button.rect()), "drawn over the game");
+    let title = harness.get_by_label("My Game").rect();
+    assert!(title.bottom() <= button.rect().top(), "the title above the button, as the layout says");
+    button.click();
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Started").is_some(), "the script heard the press and the title changed: {}", harness.state().status);
+    let shown = picture(&mut harness);
+    keep_for_review(&shown, "game-interface");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(2);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_inspector_previews_an_interface_at_the_screen_size_chosen() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-interface-preview-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().dispatch("asset.create", &json!({ "kind": "interface", "folder": "", "name": "menu" }), None);
+    harness.state_mut().inspected_file = Some(crate::file_inspector::Inspected::new(dir.join("menu.bui")));
+    harness.run_steps(2);
+    let start = |harness: &Harness<'static, Editor>| {
+        harness
+            .query_all(egui_kittest::kittest::By::new().predicate(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("Start")))
+            .next()
+            .expect("the preview shows the Start button")
+            .rect()
+    };
+    let wide = start(&harness);
+    harness.get_by_label("Screen").click();
+    harness.run();
+    harness.get_by_label("Phone, upright (390 x 844)").click();
+    harness.run_steps(2);
+    let upright = start(&harness);
+    assert!(upright.center().y > wide.center().y + 20.0, "an upright screen is taller, so the centred button sits lower: {wide:?} then {upright:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}

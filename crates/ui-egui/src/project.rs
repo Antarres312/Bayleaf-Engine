@@ -73,6 +73,10 @@ enum Kind {
     Lighting,
     /// A post-processing asset (`.bpost`): what a camera does to the drawn picture.
     PostProcessing,
+    /// A game interface layout (`.bui`).
+    Interface,
+    /// A style file for game interfaces (`.bstyle`).
+    InterfaceStyle,
     Image,
     /// A sound file an Audio Source plays.
     Sound,
@@ -91,6 +95,8 @@ impl Kind {
             Some(bayleaf_engine::input_cmds::INPUT_EXTENSION) => Kind::InputMap,
             Some(bayleaf_engine::scene::lighting::EXTENSION) => Kind::Lighting,
             Some(bayleaf_engine::scene::post::EXTENSION) => Kind::PostProcessing,
+            Some(bayleaf_interface::LAYOUT_EXTENSION) => Kind::Interface,
+            Some(bayleaf_interface::STYLE_EXTENSION) => Kind::InterfaceStyle,
             Some("png" | "jpg" | "jpeg" | "webp" | "ktx2") => Kind::Image,
             Some("glb" | "gltf") => Kind::Model,
             Some(ext) if bayleaf_engine::scene::components::SOUND_EXTENSIONS.contains(&ext) => Kind::Sound,
@@ -112,6 +118,8 @@ impl Kind {
             Kind::InputMap => "Input Map",
             Kind::Lighting => "Lighting",
             Kind::PostProcessing => "Post-processing",
+            Kind::Interface => "Interface",
+            Kind::InterfaceStyle => "Interface Style",
             Kind::Image => "Image",
             Kind::Sound => "Sound",
             Kind::Other => "File",
@@ -207,6 +215,11 @@ impl ProjectView {
         self.files_of(&[Kind::PostProcessing])
     }
 
+    /// Every game interface layout (`.bui`) in the project.
+    pub(crate) fn interface_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::Interface])
+    }
+
     /// Every 3D model (`.glb`, `.gltf`) in the project.
     pub(crate) fn model_files(&self) -> Vec<String> {
         self.files_of(&[Kind::Model])
@@ -278,7 +291,7 @@ impl ProjectView {
 }
 
 /// What the Create panel offers: the kind, its name, what it is, and the name a new one starts with.
-const CREATABLE: [(AssetKind, &str, &str, &str); 8] = [
+const CREATABLE: [(AssetKind, &str, &str, &str); 10] = [
     (AssetKind::Folder, "Folder", "A folder to sort files into", "New Folder"),
     (AssetKind::Scene, "Scene", "A level or screen, with a camera and a light", "New Scene"),
     (AssetKind::Material, "Material", "How a surface looks, as a graph", "New Material"),
@@ -287,6 +300,8 @@ const CREATABLE: [(AssetKind, &str, &str, &str); 8] = [
     (AssetKind::InputMap, "Input Map", "Actions in maps for keys, mouse and gamepads", "New Input Map"),
     (AssetKind::Lighting, "Lighting", "A scene's sky, light, fog and sun, shared by the scenes that name it", "New Lighting"),
     (AssetKind::PostProcessing, "Post-processing", "Bloom, tone mapping, colour, vignette and more, for a scene or a camera", "New Post-processing"),
+    (AssetKind::Interface, "Interface", "A game's menu or display: panels, text, buttons and more", "New Interface"),
+    (AssetKind::InterfaceStyle, "Interface Style", "How interfaces look: rules for kinds, classes and names", "New Interface Style"),
 ];
 
 /// The lowercase name of a kind, for "New â¦" prompts.
@@ -300,6 +315,8 @@ fn kind_name(kind: AssetKind) -> &'static str {
         AssetKind::InputMap => "input map",
         AssetKind::Lighting => "lighting",
         AssetKind::PostProcessing => "post-processing",
+        AssetKind::Interface => "interface",
+        AssetKind::InterfaceStyle => "interface style",
     }
 }
 
@@ -314,6 +331,8 @@ fn kind_icon(kind: AssetKind) -> Kind {
         AssetKind::InputMap => Kind::InputMap,
         AssetKind::Lighting => Kind::Lighting,
         AssetKind::PostProcessing => Kind::PostProcessing,
+        AssetKind::Interface => Kind::Interface,
+        AssetKind::InterfaceStyle => Kind::InterfaceStyle,
     }
 }
 
@@ -681,7 +700,9 @@ fn create(editor: &mut Editor, naming: &Naming, name: &str) -> Result<PathBuf, S
         AssetKind::Material | AssetKind::VisualScript => editor.open_graph(&path),
         AssetKind::Script => editor.build_script(&path),
         // An Input Map opens in the Inspector, where its actions are edited.
-        AssetKind::InputMap | AssetKind::Lighting | AssetKind::PostProcessing => editor.inspect_file(path.clone()),
+        AssetKind::InputMap | AssetKind::Lighting | AssetKind::PostProcessing | AssetKind::Interface | AssetKind::InterfaceStyle => {
+            editor.inspect_file(path.clone());
+        }
         AssetKind::Folder | AssetKind::Scene => {}
     }
     Ok(path)
@@ -1249,7 +1270,7 @@ fn default_action(entry: &Entry) -> Option<Action> {
     let path = entry.path.clone();
     match entry.kind {
         // A click already shows an Input Map in the Inspector, where it is edited.
-        Kind::Folder | Kind::InputMap | Kind::Lighting | Kind::PostProcessing => None,
+        Kind::Folder | Kind::InputMap | Kind::Lighting | Kind::PostProcessing | Kind::Interface | Kind::InterfaceStyle => None,
         Kind::Scene | Kind::Project => Some(Action::OpenScene(path)),
         Kind::Material | Kind::VisualScript => Some(Action::OpenGraph(path)),
         Kind::Prefab => Some(Action::OpenPrefab(path)),
@@ -1355,6 +1376,8 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
         | Kind::InputMap
         | Kind::Lighting
         | Kind::PostProcessing
+        | Kind::Interface
+        | Kind::InterfaceStyle
         | Kind::Image
         | Kind::Sound
         | Kind::Other => {
@@ -1368,6 +1391,7 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                 Kind::InputMap => t.pin_bool,
                 Kind::Lighting => t.warning,
                 Kind::PostProcessing => t.pin_vector,
+                Kind::Interface | Kind::InterfaceStyle => t.pin_object,
                 Kind::Image => t.axis_y,
                 Kind::Sound => t.pin_text,
                 _ => t.text_muted,
@@ -1390,6 +1414,23 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                     for (x, y) in [(0.0, 0.0), (0.58, 0.0), (0.0, 0.64), (0.58, 0.64)] {
                         let min = inner.min + inner.size() * egui::vec2(x, y);
                         painter.rect_stroke(egui::Rect::from_min_size(min, key), 2.0, stroke(accent), egui::StrokeKind::Inside);
+                    }
+                }
+                Kind::Interface if s >= 24.0 => {
+                    // A screen with a title bar and a button.
+                    let bar = egui::Rect::from_min_size(inner.min, egui::vec2(inner.width(), inner.height() * 0.22));
+                    painter.rect_filled(bar, 1.0, accent);
+                    let button = egui::Rect::from_center_size(inner.center() + egui::vec2(0.0, inner.height() * 0.2), inner.size() * egui::vec2(0.55, 0.24));
+                    painter.rect_stroke(button, 2.0, stroke(accent), egui::StrokeKind::Inside);
+                }
+                Kind::InterfaceStyle if s >= 24.0 => {
+                    // Lines of rules, indented.
+                    for (i, (x, w)) in [(0.0, 0.7), (0.2, 0.6), (0.2, 0.45), (0.0, 0.7)].into_iter().enumerate() {
+                        let y = inner.top() + inner.height() * (0.15 + 0.23 * i as f32);
+                        painter.line_segment(
+                            [egui::pos2(inner.left() + inner.width() * x, y), egui::pos2(inner.left() + inner.width() * (x + w), y)],
+                            stroke(accent),
+                        );
                     }
                 }
                 Kind::PostProcessing if s >= 24.0 => {

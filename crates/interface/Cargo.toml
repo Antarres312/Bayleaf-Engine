@@ -1,0 +1,15 @@
+[package]
+name = "bayleaf-interface"
+description = "L2: game interfaces: layout files (.bui) of nested elements, style files (.bstyle) of rules, and the flexible-box layout that places them on a screen."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

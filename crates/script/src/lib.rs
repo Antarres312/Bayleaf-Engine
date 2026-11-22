@@ -73,6 +73,14 @@ pub enum ScriptError {
     Unavailable(String),
 }
 
+/// What a script changes in an Interface element while the game plays.
+#[derive(Clone, Debug, PartialEq)]
+pub enum InterfaceChange {
+    Text(String),
+    Value(f64),
+    Visible(bool),
+}
+
 /// What a script asks of a Particle Emitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticleAction {
@@ -165,6 +173,8 @@ pub enum Request {
     Jump { by: StableId, object: StableId, speed: f32 },
     /// Start, stop or burst the object's Particle Emitter.
     Particles { by: StableId, object: StableId, action: ParticleAction },
+    /// Change an element of the object's Interface (an empty `element`: the whole interface).
+    Interface { by: StableId, object: StableId, element: String, change: InterfaceChange },
     /// Play the object's Audio Source.
     PlaySound { by: StableId, object: StableId },
     /// Stop the sounds the object plays.

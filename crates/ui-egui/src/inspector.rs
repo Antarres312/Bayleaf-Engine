@@ -608,8 +608,22 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
     let audio = scene.get::<AudioSource>(id).cloned();
     let camera = scene.get::<bayleaf_engine::scene::components::Camera>(id).cloned();
     let emitter = scene.get::<bayleaf_engine::scene::components::ParticleEmitter>(id).cloned();
+    let interface = scene.get::<bayleaf_engine::scene::components::Interface>(id).cloned();
     let streamed = scene.get::<StreamedArea>(id).cloned();
     let mut fields = Vec::new();
+    if let Some(interface) = interface {
+        let missing = !interface.layout.is_empty() && !base.join(&interface.layout).is_file();
+        fields.push(FileField {
+            component: "interface",
+            field: "layout",
+            label: "Layout",
+            none: "None (shows nothing)",
+            no_files: "No .bui files in the project folder",
+            files: editor.project.interface_files(),
+            problem: missing.then(|| crate::i18n::tf("{file} is not there", &[("file", &interface.layout.to_string())])),
+            editable: false,
+        });
+    }
     if let Some(emitter) = emitter {
         let missing = |path: &str| (!path.is_empty() && !base.join(path).is_file()).then(|| crate::i18n::tf("{file} is not there", &[("file", path)]));
         fields.push(FileField {

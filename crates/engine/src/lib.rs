@@ -14,6 +14,7 @@ pub mod export;
 mod graph_cmds;
 pub mod import;
 pub mod input_cmds;
+pub mod interface;
 mod lighting_cmds;
 pub mod native_export;
 mod play;
@@ -499,6 +500,7 @@ impl CommandRegistry {
         commands.extend(asset_info::commands());
         commands.extend(asset_cmds::commands());
         commands.extend(import::commands());
+        commands.extend(interface::commands());
         commands.extend(input_cmds::commands());
         Self { commands }
     }

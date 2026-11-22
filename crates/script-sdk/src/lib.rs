@@ -245,6 +245,24 @@ impl Object {
         abi::particles_burst(self.0, count)
     }
 
+    /// Sets the text of the element named `element` in the object's Interface, after this step.
+    /// Buttons send the object's scripts `pressed:<name>`, and toggles, sliders and text fields
+    /// `changed:<name>` with their new value.
+    pub fn set_interface_text(self, element: &str, text: &str) -> bool {
+        abi::ui_set_text(self.0, element, text)
+    }
+
+    /// Sets an element's value: a toggle's state (0 or 1), a slider's number, a progress bar's fill.
+    pub fn set_interface_value(self, element: &str, value: f64) -> bool {
+        abi::ui_set_value(self.0, element, value)
+    }
+
+    /// Shows or hides an element of the object's Interface, or the whole interface when `element`
+    /// is empty.
+    pub fn show_interface(self, element: &str, visible: bool) -> bool {
+        abi::ui_show(self.0, element, visible)
+    }
+
     /// Plays its Audio Source after this step; false when this call asked too often.
     pub fn play_sound(self) -> bool {
         abi::sound_play(self.0)

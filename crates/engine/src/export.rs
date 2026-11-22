@@ -36,6 +36,8 @@ const GAME_EXTENSIONS: &[&str] = &[
     "gltf",
     "bin",
     bayleaf_render::assets::import::SETTINGS_EXTENSION,
+    bayleaf_interface::LAYOUT_EXTENSION,
+    bayleaf_interface::STYLE_EXTENSION,
 ];
 
 /// Folders whose files a game does not need: build output, saved values and version control.
@@ -418,6 +420,7 @@ fn player_program(session: &Session, given: Option<&Path>) -> Result<PathBuf, Co
 /// File extensions a scene or prefab may name a file of the project by.
 const REFERENCED_EXTENSIONS: &[&str] = &[
     "bscene",
+    "bui",
     "blight",
     "bpost",
     "bprefab",

@@ -739,6 +739,24 @@ fn particles_request(caller: &mut Caller<'_, HostState>, what: &str, handle: i32
     Ok(1)
 }
 
+/// Longest text a script sets on an Interface element, as layouts allow.
+const MAX_INTERFACE_TEXT: usize = 4096;
+
+/// Records a change to an element of the Interface of the object with `handle`, applied after the step.
+fn interface_request(caller: &mut Caller<'_, HostState>, what: &str, handle: i32, name: (i32, i32), change: crate::InterfaceChange) -> Result<i32, Error> {
+    let element = read_text(caller, name.0, name.1, 64).map_err(|m| fault(caller, format!("{what}: {m}")))?;
+    let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+        return Err(fault(caller, format!("{what}: there is no object with handle {handle}")));
+    };
+    let state = caller.data_mut();
+    if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+        return Ok(0);
+    }
+    let by = state.object;
+    state.requests.push(Request::Interface { by, object, element, change });
+    Ok(1)
+}
+
 /// Records a physics request for the object with `handle`, applied after the step.
 fn physics_request(
     caller: &mut Caller<'_, HostState>,
@@ -1272,6 +1290,31 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             let count = u32::try_from(count).map_err(|_| fault(&mut caller, "particles_burst: the count must not be negative".to_owned()))?;
             particles_request(&mut caller, "particles_burst", handle, crate::ParticleAction::Burst(count))
         })?;
+        linker.func_wrap(
+            "bayleaf",
+            "ui_set_text",
+            |mut caller: Caller<'_, HostState>, handle: i32, name_ptr: i32, name_len: i32, ptr: i32, len: i32| -> Result<i32, Error> {
+                let text = read_text(&mut caller, ptr, len, MAX_INTERFACE_TEXT).map_err(|m| fault(&mut caller, format!("ui_set_text: {m}")))?;
+                interface_request(&mut caller, "ui_set_text", handle, (name_ptr, name_len), crate::InterfaceChange::Text(text))
+            },
+        )?;
+        linker.func_wrap(
+            "bayleaf",
+            "ui_set_value",
+            |mut caller: Caller<'_, HostState>, handle: i32, name_ptr: i32, name_len: i32, value: f64| -> Result<i32, Error> {
+                if !value.is_finite() {
+                    return Err(fault(&mut caller, "ui_set_value: the value must be a finite number".to_owned()));
+                }
+                interface_request(&mut caller, "ui_set_value", handle, (name_ptr, name_len), crate::InterfaceChange::Value(value))
+            },
+        )?;
+        linker.func_wrap(
+            "bayleaf",
+            "ui_show",
+            |mut caller: Caller<'_, HostState>, handle: i32, name_ptr: i32, name_len: i32, visible: i32| -> Result<i32, Error> {
+                interface_request(&mut caller, "ui_show", handle, (name_ptr, name_len), crate::InterfaceChange::Visible(visible != 0))
+            },
+        )?;
         for (name, stop) in [("sound_play", false), ("sound_stop", true)] {
             linker.func_wrap("bayleaf", name, move |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, Error> {
                 let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {

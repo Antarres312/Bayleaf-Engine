@@ -572,6 +572,7 @@ dependencies = [
  "bayleaf-core",
  "bayleaf-gameplay",
  "bayleaf-graph",
+ "bayleaf-interface",
  "bayleaf-particles",
  "bayleaf-physics",
  "bayleaf-render",
@@ -602,6 +603,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "bayleaf-interface"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -699,6 +708,7 @@ version = "0.1.0"
 dependencies = [
  "bayleaf-core",
  "bayleaf-engine",
+ "bayleaf-interface",
  "bayleaf-render",
  "craft-flow",
  "craft-fonts-build",

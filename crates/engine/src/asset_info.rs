@@ -89,6 +89,8 @@ pub fn describe(session: &Session, path: &Path) -> Info {
         "wasm" => script(path),
         "bproject" => project(path),
         "binput" => input_map(session, path),
+        "bui" => interface(session, path),
+        "bstyle" => interface_style(path),
         e if TEXT_EXTENSIONS.contains(&e) || name.starts_with('.') => text(path, "Text"),
         _ => Info { kind: "File", ..Info::default() },
     };
@@ -242,6 +244,35 @@ fn input_map(session: &Session, path: &Path) -> Info {
             info.row("Starts with", maps.start());
             info.row("Actions", asset.action_count());
         }
+        Err(problem) => info.problems.push(problem),
+    }
+    info
+}
+
+/// An interface layout: its elements and style files, and whether they all read.
+fn interface(session: &Session, path: &Path) -> Info {
+    let mut info = Info { kind: "Interface", ..Info::default() };
+    match bayleaf_interface::Layout::load(path) {
+        Ok(layout) => {
+            info.row("Elements", layout.root.walk().len());
+            info.row("Named", layout.root.walk().iter().filter(|e| !e.name.is_empty()).count());
+            info.row("Style files", if layout.styles.is_empty() { "None".to_owned() } else { layout.styles.join(", ") });
+            for style in &layout.styles {
+                if let Err(problem) = bayleaf_interface::StyleSheet::load(&session.script_dir().join(style)) {
+                    info.problems.push(problem);
+                }
+            }
+        }
+        Err(problem) => info.problems.push(problem),
+    }
+    info
+}
+
+/// An interface style file: how many rules it has, and whether it reads.
+fn interface_style(path: &Path) -> Info {
+    let mut info = Info { kind: "Interface Style", ..Info::default() };
+    match bayleaf_interface::StyleSheet::load(path) {
+        Ok(style) => info.row("Rules", style.rules.len()),
         Err(problem) => info.problems.push(problem),
     }
     info

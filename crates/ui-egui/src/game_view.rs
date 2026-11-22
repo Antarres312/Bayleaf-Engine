@@ -120,6 +120,8 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
     let image = egui::Image::new(egui::load::SizedTexture::new(target.texture, size)).sense(egui::Sense::click_and_drag());
     let response = ui.add(image);
     let playing = editor.session.is_playing();
+    // The game's interfaces over it: answering the player while it plays, a preview before.
+    crate::game_interface::show(ui, response.rect, &mut editor.session, &mut editor.game_interfaces, playing);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, if playing { "Game view, playing" } else { "Game view" }));
     if response.clicked() {
         response.request_focus();

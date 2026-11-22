@@ -31,6 +31,9 @@ mod raw {
         pub fn particles_play(handle: i32) -> i32;
         pub fn particles_stop(handle: i32) -> i32;
         pub fn particles_burst(handle: i32, count: i32) -> i32;
+        pub fn ui_set_text(handle: i32, name_ptr: *const u8, name_len: usize, text_ptr: *const u8, text_len: usize) -> i32;
+        pub fn ui_set_value(handle: i32, name_ptr: *const u8, name_len: usize, value: f64) -> i32;
+        pub fn ui_show(handle: i32, name_ptr: *const u8, name_len: usize, visible: i32) -> i32;
         pub fn sound_play(handle: i32) -> i32;
         pub fn sound_stop(handle: i32) -> i32;
         pub fn sound_play_at(path_ptr: *const u8, path_len: usize, x: f32, y: f32, z: f32, volume: f32) -> i32;
@@ -314,6 +317,34 @@ mod raw {
     }
     pub unsafe fn particles_burst(handle: i32, count: i32) -> i32 {
         plain("particles_burst", &[I32(handle), I32(count)])
+    }
+    pub unsafe fn ui_set_text(handle: i32, name_ptr: *const u8, name_len: usize, text_ptr: *const u8, text_len: usize) -> i32 {
+        // SAFETY: the safe wrappers pass live slices.
+        let (name, text) = unsafe { (bytes(name_ptr, name_len), bytes(text_ptr, text_len)) };
+        run(|x| {
+            let at = x.put(name)?;
+            let text_at = x.put(text)?;
+            x.call("ui_set_text", &[I32(handle), at, len(name.len()), text_at, len(text.len())])?.i32()
+        })
+        .unwrap_or(0)
+    }
+    pub unsafe fn ui_set_value(handle: i32, name_ptr: *const u8, name_len: usize, value: f64) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(name_ptr, name_len) };
+        run(|x| {
+            let at = x.put(name)?;
+            x.call("ui_set_value", &[I32(handle), at, len(name.len()), F64(value)])?.i32()
+        })
+        .unwrap_or(0)
+    }
+    pub unsafe fn ui_show(handle: i32, name_ptr: *const u8, name_len: usize, visible: i32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(name_ptr, name_len) };
+        run(|x| {
+            let at = x.put(name)?;
+            x.call("ui_show", &[I32(handle), at, len(name.len()), I32(visible)])?.i32()
+        })
+        .unwrap_or(0)
     }
     pub unsafe fn sound_play(handle: i32) -> i32 {
         plain("sound_play", &[I32(handle)])
@@ -682,6 +713,21 @@ pub(crate) fn particles_stop(handle: i32) -> bool {
 pub(crate) fn particles_burst(handle: i32, count: u32) -> bool {
     // SAFETY: plain numbers in and out.
     unsafe { raw::particles_burst(handle, i32::try_from(count).unwrap_or(i32::MAX)) != 0 }
+}
+
+pub(crate) fn ui_set_text(handle: i32, element: &str, text: &str) -> bool {
+    // SAFETY: the pointers and lengths describe `element` and `text`; the host only reads.
+    unsafe { raw::ui_set_text(handle, element.as_ptr(), element.len(), text.as_ptr(), text.len()) != 0 }
+}
+
+pub(crate) fn ui_set_value(handle: i32, element: &str, value: f64) -> bool {
+    // SAFETY: the pointer and length describe `element`; the host only reads.
+    unsafe { raw::ui_set_value(handle, element.as_ptr(), element.len(), value) != 0 }
+}
+
+pub(crate) fn ui_show(handle: i32, element: &str, visible: bool) -> bool {
+    // SAFETY: the pointer and length describe `element`; the host only reads.
+    unsafe { raw::ui_show(handle, element.as_ptr(), element.len(), i32::from(visible)) != 0 }
 }
 
 pub(crate) fn sound_play(handle: i32) -> bool {

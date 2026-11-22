@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 bayleaf-core = { workspace = true }
 bayleaf-engine = { workspace = true }
+bayleaf-interface = { workspace = true }
 gilrs = { workspace = true }
 bayleaf-render = { workspace = true }
 craft-flow = { workspace = true }

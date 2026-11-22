@@ -48,6 +48,8 @@ struct Player {
     failure: Option<String>,
     fullscreen: bool,
     gamepads: bayleaf_ui_egui::gamepad::Gamepads,
+    /// The game's interfaces over the picture.
+    interfaces: bayleaf_ui_egui::game_interface::GameInterfaces,
     /// Where the profile goes when the game closes, if one is recorded.
     profile: Option<PathBuf>,
     /// How shadows are drawn, from the project's graphics settings.
@@ -147,6 +149,7 @@ impl Player {
         let image = egui::Image::new(egui::load::SizedTexture::new(view.texture, size)).sense(egui::Sense::click_and_drag());
         let response = ui.add(image);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Game view"));
+        bayleaf_ui_egui::game_interface::show(ui, response.rect, &mut self.session, &mut self.interfaces, true);
         let pointer = response.hover_pos().map(|p| {
             let local = (p - response.rect.min) / response.rect.size();
             [local.x * 2.0 - 1.0, 1.0 - local.y * 2.0]
@@ -246,6 +249,7 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
         assets: render::assets::AssetCache::default(),
         gpu: None,
         gamepads: bayleaf_ui_egui::gamepad::Gamepads::default(),
+        interfaces: bayleaf_ui_egui::game_interface::GameInterfaces::default(),
         shadows,
         effects,
         failure,

@@ -13,6 +13,7 @@ mod export_window;
 mod file_drop;
 mod file_inspector;
 mod fonts;
+pub mod game_interface;
 mod game_view;
 pub mod gamepad;
 mod gizmo;
@@ -63,6 +64,10 @@ pub struct Editor {
     title: String,
     scene_view: scene_view::SceneView,
     game_view: game_view::GameView,
+    /// Game interfaces drawn over the Game view.
+    game_interfaces: game_interface::GameInterfaces,
+    /// The screen size the Inspector previews an interface layout at (an index of the sizes offered).
+    interface_preview_screen: usize,
     /// Material pictures for the Project panel and the Inspector.
     thumbnails: thumbnails::Thumbnails,
     /// Play mode as last frame saw it: starting raises the Game view, stopping the scene view.
@@ -129,6 +134,8 @@ impl Default for Editor {
             title: String::new(),
             scene_view: scene_view::SceneView::new(),
             game_view: game_view::GameView::default(),
+            game_interfaces: game_interface::GameInterfaces::default(),
+            interface_preview_screen: 0,
             thumbnails: thumbnails::Thumbnails::default(),
             was_playing: false,
             recent_projects: Vec::new(),

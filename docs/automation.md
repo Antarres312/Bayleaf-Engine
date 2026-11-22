@@ -208,3 +208,11 @@ roots. Models and images get import settings beside them (`robot.glb.bimport`), 
 `scene.file.place` (`{path, parent?, index?, position?}`) puts a model or a sound in the scene as an
 object, and `scene.image.apply` (`{id, image}`) shows an image on a sprite, or on a mesh through a
 new material made beside the image. Dropping files on the editor runs the same commands.
+
+Game interfaces (`docs/interface.md`) are layout files (`.bui`) and style files (`.bstyle`):
+`ui.layout.get` and `ui.layout.set` (`{path, layout}`), `ui.style.get` and `ui.style.set` (`{path,
+style}`) read and write them, checked first; `asset.create` makes them (kinds `interface` and
+`interfaceStyle`). While the game plays, `play.ui.state` (`{id}`) gives an object's interface as it
+shows (`{visible, elements: [{name, kind, text, value, visible}]}`), `play.ui.press` (`{id,
+element}`) presses a button or flips a toggle, and `play.ui.change` (`{id, element, value | text}`)
+moves a slider or types into a text field, as the player would; the object's scripts hear it.

@@ -2315,3 +2315,65 @@ fn files_brought_in_are_checked_copied_with_their_settings_and_placed() {
     assert!(registry.execute(&mut session, "asset.import", &json!({"files": [outside.join("logo.png")], "folder": "assets"})).is_err());
     std::fs::remove_dir_all(&base).ok();
 }
+
+#[test]
+fn an_interface_tells_its_scripts_what_the_player_did_and_shows_what_they_set() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-interface-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let made = registry.execute(&mut session, "asset.create", &json!({"kind": "interface", "folder": "", "name": "menu"})).unwrap();
+    assert!(made["path"].as_str().unwrap().ends_with("menu.bui"));
+    // A score bound to the game's state, added through the layout commands.
+    let mut layout = registry.execute(&mut session, "ui.layout.get", &json!({"path": "menu.bui"})).unwrap()["layout"].clone();
+    layout["root"]["children"].as_array_mut().unwrap().push(json!({"kind": "text", "name": "Score", "bind": "game:score"}));
+    registry.execute(&mut session, "ui.layout.set", &json!({"path": "menu.bui", "layout": layout})).unwrap();
+    let mut broken = layout.clone();
+    broken["root"]["children"][0]["children"] = json!([{"kind": "text"}]);
+    assert!(registry.execute(&mut session, "ui.layout.set", &json!({"path": "menu.bui", "layout": broken})).is_err(), "text holds no children");
+
+    // A script that answers the Start button by changing the title.
+    let menu = wat::parse_str(
+        r#"(module
+            (import "bayleaf" "message_is" (func $is (param i32 i32) (result i32)))
+            (import "bayleaf" "self_handle" (func $self (result i32)))
+            (import "bayleaf" "ui_set_text" (func $text (param i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "pressed:Start")
+            (data (i32.const 120) "Title")
+            (data (i32.const 140) "Started")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param f32))
+            (func (export "bayleaf_message") (param f32)
+              (if (call $is (i32.const 100) (i32.const 13))
+                (then (drop (call $text (call $self) (i32.const 120) (i32.const 5) (i32.const 140) (i32.const 7)))))))"#,
+    )
+    .unwrap();
+    std::fs::write(session.script_dir().join("menu.wasm"), menu).unwrap();
+    let id = create(
+        &registry,
+        &mut session,
+        json!({"name": "Menu", "components": {"interface": {"layout": "menu.bui", "visible": true, "order": 0}, "scripts": [{"module": "menu.wasm"}]}}),
+    );
+    let text_of = |session: &mut Session, name: &str| {
+        let state = registry.execute(session, "play.ui.state", &json!({"id": id})).unwrap();
+        state["elements"].as_array().unwrap().iter().find(|e| e["name"] == name).map(|e| e["text"].as_str().unwrap().to_owned()).unwrap()
+    };
+
+    assert!(registry.execute(&mut session, "play.ui.state", &json!({"id": id})).is_err(), "only while playing");
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    assert_eq!(text_of(&mut session, "Title"), "My Game");
+    registry.execute(&mut session, "game.state.set", &json!({"name": "score", "value": 7})).unwrap();
+    assert_eq!(text_of(&mut session, "Score"), "7", "bound to the game's state with no script");
+    registry.execute(&mut session, "play.ui.press", &json!({"id": id, "element": "Start"})).unwrap();
+    assert_eq!(text_of(&mut session, "Title"), "Started", "the script heard the press and changed the title");
+    assert!(registry.execute(&mut session, "play.ui.press", &json!({"id": id, "element": "Title"})).is_err(), "text is not pressed");
+    assert!(registry.execute(&mut session, "play.ui.press", &json!({"id": id, "element": "Nothing"})).is_err());
+
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    assert_eq!(text_of(&mut session, "Title"), "My Game", "stopping put the interface back");
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}

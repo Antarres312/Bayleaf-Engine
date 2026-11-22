@@ -875,6 +875,38 @@ impl SceneComponent for AudioSource {
     }
 }
 
+/// A game interface over the game: a layout file (`.bui`) of panels, text, buttons and other
+/// elements. Its buttons, toggles, sliders and text fields send the object's scripts messages
+/// (`pressed:<name>`, `changed:<name>`), and scripts change its elements while the game plays.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Interface {
+    /// A layout file (`.bui`), relative to the project folder; empty for none.
+    pub layout: String,
+    /// Drawn and answering the player; scripts show and hide it.
+    pub visible: bool,
+    /// Interfaces with a higher order are drawn over those with a lower one.
+    pub order: i32,
+}
+
+impl Default for Interface {
+    fn default() -> Self {
+        Self { layout: String::new(), visible: true, order: 0 }
+    }
+}
+
+impl SceneComponent for Interface {
+    const NAME: &'static str = "interface";
+    const LABEL: &'static str = "Interface";
+    const MENU: &'static str = "Interface/Interface";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        file_field("layout", &self.layout, &["bui"])?;
+        if (-1000..=1000).contains(&self.order) { Ok(()) } else { Err("order must be between -1000 and 1000".to_owned()) }
+    }
+}
+
 /// A part of the world kept in its own scene file and added under the object while playing, in
 /// the background, when a camera comes within Load Distance; it goes again once every camera is
 /// further than Load Distance and Keep Margin. Its objects are placed relative to the object.
