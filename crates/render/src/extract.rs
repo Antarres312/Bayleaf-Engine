@@ -275,6 +275,9 @@ pub struct Frame {
     pub clear_color: Vec4,
     /// The sky drawn behind the scene, if the scene has one.
     pub sky: Option<Sky>,
+    /// Draws the sky (or the clear colour) behind the shapes; off, the background stays transparent
+    /// (material previews over a panel) while the sky still lights and is reflected.
+    pub background: bool,
     /// Fog colour (linear RGB) and density per world unit; density 0 is no fog.
     pub fog: (Vec3, f32),
     pub show_grid: bool,
@@ -466,6 +469,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
         ambient_ground,
         clear_color,
         sky,
+        background: true,
         fog,
         show_grid: options.show_grid,
         shadows: options.shadows,
@@ -491,7 +495,8 @@ fn environment_light(env: &Environment) -> (Vec3, Vec3, Vec4, Option<Sky>) {
 }
 
 /// A frame that shows `material` on a sphere under the default sky and a sun from the upper
-/// left, for the graph editor's preview. `textures` are its images by slot.
+/// left, with no background: only the sphere shows over the panel (the previews of the Graph and
+/// Project panels and the Inspector). `textures` are its images by slot.
 pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Arc<Image>>>, aspect: f32, time: f32) -> Frame {
     let (ambient, ambient_ground, clear_color, sky) = environment_light(&Environment::default());
     let sun = LightItem::directional(Vec3::new(-0.5, -0.7, -0.6).normalize(), Vec3::splat(3.0), false);
@@ -516,6 +521,7 @@ pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Ar
         ambient_ground,
         clear_color,
         sky,
+        background: false,
         fog: (Vec3::ZERO, 0.0),
         show_grid: false,
         // Nothing casts a shadow here, so the smallest map.

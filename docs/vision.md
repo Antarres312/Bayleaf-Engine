@@ -397,7 +397,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
      the Inspector, the Graph panel's preview) show the sky behind the sphere. Draw them with a
      transparent background instead, so only the sphere shows over the panel; the sphere is still
      lit by the same sky light. A GPU test checks the corners of a preview are transparent and its
-     centre is not.
+     centre is not. (Done.)
    - **Fix: the Export window grows too wide with Native chosen.** Choosing Native makes the window
      much wider than it opens, so the folder row's Choose… button is out of sight until the window
      is widened by hand. Long texts (the check's findings, the notes on how each script runs, paths)

@@ -226,12 +226,13 @@ fn materials_change_the_drawn_colour_and_every_node_is_valid_on_the_gpu() {
     // The light adds a white highlight; the emission makes red dominate.
     assert!(r > 200 && r > g + 100 && r > b + 100, "expected red, got {:?}", [r, g, b]);
 
-    // The graph editor's preview shows the material on a sphere in front of the sky.
+    // The material preview shows only the sphere, over a transparent background.
     let preview = gpu.render(&crate::material_preview(Arc::clone(&red), Vec::new(), 1.0, 0.0), 64, 64).unwrap();
-    let [r, g, b, _] = preview.pixel(32, 32).unwrap();
-    assert!(r > g + 100 && r > b + 100, "the sphere shows the material: {:?}", [r, g, b]);
-    let [r, _, b, _] = preview.pixel(2, 2).unwrap();
-    assert!(b > r, "the corner shows the sky");
+    let [r, g, b, a] = preview.pixel(32, 32).unwrap();
+    assert!(r > g + 100 && r > b + 100 && a == 255, "the sphere shows the material: {:?}", [r, g, b, a]);
+    for corner in [(1, 1), (62, 1), (1, 62), (62, 62)] {
+        assert_eq!(preview.pixel(corner.0, corner.1).unwrap()[3], 0, "the corner {corner:?} is transparent");
+    }
 
     let every = Arc::new(compile(&every_node_material()).unwrap());
     let frame = extract_with(&scene, camera, OPTIONS, &mut Materials(None, Arc::clone(&every)));

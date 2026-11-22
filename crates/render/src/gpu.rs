@@ -561,7 +561,7 @@ impl Renderer {
             }
         }
         {
-            let c = frame.clear_color;
+            let c = if frame.background { frame.clear_color } else { bayleaf_core::math::Vec4::ZERO };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("bayleaf scene pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -590,7 +590,7 @@ impl Renderer {
             if let Some(group) = self.texture_groups.get(&[0; 4]) {
                 pass.set_bind_group(2, group, &[]);
             }
-            if frame.sky.is_some() {
+            if frame.sky.is_some() && frame.background {
                 pass.set_pipeline(&self.sky);
                 pass.draw(0..3, 0..1);
             }
