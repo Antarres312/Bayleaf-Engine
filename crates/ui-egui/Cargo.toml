@@ -14,6 +14,8 @@ gilrs = { workspace = true }
 bayleaf-render = { workspace = true }
 craft-flow = { workspace = true }
 craft-fonts-build = { workspace = true }
+# Translations: the craft-i18n catalogs (embedded when CRAFT_I18N_DIR names a checkout) and lookups.
+craft-i18n = { workspace = true }
 # Markdown files in the Inspector, read by the Craft apps' shared parser.
 craft-markdown = { workspace = true }
 # system_fonts: installed fonts fill in scripts the embedded faces lack (desktop only).

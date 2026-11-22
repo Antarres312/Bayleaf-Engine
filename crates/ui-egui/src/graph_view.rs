@@ -10,6 +10,7 @@
 //! the nodes: their title moves them with the nodes inside (arrows), Ctrl + arrows resize, Enter
 //! edits the text. A material graph shows a preview of the material on a sphere.
 
+use crate::i18n::tl;
 use bayleaf_engine::graph::{Catalog, Graph, Node, NodeDef, PinDef, PinDefault, PinRef, PinType, Problem, SettingKind};
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use serde_json::{Value, json};
@@ -224,7 +225,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
         return;
     };
     let Some(catalog) = doc.catalog() else {
-        ui.label("This graph's kind is not known to this editor.");
+        ui.label(tl("This graph's kind is not known to this editor."));
         return;
     };
     let mut view = std::mem::take(&mut editor.graph_view);
@@ -331,11 +332,11 @@ fn material_preview(editor: &mut Editor, ui: &egui::Ui, graph: &Graph, gpu: Opti
         egui::Frame::new().fill(t.panel).corner_radius(theme::CARD_RADIUS).inner_margin(4.0).show(ui, |ui| {
             ui.set_width(size.x);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Preview").small().color(t.text_muted));
+                ui.label(egui::RichText::new(tl("Preview")).small().color(t.text_muted));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let hide = ui.add(egui::Button::new(egui::RichText::new("Hide").small()).frame(false));
+                    let hide = ui.add(egui::Button::new(egui::RichText::new(tl("Hide")).small()).frame(false));
                     ui.ctx().accesskit_node_builder(hide.id, |node| node.set_label("Hide material preview"));
-                    if hide.on_hover_text("Show it again from the toolbar").clicked() {
+                    if hide.on_hover_text(tl("Show it again from the toolbar")).clicked() {
                         view.show_preview = false;
                     }
                 });
@@ -362,20 +363,20 @@ fn empty_state(editor: &mut Editor, ui: &mut egui::Ui) {
     let t = theme::tokens(ui);
     ui.vertical_centered(|ui| {
         ui.add_space((ui.available_height() * 0.3).max(12.0));
-        ui.label(egui::RichText::new("No graph open").heading().color(t.text));
+        ui.label(egui::RichText::new(tl("No graph open")).heading().color(t.text));
         ui.add_space(theme::GAP);
-        ui.label(egui::RichText::new("Make a material or a visual script, or double-click one in the Project panel.").color(t.text_muted));
+        ui.label(egui::RichText::new(tl("Make a material or a visual script, or double-click one in the Project panel.")).color(t.text_muted));
         ui.add_space(theme::GAP * 2.0);
         ui.horizontal(|ui| {
             let width = 3.0 * 150.0 + 2.0 * ui.spacing().item_spacing.x;
             ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
-            if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new("New Material")).clicked() {
+            if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new(tl("New Material"))).clicked() {
                 editor.dispatch("graph.new", &json!({ "domain": "material" }), None);
             }
-            if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new("New Visual Script")).clicked() {
+            if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new(tl("New Visual Script"))).clicked() {
                 editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
             }
-            if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new("Open Graph…")).clicked()
+            if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new(tl("Open Graph…"))).clicked()
                 && let Some(path) = rfd::FileDialog::new().add_filter("Graphs", &["bmaterial", "bscript"]).pick_file()
             {
                 editor.open_graph(&path);
@@ -394,18 +395,18 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui, doc: &bayleaf_engine::GraphDo
                 .and_then(|p| p.file_name())
                 .map_or_else(|| format!("Untitled {}", catalog.label.to_lowercase()), |n| n.to_string_lossy().into_owned());
             ui.label(egui::RichText::new(&name).strong().color(t.text));
-            ui.label(egui::RichText::new(catalog.label).small().color(t.text_muted));
+            ui.label(egui::RichText::new(tl(catalog.label)).small().color(t.text_muted));
             if doc.dirty {
-                theme::tag(ui, "Modified", t.surface_active, t.text);
+                theme::tag(ui, tl("Modified"), t.surface_active, t.text);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Close").clicked() && (!doc.dirty || crate::confirm_discard_graph()) {
+                if ui.button(tl("Close")).clicked() && (!doc.dirty || crate::confirm_discard_graph()) {
                     editor.dispatch("graph.close", &Value::Null, None);
                 }
-                if ui.button("Save As…").clicked() {
+                if ui.button(tl("Save As…")).clicked() {
                     save_as(editor, catalog);
                 }
-                let save = ui.add_enabled(doc.dirty || doc.path.is_none(), egui::Button::new("Save"));
+                let save = ui.add_enabled(doc.dirty || doc.path.is_none(), egui::Button::new(tl("Save")));
                 if save.clicked() {
                     if doc.path.is_some() {
                         editor.dispatch("graph.save", &Value::Null, None);
@@ -413,20 +414,20 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui, doc: &bayleaf_engine::GraphDo
                         save_as(editor, catalog);
                     }
                 }
-                if ui.button("Fit All").on_hover_text("Show every node (Ctrl+0)").clicked() {
+                if ui.button(tl("Fit All")).on_hover_text(tl("Show every node (Ctrl+0)")).clicked() {
                     // The canvas fits the view to the nodes when it has none.
                     view.scene_rect = Rect::NOTHING;
                 }
                 if catalog.domain == bayleaf_render::material::CATALOG.domain
                     && !view.show_preview
-                    && ui.button("Show Preview").on_hover_text("Show the material on a sphere").clicked()
+                    && ui.button(tl("Show Preview")).on_hover_text(tl("Show the material on a sphere")).clicked()
                 {
                     view.show_preview = true;
                 }
-                if ui.button("Add Comment").on_hover_text("A box with a note, around the selected nodes").clicked() {
+                if ui.button(tl("Add Comment")).on_hover_text(tl("A box with a note, around the selected nodes")).clicked() {
                     add_comment(editor, view, &doc.graph, catalog);
                 }
-                if ui.button("Add Node").clicked() {
+                if ui.button(tl("Add Node")).clicked() {
                     let at = if view.scene_rect.is_finite() && view.scene_rect.is_positive() { view.scene_rect.center() } else { pos2(0.0, 0.0) };
                     view.add_menu =
                         Some(AddMenu { at, screen: ui.min_rect().left_bottom(), search: String::new(), from: None, focus_search: true, fresh: true });
@@ -480,11 +481,11 @@ fn problem_strip(ui: &mut egui::Ui, graph: &Graph, catalog: &Catalog, problems: 
                 let place = problem
                     .node
                     .and_then(|id| graph.node(id))
-                    .map(|n| format!("{} {}: ", catalog.def_of(n).map_or(n.kind.as_str(), |d| d.label), n.id))
+                    .map(|n| format!("{} {}: ", catalog.def_of(n).map_or(n.kind.as_str(), |d| tl(d.label)), n.id))
                     .unwrap_or_default();
                 let text = format!("{place}{}", problem.message);
                 if let Some(id) = problem.node {
-                    if ui.link(egui::RichText::new(text).color(t.text)).on_hover_text("Show this node").clicked() {
+                    if ui.link(egui::RichText::new(text).color(t.text)).on_hover_text(tl("Show this node")).clicked() {
                         view.selected = vec![id];
                         view.focus_node = Some(id);
                     }
@@ -823,11 +824,11 @@ fn comment_ui(
     }
     let mut start_editing = edit;
     title.context_menu(|ui| {
-        if ui.add(egui::Button::new("Edit Text").shortcut_text("Enter")).clicked() {
+        if ui.add(egui::Button::new(tl("Edit Text")).shortcut_text("Enter")).clicked() {
             start_editing = true;
             ui.close();
         }
-        if ui.add(egui::Button::new("Delete Comment").shortcut_text("Delete")).clicked() {
+        if ui.add(egui::Button::new(tl("Delete Comment")).shortcut_text("Delete")).clicked() {
             requests.run("graph.comment.remove", json!({ "comment": comment.id }));
             ui.close();
         }
@@ -836,7 +837,7 @@ fn comment_ui(
         view.editing_comment = Some((comment.id, comment.text.clone()));
         view.focus_comment = Some(comment.id);
     }
-    title.on_hover_text("Drag to move it with the nodes inside; double-click to edit the text");
+    title.on_hover_text(tl("Drag to move it with the nodes inside; double-click to edit the text"));
 
     // The corner handle resizes the box.
     let handle_rect = Rect::from_min_max(rect.max - vec2(COMMENT_HANDLE, COMMENT_HANDLE), rect.max);
@@ -894,7 +895,7 @@ fn node_ui(
         painter.text(pos2(title_x + 6.0, title_rect.center().y), egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(11.0), t.on_warning);
         title_x += 18.0;
     }
-    painter.text(pos2(title_x, title_rect.center().y), egui::Align2::LEFT_CENTER, def.label, egui::FontId::proportional(14.0), title_text);
+    painter.text(pos2(title_x, title_rect.center().y), egui::Align2::LEFT_CENTER, tl(def.label), egui::FontId::proportional(14.0), title_text);
     painter.text(
         pos2(rect.right() - 10.0, title_rect.center().y),
         egui::Align2::RIGHT_CENTER,
@@ -907,7 +908,7 @@ fn node_ui(
     let id = ui.scope_id().with(("graph node", node.id));
     let title = ui.interact(title_rect, id, Sense::click_and_drag());
     let problem_note = if has_problem { ", has a problem" } else { "" };
-    title.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, format!("{} node {}{problem_note}", def.label, node.id)));
+    title.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, format!("{} node {}{problem_note}", tl(def.label), node.id)));
     screen_bounds(ui, &title);
     if view.focus_node == Some(node.id) {
         title.request_focus();
@@ -972,25 +973,25 @@ fn node_ui(
         painter.rect_stroke(rect.expand(2.0), theme::CARD_RADIUS, Stroke::new(2.0, t.focus), egui::StrokeKind::Outside);
     }
     title.context_menu(|ui| {
-        ui.label(egui::RichText::new(def.description).small().color(t.text_muted));
+        ui.label(egui::RichText::new(tl(def.description)).small().color(t.text_muted));
         ui.separator();
         if !view.selected.contains(&node.id) {
             view.selected = vec![node.id];
         }
-        if ui.add(egui::Button::new("Copy").shortcut_text("Ctrl+C")).clicked() {
+        if ui.add(egui::Button::new(tl("Copy")).shortcut_text("Ctrl+C")).clicked() {
             requests.clipboard = Some(false);
             ui.close();
         }
-        if ui.add(egui::Button::new("Duplicate").shortcut_text("Ctrl+D")).clicked() {
+        if ui.add(egui::Button::new(tl("Duplicate")).shortcut_text("Ctrl+D")).clicked() {
             requests.clipboard = Some(true);
             ui.close();
         }
-        if ui.add(egui::Button::new("Delete Node").shortcut_text("Delete")).clicked() {
+        if ui.add(egui::Button::new(tl("Delete Node")).shortcut_text("Delete")).clicked() {
             requests.run("graph.node.remove", json!({ "node": node.id }));
             ui.close();
         }
     });
-    title.on_hover_text(def.description);
+    title.on_hover_text(tl(def.description));
 
     let mut y = rect.top() + TITLE + 3.0;
     for setting in def.settings.iter().filter(|s| s.shown()) {
@@ -1004,7 +1005,7 @@ fn node_ui(
         let linked = graph.link_into(node.id, pin.name).is_some();
         let label_rect = Rect::from_min_size(pos2(rect.left() + 12.0, center.y - ROW / 2.0), vec2(rect.width() * 0.42, ROW));
         ui.interact(label_rect, ui.scope_id().with(("pin label", node.id, pin.name, false)), Sense::hover()).on_hover_text(pin_hint(pin));
-        painter.text(pos2(label_rect.left(), center.y), egui::Align2::LEFT_CENTER, pin.label, egui::FontId::proportional(13.0), t.text);
+        painter.text(pos2(label_rect.left(), center.y), egui::Align2::LEFT_CENTER, tl(pin.label), egui::FontId::proportional(13.0), t.text);
         if !linked && pin.ty != PinType::Flow && !matches!(pin.default, PinDefault::Implicit(_)) {
             let field =
                 Rect::from_min_max(pos2(rect.left() + rect.width() * 0.42, center.y - ROW / 2.0 + 2.0), pos2(rect.right() - 10.0, center.y + ROW / 2.0 - 2.0));
@@ -1022,7 +1023,7 @@ fn node_ui(
         pin_ui(ui, t, graph, catalog, node, def, pin, true, center, view, requests, hovered_pin);
         let label_rect = Rect::from_min_max(pos2(rect.left() + rect.width() * 0.5, center.y - ROW / 2.0), pos2(rect.right() - 12.0, center.y + ROW / 2.0));
         ui.interact(label_rect, ui.scope_id().with(("pin label", node.id, pin.name, true)), Sense::hover()).on_hover_text(pin_hint(pin));
-        painter.text(pos2(rect.right() - 12.0, center.y), egui::Align2::RIGHT_CENTER, pin.label, egui::FontId::proportional(13.0), t.text);
+        painter.text(pos2(rect.right() - 12.0, center.y), egui::Align2::RIGHT_CENTER, tl(pin.label), egui::FontId::proportional(13.0), t.text);
     }
 }
 
@@ -1062,7 +1063,7 @@ fn pin_ui(
             egui::Role::Button,
             true,
             picked_here,
-            format!("{side} {} ({}) of {} {}, {linked}", pin.label, pin.ty.label(), def.label, node.id),
+            format!("{side} {} ({}) of {} {}, {linked}", tl(pin.label), pin.ty.label(), tl(def.label), node.id),
         )
     });
     let response = response.on_hover_text(pin_hint(pin));
@@ -1122,11 +1123,11 @@ fn pin_ui(
         }
     }
     response.context_menu(|ui| {
-        if ui.add_enabled(!links.is_empty(), egui::Button::new("Remove Links")).clicked() {
+        if ui.add_enabled(!links.is_empty(), egui::Button::new(tl("Remove Links"))).clicked() {
             requests.run("graph.link.remove", json!({ "node": node.id, "pin": pin.name }));
             ui.close();
         }
-        if ui.button("Start Link Here").clicked() {
+        if ui.button(tl("Start Link Here")).clicked() {
             view.picked = Some(pick.clone());
             ui.close();
         }
@@ -1146,11 +1147,11 @@ fn pin_hint(pin: &PinDef) -> String {
         PinType::Text => "letters, words and numbers as written",
         PinType::Int => "a whole number",
     };
-    format!("{}: {} ({meaning})", pin.label, pin.ty.label())
+    format!("{}: {} ({meaning})", tl(pin.label), pin.ty.label())
 }
 
 fn node_name(catalog: &Catalog, node: &Node) -> String {
-    format!("{} {}", catalog.def_of(node).map_or(node.kind.as_str(), |d| d.label), node.id)
+    format!("{} {}", catalog.def_of(node).map_or(node.kind.as_str(), |d| tl(d.label)), node.id)
 }
 
 /// The stored value of an input or setting, or its default.
@@ -1164,7 +1165,7 @@ fn triple(value: &Value, default: [f32; 3]) -> [f32; 3] {
 
 fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rect: Rect, gesture: u64, requests: &mut Requests) {
     let key = format!("graph set {} {} {gesture}", node.id, pin.name);
-    let name = format!("{} of {} {}", pin.label, def.label, node.id);
+    let name = format!("{} of {} {}", tl(pin.label), tl(def.label), node.id);
     let hint = pin_hint(pin);
     match pin.ty {
         PinType::Float | PinType::Any => {
@@ -1178,7 +1179,7 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
                 labelled(ui, &response, &name);
                 commit(&response, requests, || ("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": v })), key);
             } else {
-                ui.put(rect, egui::Label::new("vector"));
+                ui.put(rect, egui::Label::new(tl("vector")));
             }
         }
         PinType::Vec3 => {
@@ -1277,10 +1278,10 @@ fn setting_row(
 ) {
     let t = theme::tokens(ui);
     let label_width = row.width() * 0.36;
-    ui.painter().text(pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, setting.label, egui::FontId::proportional(13.0), t.text_muted);
+    ui.painter().text(pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, tl(setting.label), egui::FontId::proportional(13.0), t.text_muted);
     let field = Rect::from_min_max(pos2(row.left() + label_width, row.top() + 2.0), pos2(row.right(), row.bottom() - 2.0));
     let key = format!("graph set {} {} {gesture}", node.id, setting.name);
-    let name = format!("{} of node {}", setting.label, node.id);
+    let name = format!("{} of node {}", tl(setting.label), node.id);
     // A variable node picks its variable from the script's own, of its type.
     if setting.name == "name"
         && let Some(ty) =
@@ -1387,15 +1388,15 @@ fn component_picker(ui: &mut egui::Ui, search: &SearchChoices, node: &Node, sett
             .selected_text(current.clone())
             .show_ui(ui, |ui| {
                 let t = theme::tokens(ui);
-                ui.label(egui::RichText::new("Components").small().color(t.text_muted));
+                ui.label(egui::RichText::new(tl("Components")).small().color(t.text_muted));
                 for component in bayleaf_engine::script::visual::COMPONENTS.iter().filter(|c| !setting_it || c.settable()) {
-                    if ui.selectable_label(component.label == current, component.label).clicked() && component.label != current {
+                    if ui.selectable_label(component.label == current, tl(component.label)).clicked() && component.label != current {
                         chosen = Some(component.label);
                     }
                 }
                 let scripts: Vec<&(String, Vec<String>)> = search.scripts.iter().filter(|(_, p)| !p.is_empty()).collect();
                 if !scripts.is_empty() {
-                    ui.label(egui::RichText::new("Scripts").small().color(t.text_muted));
+                    ui.label(egui::RichText::new(tl("Scripts")).small().color(t.text_muted));
                 }
                 for (name, _) in scripts {
                     if ui.selectable_label(*name == current, name).clicked() && *name != current {
@@ -1405,7 +1406,7 @@ fn component_picker(ui: &mut egui::Ui, search: &SearchChoices, node: &Node, sett
             })
             .response
     });
-    labelled(ui, &response, &format!("{} of node {}: {current}", setting.label, node.id));
+    labelled(ui, &response, &format!("{} of node {}: {current}", tl(setting.label), node.id));
     // A script dragged from the Project panel, when it declares properties.
     let declared = |module: &str| search.scripts.iter().any(|(n, p)| *n == script_name(module) && !p.is_empty());
     if let Some(module) = crate::value_editor::file_drop(ui, &response, |path| (path.ends_with(".bscript") || path.ends_with(".wasm")) && declared(path)) {
@@ -1445,7 +1446,7 @@ fn kind_picker(ui: &mut egui::Ui, search: &SearchChoices, node: &Node, setting: 
                     ("Tags", search.tags.iter().map(String::as_str).collect()),
                 ];
                 for (heading, choices) in groups.iter().filter(|(_, c)| !c.is_empty()) {
-                    ui.label(egui::RichText::new(*heading).small().color(t.text_muted));
+                    ui.label(egui::RichText::new(tl(heading)).small().color(t.text_muted));
                     for choice in choices {
                         if ui.selectable_label(*choice == current, *choice).clicked() && *choice != current {
                             chosen = Some((*choice).to_owned());
@@ -1455,7 +1456,7 @@ fn kind_picker(ui: &mut egui::Ui, search: &SearchChoices, node: &Node, setting: 
             })
             .response
     });
-    labelled(ui, &response, &format!("{} of node {}: {current}", setting.label, node.id));
+    labelled(ui, &response, &format!("{} of node {}: {current}", tl(setting.label), node.id));
     if let Some(module) = crate::value_editor::file_drop(ui, &response, |path| path.ends_with(".bscript") || path.ends_with(".wasm")) {
         chosen = Some(script_name(&module));
     }
@@ -1504,7 +1505,7 @@ fn variable_picker(
                 if !names.is_empty() {
                     ui.separator();
                 }
-                if ui.button("New Variable…").on_hover_text(format!("Declare a new {} variable for this node", ty.label())).clicked() {
+                if ui.button(tl("New Variable…")).on_hover_text(format!("Declare a new {} variable for this node", ty.label())).clicked() {
                     let stem = kinds[0];
                     let fresh =
                         (1..).map(|n| format!("{stem}{n}")).find(|n| graph.variable(n).is_none() && !names.contains(n)).unwrap_or_else(|| stem.to_owned());
@@ -1514,7 +1515,7 @@ fn variable_picker(
             })
             .response
     });
-    labelled(ui, &response, &format!("{} of node {}: {current}", setting.label, node.id));
+    labelled(ui, &response, &format!("{} of node {}: {current}", tl(setting.label), node.id));
 }
 
 fn labelled(ui: &egui::Ui, response: &egui::Response, name: &str) {
@@ -1549,7 +1550,7 @@ const MENU_HEIGHT: f32 = 320.0;
 
 /// One node of the add-node popup; returns whether it was chosen.
 fn node_button(ui: &mut egui::Ui, def: &NodeDef) -> bool {
-    ui.add(egui::Button::new(def.label).min_size(vec2(ui.available_width(), theme::LIST_ROW))).on_hover_text(def.description).clicked()
+    ui.add(egui::Button::new(tl(def.label)).min_size(vec2(ui.available_width(), theme::LIST_ROW))).on_hover_text(tl(def.description)).clicked()
 }
 
 /// The searchable add-node popup.
@@ -1561,7 +1562,7 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
         let t = theme::tokens(ui);
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(240.0);
-            let search = ui.add(egui::TextEdit::singleline(&mut menu.search).hint_text("Search nodes"));
+            let search = ui.add(egui::TextEdit::singleline(&mut menu.search).hint_text(tl("Search nodes")));
             ui.ctx().accesskit_node_builder(search.id, |node| node.set_label("Search nodes"));
             if menu.focus_search {
                 search.request_focus();
@@ -1578,7 +1579,7 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
                 .nodes
                 .iter()
                 .filter(|d| fits(d) && !unique_taken(d))
-                .filter(|d| needle.is_empty() || d.label.to_lowercase().contains(&needle) || d.category.to_lowercase().contains(&needle))
+                .filter(|d| needle.is_empty() || tl(d.label).to_lowercase().contains(&needle) || tl(d.category).to_lowercase().contains(&needle))
                 .collect();
             // Enter takes the first match. A one-line field gives up focus on Enter in the same frame.
             if (search.has_focus() || search.lost_focus())
@@ -1601,7 +1602,7 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
                 for category in categories {
                     let in_category = matches.iter().filter(|d| d.category == category);
                     if flat {
-                        ui.label(egui::RichText::new(category).small().color(t.text_muted));
+                        ui.label(egui::RichText::new(tl(category)).small().color(t.text_muted));
                         for def in in_category {
                             if node_button(ui, def) {
                                 chosen = Some(def);
@@ -1618,7 +1619,7 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
                     }
                 }
                 if matches.is_empty() {
-                    ui.label(egui::RichText::new("No matching nodes").color(t.text_muted));
+                    ui.label(egui::RichText::new(tl("No matching nodes")).color(t.text_muted));
                 }
             });
         });

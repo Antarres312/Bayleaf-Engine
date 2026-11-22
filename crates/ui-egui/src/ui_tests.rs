@@ -1636,3 +1636,33 @@ fn split_into_streamed_areas_asks_with_a_form_that_takes_the_keyboard() {
     assert!(base.join("World/cells").is_dir());
     std::fs::remove_dir_all(&base).ok();
 }
+
+#[test]
+fn the_pseudo_language_marks_menus_tabs_cards_and_command_labels() {
+    // Text the pseudo language marks went through translation; plain English did not. The marks
+    // (U+27E6, U+27E7) need a math face that only a craft-fonts build embeds.
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1440.0, 900.0))
+        .allow_missing_glyphs()
+        .build_ui_state(|ui, editor: &mut Editor| editor.ui(ui, None), Editor::default());
+    harness.state_mut().set_language("pseudo");
+    harness.state_mut().dispatch("scene.object.create", &json!({ "name": "Box" }), None);
+    harness.run();
+    assert!(harness.query_by_label("⟦File⟧").is_some(), "top menus");
+    assert!(harness.query_by_label("⟦Hierarchy⟧").is_some(), "panel tabs");
+    harness.get_by_label("Box").click();
+    harness.run();
+    assert!(harness.query_by_label("⟦Transform⟧").is_some(), "component cards");
+    harness.get_by_label("⟦Object⟧").click();
+    harness.run();
+    harness.query_all_by_label_contains("⟦Split into Streamed Areas…⟧").next().expect("command labels in menus").click();
+    harness.run();
+    assert!(harness.query_by_role_and_label(egui::accesskit::Role::TextInput, "⟦Cell Size⟧").is_some(), "form fields");
+    assert!(crate::i18n::looked_up().contains("Inspector"));
+
+    // Back in English, and an unknown language is English too.
+    harness.key_press(egui::Key::Escape);
+    harness.state_mut().set_language("xx-unknown");
+    harness.run();
+    assert!(harness.query_by_label("File").is_some() && harness.query_by_label("⟦File⟧").is_none());
+}

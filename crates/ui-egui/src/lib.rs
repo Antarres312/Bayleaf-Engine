@@ -16,6 +16,7 @@ pub mod gamepad;
 mod gizmo;
 mod graph_view;
 mod hierarchy;
+pub mod i18n;
 mod input_editor;
 mod inspector;
 mod markdown_view;
@@ -30,6 +31,7 @@ mod value_editor;
 pub use dock::{Layout, Panel};
 pub use fonts::install_fonts;
 
+use crate::i18n::tl;
 use bayleaf_core::StableId;
 use bayleaf_engine::scene::doc::EXTENSION;
 use bayleaf_engine::{CommandInfo, CommandRegistry, Prompt, Session};
@@ -83,6 +85,10 @@ pub struct Editor {
     close_asked: bool,
     /// The form a command asks with, while it is open.
     form: Option<Form>,
+    /// The interface language setting (Window > Language).
+    language: String,
+    /// The language the fonts were last installed for.
+    fonts_language: &'static str,
     /// Closing was confirmed; the next close request is let through.
     close_confirmed: bool,
     /// Script builds running in the background: the script's name and where the result arrives.
@@ -125,6 +131,8 @@ impl Default for Editor {
             copy_out: None,
             close_asked: false,
             form: None,
+            language: "en".to_owned(),
+            fonts_language: "en",
             close_confirmed: false,
             builds: Vec::new(),
             inspected_file: None,
@@ -143,6 +151,11 @@ impl Editor {
             self.theme_installed = true;
         }
         let t = theme::tokens(ui);
+        // A new language may need another CJK face first.
+        if i18n::language() != self.fonts_language {
+            self.fonts_language = i18n::language();
+            fonts::install_fonts(ui.ctx());
+        }
         self.handle_shortcuts(ui.ctx());
         self.poll_builds(ui.ctx());
         self.run_play_frame(ui.ctx());
@@ -160,7 +173,7 @@ impl Editor {
         egui::Panel::bottom("status_bar").frame(egui::Frame::new().fill(t.backdrop).inner_margin(egui::Margin::symmetric(10, 4))).show(ui, |ui| {
             ui.horizontal(|ui| {
                 if self.session.is_dirty() {
-                    theme::tag(ui, "Modified", t.surface_active, t.text);
+                    theme::tag(ui, tl("Modified"), t.surface_active, t.text);
                 }
                 if let Some(note) = &self.automation_note {
                     // A visible sign that an agent can change the scene.
@@ -345,9 +358,9 @@ impl Editor {
 
     /// File > Open Recent: the projects opened lately. One whose folder is gone shows, greyed out.
     fn recent_menu(&mut self, ui: &mut egui::Ui, open: &mut Option<std::path::PathBuf>) {
-        ui.menu_button("Open Recent", |ui| {
+        ui.menu_button(tl("Open Recent"), |ui| {
             if self.recent_projects.is_empty() {
-                ui.add_enabled(false, egui::Button::new("No recent projects"));
+                ui.add_enabled(false, egui::Button::new(tl("No recent projects")));
                 return;
             }
             for dir in &self.recent_projects {
@@ -355,14 +368,14 @@ impl Editor {
                 let here = self.session.project_dir() == Some(dir.as_path());
                 let button = ui.add_enabled(dir.is_dir() && !here, egui::Button::new(name)).on_hover_text(dir.display().to_string());
                 let button =
-                    if here { button.on_disabled_hover_text("Open now") } else { button.on_disabled_hover_text(format!("Not found: {}", dir.display())) };
+                    if here { button.on_disabled_hover_text(tl("Open now")) } else { button.on_disabled_hover_text(format!("Not found: {}", dir.display())) };
                 if button.clicked() {
                     *open = Some(dir.clone());
                     ui.close();
                 }
             }
             ui.separator();
-            if ui.button("Clear Recent").clicked() {
+            if ui.button(tl("Clear Recent")).clicked() {
                 self.recent_projects.retain(|p| Some(p.as_path()) == self.session.project_dir());
                 ui.close();
             }
@@ -418,8 +431,20 @@ impl Editor {
         }
     }
 
+    /// The interface language setting: [`i18n::AUTOMATIC`] or a language code.
+    pub fn language_setting(&self) -> &str {
+        &self.language
+    }
+
+    /// Shows the interface in a language: [`i18n::AUTOMATIC`] for the system's, or a code from
+    /// Window > Language. An unknown code shows English.
+    pub fn set_language(&mut self, setting: &str) {
+        self.language = setting.to_owned();
+        i18n::set_language(setting);
+    }
+
     fn window_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Window", |ui| {
+        ui.menu_button(tl("Window"), |ui| {
             for panel in Panel::ALL {
                 let mut open = dock::is_open(&self.dock, panel);
                 let response = ui.add_enabled(panel != Panel::Scene, egui::Checkbox::new(&mut open, panel.title()));
@@ -431,10 +456,25 @@ impl Editor {
             for layout in Layout::ALL {
                 if ui.button(layout.label()).clicked() {
                     self.dock = layout.build();
-                    self.status = format!("{}: applied", layout.label());
+                    self.status = crate::i18n::tf("{layout}: applied", &[("layout", layout.label())]);
                     ui.close();
                 }
             }
+            ui.separator();
+            ui.menu_button(tl("Language"), |ui| {
+                let automatic = crate::i18n::tf("Automatic ({language})", &[("language", crate::i18n::system_language_name())]);
+                if ui.radio(self.language == crate::i18n::AUTOMATIC, automatic).clicked() {
+                    self.set_language(crate::i18n::AUTOMATIC);
+                    ui.close();
+                }
+                // Each language by its own name, untranslated.
+                for (code, name) in crate::i18n::languages() {
+                    if ui.radio(self.language == code, name).clicked() {
+                        self.set_language(code);
+                        ui.close();
+                    }
+                }
+            });
         });
     }
 
@@ -457,9 +497,10 @@ impl Editor {
             if items.is_empty() {
                 continue;
             }
-            ui.menu_button(top, |ui| {
+            ui.menu_button(crate::i18n::tc("menu", top), |ui| {
                 for entry in items {
                     let label = entry.menu.rsplit('/').next().unwrap_or(entry.label);
+                    let label = crate::i18n::tid(entry.id, label);
                     let enabled = entry.enabled && (entry.prompt != Prompt::SelectedObject || self.selected.is_some());
                     let button = egui::Button::new(label).shortcut_text(entry.shortcut);
                     let response = ui.add_enabled(enabled, button);
@@ -480,16 +521,16 @@ impl Editor {
                     // Clipboard entries belong to the editor: they use the system clipboard.
                     ui.separator();
                     let has_selection = self.selected.is_some();
-                    if ui.add_enabled(has_selection, egui::Button::new("Cut").shortcut_text("Ctrl+X")).clicked() {
+                    if ui.add_enabled(has_selection, egui::Button::new(tl("Cut")).shortcut_text("Ctrl+X")).clicked() {
                         clipboard_action = Some("cut");
                         ui.close();
                     }
-                    if ui.add_enabled(has_selection, egui::Button::new("Copy").shortcut_text("Ctrl+C")).clicked() {
+                    if ui.add_enabled(has_selection, egui::Button::new(tl("Copy")).shortcut_text("Ctrl+C")).clicked() {
                         clipboard_action = Some("copy");
                         ui.close();
                     }
-                    let paste = ui.add_enabled(self.clipboard.is_some(), egui::Button::new("Paste").shortcut_text("Ctrl+V"));
-                    if paste.on_disabled_hover_text("Copy an object first").clicked() {
+                    let paste = ui.add_enabled(self.clipboard.is_some(), egui::Button::new(tl("Paste")).shortcut_text("Ctrl+V"));
+                    if paste.on_disabled_hover_text(tl("Copy an object first")).clicked() {
                         clipboard_action = Some("paste");
                         ui.close();
                     }
@@ -657,11 +698,12 @@ impl Editor {
         let mut cancel = false;
         let modal = egui::Modal::new(egui::Id::unique(("command form", form.id))).show(ctx, |ui| {
             ui.set_max_width(420.0);
-            ui.heading(form.label.trim_end_matches('…'));
+            let title = crate::i18n::tid(form.id, form.label).trim_end_matches('…');
+            ui.heading(title);
             ui.add_space(theme::GAP);
             egui::Grid::new("form fields").num_columns(2).spacing([theme::GAP * 2.0, theme::GAP]).show(ui, |ui| {
                 for (index, (field, value)) in form.fields.iter().zip(form.values.iter_mut()).enumerate() {
-                    let label = ui.label(field.label);
+                    let label = ui.label(tl(field.label));
                     let edit = ui.add(egui::TextEdit::singleline(value).desired_width(220.0)).labelled_by(label.id);
                     if index == 0 && std::mem::take(&mut form.focus) {
                         edit.request_focus();
@@ -674,14 +716,14 @@ impl Editor {
             });
             if let Some(problem) = &form.problem {
                 ui.add_space(theme::GAP);
-                ui.label(egui::RichText::new(format!("Not done: {problem}")).color(t.error));
+                ui.label(egui::RichText::new(crate::i18n::tf("Not done: {problem}", &[("problem", problem)])).color(t.error));
             }
             ui.add_space(theme::GAP * 2.0);
             ui.horizontal(|ui| {
-                if ui.add(egui::Button::new(egui::RichText::new(form.label.trim_end_matches('…')).color(t.on_accent)).fill(t.accent)).clicked() {
+                if ui.add(egui::Button::new(egui::RichText::new(title).color(t.on_accent)).fill(t.accent)).clicked() {
                     send = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(tl("Cancel")).clicked() {
                     cancel = true;
                 }
             });
@@ -696,7 +738,7 @@ impl Editor {
                     match value.trim().parse::<f64>() {
                         Ok(number) => json!(number),
                         Err(_) => {
-                            form.problem = Some(format!("{} must be a number", field.label));
+                            form.problem = Some(crate::i18n::tf("{field} must be a number", &[("field", tl(field.label))]));
                             self.form = Some(form);
                             return;
                         }
@@ -727,7 +769,7 @@ impl Editor {
         let mut choice = None;
         let modal = egui::Modal::new(egui::Id::unique("unsaved changes")).show(ctx, |ui| {
             ui.set_max_width(420.0);
-            ui.heading("Save changes before closing?");
+            ui.heading(tl("Save changes before closing?"));
             ui.add_space(theme::GAP);
             if self.session.is_dirty() {
                 let name =
@@ -740,14 +782,14 @@ impl Editor {
             }
             ui.add_space(theme::GAP * 2.0);
             ui.horizontal(|ui| {
-                let save = ui.add(egui::Button::new(egui::RichText::new("Save and Close").color(t.on_accent)).fill(t.accent));
+                let save = ui.add(egui::Button::new(egui::RichText::new(tl("Save and Close")).color(t.on_accent)).fill(t.accent));
                 if save.clicked() {
                     choice = Some(true);
                 }
-                if ui.button("Close Without Saving").clicked() {
+                if ui.button(tl("Close Without Saving")).clicked() {
                     choice = Some(false);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(tl("Cancel")).clicked() {
                     self.close_asked = false;
                 }
             });
@@ -912,7 +954,7 @@ impl Editor {
             Prompt::SelectedObject => match self.selected {
                 Some(selected) => json!({ "id": selected }),
                 None => {
-                    self.status = format!("{}: select an object first.", info.label);
+                    self.status = crate::i18n::tf("{command}: select an object first.", &[("command", crate::i18n::tid(info.id, info.label))]);
                     return;
                 }
             },
@@ -922,10 +964,10 @@ impl Editor {
 
     /// Runs a command and reports the outcome in the status bar. Returns the result on success.
     pub(crate) fn dispatch(&mut self, id: &str, params: &Value, merge_key: Option<&str>) -> Option<Value> {
-        let label = self.registry.get(id).map_or(id, |c| c.label).trim_end_matches(['…', '.']);
+        let label = self.registry.get(id).map_or(id, |c| crate::i18n::tid(c.id, c.label)).trim_end_matches(['…', '.']);
         match self.registry.execute_merging(&mut self.session, id, params, merge_key) {
             Ok(result) => {
-                self.status = format!("{label}: done");
+                self.status = crate::i18n::tf("{command}: done", &[("command", label)]);
                 if matches!(id, "scene.object.duplicate")
                     && let Some(copy) = result.get("id").and_then(Value::as_str).and_then(|s| StableId::parse_hex(s).ok())
                 {

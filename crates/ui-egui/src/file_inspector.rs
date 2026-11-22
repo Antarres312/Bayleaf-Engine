@@ -1,6 +1,7 @@
 //! The Inspector for a file clicked in the Project panel: what it is, what it holds (from
 //! `asset.info`), a picture of an image, the start of a text file, and the actions that fit it.
 
+use crate::i18n::tl;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -80,7 +81,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             ui.set_width(ui.available_width());
             egui::Grid::new("file rows").num_columns(2).spacing([12.0, 4.0]).min_row_height(ROW_HEIGHT - 4.0).show(ui, |ui| {
                 if file.info.kind != "Folder" && file.info.kind != "Script Source" {
-                    ui.label(egui::RichText::new("Size on disk").color(t.text_muted));
+                    ui.label(egui::RichText::new(tl("Size on disk")).color(t.text_muted));
                     ui.label(file_size(file.info.bytes));
                     ui.end_row();
                 }
@@ -96,7 +97,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         if !file.info.problems.is_empty() {
             theme::section(t).fill(t.warning).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(egui::RichText::new("Problems").strong().color(t.on_warning));
+                ui.label(egui::RichText::new(tl("Problems")).strong().color(t.on_warning));
                 for problem in &file.info.problems {
                     ui.add(egui::Label::new(egui::RichText::new(problem).color(t.on_warning)).wrap());
                 }
@@ -129,7 +130,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             markdown_contents(ui, &mut file);
         } else if let Some(text) = &file.info.text {
             ui.add_space(6.0);
-            let label = ui.label(egui::RichText::new("Contents").small().color(t.text_muted));
+            let label = ui.label(egui::RichText::new(tl("Contents")).small().color(t.text_muted));
             theme::section(t).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 egui::ScrollArea::both().id_salt("file text").max_height(TEXT_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
@@ -214,9 +215,9 @@ fn markdown_contents(ui: &mut egui::Ui, file: &mut Inspected) {
     let Some((flow, text)) = &file.markdown else { return };
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Contents").small().color(t.text_muted));
+        ui.label(egui::RichText::new(tl("Contents")).small().color(t.text_muted));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let source = ui.add(egui::Button::selectable(file.show_source, "Source").small()).on_hover_text("Show the Markdown as written");
+            let source = ui.add(egui::Button::selectable(file.show_source, "Source").small()).on_hover_text(tl("Show the Markdown as written"));
             if source.clicked() {
                 file.show_source = !file.show_source;
             }

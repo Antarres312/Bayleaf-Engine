@@ -1,6 +1,7 @@
 //! Editor for a component's JSON value. Every control takes the width it is given, so editing a
 //! value never changes the width of the panel around it.
 
+use crate::i18n::tl;
 use serde_json::{Number, Value};
 
 use crate::theme::{self, GAP, LABEL_WIDTH, ROW_HEIGHT, Tokens};
@@ -61,7 +62,7 @@ const MIN_BESIDE: f32 = 150.0;
 /// narrow panel the label takes a line of its own and the value the full width under it, so
 /// nothing runs past the panel's edge.
 pub(crate) fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, body: impl FnOnce(&mut egui::Ui, egui::Id, f32) -> R) -> R {
-    let text = egui::RichText::new(label).color(t.text_muted);
+    let text = egui::RichText::new(crate::i18n::tl(label)).color(t.text_muted);
     if ui.available_width() < LABEL_WIDTH + GAP + MIN_BESIDE {
         return ui
             .vertical(|ui| {
@@ -203,7 +204,7 @@ fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if text_list
                         && ui
-                            .add(egui::Button::new("Remove").min_size(egui::vec2(0.0, ROW_HEIGHT)))
+                            .add(egui::Button::new(tl("Remove")).min_size(egui::vec2(0.0, ROW_HEIGHT)))
                             .on_hover_text(format!("Remove item {}", index + 1))
                             .clicked()
                     {
@@ -217,7 +218,7 @@ fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: 
         if items.is_empty() {
             ui.weak("No items");
         }
-        if text_list && ui.add_sized([width, ROW_HEIGHT], egui::Button::new("Add Item")).clicked() {
+        if text_list && ui.add_sized([width, ROW_HEIGHT], egui::Button::new(tl("Add Item"))).clicked() {
             items.push(Value::String(String::new()));
             outcome = Outcome { changed: true, ended: true };
         }
@@ -316,7 +317,7 @@ fn edit_named_numbers(ui: &mut egui::Ui, map: &mut serde_json::Map<String, Value
                 if let Value::Number(n) = value {
                     outcome.merge(ui.push_id(name.as_str(), |ui| edit_number(ui, n, label.id, field_width)).inner);
                 }
-                if ui.add_sized([62.0, ROW_HEIGHT], egui::Button::new("Remove")).on_hover_text(format!("Remove {name}")).clicked() {
+                if ui.add_sized([62.0, ROW_HEIGHT], egui::Button::new(tl("Remove"))).on_hover_text(format!("Remove {name}")).clicked() {
                     remove = Some(name.clone());
                 }
             });
@@ -327,13 +328,13 @@ fn edit_named_numbers(ui: &mut egui::Ui, map: &mut serde_json::Map<String, Value
         ui.horizontal(|ui| {
             let field = ui.add_sized(
                 [(ui.available_width() - 70.0).max(40.0), ROW_HEIGHT],
-                egui::TextEdit::singleline(&mut draft).hint_text("New property").align(egui::Align2::LEFT_CENTER),
+                egui::TextEdit::singleline(&mut draft).hint_text(tl("New property")).align(egui::Align2::LEFT_CENTER),
             );
             ui.ctx().accesskit_node_builder(field.id, |node| node.set_label("New property name"));
             let name = draft.trim().to_owned();
             let can_add = !name.is_empty() && !map.contains_key(&name);
             let submitted = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if (ui.add_enabled_ui(can_add, |ui| ui.add_sized([62.0, ROW_HEIGHT], egui::Button::new("Add"))).inner.clicked() || submitted) && can_add {
+            if (ui.add_enabled_ui(can_add, |ui| ui.add_sized([62.0, ROW_HEIGHT], egui::Button::new(tl("Add")))).inner.clicked() || submitted) && can_add {
                 map.insert(name, Value::from(0.0));
                 draft.clear();
                 outcome = Outcome { changed: true, ended: true };
@@ -382,8 +383,8 @@ pub(crate) fn named_number(ui: &mut egui::Ui, name: &str, value: &mut Value, cha
 fn reset_button(ui: &mut egui::Ui, enabled: bool, name: &str) -> egui::Response {
     let button = ui
         .add_enabled(enabled, egui::Button::new("").min_size(egui::vec2(ROW_HEIGHT, ROW_HEIGHT)))
-        .on_hover_text("Back to the script's default")
-        .on_disabled_hover_text("This is the script's default");
+        .on_hover_text(tl("Back to the script's default"))
+        .on_disabled_hover_text(tl("This is the script's default"));
     ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(format!("Reset {name}")));
     let t = theme::tokens(ui);
     let color = if enabled { t.text } else { t.text_muted.gamma_multiply(0.6) };

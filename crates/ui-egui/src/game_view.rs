@@ -1,6 +1,7 @@
 //! Game view: the game as players see it, through the scene's first camera (or a view of everything
 //! when the scene has none), with the game's state beside it. In play mode the pointer and mouse
 //! buttons over the view go to the scripts.
+use crate::i18n::tl;
 
 use std::collections::BTreeMap;
 
@@ -44,7 +45,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
     ui.horizontal(|ui| {
         command = crate::scene_view::play_controls(ui, &editor.session);
         ui.separator();
-        ui.checkbox(&mut view.show_state, "State").on_hover_text("Show the game's values, each player's and the saved ones");
+        ui.checkbox(&mut view.show_state, tl("State")).on_hover_text(tl("Show the game's values, each player's and the saved ones"));
         if let Some(won) = editor.session.game_state().and_then(|s| s.outcome) {
             ui.separator();
             let text = if won { "Game won" } else { "Game lost" };
@@ -62,7 +63,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
     ui.scope_builder(egui::UiBuilder::new().max_rect(view_rect), |ui| match gpu {
         Some(gpu) => viewport(&mut view, editor, ui, gpu),
         None => {
-            ui.label("The game view needs the wgpu renderer, which is not available here.");
+            ui.label(tl("The game view needs the wgpu renderer, which is not available here."));
         }
     });
     if view.show_state {
@@ -171,7 +172,7 @@ fn state_panel(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui) {
                 muted(ui, t, "Saved values are kept only in a project.");
             }
             let any = saved.as_ref().is_ok_and(|s| !s.is_empty());
-            let button = ui.add_enabled(any, egui::Button::new("Clear Saved Values")).on_hover_text("Forget what the game saved in this project");
+            let button = ui.add_enabled(any, egui::Button::new(tl("Clear Saved Values"))).on_hover_text(tl("Forget what the game saved in this project"));
             clear = button.clicked();
         });
     });

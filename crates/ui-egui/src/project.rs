@@ -7,6 +7,7 @@
 //! inspector to use its path (a script module, for example); the context menu offers the same
 //! without dragging.
 
+use crate::i18n::tl;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -525,14 +526,14 @@ fn delete_dialog(editor: &mut Editor, ctx: &egui::Context) {
     let mut cancelled = false;
     let modal = egui::Modal::new(egui::Id::unique("delete asset")).show(ctx, |ui| {
         ui.set_max_width(420.0);
-        ui.heading("Move to the Recycle Bin?");
+        ui.heading(tl("Move to the Recycle Bin?"));
         ui.add_space(theme::GAP);
         let what = if folder { format!("The folder {name} and everything in it") } else { name.clone() };
         ui.add(egui::Label::new(egui::RichText::new(what).color(t.text)).wrap());
-        ui.label(egui::RichText::new("You can restore it from the Recycle Bin.").color(t.text_muted));
+        ui.label(egui::RichText::new(tl("You can restore it from the Recycle Bin.")).color(t.text_muted));
         ui.add_space(theme::GAP * 2.0);
         ui.horizontal(|ui| {
-            let delete = ui.add(egui::Button::new(egui::RichText::new("Move to Recycle Bin").color(t.on_accent)).fill(t.accent));
+            let delete = ui.add(egui::Button::new(egui::RichText::new(tl("Move to Recycle Bin")).color(t.on_accent)).fill(t.accent));
             // Focus starts on the confirm button once; Tab still reaches Cancel.
             let opened = egui::Id::unique("delete asset focused");
             if !ui.ctx().data(|d| d.get_temp::<bool>(opened).unwrap_or(false)) {
@@ -540,7 +541,7 @@ fn delete_dialog(editor: &mut Editor, ctx: &egui::Context) {
                 ui.ctx().data_mut(|d| d.insert_temp(opened, true));
             }
             confirmed = delete.clicked();
-            cancelled = ui.button("Cancel").clicked();
+            cancelled = ui.button(tl("Cancel")).clicked();
         });
     });
     if !(modal.should_close() || cancelled || confirmed) {
@@ -680,7 +681,7 @@ fn toolbar(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) {
                 }
             }
             None => {
-                ui.label(egui::RichText::new("Project").small().color(t.text));
+                ui.label(egui::RichText::new(tl("Project")).small().color(t.text));
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -692,7 +693,7 @@ fn toolbar(ui: &mut egui::Ui, view: &mut ProjectView, outcome: &mut Outcome) {
 fn create_menu(ui: &mut egui::Ui, outcome: &mut Outcome) {
     let create = ui.menu_button("+", |ui| create_panel(ui, None, outcome));
     ui.ctx().accesskit_node_builder(create.response.id, |node| node.set_label("Create asset"));
-    create.response.on_hover_text("Create a folder, scene, material or script in the open folder");
+    create.response.on_hover_text(tl("Create a folder, scene, material or script in the open folder"));
 }
 
 /// The kinds of asset that can be made, each with its icon and what it is. Choosing one starts
@@ -702,7 +703,7 @@ fn create_panel(ui: &mut egui::Ui, folder: Option<&Path>, outcome: &mut Outcome)
     // A fixed width: rows that grow would take all the room a menu offers.
     const WIDTH: f32 = 300.0;
     ui.set_width(WIDTH);
-    ui.label(egui::RichText::new("Create").small().color(t.text_muted));
+    ui.label(egui::RichText::new(tl("Create")).small().color(t.text_muted));
     for (kind, title, what, _) in CREATABLE {
         let icon = egui::Atom::paint(egui::vec2(22.0, 22.0), move |ui, args| paint_icon(ui.painter(), args.rect, kind_icon(kind), t));
         let mut job = egui::text::LayoutJob::default();
@@ -725,7 +726,7 @@ fn create_panel(ui: &mut egui::Ui, folder: Option<&Path>, outcome: &mut Outcome)
 /// View switch, icon size and search, laid out from the right.
 fn toolbar_right(ui: &mut egui::Ui, view: &mut ProjectView) {
     ui.spacing_mut().item_spacing.x = 4.0;
-    let search = ui.add_sized([SEARCH_WIDTH, LIST_ROW], egui::TextEdit::singleline(&mut view.filter).hint_text("Search").align(egui::Align2::LEFT_CENTER));
+    let search = ui.add_sized([SEARCH_WIDTH, LIST_ROW], egui::TextEdit::singleline(&mut view.filter).hint_text(tl("Search")).align(egui::Align2::LEFT_CENTER));
     ui.ctx().accesskit_node_builder(search.id, |node| node.set_label("Search project files"));
     // A short icon-size slider; Ctrl+mouse wheel over the files does the same.
     let mut size = view.icon();
@@ -738,7 +739,7 @@ fn toolbar_right(ui: &mut egui::Ui, view: &mut ProjectView) {
             .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
     );
     ui.ctx().accesskit_node_builder(slider.id, |node| node.set_label("Icon size"));
-    if slider.on_hover_text("Icon size (Ctrl + mouse wheel)").changed() {
+    if slider.on_hover_text(tl("Icon size (Ctrl + mouse wheel)")).changed() {
         view.icon_size = size;
     }
     for (mode, label) in [(ViewMode::List, "List"), (ViewMode::Icons, "Icons")] {
@@ -1069,60 +1070,60 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
         }
     }
     response.context_menu(|ui| {
-        if entry.kind == Kind::ScriptSource && ui.button("Build Script").on_hover_text("Build it to WebAssembly, next to its folder").clicked() {
+        if entry.kind == Kind::ScriptSource && ui.button(tl("Build Script")).on_hover_text(tl("Build it to WebAssembly, next to its folder")).clicked() {
             outcome.action = Some(Action::BuildScript(entry.path.clone()));
             ui.close();
         }
-        if matches!(entry.kind, Kind::Folder | Kind::ScriptSource) && ui.button("Open Folder").clicked() {
+        if matches!(entry.kind, Kind::Folder | Kind::ScriptSource) && ui.button(tl("Open Folder")).clicked() {
             outcome.enter = Some(entry.path.clone());
             ui.close();
         }
-        if entry.kind == Kind::Scene && ui.button("Open Scene").clicked() {
+        if entry.kind == Kind::Scene && ui.button(tl("Open Scene")).clicked() {
             outcome.action = Some(Action::OpenScene(entry.path.clone()));
             ui.close();
         }
-        if entry.kind == Kind::Prefab && ui.button("Place in Scene").on_hover_text("Adds a linked copy after the selected object").clicked() {
+        if entry.kind == Kind::Prefab && ui.button(tl("Place in Scene")).on_hover_text(tl("Adds a linked copy after the selected object")).clicked() {
             outcome.action = Some(Action::PlacePrefab(entry.path.clone()));
             ui.close();
         }
-        if entry.kind == Kind::Project && ui.button("Open Project").clicked() {
+        if entry.kind == Kind::Project && ui.button(tl("Open Project")).clicked() {
             outcome.action = Some(Action::OpenScene(entry.path.clone()));
             ui.close();
         }
-        if matches!(entry.kind, Kind::Material | Kind::VisualScript) && ui.button("Open in Graph Editor").clicked() {
+        if matches!(entry.kind, Kind::Material | Kind::VisualScript) && ui.button(tl("Open in Graph Editor")).clicked() {
             outcome.action = Some(Action::OpenGraph(entry.path.clone()));
             ui.close();
         }
         if matches!(entry.kind, Kind::Script | Kind::VisualScript | Kind::ScriptSource) {
-            let button = ui.add_enabled(selected_object, egui::Button::new("Add to Selected Object"));
-            if button.on_disabled_hover_text("Select an object first").clicked() {
+            let button = ui.add_enabled(selected_object, egui::Button::new(tl("Add to Selected Object")));
+            if button.on_disabled_hover_text(tl("Select an object first")).clicked() {
                 outcome.action = Some(Action::AddScript(module.clone().unwrap_or_else(|| relative.clone())));
                 ui.close();
             }
         }
-        if entry.kind != Kind::Folder && ui.button("Open with System App").on_hover_text("Open it with the program your system uses for it").clicked() {
+        if entry.kind != Kind::Folder && ui.button(tl("Open with System App")).on_hover_text(tl("Open it with the program your system uses for it")).clicked() {
             outcome.action = Some(Action::OpenExternal(source_file(entry).unwrap_or_else(|| entry.path.clone())));
             ui.close();
         }
-        if ui.button("Show in File Explorer").clicked() {
+        if ui.button(tl("Show in File Explorer")).clicked() {
             outcome.action = Some(Action::Reveal(entry.path.clone()));
             ui.close();
         }
-        if ui.button("Copy Relative Path").clicked() {
+        if ui.button(tl("Copy Relative Path")).clicked() {
             ui.ctx().copy_text(relative.clone());
             ui.close();
         }
         if entry.kind == Kind::Folder && view.is_in_project(&entry.path) {
             ui.separator();
-            ui.menu_button("Create", |ui| create_panel(ui, Some(&entry.path), outcome));
+            ui.menu_button(tl("Create"), |ui| create_panel(ui, Some(&entry.path), outcome));
         }
         if view.is_in_project(&entry.path) {
             ui.separator();
-            if ui.add(egui::Button::new("Rename").shortcut_text("F2")).clicked() {
+            if ui.add(egui::Button::new(tl("Rename")).shortcut_text("F2")).clicked() {
                 outcome.action = Some(Action::StartRename(entry.path.clone()));
                 ui.close();
             }
-            if ui.button("Delete…").on_hover_text("Move it to the Recycle Bin (Delete)").clicked() {
+            if ui.button(tl("Delete…")).on_hover_text(tl("Move it to the Recycle Bin (Delete)")).clicked() {
                 outcome.action = Some(Action::AskDelete(entry.path.clone()));
                 ui.close();
             }
@@ -1135,14 +1136,14 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
 fn folder_menu(response: &egui::Response, view: &ProjectView, folder: &Path, outcome: &mut Outcome) {
     response.context_menu(|ui| {
         if view.is_in_project(folder) {
-            ui.menu_button("Create", |ui| create_panel(ui, Some(folder), outcome));
+            ui.menu_button(tl("Create"), |ui| create_panel(ui, Some(folder), outcome));
             ui.separator();
         }
-        if ui.button("Show in File Explorer").clicked() {
+        if ui.button(tl("Show in File Explorer")).clicked() {
             outcome.action = Some(Action::Reveal(folder.to_path_buf()));
             ui.close();
         }
-        if ui.button("Refresh").on_hover_text("Read the folders again now").clicked() {
+        if ui.button(tl("Refresh")).on_hover_text(tl("Read the folders again now")).clicked() {
             outcome.action = Some(Action::Refresh);
             ui.close();
         }

@@ -1,6 +1,7 @@
 //! Docked panels: drag a tab to move a panel, drag a divider to resize. The Window menu offers the
 //! same without dragging: show or hide panels, pick a ready-made layout, or reset.
 
+use crate::i18n::tl;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 
@@ -28,14 +29,14 @@ impl Panel {
 
     pub fn title(self) -> &'static str {
         match self {
-            Panel::Hierarchy => "Hierarchy",
-            Panel::Scene => "Scene",
-            Panel::Inspector => "Inspector",
-            Panel::Console => "Console",
-            Panel::Project => "Project",
-            Panel::Graph => "Graph",
-            Panel::ProjectSettings => "Project Settings",
-            Panel::Game => "Game",
+            Panel::Hierarchy => tl("Hierarchy"),
+            Panel::Scene => tl("Scene"),
+            Panel::Inspector => tl("Inspector"),
+            Panel::Console => tl("Console"),
+            Panel::Project => tl("Project"),
+            Panel::Graph => tl("Graph"),
+            Panel::ProjectSettings => tl("Project Settings"),
+            Panel::Game => tl("Game"),
         }
     }
 
@@ -61,9 +62,9 @@ impl Layout {
 
     pub fn label(self) -> &'static str {
         match self {
-            Layout::Standard => "Standard Layout",
-            Layout::WideScene => "Wide Scene Layout",
-            Layout::Mirrored => "Mirrored Layout",
+            Layout::Standard => tl("Standard Layout"),
+            Layout::WideScene => tl("Wide Scene Layout"),
+            Layout::Mirrored => tl("Mirrored Layout"),
         }
     }
 

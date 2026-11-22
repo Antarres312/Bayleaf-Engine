@@ -185,7 +185,7 @@ pub(crate) fn tag(ui: &mut egui::Ui, text: &str, fill: Color32, color: Color32) 
         .fill(fill)
         .corner_radius(RADIUS)
         .inner_margin(Margin::symmetric(5, 0))
-        .show(ui, |ui| ui.label(egui::RichText::new(text).small().color(color)))
+        .show(ui, |ui| ui.label(egui::RichText::new(crate::i18n::tl(text)).small().color(color)))
         .response
 }
 
@@ -209,7 +209,7 @@ pub(crate) fn section(t: &Tokens) -> egui::Frame {
 /// A group of settings under a heading, through the Craft apps' shared section
 /// (`craft_ui::layout::Section`), framed like an inspector section. It fills the width.
 pub(crate) fn headed(t: &Tokens, heading: &str) -> craft_ui::layout::Section {
-    craft_ui::layout::Section::new(section(t)).heading(egui::RichText::new(heading).strong())
+    craft_ui::layout::Section::new(section(t)).heading(egui::RichText::new(crate::i18n::tl(heading)).strong())
 }
 
 fn style(t: &Tokens, dark: bool) -> egui::Style {

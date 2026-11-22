@@ -14,6 +14,7 @@ use clap::Parser;
 const LAYOUT_KEY: &str = "bayleaf.layout";
 /// Projects opened lately, for File > Open Recent.
 const RECENT_KEY: &str = "bayleaf.recentProjects";
+const LANGUAGE_KEY: &str = "bayleaf.language";
 
 #[derive(Parser)]
 #[command(name = "bayleaf", version, about = "Bayleaf Engine editor")]
@@ -67,6 +68,8 @@ impl App {
         if let Some(text) = cc.storage.and_then(|s| s.get_string(RECENT_KEY)) {
             editor.restore_recent_projects(&text);
         }
+        // The interface language: the system's until one is chosen in Window > Language.
+        editor.set_language(&cc.storage.and_then(|s| s.get_string(LANGUAGE_KEY)).unwrap_or_else(|| bayleaf_ui_egui::i18n::AUTOMATIC.to_owned()));
         if let Some(scene) = &scene {
             editor.open_scene(scene);
         }
@@ -117,6 +120,7 @@ impl eframe::App for App {
             storage.set_string(LAYOUT_KEY, text);
         }
         storage.set_string(RECENT_KEY, self.editor.recent_projects_text());
+        storage.set_string(LANGUAGE_KEY, self.editor.language_setting().to_owned());
     }
 }
 

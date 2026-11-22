@@ -2,6 +2,7 @@
 //! Each script on the object is its own card, named after its module, with the properties the
 //! script declares. Its width comes from the dock; nothing inside sets it.
 
+use crate::i18n::tl;
 use bayleaf_engine::scene::components::{SceneComponent, ScriptRef, Scripts};
 use serde_json::{Value, json};
 
@@ -68,7 +69,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         // Name: a large field at the top instead of a card.
         if let Some((_, Value::String(name))) = components.iter().find(|(n, _)| *n == "name") {
             let mut edited = name.clone();
-            let label = ui.label(egui::RichText::new("Name").small().color(t.text_muted));
+            let label = ui.label(egui::RichText::new(tl("Name")).small().color(t.text_muted));
             let response = ui
                 .add_sized(
                     [ui.available_width(), ROW_HEIGHT + 4.0],
@@ -112,13 +113,13 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 };
                 ui.add(egui::Label::new(egui::RichText::new(summary).small().color(t.text_muted)).wrap());
                 ui.horizontal(|ui| {
-                    if ui.button("Apply").on_hover_text("Write this object and its children to the prefab file, and update its other copies in the scene").clicked() {
+                    if ui.button(tl("Apply")).on_hover_text(tl("Write this object and its children to the prefab file, and update its other copies in the scene")).clicked() {
                         pending = Some(Pending::Prefab("scene.prefab.apply"));
                     }
-                    if ui.button("Revert").on_hover_text("Throw away this copy's changes and read the prefab file again").clicked() {
+                    if ui.button(tl("Revert")).on_hover_text(tl("Throw away this copy's changes and read the prefab file again")).clicked() {
                         pending = Some(Pending::Prefab("scene.prefab.revert"));
                     }
-                    if ui.button("Unlink").on_hover_text("Keep the objects but stop treating them as a copy of the prefab").clicked() {
+                    if ui.button(tl("Unlink")).on_hover_text(tl("Keep the objects but stop treating them as a copy of the prefab")).clicked() {
                         pending = Some(Pending::Remove("prefab"));
                     }
                 });
@@ -182,7 +183,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         let mut entries: Vec<MenuEntry> = missing
             .iter()
             .map(|kind| MenuEntry {
-                path: if kind.menu.is_empty() { vec![kind.label.to_owned()] } else { kind.menu.split('/').map(str::to_owned).collect() },
+                path: if kind.menu.is_empty() { vec![tl(kind.label).to_owned()] } else { kind.menu.split('/').map(|part| tl(part).to_owned()).collect() },
                 hint: None,
                 add: Pending::Add(kind.name),
             })
@@ -196,19 +197,19 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             entries.push(MenuEntry { path, hint: Some(module.clone()), add: Pending::AddScript(module.clone()) });
         }
         let mut chosen = None;
-        egui::containers::menu::MenuButton::from_button(egui::Button::new("Add Component").min_size(egui::vec2(width, ROW_HEIGHT + 2.0))).ui(ui, |ui| {
+        egui::containers::menu::MenuButton::from_button(egui::Button::new(tl("Add Component")).min_size(egui::vec2(width, ROW_HEIGHT + 2.0))).ui(ui, |ui| {
             ui.set_min_width(width.min(260.0));
             let all: Vec<usize> = (0..entries.len()).collect();
             menu_tree(ui, &entries, &all, 0, &mut chosen);
             if script_menus.is_empty() {
                 ui.separator();
-                ui.label(egui::RichText::new("No scripts in the project folder").color(t.text_muted));
+                ui.label(egui::RichText::new(tl("No scripts in the project folder")).color(t.text_muted));
             }
         });
         if let Some(index) = chosen {
             pending = Some(entries.swap_remove(index).add);
         }
-        ui.label(egui::RichText::new("Tip: drag a script from the Project panel onto this panel.").small().color(t.text_muted));
+        ui.label(egui::RichText::new(tl("Tip: drag a script from the Project panel onto this panel.")).small().color(t.text_muted));
     });
 
     // A script dragged from the Project panel and dropped anywhere on the inspector is added.
@@ -298,13 +299,13 @@ fn card(
         let state_id = ui.make_persistent_id(salt);
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true)
             .show_header(ui, |ui| {
-                let label = ui.label(egui::RichText::new(title).strong());
+                let label = ui.label(egui::RichText::new(tl(title)).strong());
                 if let Some(subtitle) = subtitle {
                     label.on_hover_text(subtitle);
                 }
                 if removable {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let button = ui.small_button("Remove");
+                        let button = ui.small_button(tl("Remove"));
                         // Several cards have a Remove button; the accessible name says which.
                         button.ctx.accesskit_node_builder(button.id, |node| node.set_label(format!("Remove {title}")));
                         if button.on_hover_text(format!("Remove {title}")).clicked() {
@@ -328,7 +329,7 @@ fn script_properties(ui: &mut egui::Ui, index: usize, script: &ScriptRef, declar
     let t = theme::tokens(ui);
     let mut outcome = value_editor::Outcome::default();
     if declared.is_empty() && script.properties.is_empty() {
-        ui.label(egui::RichText::new("This script declares no properties.").color(t.text_muted));
+        ui.label(egui::RichText::new(tl("This script declares no properties.")).color(t.text_muted));
         return outcome;
     }
     // Each row: name, value, and whether it differs from the script's default (a value the script
@@ -394,8 +395,8 @@ pub(crate) fn empty_state(ui: &mut egui::Ui, title: &str, hint: &str) {
     let t = theme::tokens(ui);
     ui.vertical_centered(|ui| {
         ui.add_space((ui.available_height() * 0.3).min(120.0));
-        ui.label(egui::RichText::new(title).strong());
-        ui.add(egui::Label::new(egui::RichText::new(hint).color(t.text_muted)).wrap());
+        ui.label(egui::RichText::new(tl(title)).strong());
+        ui.add(egui::Label::new(egui::RichText::new(tl(hint)).color(t.text_muted)).wrap());
     });
 }
 
@@ -427,14 +428,14 @@ fn file_row(
 ) -> Option<String> {
     let files = &field.files;
     let mut chosen = None;
-    crate::value_editor::row(ui, t, field.label, |ui, label, width| {
+    crate::value_editor::row(ui, t, tl(field.label), |ui, label, width| {
         // Edit sits at the right edge and the list takes what is left of the value's own rect; a
         // long file name is cut short with an ellipsis (hover shows it all), never over the label.
         ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if field.editable && !current.is_empty() {
-                let edit = ui.add(egui::Button::new("Edit").min_size(egui::vec2(0.0, ROW_HEIGHT)));
+                let edit = ui.add(egui::Button::new(tl("Edit")).min_size(egui::vec2(0.0, ROW_HEIGHT)));
                 ui.ctx().accesskit_node_builder(edit.id, |node| node.set_label(format!("Edit {}", field.label.to_lowercase())));
-                if edit.on_hover_text("Open it in the graph editor").clicked() {
+                if edit.on_hover_text(tl("Open it in the graph editor")).clicked() {
                     *open = Some(base.join(current));
                 }
             }
@@ -444,7 +445,7 @@ fn file_row(
                 .truncate()
                 .selected_text(egui::RichText::new(shown).color(t.text))
                 .show_ui(ui, |ui| {
-                    if ui.selectable_label(current.is_empty(), field.none).clicked() {
+                    if ui.selectable_label(current.is_empty(), tl(field.none)).clicked() {
                         chosen = Some(String::new());
                     }
                     for file in files {
@@ -453,7 +454,7 @@ fn file_row(
                         }
                     }
                     if files.is_empty() {
-                        ui.label(egui::RichText::new(field.no_files).color(t.text_muted));
+                        ui.label(egui::RichText::new(tl(field.no_files)).color(t.text_muted));
                     }
                 })
                 .response

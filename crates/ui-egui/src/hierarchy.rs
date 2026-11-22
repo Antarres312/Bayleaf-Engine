@@ -6,6 +6,7 @@
 //! menu with keyboard shortcuts (accessibility standard: anything done by dragging also works
 //! without dragging).
 
+use crate::i18n::tl;
 use bayleaf_core::StableId;
 use bayleaf_engine::scene::Scene;
 use serde_json::{Value, json};
@@ -162,7 +163,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
 fn row_menu(response: &egui::Response, id: StableId, state: &mut RowState) {
     response.context_menu(|ui| {
         state.selected = Some(id);
-        if ui.button("Rename").on_hover_text("F2 or double-click").clicked() {
+        if ui.button(tl("Rename")).on_hover_text(tl("F2 or double-click")).clicked() {
             state.renaming = Some(Rename { id, text: String::new(), focused: false });
             ui.close();
         }
@@ -217,7 +218,7 @@ fn draggable_row(ui: &mut egui::Ui, id: StableId, name: &str, prefab: bool, stat
     let t = theme::tokens(ui);
     // No empty marker on other rows: it would add a space to their accessible name.
     let button = if prefab {
-        egui::Button::selectable(is_selected, (name, egui::Atom::grow(), egui::RichText::new("prefab").small().color(t.text_muted)))
+        egui::Button::selectable(is_selected, (name, egui::Atom::grow(), egui::RichText::new(tl("prefab")).small().color(t.text_muted)))
     } else {
         egui::Button::selectable(is_selected, (name, egui::Atom::grow()))
     };
@@ -448,7 +449,7 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui) {
         let add_size = egui::vec2(ROW_HEIGHT, ROW_HEIGHT);
         let (add, _) = egui::containers::menu::MenuButton::from_button(egui::Button::new(egui::RichText::new("+").strong()).min_size(add_size)).ui(ui, |ui| {
             ui.set_min_width(180.0);
-            if ui.button("Empty Object").clicked() {
+            if ui.button(tl("Empty Object")).clicked() {
                 action = Some(json!({ "name": "Object" }));
                 ui.close();
             }
@@ -461,10 +462,10 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui) {
             }
         });
         ui.ctx().accesskit_node_builder(add.id, |node| node.set_label("Add Object"));
-        add.on_hover_text("Add an object");
+        add.on_hover_text(tl("Add an object"));
         let search = ui.add_sized(
             [ui.available_width(), ROW_HEIGHT],
-            egui::TextEdit::singleline(&mut editor.hierarchy_filter).hint_text("Search").align(egui::Align2::LEFT_CENTER),
+            egui::TextEdit::singleline(&mut editor.hierarchy_filter).hint_text(tl("Search")).align(egui::Align2::LEFT_CENTER),
         );
         // The hint is not an accessible name; give the field one.
         ui.ctx().accesskit_node_builder(search.id, |node| node.set_label("Search objects"));

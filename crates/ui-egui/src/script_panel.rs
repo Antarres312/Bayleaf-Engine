@@ -3,6 +3,7 @@
 //! object) and where Add Component lists it. Everything changes through `graph.*` commands, so
 //! it undoes like any other graph edit.
 
+use crate::i18n::tl;
 use std::collections::HashMap;
 
 use bayleaf_engine::graph::{Graph, Node, VariableType};
@@ -49,7 +50,7 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
         if graph.variables.is_empty() {
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new("Numbers, whole numbers, vectors, true/false, text, objects and colours this script keeps, per object.")
+                    egui::RichText::new(tl("Numbers, whole numbers, vectors, true/false, text, objects and colours this script keeps, per object."))
                         .small()
                         .color(t.text_muted),
                 )
@@ -77,7 +78,7 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                         ui.label(egui::RichText::new(variable.ty.label()).small().color(t.text_muted));
                     });
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("Starts at").color(t.text_muted));
+                        ui.label(egui::RichText::new(tl("Starts at")).color(t.text_muted));
                         if let Some(start) = start_editor(ui, variable.ty, &variable.start, &variable.name) {
                             let key = format!("variable start {} {}", variable.name, editor.gesture);
                             editor.dispatch("graph.variable.set", &json!({ "name": variable.name, "start": start }), Some(&key));
@@ -85,17 +86,17 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                     });
                     ui.horizontal(|ui| {
                         let [get, set] = bayleaf_engine::script::visual::variable_kinds(variable.ty);
-                        let read = ui.small_button("Get").on_hover_text("Place a node that reads it");
+                        let read = ui.small_button(tl("Get")).on_hover_text(tl("Place a node that reads it"));
                         ui.ctx().accesskit_node_builder(read.id, |node| node.set_label(format!("Get {}", variable.name)));
                         if read.clicked() {
                             place(editor, get, at, &variable.name);
                         }
-                        let write = ui.small_button("Set").on_hover_text("Place a node that sets it");
+                        let write = ui.small_button(tl("Set")).on_hover_text(tl("Place a node that sets it"));
                         ui.ctx().accesskit_node_builder(write.id, |node| node.set_label(format!("Set {}", variable.name)));
                         if write.clicked() {
                             place(editor, set, at, &variable.name);
                         }
-                        let remove = ui.small_button("Remove").on_hover_text("Its nodes keep working, starting from zero");
+                        let remove = ui.small_button(tl("Remove")).on_hover_text(tl("Its nodes keep working, starting from zero"));
                         ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(format!("Remove variable {}", variable.name)));
                         if remove.clicked() {
                             editor.dispatch("graph.variable.remove", &json!({ "name": variable.name }), None);
@@ -105,7 +106,7 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
             });
             ui.add_space(theme::SECTION_GAP);
         }
-        ui.menu_button("Add Variable", |ui| {
+        ui.menu_button(tl("Add Variable"), |ui| {
             for ty in VariableType::ALL {
                 if ui.button(ty.label()).clicked() {
                     let stem = match ty {
@@ -165,7 +166,7 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
         }
         // An object variable starts as none: it is set while the game plays.
         VariableType::Object => {
-            ui.label(egui::RichText::new("none, until set in play").color(theme::tokens(ui).text_muted));
+            ui.label(egui::RichText::new(tl("none, until set in play")).color(theme::tokens(ui).text_muted));
             None
         }
         VariableType::Color => {
@@ -182,7 +183,7 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
     theme::headed(t, "Properties").show(ui, |ui| {
         let nodes: Vec<&Node> = graph.nodes.iter().filter(|n| n.kind == "property").collect();
         if nodes.is_empty() {
-            ui.add(egui::Label::new(egui::RichText::new("Numbers set per object in the Inspector.").small().color(t.text_muted)).wrap());
+            ui.add(egui::Label::new(egui::RichText::new(tl("Numbers set per object in the Inspector.")).small().color(t.text_muted)).wrap());
         }
         for node in nodes {
             let name = node.values.get("name").and_then(Value::as_str).unwrap_or("speed").to_owned();
@@ -197,7 +198,7 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
                 }
             });
         }
-        if ui.button("Add Property").on_hover_text("Place a Property node: a number the Inspector sets per object").clicked() {
+        if ui.button(tl("Add Property")).on_hover_text(tl("Place a Property node: a number the Inspector sets per object")).clicked() {
             let taken = |n: &str| graph.nodes.iter().any(|node| node.kind == "property" && node.values.get("name").and_then(Value::as_str) == Some(n));
             place(editor, "property", at, &free_name("value", taken));
         }
@@ -208,11 +209,11 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
 /// while the field has focus, even when it does not read right yet (a trailing `/`).
 fn script(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, panel: &mut ScriptPanel) {
     theme::headed(t, "Script").show(ui, |ui| {
-        ui.label(egui::RichText::new("Menu path").small().color(t.text_muted));
+        ui.label(egui::RichText::new(tl("Menu path")).small().color(t.text_muted));
         let (text, problem) = panel.menu.get_or_insert_with(|| (graph.menu.clone(), None));
         let field = ui
-            .add_sized([ui.available_width(), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(text).hint_text("Scripts/My Script"))
-            .on_hover_text("Folders, then the name: Light/Flicker. Empty: under Scripts.");
+            .add_sized([ui.available_width(), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(text).hint_text(tl("Scripts/My Script")))
+            .on_hover_text(tl("Folders, then the name: Light/Flicker. Empty: under Scripts."));
         ui.ctx().accesskit_node_builder(field.id, |n| n.set_label("Menu path in Add Component"));
         if field.changed() {
             let key = format!("menu path {}", editor.gesture);

@@ -117,7 +117,13 @@ checked and recorded in `docs/feature-names.md`. Product copy never names or com
 - A dependency change: `cargo xtask licences --write` (licences on the craft-contrib list; NOTICE up to date)
 - UI changes: the egui_kittest tests in `crates/ui-egui/src/ui_tests.rs`, with the accessibility check left on.
 
-**Known departures.** This SHOULD rule is not met yet: the translation system (AA 16; labels are plain English).
+**Translations** (AA 16) go through craft-i18n in `crates/ui-egui/src/i18n.rs`: `tl` for a label, `tc` with a context,
+`tid` for a command's label by its id, `tf` for a message with `{name}` placeholders. Builds embed the catalogs when
+`CRAFT_I18N_DIR` names a craft-i18n checkout (`common.tsv` and `bayleaf.tsv` per locale); Window > Language
+chooses, and debug builds offer the pseudo language, which marks translated text.
+
+**Known departures.** AA 16 is only partly met: messages built with `format!` and the engine's own messages (errors,
+the console, the CLI) are still plain English, and right-to-left languages are not offered until the layout mirrors.
 Theme tokens live in `crates/ui-egui/src/theme.rs`, as each Craft app keeps its own; their contrast is tested there.
 The editor uses craft-ui (storytold/craft-libs at one pinned `rev`) for widget-state colours, headed sections,
 combo boxes and the font stack (`crates/ui-egui/src/fonts.rs`; set `CRAFT_FONTS_DIR` to a craft-fonts checkout to

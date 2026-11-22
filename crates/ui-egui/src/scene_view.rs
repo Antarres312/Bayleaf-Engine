@@ -3,6 +3,7 @@
 //! Mouse: drag to orbit, Shift+drag or middle-drag to pan, scroll to zoom, click to select.
 //! Keyboard, with the view focused: arrows orbit, Shift+arrows pan, +/− zoom, F frames the selection.
 
+use crate::i18n::tl;
 use bayleaf_core::math::{DVec3, Vec2, Vec3};
 use bayleaf_render::{CameraView, FrameOptions, RenderTarget, Renderer};
 
@@ -128,7 +129,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
     match gpu {
         Some(gpu) => viewport(&mut view, editor, ui, gpu),
         None => {
-            ui.label("The scene view needs the wgpu renderer, which is not available here.");
+            ui.label(tl("The scene view needs the wgpu renderer, which is not available here."));
         }
     }
     editor.scene_view = view;
@@ -141,11 +142,11 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
         command = play_controls(ui, &editor.session);
         ui.separator();
         let frame_label = if editor.selected.is_some() { "Frame Selection" } else { "Frame All" };
-        if ui.button(frame_label).on_hover_text("Move the view to show it (F)").clicked() {
+        if ui.button(frame_label).on_hover_text(tl("Move the view to show it (F)")).clicked() {
             view.frame_selection(editor);
         }
-        ui.checkbox(&mut view.show_grid, "Grid");
-        ui.checkbox(&mut view.show_colliders, "Colliders").on_hover_text("Outline every physics shape; selected objects always show theirs");
+        ui.checkbox(&mut view.show_grid, tl("Grid"));
+        ui.checkbox(&mut view.show_colliders, tl("Colliders")).on_hover_text(tl("Outline every physics shape; selected objects always show theirs"));
         ui.separator();
         for tool in gizmo::Tool::ALL {
             let key = tool.key().name();
@@ -158,7 +159,7 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
         }
         ui.separator();
         // Shortened with an ellipsis when the view is narrow; hovering shows all of it.
-        ui.add(egui::Label::new(egui::RichText::new("Drag: orbit · Shift+drag: pan · Scroll: zoom · Click: select").weak()).truncate());
+        ui.add(egui::Label::new(egui::RichText::new(tl("Drag: orbit · Shift+drag: pan · Scroll: zoom · Click: select")).weak()).truncate());
     });
     command
 }
@@ -174,18 +175,18 @@ pub(crate) fn play_controls(ui: &mut egui::Ui, session: &bayleaf_engine::Session
     };
     if session.is_playing() {
         let (label, name) = if session.is_paused() { ("Resume", "Resume playing") } else { ("Pause", "Pause playing") };
-        if named(ui.button(label), name).on_hover_text("Ctrl+Shift+P").clicked() {
+        if named(ui.button(label), name).on_hover_text(tl("Ctrl+Shift+P")).clicked() {
             command = Some("play.pause");
         }
-        let stop = ui.add(egui::Button::new(egui::RichText::new("Stop").color(t.on_accent)).fill(t.accent));
-        if named(stop, "Stop playing").on_hover_text("Stop and restore the scene (Ctrl+P)").clicked() {
+        let stop = ui.add(egui::Button::new(egui::RichText::new(tl("Stop")).color(t.on_accent)).fill(t.accent));
+        if named(stop, "Stop playing").on_hover_text(tl("Stop and restore the scene (Ctrl+P)")).clicked() {
             command = Some("play.stop");
         }
         let state = if session.is_paused() { "Paused" } else { "Playing" };
         ui.label(egui::RichText::new(format!("{state} · {:.1} s", session.play_time())).strong());
     } else {
-        let play = ui.add(egui::Button::new(egui::RichText::new("Play").color(t.on_accent)).fill(t.accent));
-        if named(play, "Play scene").on_hover_text("Run the scene's scripts (Ctrl+P)").clicked() {
+        let play = ui.add(egui::Button::new(egui::RichText::new(tl("Play")).color(t.on_accent)).fill(t.accent));
+        if named(play, "Play scene").on_hover_text(tl("Run the scene's scripts (Ctrl+P)")).clicked() {
             command = Some("play.start");
         }
     }

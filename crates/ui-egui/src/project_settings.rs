@@ -1,6 +1,7 @@
 //! Project Settings: what applies to the whole project, such as physics, the project's Input
 //! Map and the editor's preferences for it. Reads the settings once per project and changes them only through `project.settings.set`.
 
+use crate::i18n::tl;
 use bayleaf_engine::project_cmds::{PhysicsPrecision, PhysicsSettings, ProjectSettings, settings_of};
 use serde_json::json;
 
@@ -79,7 +80,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             if project.is_none() {
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new("Open a project to change its settings. Scenes outside a project use these defaults.").color(t.text_muted),
+                        egui::RichText::new(tl("Open a project to change its settings. Scenes outside a project use these defaults.")).color(t.text_muted),
                     )
                     .wrap(),
                 );
@@ -93,7 +94,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 }
                 if category != Category::Preferences {
                     ui.add_space(theme::GAP);
-                    ui.label(egui::RichText::new("Play mode uses these settings from its next start.").small().color(t.text_muted));
+                    ui.label(egui::RichText::new(tl("Play mode uses these settings from its next start.")).small().color(t.text_muted));
                 }
             });
         });
@@ -114,10 +115,11 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
 /// Physics in play mode: on or off, gravity, and how precisely positions count.
 fn physics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectSettings) {
     theme::headed(t, "Physics").show(ui, |ui| {
-        ui.checkbox(&mut settings.physics.enabled, "Physics in play mode").on_hover_text("Off: Rigid Bodies and Colliders do nothing when the game runs");
+        ui.checkbox(&mut settings.physics.enabled, tl("Physics in play mode"))
+            .on_hover_text(tl("Off: Rigid Bodies and Colliders do nothing when the game runs"));
         ui.add_enabled_ui(settings.physics.enabled, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Gravity");
+                ui.label(tl("Gravity"));
                 for (axis, value) in ["X", "Y", "Z"].iter().zip(settings.physics.gravity.iter_mut()) {
                     let field = ui.add_sized(
                         [64.0, ROW_HEIGHT - 4.0],
@@ -125,13 +127,13 @@ fn physics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectS
                     );
                     ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Gravity {axis}, metres per second squared")));
                 }
-                ui.label(egui::RichText::new("m/s²").color(t.text_muted));
+                ui.label(egui::RichText::new(tl("m/s²")).color(t.text_muted));
             });
-            if ui.button("Earth Gravity").on_hover_text("9.81 m/s² downwards").clicked() {
+            if ui.button(tl("Earth Gravity")).on_hover_text(tl("9.81 m/s² downwards")).clicked() {
                 settings.physics.gravity = PhysicsSettings::default().gravity;
             }
             ui.horizontal(|ui| {
-                ui.label("Precision");
+                ui.label(tl("Precision"));
                 let choices = [
                     (PhysicsPrecision::Single, "Single", "Faster; exact to the millimetre within about 10 km of the world's centre"),
                     (PhysicsPrecision::Double, "Double", "About a third slower physics; exact far from the centre, for large worlds"),
@@ -151,12 +153,14 @@ fn physics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectS
 /// How the editor shows this project.
 fn preferences_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectSettings) {
     theme::headed(t, "Project Panel").show(ui, |ui| {
-        ui.checkbox(&mut settings.editor.hide_extensions, "Hide file extensions");
+        ui.checkbox(&mut settings.editor.hide_extensions, tl("Hide file extensions"));
         ui.add(
             egui::Label::new(
-                egui::RichText::new("Show names without .bmaterial, .png and the like; the kind of each file still shows, and renaming keeps the extension.")
-                    .small()
-                    .color(t.text_muted),
+                egui::RichText::new(tl(
+                    "Show names without .bmaterial, .png and the like; the kind of each file still shows, and renaming keeps the extension.",
+                ))
+                .small()
+                .color(t.text_muted),
             )
             .wrap(),
         );
@@ -172,7 +176,7 @@ fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, files: &[String], setting
             ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let current = settings.input.map.clone();
                 if !current.is_empty() {
-                    let button = ui.button("Edit").on_hover_text("Open it in the Inspector to change its actions");
+                    let button = ui.button(tl("Edit")).on_hover_text(tl("Open it in the Inspector to change its actions"));
                     ui.ctx().accesskit_node_builder(button.id, |node| node.set_label("Edit the Input Map"));
                     if button.clicked() {
                         edit = Some(current.clone());
@@ -184,7 +188,7 @@ fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, files: &[String], setting
                     .truncate()
                     .selected_text(shown)
                     .show_ui(ui, |ui| {
-                        if ui.selectable_label(current.is_empty(), "None").clicked() {
+                        if ui.selectable_label(current.is_empty(), tl("None")).clicked() {
                             settings.input.map.clear();
                         }
                         for file in files {
@@ -193,7 +197,7 @@ fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, files: &[String], setting
                             }
                         }
                         if files.is_empty() {
-                            ui.label(egui::RichText::new("No .binput files yet: create one in the Project panel").color(t.text_muted));
+                            ui.label(egui::RichText::new(tl("No .binput files yet: create one in the Project panel")).color(t.text_muted));
                         }
                     })
                     .response

@@ -6,6 +6,7 @@
 //! Each action is a card of two lines (name and kind; then its bindings and Remove), with widths
 //! fixed from the card's width, so rows never push the panel wider.
 
+use crate::i18n::tl;
 use bayleaf_engine::input_cmds::{InputAction, InputAsset, InputMapDef};
 use bayleaf_engine::script::actions::ActionKind;
 
@@ -88,10 +89,10 @@ enum Change {
 pub(crate) fn show(ui: &mut egui::Ui, draft: &mut Draft) -> Option<InputAsset> {
     let t = theme::tokens(ui);
     let mut changed = false;
-    ui.label(egui::RichText::new("Maps").small().color(t.text_muted));
+    ui.label(egui::RichText::new(tl("Maps")).small().color(t.text_muted));
     ui.add(
         egui::Label::new(
-            egui::RichText::new("Each map holds its actions; one map is active at a time. Code and visual scripts name an action Map/Action (Player/Jump), or just Jump for the active map. Bindings: key:W, mouse:Left, pad:South, axis:LeftX+, separated by commas.")
+            egui::RichText::new(tl("Each map holds its actions; one map is active at a time. Code and visual scripts name an action Map/Action (Player/Jump), or just Jump for the active map. Bindings: key:W, mouse:Left, pad:South, axis:LeftX+, separated by commas."))
                 .small()
                 .color(t.text_muted),
         )
@@ -112,13 +113,13 @@ pub(crate) fn show(ui: &mut egui::Ui, draft: &mut Draft) -> Option<InputAsset> {
                 ui.horizontal(|ui| {
                     let field = ui.add_sized(
                         [(width - REMOVE_MAP_WIDTH - gap).max(40.0), ROW_HEIGHT - 4.0],
-                        egui::TextEdit::singleline(&mut map.name).hint_text("Map name").font(egui::TextStyle::Button),
+                        egui::TextEdit::singleline(&mut map.name).hint_text(tl("Map name")).font(egui::TextStyle::Button),
                     );
                     ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Name of map {map_shown}")));
                     changed |= field.changed();
-                    let remove = ui.add_sized([REMOVE_MAP_WIDTH, ROW_HEIGHT - 4.0], egui::Button::new("Remove Map"));
+                    let remove = ui.add_sized([REMOVE_MAP_WIDTH, ROW_HEIGHT - 4.0], egui::Button::new(tl("Remove Map")));
                     ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(format!("Remove map {map_shown}")));
-                    if remove.on_hover_text("Remove this map and its actions").clicked() {
+                    if remove.on_hover_text(tl("Remove this map and its actions")).clicked() {
                         change = Some(Change::RemoveMap(m));
                     }
                 });
@@ -131,16 +132,16 @@ pub(crate) fn show(ui: &mut egui::Ui, draft: &mut Draft) -> Option<InputAsset> {
                     });
                     ui.add_space(theme::SECTION_GAP);
                 }
-                let add = ui.button("Add Action");
+                let add = ui.button(tl("Add Action"));
                 ui.ctx().accesskit_node_builder(add.id, |node| node.set_label(format!("Add action to {map_shown}")));
-                if add.on_hover_text("A new action in this map").clicked() {
+                if add.on_hover_text(tl("A new action in this map")).clicked() {
                     change = Some(Change::AddAction(m));
                 }
             });
         });
         ui.add_space(theme::GAP);
     }
-    if ui.button("Add Map").on_hover_text("A new map, for another way to play (driving, a menu…)").clicked() {
+    if ui.button(tl("Add Map")).on_hover_text(tl("A new map, for another way to play (driving, a menu…)")).clicked() {
         change = Some(Change::AddMap);
     }
     match change {
@@ -193,7 +194,7 @@ fn action_card(ui: &mut egui::Ui, t: &Tokens, map: &str, index: usize, row: &mut
         let shown = if row.name.trim().is_empty() { format!("{map}/action {}", index + 1) } else { format!("{map}/{}", row.name.trim()) };
         ui.horizontal(|ui| {
             let name =
-                ui.add_sized([(width - KIND_WIDTH - gap).max(40.0), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(&mut row.name).hint_text("Action name"));
+                ui.add_sized([(width - KIND_WIDTH - gap).max(40.0), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(&mut row.name).hint_text(tl("Action name")));
             ui.ctx().accesskit_node_builder(name.id, |node| node.set_label(format!("Name of {shown}")));
             *changed |= name.changed();
             let current = KINDS.iter().find(|(k, ..)| *k == row.kind).map_or("Held", |(_, label, _)| label);
@@ -210,13 +211,13 @@ fn action_card(ui: &mut egui::Ui, t: &Tokens, map: &str, index: usize, row: &mut
         ui.horizontal(|ui| {
             let bindings = ui.add_sized(
                 [(width - REMOVE_WIDTH - gap).max(40.0), ROW_HEIGHT - 4.0],
-                egui::TextEdit::singleline(&mut row.bindings).hint_text("key:Space, pad:South"),
+                egui::TextEdit::singleline(&mut row.bindings).hint_text(tl("key:Space, pad:South")),
             );
             ui.ctx().accesskit_node_builder(bindings.id, |node| node.set_label(format!("Bindings of {shown}")));
             *changed |= bindings.changed();
-            let button = ui.add_sized([REMOVE_WIDTH, ROW_HEIGHT - 4.0], egui::Button::new("Remove"));
+            let button = ui.add_sized([REMOVE_WIDTH, ROW_HEIGHT - 4.0], egui::Button::new(tl("Remove")));
             ui.ctx().accesskit_node_builder(button.id, |node| node.set_label(format!("Remove {shown}")));
-            remove = button.on_hover_text("Remove this action").clicked();
+            remove = button.on_hover_text(tl("Remove this action")).clicked();
         });
     });
     remove

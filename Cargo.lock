@@ -673,6 +673,7 @@ dependencies = [
  "bayleaf-render",
  "craft-flow",
  "craft-fonts-build",
+ "craft-i18n",
  "craft-markdown",
  "craft-ui",
  "egui",
