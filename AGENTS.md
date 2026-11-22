@@ -131,6 +131,10 @@ combo boxes and the font stack (`crates/ui-egui/src/fonts.rs`; set `CRAFT_FONTS_
 embed its faces). craft-ui needs the suite's egui and winit forks: the root `Cargo.toml` patches them at the commits
 craft-libs uses, and a craft-libs `rev` move updates those patches in the same change.
 
+**Branches and versions** (`docs/releasing.md`). Work goes to `develop`, on a `feature/<what>` or `fix/<what>` branch
+merged back into it; PRs target `develop`. `main` holds only releases, each tagged `vX.Y.Z` (Semantic Versioning, the
+root `Cargo.toml` version), and changes only when a release merges `develop` into it.
+
 **Conventions.** `unsafe` is allowed only in `crates/script-sdk/src/abi.rs` (the guest FFI to the host), each block
 with a `// SAFETY:` comment. Every crate root carries the deny attributes
 from `crates/core/src/lib.rs`. Every asset is recorded in `ATTRIBUTION.md`. Fonts come from storytold/craft-fonts.
