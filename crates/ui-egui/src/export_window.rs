@@ -19,6 +19,8 @@ pub(crate) struct ExportWindow {
     report: Option<((Platform, ScriptMode), Result<Value, String>)>,
     /// What the last export said: where it went, or why not.
     outcome: Option<Result<String, String>>,
+    /// A native player being built in the background: the game's folder, and the build's answer.
+    building: Option<(String, std::sync::mpsc::Receiver<Result<(), String>>)>,
 }
 
 impl ExportWindow {
@@ -26,7 +28,7 @@ impl ExportWindow {
     pub(crate) fn new(editor: &Editor) -> Self {
         let platform = Platform::current();
         let mode = bayleaf_engine::export::chosen_mode(&editor.session, platform);
-        Self { platform, mode, folder: String::new(), report: None, outcome: None }
+        Self { platform, mode, folder: String::new(), report: None, outcome: None, building: None }
     }
 }
 
@@ -117,8 +119,22 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
     }
     ui.add_space(theme::SECTION_GAP);
 
+    // A native build that finished says how it went.
+    if let Some((path, answer)) = &window.building {
+        match answer.try_recv() {
+            Ok(result) => {
+                window.outcome = Some(result.map(|()| path.clone()));
+                window.building = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                window.outcome = Some(Err(tl("the build stopped without an answer").to_owned()));
+                window.building = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => ui.ctx().request_repaint_after(std::time::Duration::from_millis(250)),
+        }
+    }
     // Where to, and the export itself.
-    let ready = matches!(&window.report, Some((_, Ok(report))) if report["ready"] == true);
+    let ready = matches!(&window.report, Some((_, Ok(report))) if report["ready"] == true) && window.building.is_none();
     theme::headed(t, "Export").show(ui, |ui| {
         crate::value_editor::row(ui, t, "Folder", |ui, label, width| {
             ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -141,11 +157,27 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
                 .add_enabled(can, egui::Button::new(egui::RichText::new(tl("Export")).color(t.on_accent)).fill(t.accent))
                 .on_disabled_hover_text(tl("Choose a folder, and fix the errors the check lists"));
             if export.clicked() {
-                let params = json!({ "folder": window.folder.trim(), "platform": window.platform, "mode": window.mode });
-                window.outcome = Some(match editor.registry.execute(&mut editor.session, "project.export", &params) {
-                    Ok(result) => Ok(result["path"].as_str().unwrap_or_default().to_owned()),
-                    Err(e) => Err(e.to_string()),
-                });
+                // A native player builds for minutes: the export returns when it can start, and it
+                // builds in the background while the editor stays in use.
+                let params = json!({ "folder": window.folder.trim(), "platform": window.platform, "mode": window.mode, "wait": false });
+                match editor.registry.execute(&mut editor.session, "project.export", &params) {
+                    Ok(result) => {
+                        let path = result["path"].as_str().unwrap_or_default().to_owned();
+                        // Native mode: the player still to build (`build` is null otherwise).
+                        match serde_json::from_value::<bayleaf_engine::native_export::NativeBuild>(result["build"].clone()) {
+                            Ok(plan) => {
+                                let (sender, receiver) = std::sync::mpsc::channel();
+                                std::thread::spawn(move || {
+                                    let _ = sender.send(bayleaf_engine::native_export::build(&plan));
+                                });
+                                window.building = Some((path, receiver));
+                                window.outcome = None;
+                            }
+                            Err(_) => window.outcome = Some(Ok(path)),
+                        }
+                    }
+                    Err(e) => window.outcome = Some(Err(e.to_string())),
+                }
                 // The project may have changed meanwhile; check it again.
                 window.report = None;
             }
@@ -153,6 +185,17 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
                 *keep = false;
             }
         });
+        if window.building.is_some() {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new());
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(tl("Building the game's player with its Rust scripts. The first build takes several minutes.")).color(t.text),
+                    )
+                    .wrap(),
+                );
+            });
+        }
         match &window.outcome {
             Some(Ok(path)) => {
                 ui.add(egui::Label::new(egui::RichText::new(tf("Exported to {path}", &[("path", path)])).color(t.text)).wrap());

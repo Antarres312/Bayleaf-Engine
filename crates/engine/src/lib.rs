@@ -14,6 +14,7 @@ pub mod export;
 mod graph_cmds;
 pub mod input_cmds;
 mod lighting_cmds;
+pub mod native_export;
 mod play;
 pub mod prefab_cmds;
 pub mod project_cmds;
@@ -30,6 +31,7 @@ pub use bayleaf_graph as graph;
 pub use bayleaf_render as render;
 pub use bayleaf_scene as scene;
 pub use bayleaf_script as script;
+pub use bayleaf_script::NativeScript;
 pub use graph_cmds::{GraphDoc, catalog_for_domain, catalog_for_path, problems};
 pub use scene_cmds::CLIPBOARD_FORMAT;
 
@@ -138,6 +140,9 @@ pub struct Session {
     project_dir: Option<PathBuf>,
     /// Sounds are heard in play mode (the editor and the player); otherwise they play silently.
     sound: bool,
+    /// Scripts built into the game (native mode), by the module path they stand for; play mode runs
+    /// them instead of those modules.
+    native_scripts: Vec<(PathBuf, bayleaf_script::NativeScript)>,
 }
 
 /// How important a console line is.
@@ -192,6 +197,13 @@ impl Session {
     /// player turn it on; the CLI, agents and tests leave it off, and sounds play silently, in time.
     pub fn set_sound(&mut self, on: bool) {
         self.sound = on;
+    }
+
+    /// Scripts built into this program (a game exported in native mode), each standing for the
+    /// module at its path in the game (`scripts/mover.wasm`). Play mode runs them, from its next
+    /// start, as machine code with no sandbox.
+    pub fn set_native_scripts(&mut self, natives: Vec<(PathBuf, bayleaf_script::NativeScript)>) {
+        self.native_scripts = natives;
     }
 
     /// The gamepad scripts see (`None`: none connected). Axes are clamped to their ranges.

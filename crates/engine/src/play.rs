@@ -338,10 +338,12 @@ fn readable_modules(session: &Session, scene: &Scene) -> Result<(), CommandError
 fn fresh_host(session: &Session, runtime: Runtime) -> (ScriptHost, InputAssets, Vec<String>) {
     let mut problems = Vec::new();
     // Scripts that cannot run as asked are interpreted, and the console says so.
-    let host = ScriptHost::with_runtime(runtime).unwrap_or_else(|why| {
-        problems.push(format!("Scripts are interpreted: {why}."));
-        ScriptHost::new()
-    });
+    let host = ScriptHost::with_runtime(runtime)
+        .unwrap_or_else(|why| {
+            problems.push(format!("Scripts are interpreted: {why}."));
+            ScriptHost::new()
+        })
+        .with_natives(session.native_scripts.clone());
     match project_input(session) {
         Ok(maps) => host.with_input(|set| set.project = maps.map(bayleaf_script::actions::InputState::new)),
         Err(problem) => problems.push(format!("The project's Input Map: {problem}")),

@@ -302,7 +302,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
      project are built into the player at export, with no sandbox; the export says plainly that such
      a script can do anything a program can, and scripts without source stay compiled WebAssembly.
      The Export window's check then reports these modes as available, and Project Settings keeps
-     the choice per platform.
+     the choice per platform. (Done: the export builds a player with the scripts in from the engine's
+     source and cargo; native scripts reach the host through the same host functions, so its checks
+     and faults apply; see `docs/script-abi.md`.)
    - **Ctrl+S saves the graph being edited.** While the Graph panel is the one in use (a node, the
      canvas or the script panel has the keyboard, or it was last clicked), Ctrl+S saves the open
      graph (`graph.save`) instead of the scene; a graph never saved asks where, as Save As does.

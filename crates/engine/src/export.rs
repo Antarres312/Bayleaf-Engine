@@ -30,6 +30,7 @@ const GAME_EXTENSIONS: &[&str] = &[
     bayleaf_script::VISUAL_EXTENSION,
     "wasm",
     crate::input_cmds::INPUT_EXTENSION,
+    bayleaf_scene::lighting::EXTENSION,
     "glb",
     "gltf",
     "bin",
@@ -84,6 +85,14 @@ struct ExportParams {
     mode: Option<ScriptMode>,
     #[serde(default)]
     player: Option<PathBuf>,
+    /// Native mode: wait for the game's player to build (the default), or return when the build
+    /// is ready to run (`build` in the result), for a program that builds it in the background.
+    #[serde(default = "yes")]
+    wait: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// The game's name as a file name: letters, digits, spaces, `-` and `_`; anything else becomes `_`.
@@ -158,7 +167,7 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
         let errors: Vec<&str> = report.findings.iter().filter(|f| f.severity == Severity::Error).map(|f| f.message.as_str()).collect();
         return Err(CommandError::Failed(format!("the game cannot be exported yet: {}", errors.join(" "))));
     }
-    let player = player_program(session, p.player.as_deref())?;
+    let player = if mode == ScriptMode::Native { None } else { Some(player_program(session, p.player.as_deref())?) };
 
     let out = session.allowed(&p.folder.join(&name), Access::Write)?;
     if out.starts_with(&project) {
@@ -193,7 +202,24 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
     }
     record_mode(&game, platform, mode)?;
     let program = out.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(&player, &program).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", program.display())))?;
+    // The plain player, or (native mode) one built with the game's Rust scripts in it.
+    let mut pending = None;
+    let natives = crate::native_export::sources(&project, &files);
+    match &player {
+        Some(player) => {
+            std::fs::copy(player, &program).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", program.display())))?;
+        }
+        None => {
+            let engine = crate::native_export::engine_source().ok_or_else(|| CommandError::Failed("the engine's source is not found".to_owned()))?;
+            let folder = session.allowed(&project.join(".build").join("native").join(platform.code()), Access::Write)?;
+            let plan = crate::native_export::prepare(&engine, &project, &natives, &folder, &program).map_err(CommandError::Failed)?;
+            if p.wait {
+                crate::native_export::build(&plan).map_err(CommandError::Failed)?;
+            } else {
+                pending = Some(plan);
+            }
+        }
+    }
 
     let shown = |list: &[PathBuf]| list.iter().map(|p| p.to_string_lossy().replace('\\', "/")).collect::<Vec<_>>();
     session.log(crate::Level::Info, format!("Exported {name} to {}: {} files, {} visual scripts compiled.", out.display(), files.len(), compiled.len()));
@@ -203,6 +229,8 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
         "files": files.len(),
         "compiled": shown(&compiled.iter().map(|(f, _)| f.clone()).collect::<Vec<_>>()),
         "skipped": shown(&left),
+        "native": if mode == ScriptMode::Native { natives.iter().map(|s| s.module.clone()).collect::<Vec<_>>() } else { Vec::new() },
+        "build": pending,
     }))
 }
 
@@ -290,12 +318,13 @@ impl ScriptMode {
     }
 
     /// Whether this version of the engine can export games for `platform` in this mode: compiled
-    /// scripts need a desktop system (the player built with them), and native ones are not there yet.
+    /// scripts need a desktop system (the player built with them); native ones build the player on
+    /// this computer, for its own system, with the engine's source and Rust (cargo).
     pub fn available_for(self, platform: Platform) -> bool {
         match self {
             ScriptMode::Interpreted => true,
             ScriptMode::Compiled => platform != Platform::Web,
-            ScriptMode::Native => false,
+            ScriptMode::Native => platform == Platform::current() && crate::native_export::engine_source().is_some() && crate::native_export::cargo_found(),
         }
     }
 
@@ -387,6 +416,7 @@ fn player_program(session: &Session, given: Option<&Path>) -> Result<PathBuf, Co
 /// File extensions a scene or prefab may name a file of the project by.
 const REFERENCED_EXTENSIONS: &[&str] = &[
     "bscene",
+    "blight",
     "bprefab",
     "bmaterial",
     "bscript",
@@ -464,18 +494,33 @@ pub fn check(session: &Session, platform: Platform, mode: ScriptMode, player: Op
     if !mode.available_for(platform) {
         let why = match mode {
             ScriptMode::Compiled => format!("{} is not available for {}: browsers run scripts interpreted.", mode.label(), platform.label()),
-            _ => format!("{} is not available yet in this version; choose Interpreted or Compiled to machine code.", mode.label()),
+            ScriptMode::Native if platform != Platform::current() => {
+                format!("{} builds the game's player on this computer, so only for {}.", mode.label(), Platform::current().label())
+            }
+            ScriptMode::Native if crate::native_export::engine_source().is_none() => {
+                format!("{} builds the game's player from the engine's source, which is not found; set BAYLEAF_SOURCE_DIR to its folder.", mode.label())
+            }
+            _ => format!("{} builds the game's player with Rust (cargo), which is not installed; get it from rustup.rs.", mode.label()),
         };
         found(Severity::Error, why, None);
     }
-    match player_program(session, player) {
-        Ok(path) if path.is_file() => {}
-        Ok(path) => found(
-            Severity::Error,
-            format!("The player program {} is not there; build it first (cargo build --release -p bayleaf-player).", path.display()),
+    if mode == ScriptMode::Native {
+        found(
+            Severity::Warning,
+            "Native scripts run with no sandbox: such a script can do anything a program can, and a fault in one stops the game. Use them only for code you trust.".to_owned(),
             None,
-        ),
-        Err(e) => found(Severity::Error, e.to_string(), None),
+        );
+        found(Severity::Note, "The export builds the game's own player; the first build takes several minutes, later ones less.".to_owned(), None);
+    } else {
+        match player_program(session, player) {
+            Ok(path) if path.is_file() => {}
+            Ok(path) => found(
+                Severity::Error,
+                format!("The player program {} is not there; build it first (cargo build --release -p bayleaf-player).", path.display()),
+                None,
+            ),
+            Err(e) => found(Severity::Error, e.to_string(), None),
+        }
     }
     // The scene the game starts with.
     let file =
@@ -549,6 +594,8 @@ pub fn check(session: &Session, platform: Platform, mode: ScriptMode, player: Op
         };
         let mut named = Vec::new();
         referenced_files(&value["objects"], &mut named);
+        // A scene's settings name its lighting asset.
+        referenced_files(&value["settings"], &mut named);
         named.sort();
         named.dedup();
         for missing in named.into_iter().filter(|n| !project.join(n).is_file()) {

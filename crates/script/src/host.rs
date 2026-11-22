@@ -13,13 +13,14 @@ use bayleaf_scene::Scene;
 use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue, ScriptRef, Scripts};
 
 use super::rt::{self, Caller, Engine, Linker, Module, Store, TypedFunc};
-use super::{Error, LinkError, error, instantiate, limits, out_of_fuel, trap_message};
+use super::{Error, LinkError, error, from_val, instantiate, limits, out_of_fuel, to_val, trap_message};
 use crate::{
     ABI_VERSION, Description, EVERY_OBJECT, FUEL_PER_CALL, GameState, Input, LogLine, MAX_DESCRIPTION_BYTES, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME,
     MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS, MAX_REQUESTS_PER_CALL, Message, Properties, PropertyWrite, Request, Scope, ScriptError, ScriptFault, ScriptValues,
     SharedState, Velocities, WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position, module_bytes, read_position, read_transform,
     readable_component, script_keys, transform_from, visual,
 };
+use bayleaf_script_sdk::native::{Bridge, NativeObject, Value};
 
 /// What one instance's host functions see, with this runtime's store limits.
 type HostState = crate::HostState<rt::StoreLimits>;
@@ -99,6 +100,8 @@ pub struct ScriptHost {
     linker: Linker<HostState>,
     /// Modules by their bytes, so a script on many objects is compiled once.
     modules: HashMap<Vec<u8>, Module>,
+    /// Scripts built into the game, by the module path they stand for (native mode).
+    natives: Vec<(PathBuf, crate::NativeScript)>,
     instances: Vec<Instance>,
     faults: Vec<ScriptFault>,
     logs: Vec<LogLine>,
@@ -123,6 +126,7 @@ impl ScriptHost {
             engine,
             linker,
             modules: HashMap::new(),
+            natives: Vec::new(),
             instances: Vec::new(),
             faults: Vec::new(),
             logs: Vec::new(),
@@ -135,6 +139,12 @@ impl ScriptHost {
             reads_fields: false,
             property_writes: Vec::new(),
         }
+    }
+
+    /// Runs the modules at these paths (relative to the game, `scripts/mover.wasm`) as the native
+    /// scripts built into the game instead.
+    pub(crate) fn set_natives(&mut self, natives: Vec<(PathBuf, crate::NativeScript)>) {
+        self.natives = natives;
     }
 
     /// Loads every script of every object. Module paths are relative to `base_dir`. Problems are
@@ -270,6 +280,12 @@ impl ScriptHost {
         input: &Arc<Input>,
     ) -> Result<(), ScriptError> {
         let module_name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        // A script built into the game runs natively behind the trampoline module.
+        let native = crate::native::find(&self.natives, path);
+        let bytes = match native {
+            Some(_) => crate::native::trampoline().map_err(|e| ScriptError::Invalid(module_name.clone(), e))?,
+            None => bytes,
+        };
         let module = match self.modules.get(bytes) {
             Some(module) => module.clone(),
             None => {
@@ -289,6 +305,7 @@ impl ScriptHost {
         let trapped = |module: &str, e: Error| ScriptError::Trapped { module: module.to_owned(), message: trap_message(&e) };
         store.set_fuel(FUEL_PER_CALL).map_err(|e| trapped(&module_name, e))?;
         let instance = instantiate(&self.linker, &mut store, &module).map_err(|e| trapped(&module_name, e))?;
+        store.data_mut().native = native.map(|script| script.create());
 
         let abi = instance
             .get_typed_func::<(), i32>(&mut store, "bayleaf_abi")
@@ -730,6 +747,83 @@ fn state_scope(caller: &mut Caller<'_, HostState>, what: &str, scope: i32, handl
         },
         _ => Err(fault(caller, format!("{what}: scope is 0 (the game), 1 (a player) or 2 (saved)"))),
     }
+}
+
+/// The SDK's way to the host for a native script: each call goes through the trampoline's
+/// `call_<name>` export, so the host function runs as for a WebAssembly script.
+struct NativeBridge<'a, 'c> {
+    caller: &'a mut Caller<'c, HostState>,
+    /// The first call that failed; later calls do nothing.
+    failed: Option<Error>,
+}
+
+impl Bridge for NativeBridge<'_, '_> {
+    fn call(&mut self, name: &str, args: &[Value]) -> Option<Value> {
+        if self.failed.is_some() {
+            return None;
+        }
+        let Some(func) = self.caller.get_export(&format!("call_{name}")).and_then(rt::Extern::into_func) else {
+            self.failed = Some(fault(self.caller, format!("{name}: there is no such host function")));
+            return None;
+        };
+        let params: Vec<rt::Val> = args.iter().map(|a| to_val(*a)).collect();
+        let mut results = vec![rt::Val::I32(0); func.ty(&*self.caller).results().len()];
+        match func.call(&mut *self.caller, &params, &mut results) {
+            Ok(()) => Some(results.first().map_or(Value::I32(0), from_val)),
+            Err(e) => {
+                self.failed = Some(e);
+                None
+            }
+        }
+    }
+
+    fn read(&mut self, at: u32, out: &mut [u8]) -> bool {
+        let Some(memory) = self.caller.get_export("memory").and_then(rt::Extern::into_memory) else { return false };
+        memory.read(&*self.caller, at as usize, out).is_ok()
+    }
+
+    fn write(&mut self, at: u32, bytes: &[u8]) -> bool {
+        let Some(memory) = self.caller.get_export("memory").and_then(rt::Extern::into_memory) else { return false };
+        memory.write(&mut *self.caller, at as usize, bytes).is_ok()
+    }
+}
+
+/// Runs one of a native script's functions with the bridge set. A failed host call, or a panic,
+/// stops the script with its reason.
+fn run_native(caller: &mut Caller<'_, HostState>, run: impl FnOnce(&mut dyn NativeObject)) -> Result<(), Error> {
+    let Some(mut object) = caller.data_mut().native.take() else { return Ok(()) };
+    let mut bridge = NativeBridge { caller: &mut *caller, failed: None };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bayleaf_script_sdk::native::with_bridge(&mut bridge, || run(object.as_mut()));
+    }));
+    let failed = bridge.failed.take();
+    caller.data_mut().native = Some(object);
+    if let Err(payload) = outcome {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "no message".to_owned());
+        return Err(fault(caller, format!("the script panicked: {message}")));
+    }
+    failed.map_or(Ok(()), Err)
+}
+
+/// The functions the trampoline module calls for a native script.
+fn link_native(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
+    linker.func_wrap("native", "init", |mut caller: Caller<'_, HostState>| -> Result<(), Error> { run_native(&mut caller, |o| o.init()) })?;
+    linker.func_wrap("native", "start", |mut caller: Caller<'_, HostState>| -> Result<(), Error> { run_native(&mut caller, |o| o.start()) })?;
+    linker.func_wrap("native", "update", |mut caller: Caller<'_, HostState>, dt: f32| -> Result<(), Error> { run_native(&mut caller, |o| o.update(dt)) })?;
+    linker.func_wrap("native", "message", |mut caller: Caller<'_, HostState>, value: f32| -> Result<(), Error> {
+        run_native(&mut caller, |o| o.message(value))
+    })?;
+    // The description is written at the start of the exchange memory: `(0 << 32) | len`.
+    linker.func_wrap("native", "describe", |mut caller: Caller<'_, HostState>| -> Result<i64, Error> {
+        let text = caller.data().native.as_ref().map(|o| o.describe()).unwrap_or_default();
+        write_guest(&mut caller, 0, text.as_bytes(), "describe")?;
+        Ok(i64::try_from(text.len()).unwrap_or(0))
+    })?;
+    Ok(())
 }
 
 fn make_linker(engine: &Engine) -> Linker<HostState> {
@@ -1231,6 +1325,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             write_guest(&mut caller, out, bytes, "message_name")?;
             Ok(name.len() as i32)
         })?;
+        link_native(&mut linker)?;
         Ok(())
     })();
     // The names are fixed and unique, so defining them cannot fail.

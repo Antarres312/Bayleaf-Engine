@@ -1951,10 +1951,12 @@ fn export_game_opens_its_own_window_that_checks_the_project_for_the_chosen_mode(
     harness.run_steps(3);
     assert!(harness.query_by_label_contains("How each script would run").is_some(), "the window lists the check's findings and scripts");
 
-    // A mode this version cannot export yet: the check says so and Export stays off.
-    harness.query_all_by_label_contains("Native (not available here)").next().expect("the modes, with what is not available").click();
+    // Native says plainly what it gives up; a project with an error cannot export, and says why.
+    std::fs::remove_file(dir.join("Game").join("scenes").join("main.bscene")).unwrap();
+    harness.query_all_by_label_contains("Native").next().expect("the modes").click();
     harness.run_steps(3);
-    assert!(harness.query_all_by_label_contains("Error: Native is not available yet").next().is_some(), "errors are named as errors, not only coloured");
+    assert!(harness.query_all_by_label_contains("Warning: Native scripts run with no sandbox").next().is_some(), "warnings are named as warnings");
+    assert!(harness.query_all_by_label_contains("Error: The main scene").next().is_some(), "errors are named as errors, not only coloured");
     harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export").click();
     harness.run_steps(2);
     assert!(harness.query_all_by_label_contains("xported").next().is_none(), "nothing exports while the check finds errors");

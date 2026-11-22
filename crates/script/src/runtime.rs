@@ -78,6 +78,13 @@ impl ScriptHost {
         }
     }
 
+    /// Runs the modules at these paths (relative to the game, `scripts/mover.wasm`) as the native
+    /// scripts built into the game instead: machine code with no sandbox (native mode).
+    pub fn with_natives(mut self, natives: Vec<(PathBuf, crate::NativeScript)>) -> Self {
+        each!(&mut self.0, host => host.set_natives(natives));
+        self
+    }
+
     pub fn runtime(&self) -> Runtime {
         match &self.0 {
             Backend::Interpreted(_) => Runtime::Interpreted,

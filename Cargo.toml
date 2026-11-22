@@ -22,6 +22,7 @@ bayleaf-graph = { path = "crates/graph" }
 bayleaf-assets = { path = "crates/assets" }
 bayleaf-render = { path = "crates/render" }
 bayleaf-script = { path = "crates/script" }
+bayleaf-script-sdk = { path = "crates/script-sdk" }
 bayleaf-streaming = { path = "crates/streaming" }
 bayleaf-engine = { path = "crates/engine" }
 bayleaf-ui-egui = { path = "crates/ui-egui" }

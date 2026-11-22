@@ -43,6 +43,29 @@ pub(crate) fn trap_message(error: &Error) -> String {
     error.to_string()
 }
 
+/// A number for a host function, from a native script.
+pub(crate) fn to_val(value: bayleaf_script_sdk::native::Value) -> rt::Val {
+    use bayleaf_script_sdk::native::Value::{F32, F64, I32, I64};
+    match value {
+        I32(v) => rt::Val::I32(v),
+        I64(v) => rt::Val::I64(v),
+        F32(v) => rt::Val::F32(v.into()),
+        F64(v) => rt::Val::F64(v.into()),
+    }
+}
+
+/// A host function's result, for a native script.
+pub(crate) fn from_val(value: &rt::Val) -> bayleaf_script_sdk::native::Value {
+    use bayleaf_script_sdk::native::Value::{F32, F64, I32, I64};
+    match value {
+        rt::Val::I32(v) => I32(*v),
+        rt::Val::I64(v) => I64(*v),
+        rt::Val::F32(v) => F32((*v).into()),
+        rt::Val::F64(v) => F64((*v).into()),
+        _ => I32(0),
+    }
+}
+
 #[cfg(test)]
 fn test_host() -> host::ScriptHost {
     host::ScriptHost::from_engine(engine())

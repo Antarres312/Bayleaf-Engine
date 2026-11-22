@@ -660,6 +660,7 @@ dependencies = [
  "bayleaf-core",
  "bayleaf-graph",
  "bayleaf-scene",
+ "bayleaf-script-sdk",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

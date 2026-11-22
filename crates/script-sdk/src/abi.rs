@@ -61,159 +61,501 @@ mod raw {
     }
 }
 
-/// Off WebAssembly (unit tests on the host machine) there is no host: calls do nothing.
+/// Off WebAssembly, a script is built into the game (native mode): each import goes through the
+/// [`crate::native::Bridge`] the host sets around the call, its texts and numbers copied through
+/// the bridge's exchange memory. Without a bridge (a script's own unit tests) calls do nothing.
 #[cfg(not(target_arch = "wasm32"))]
 mod raw {
-    pub unsafe fn log(_: *const u8, _: usize) {}
+    use super::bridge::{Exchange, run};
+    use crate::native::Value::{F32, F64, I32};
+
+    /// The `len` bytes at `ptr`.
+    ///
+    /// # Safety
+    /// `ptr` and `len` describe a live slice (any pointer when `len` is 0).
+    unsafe fn bytes<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
+        if len == 0 {
+            return &[];
+        }
+        // SAFETY: the caller promises `len` readable bytes at `ptr`.
+        unsafe { std::slice::from_raw_parts(ptr, len) }
+    }
+
+    /// The `n` numbers at `ptr` as little-endian bytes, as the host reads them.
+    ///
+    /// # Safety
+    /// `ptr` points to `n` readable `T`.
+    unsafe fn numbers<T: Copy + Bytes>(ptr: *const T, n: usize) -> Vec<u8> {
+        // SAFETY: the caller promises `n` readable values at `ptr`.
+        let values = unsafe { std::slice::from_raw_parts(ptr, n) };
+        values.iter().flat_map(|v| v.le()).collect()
+    }
+
+    /// Writes the numbers in `data` (little-endian, as the host wrote them) to `out`.
+    ///
+    /// # Safety
+    /// `out` points to room for `data.len() / size_of::<T>()` values of `T`.
+    unsafe fn numbers_out<T: Bytes>(out: *mut T, data: &[u8]) {
+        for (i, chunk) in data.chunks_exact(std::mem::size_of::<T>()).enumerate() {
+            // SAFETY: the caller promises room for every whole value in `data`.
+            unsafe { out.add(i).write(T::from_le(chunk)) }
+        }
+    }
+
+    /// Writes at most `cap` bytes of `data` to `out`.
+    ///
+    /// # Safety
+    /// `out` points to `cap` writable bytes (any pointer when `cap` is 0).
+    unsafe fn bytes_out(out: *mut u8, cap: usize, data: &[u8]) {
+        let n = data.len().min(cap);
+        if n > 0 {
+            // SAFETY: `n` is at most `cap`, which the caller promises is writable at `out`.
+            unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), out, n) }
+        }
+    }
+
+    /// Numbers as the host stores them.
+    trait Bytes: Sized {
+        fn le(&self) -> Vec<u8>;
+        fn from_le(bytes: &[u8]) -> Self;
+    }
+
+    impl Bytes for f32 {
+        fn le(&self) -> Vec<u8> {
+            self.to_le_bytes().to_vec()
+        }
+        fn from_le(bytes: &[u8]) -> Self {
+            let mut b = [0u8; 4];
+            b.copy_from_slice(bytes);
+            f32::from_le_bytes(b)
+        }
+    }
+
+    impl Bytes for f64 {
+        fn le(&self) -> Vec<u8> {
+            self.to_le_bytes().to_vec()
+        }
+        fn from_le(bytes: &[u8]) -> Self {
+            let mut b = [0u8; 8];
+            b.copy_from_slice(bytes);
+            f64::from_le_bytes(b)
+        }
+    }
+
+    fn len(n: usize) -> crate::native::Value {
+        I32(i32::try_from(n).unwrap_or(i32::MAX))
+    }
+
+    /// A call with one text argument, returning a whole number (0 without a host).
+    fn text_call(name: &'static str, text: &[u8], more: &[crate::native::Value]) -> i32 {
+        run(|x| {
+            let at = x.put(text)?;
+            let mut args = vec![at, len(text.len())];
+            args.extend_from_slice(more);
+            x.call(name, &args)?.i32()
+        })
+        .unwrap_or(0)
+    }
+
+    /// A call with plain numbers, returning a whole number (0 without a host).
+    fn plain(name: &'static str, args: &[crate::native::Value]) -> i32 {
+        run(|x| x.call(name, args)?.i32()).unwrap_or(0)
+    }
+
+    /// A call that writes `n` numbers of `T` for the script at the end of its arguments.
+    fn with_out<T: Bytes>(name: &'static str, args: &[crate::native::Value], n: usize, x: &mut Exchange) -> Option<(crate::native::Value, Vec<u8>)> {
+        let room = x.room(n * std::mem::size_of::<T>())?;
+        let mut all = args.to_vec();
+        all.push(room);
+        let result = x.call(name, &all)?;
+        Some((result, x.get(room, n * std::mem::size_of::<T>())?))
+    }
+
+    pub unsafe fn log(ptr: *const u8, n: usize) {
+        // SAFETY: the safe wrappers pass a live slice.
+        let text = unsafe { bytes(ptr, n) };
+        text_call("log", text, &[]);
+    }
     pub unsafe fn transform_get(out: *mut f32) {
-        // SAFETY: callers pass a pointer to 9 writable f32.
-        unsafe { std::ptr::copy_nonoverlapping([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0f32].as_ptr(), out, 9) }
+        let data = run(|x| with_out::<f32>("transform_get", &[], 9, x).map(|(_, d)| d))
+            .unwrap_or_else(|| [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0f32].iter().flat_map(|v| v.to_le_bytes()).collect());
+        // SAFETY: callers pass room for 9 f32.
+        unsafe { numbers_out(out, &data) }
     }
-    pub unsafe fn transform_set(_: *const f32) {}
-    pub unsafe fn property(_: *const u8, _: usize) -> f32 {
-        f32::NAN
+    pub unsafe fn transform_set(ptr: *const f32) {
+        // SAFETY: callers pass 9 readable f32.
+        let data = unsafe { numbers(ptr, 9) };
+        run(|x| {
+            let at = x.put(&data)?;
+            x.call("transform_set", &[at])
+        });
     }
-    pub unsafe fn property_whole(_: *const u8, _: usize) -> i32 {
-        0
+    pub unsafe fn property(ptr: *const u8, n: usize) -> f32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let key = unsafe { bytes(ptr, n) };
+        run(|x| {
+            let at = x.put(key)?;
+            x.call("property", &[at, len(key.len())])?.f32()
+        })
+        .unwrap_or(f32::NAN)
     }
-    pub unsafe fn property_vector(_: *const u8, _: usize, _: *mut f32) -> i32 {
-        0
+    pub unsafe fn property_whole(ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("property_whole", unsafe { bytes(ptr, n) }, &[])
     }
-    pub unsafe fn property_text(_: *const u8, _: usize, _: *mut u8, _: usize) -> i32 {
-        0
+    pub unsafe fn property_vector(ptr: *const u8, n: usize, out: *mut f32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let key = unsafe { bytes(ptr, n) };
+        let (found, data) = run(|x| {
+            let at = x.put(key)?;
+            let (found, data) = with_out::<f32>("property_vector", &[at, len(key.len())], 3, x)?;
+            Some((found.i32()?, data))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass room for 3 f32.
+        unsafe { numbers_out(out, &data) }
+        found
     }
-    pub unsafe fn property_object(_: *const u8, _: usize) -> i32 {
-        0
+    pub unsafe fn property_text(ptr: *const u8, n: usize, out: *mut u8, cap: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let key = unsafe { bytes(ptr, n) };
+        let (full, data) = run(|x| {
+            let at = x.put(key)?;
+            let room = x.room(cap)?;
+            let full = x.call("property_text", &[at, len(key.len()), room, len(cap)])?.i32()?;
+            let got = usize::try_from(full).unwrap_or(0).min(cap);
+            Some((full, x.get(room, got)?))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass `cap` writable bytes at `out`.
+        unsafe { bytes_out(out, cap, &data) }
+        full
     }
-    pub unsafe fn property_set(_: *const u8, _: usize, _: f32, _: f32, _: f32) -> i32 {
-        0
+    pub unsafe fn property_object(ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("property_object", unsafe { bytes(ptr, n) }, &[])
     }
-    pub unsafe fn property_set_text(_: *const u8, _: usize, _: *const u8, _: usize) -> i32 {
-        0
+    pub unsafe fn property_set(ptr: *const u8, n: usize, x: f32, y: f32, z: f32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("property_set", unsafe { bytes(ptr, n) }, &[F32(x), F32(y), F32(z)])
+    }
+    pub unsafe fn property_set_text(ptr: *const u8, n: usize, t_ptr: *const u8, t_len: usize) -> i32 {
+        // SAFETY: the safe wrappers pass live slices.
+        let (key, text) = unsafe { (bytes(ptr, n), bytes(t_ptr, t_len)) };
+        run(|x| {
+            let k = x.put(key)?;
+            let t = x.put(text)?;
+            x.call("property_set_text", &[k, len(key.len()), t, len(text.len())])?.i32()
+        })
+        .unwrap_or(0)
     }
     pub unsafe fn time() -> f64 {
-        0.0
+        run(|x| x.call("time", &[])?.f64()).unwrap_or(0.0)
     }
-    pub unsafe fn key_down(_: *const u8, _: usize) -> i32 {
-        0
+    pub unsafe fn key_down(ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("key_down", unsafe { bytes(ptr, n) }, &[])
     }
-    pub unsafe fn pointer(_: *mut f32) -> i32 {
-        0
+    pub unsafe fn pointer(out: *mut f32) -> i32 {
+        let (inside, data) = run(|x| {
+            let (inside, data) = with_out::<f32>("pointer", &[], 2, x)?;
+            Some((inside.i32()?, data))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass room for 2 f32.
+        unsafe { numbers_out(out, &data) }
+        inside
     }
-    pub unsafe fn mouse_down(_: i32) -> i32 {
-        0
+    pub unsafe fn mouse_down(button: i32) -> i32 {
+        plain("mouse_down", &[I32(button)])
     }
     pub unsafe fn self_handle() -> i32 {
-        0
+        plain("self_handle", &[])
     }
-    pub unsafe fn find(_: *const u8, _: usize) -> i32 {
-        0
+    pub unsafe fn find(ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("find", unsafe { bytes(ptr, n) }, &[])
     }
-    pub unsafe fn find_with(_: *const u8, _: usize, _: i32) -> i32 {
-        0
+    pub unsafe fn find_with(ptr: *const u8, n: usize, index: i32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("find_with", unsafe { bytes(ptr, n) }, &[I32(index)])
     }
-    pub unsafe fn count_with(_: *const u8, _: usize) -> i32 {
-        0
+    pub unsafe fn count_with(ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("count_with", unsafe { bytes(ptr, n) }, &[])
     }
-    pub unsafe fn name_of(_: i32, _: *mut u8, _: usize) -> i32 {
-        0
+    pub unsafe fn name_of(handle: i32, out: *mut u8, cap: usize) -> i32 {
+        let (full, data) = run(|x| {
+            let room = x.room(cap)?;
+            let full = x.call("name_of", &[I32(handle), room, len(cap)])?.i32()?;
+            let got = usize::try_from(full).unwrap_or(0).min(cap);
+            Some((full, x.get(room, got)?))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass `cap` writable bytes at `out`.
+        unsafe { bytes_out(out, cap, &data) }
+        full
     }
-    pub unsafe fn object_ref(_: i32) -> i32 {
-        0
+    pub unsafe fn object_ref(handle: i32) -> i32 {
+        plain("object_ref", &[I32(handle)])
     }
-    pub unsafe fn scene_load(_: *const u8, _: usize, _: i32) -> i32 {
-        0
+    pub unsafe fn scene_load(ptr: *const u8, n: usize, additive: i32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("scene_load", unsafe { bytes(ptr, n) }, &[I32(additive)])
     }
-    pub unsafe fn sound_play(_: i32) -> i32 {
-        0
+    pub unsafe fn sound_play(handle: i32) -> i32 {
+        plain("sound_play", &[I32(handle)])
     }
-    pub unsafe fn sound_stop(_: i32) -> i32 {
-        0
+    pub unsafe fn sound_stop(handle: i32) -> i32 {
+        plain("sound_stop", &[I32(handle)])
     }
-    pub unsafe fn sound_play_at(_: *const u8, _: usize, _: f32, _: f32, _: f32, _: f32) -> i32 {
-        0
+    pub unsafe fn sound_play_at(ptr: *const u8, n: usize, x: f32, y: f32, z: f32, volume: f32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("sound_play_at", unsafe { bytes(ptr, n) }, &[F32(x), F32(y), F32(z), F32(volume)])
     }
-    pub unsafe fn scene_unload(_: *const u8, _: usize) -> i32 {
-        0
+    pub unsafe fn scene_unload(ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("scene_unload", unsafe { bytes(ptr, n) }, &[])
     }
-    pub unsafe fn object_of(_: i32) -> i32 {
-        0
+    pub unsafe fn object_of(reference: i32) -> i32 {
+        plain("object_of", &[I32(reference)])
     }
-    pub unsafe fn component_get(_: i32, _: *const u8, _: usize, _: *const u8, _: usize, _: *mut f32) -> i32 {
-        0
+    pub unsafe fn component_get(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, out: *mut f32) -> i32 {
+        // SAFETY: the safe wrappers pass live slices.
+        let (component, field) = unsafe { (bytes(c_ptr, c_len), bytes(f_ptr, f_len)) };
+        let (found, data) = run(|x| {
+            let c = x.put(component)?;
+            let f = x.put(field)?;
+            let (found, data) = with_out::<f32>("component_get", &[I32(handle), c, len(component.len()), f, len(field.len())], 3, x)?;
+            Some((found.i32()?, data))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass room for 3 f32.
+        unsafe { numbers_out(out, &data) }
+        found
     }
-    pub unsafe fn component_set(_: i32, _: *const u8, _: usize, _: *const u8, _: usize, _: *const f32) -> i32 {
-        0
+    pub unsafe fn component_set(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, value: *const f32) -> i32 {
+        // SAFETY: the safe wrappers pass live slices and 3 readable f32.
+        let (component, field, value) = unsafe { (bytes(c_ptr, c_len), bytes(f_ptr, f_len), numbers(value, 3)) };
+        run(|x| {
+            let c = x.put(component)?;
+            let f = x.put(field)?;
+            let v = x.put(&value)?;
+            x.call("component_set", &[I32(handle), c, len(component.len()), f, len(field.len()), v])?.i32()
+        })
+        .unwrap_or(0)
     }
-    pub unsafe fn transform_get_of(_: i32, out: *mut f32) {
-        // SAFETY: callers pass a pointer to 9 writable f32.
-        unsafe { std::ptr::copy_nonoverlapping([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0f32].as_ptr(), out, 9) }
+    pub unsafe fn transform_get_of(handle: i32, out: *mut f32) {
+        let data = run(|x| with_out::<f32>("transform_get_of", &[I32(handle)], 9, x).map(|(_, d)| d)).unwrap_or_default();
+        // SAFETY: callers pass room for 9 f32.
+        unsafe { numbers_out(out, &data) }
     }
-    pub unsafe fn transform_set_of(_: i32, _: *const f32) {}
-    pub unsafe fn position_get_of(_: i32, out: *mut f64) {
-        // SAFETY: callers pass a pointer to 3 writable f64.
-        unsafe { std::ptr::copy_nonoverlapping([0.0f64; 3].as_ptr(), out, 3) }
+    pub unsafe fn transform_set_of(handle: i32, ptr: *const f32) {
+        // SAFETY: callers pass 9 readable f32.
+        let data = unsafe { numbers(ptr, 9) };
+        run(|x| {
+            let at = x.put(&data)?;
+            x.call("transform_set_of", &[I32(handle), at])
+        });
     }
-    pub unsafe fn position_set_of(_: i32, _: *const f64) {}
-    pub unsafe fn spawn(_: *const u8, _: usize, _: f32, _: f32, _: f32) -> i32 {
-        0
+    pub unsafe fn position_get_of(handle: i32, out: *mut f64) {
+        let data = run(|x| with_out::<f64>("position_get_of", &[I32(handle)], 3, x).map(|(_, d)| d)).unwrap_or_default();
+        // SAFETY: callers pass room for 3 f64.
+        unsafe { numbers_out(out, &data) }
     }
-    pub unsafe fn destroy(_: i32) -> i32 {
-        0
+    pub unsafe fn position_set_of(handle: i32, ptr: *const f64) {
+        // SAFETY: callers pass 3 readable f64.
+        let data = unsafe { numbers(ptr, 3) };
+        run(|x| {
+            let at = x.put(&data)?;
+            x.call("position_set_of", &[I32(handle), at])
+        });
     }
-    pub unsafe fn send(_: i32, _: *const u8, _: usize, _: f32) -> i32 {
-        0
+    pub unsafe fn spawn(ptr: *const u8, n: usize, x: f32, y: f32, z: f32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("spawn", unsafe { bytes(ptr, n) }, &[F32(x), F32(y), F32(z)])
     }
-    pub unsafe fn message_name(_: *mut u8, _: usize) -> i32 {
-        0
+    pub unsafe fn destroy(handle: i32) -> i32 {
+        plain("destroy", &[I32(handle)])
+    }
+    pub unsafe fn send(handle: i32, ptr: *const u8, n: usize, value: f32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(ptr, n) };
+        run(|x| {
+            let at = x.put(name)?;
+            x.call("send", &[I32(handle), at, len(name.len()), F32(value)])?.i32()
+        })
+        .unwrap_or(0)
+    }
+    pub unsafe fn message_name(out: *mut u8, cap: usize) -> i32 {
+        let (full, data) = run(|x| {
+            let room = x.room(cap)?;
+            let full = x.call("message_name", &[room, len(cap)])?.i32()?;
+            let got = usize::try_from(full).unwrap_or(0).min(cap);
+            Some((full, x.get(room, got)?))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass `cap` writable bytes at `out`.
+        unsafe { bytes_out(out, cap, &data) }
+        full
     }
     pub unsafe fn pad_connected() -> i32 {
-        0
+        plain("pad_connected", &[])
     }
-    pub unsafe fn apply_impulse(_: i32, _: f32, _: f32, _: f32) -> i32 {
-        0
+    pub unsafe fn apply_impulse(handle: i32, x: f32, y: f32, z: f32) -> i32 {
+        plain("apply_impulse", &[I32(handle), F32(x), F32(y), F32(z)])
     }
-    pub unsafe fn character_walk(_: i32, _: f32, _: f32, _: f32) -> i32 {
-        0
+    pub unsafe fn character_walk(handle: i32, x: f32, y: f32, z: f32) -> i32 {
+        plain("character_walk", &[I32(handle), F32(x), F32(y), F32(z)])
     }
-    pub unsafe fn action(_: *const u8, _: usize) -> f32 {
-        0.0
+    pub unsafe fn action(ptr: *const u8, n: usize) -> f32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(ptr, n) };
+        run(|x| {
+            let at = x.put(name)?;
+            x.call("action", &[at, len(name.len())])?.f32()
+        })
+        .unwrap_or(0.0)
     }
-    pub unsafe fn character_jump(_: i32, _: f32) -> i32 {
-        0
+    pub unsafe fn character_jump(handle: i32, speed: f32) -> i32 {
+        plain("character_jump", &[I32(handle), F32(speed)])
     }
-    pub unsafe fn character_grounded(_: i32) -> i32 {
-        0
+    pub unsafe fn character_grounded(handle: i32) -> i32 {
+        plain("character_grounded", &[I32(handle)])
     }
-    pub unsafe fn set_velocity(_: i32, _: f32, _: f32, _: f32) -> i32 {
-        0
+    pub unsafe fn set_velocity(handle: i32, x: f32, y: f32, z: f32) -> i32 {
+        plain("set_velocity", &[I32(handle), F32(x), F32(y), F32(z)])
     }
-    pub unsafe fn velocity_of(_: i32, _: *mut f32) -> i32 {
-        0
+    pub unsafe fn velocity_of(handle: i32, out: *mut f32) -> i32 {
+        let (found, data) = run(|x| {
+            let (found, data) = with_out::<f32>("velocity_of", &[I32(handle)], 3, x)?;
+            Some((found.i32()?, data))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass room for 3 f32.
+        unsafe { numbers_out(out, &data) }
+        found
     }
     #[allow(clippy::too_many_arguments)]
-    pub unsafe fn raycast(_: f32, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32, _: *mut f32) -> i32 {
-        0
+    pub unsafe fn raycast(ox: f32, oy: f32, oz: f32, dx: f32, dy: f32, dz: f32, max: f32, out: *mut f32) -> i32 {
+        let (handle, data) = run(|x| {
+            let (handle, data) = with_out::<f32>("raycast", &[F32(ox), F32(oy), F32(oz), F32(dx), F32(dy), F32(dz), F32(max)], 4, x)?;
+            Some((handle.i32()?, data))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass room for 4 f32.
+        unsafe { numbers_out(out, &data) }
+        handle
     }
-    pub unsafe fn pad_axis(_: i32) -> f32 {
-        0.0
+    pub unsafe fn pad_axis(index: i32) -> f32 {
+        run(|x| x.call("pad_axis", &[I32(index)])?.f32()).unwrap_or(0.0)
     }
-    pub unsafe fn pad_button(_: i32) -> i32 {
-        0
+    pub unsafe fn pad_button(index: i32) -> i32 {
+        plain("pad_button", &[I32(index)])
     }
-    pub unsafe fn state_get(_: i32, _: i32, _: *const u8, _: usize, _: *mut f64) -> i32 {
-        0
+    pub unsafe fn state_get(scope: i32, handle: i32, ptr: *const u8, n: usize, out: *mut f64) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(ptr, n) };
+        let (set, data) = run(|x| {
+            let at = x.put(name)?;
+            let (set, data) = with_out::<f64>("state_get", &[I32(scope), I32(handle), at, len(name.len())], 1, x)?;
+            Some((set.i32()?, data))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass room for one f64.
+        unsafe { numbers_out(out, &data) }
+        set
     }
-    pub unsafe fn state_set(_: i32, _: i32, _: *const u8, _: usize, _: f64) -> i32 {
-        0
+    pub unsafe fn state_set(scope: i32, handle: i32, ptr: *const u8, n: usize, value: f64) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(ptr, n) };
+        run(|x| {
+            let at = x.put(name)?;
+            x.call("state_set", &[I32(scope), I32(handle), at, len(name.len()), F64(value)])?.i32()
+        })
+        .unwrap_or(0)
     }
-    pub unsafe fn game_end(_: i32) -> i32 {
-        0
+    pub unsafe fn game_end(won: i32) -> i32 {
+        plain("game_end", &[I32(won)])
     }
-    pub unsafe fn input_map_set(_: i32, _: *const u8, _: usize) -> i32 {
-        0
+    pub unsafe fn input_map_set(handle: i32, ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        text_call("input_map_set", unsafe { bytes(ptr, n) }, &[I32(handle)])
     }
 }
+
+/// The bridge to the host while a native script runs: set by [`with_bridge`] around each call.
+#[cfg(not(target_arch = "wasm32"))]
+mod bridge {
+    use std::cell::Cell;
+
+    use crate::native::{Bridge, Value};
+
+    thread_local! {
+        static CURRENT: Cell<Option<*mut (dyn Bridge + 'static)>> = const { Cell::new(None) };
+    }
+
+    /// Runs `f` with `bridge` as the host of every import it makes on this thread.
+    pub fn with_bridge<R>(bridge: &mut dyn Bridge, f: impl FnOnce() -> R) -> R {
+        // SAFETY: the pointer is only used by `run` on this thread while `f` runs, and `f` cannot
+        // outlive `bridge`; the guard below takes it away again when `f` returns or unwinds, so the
+        // erased lifetime is never relied on beyond `bridge`'s.
+        let erased: *mut (dyn Bridge + 'static) = unsafe { std::mem::transmute::<*mut (dyn Bridge + '_), *mut (dyn Bridge + 'static)>(bridge) };
+        struct Restore(Option<*mut (dyn Bridge + 'static)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                CURRENT.with(|c| c.set(self.0));
+            }
+        }
+        let _restore = Restore(CURRENT.with(|c| c.replace(Some(erased))));
+        f()
+    }
+
+    /// One import's use of the exchange memory: each value put or room taken comes after the last.
+    pub struct Exchange<'a> {
+        bridge: &'a mut dyn Bridge,
+        next: u32,
+    }
+
+    impl Exchange<'_> {
+        pub fn put(&mut self, bytes: &[u8]) -> Option<Value> {
+            let at = self.room(bytes.len())?;
+            let Value::I32(offset) = at else { return None };
+            self.bridge.write(u32::try_from(offset).ok()?, bytes).then_some(at)
+        }
+
+        pub fn room(&mut self, n: usize) -> Option<Value> {
+            let at = self.next;
+            // Values start on 8-byte boundaries, as the host's numbers expect.
+            let end = at.checked_add(u32::try_from(n).ok()?)?;
+            self.next = end.checked_add(7)? & !7;
+            Some(Value::I32(i32::try_from(at).ok()?))
+        }
+
+        pub fn get(&mut self, at: Value, n: usize) -> Option<Vec<u8>> {
+            let Value::I32(offset) = at else { return None };
+            let mut out = vec![0; n];
+            self.bridge.read(u32::try_from(offset).ok()?, &mut out).then_some(out)
+        }
+
+        pub fn call(&mut self, name: &'static str, args: &[Value]) -> Option<Value> {
+            self.bridge.call(name, args)
+        }
+    }
+
+    /// Runs `f` against the current bridge; `None` without one, or when a call failed.
+    pub fn run<R>(f: impl FnOnce(&mut Exchange<'_>) -> Option<R>) -> Option<R> {
+        let current = CURRENT.with(Cell::get)?;
+        // SAFETY: `with_bridge` set the pointer from a live `&mut dyn Bridge` on this thread and
+        // clears it before that borrow ends; host calls do not re-enter the script, so no other
+        // reference to the bridge is in use while this one is.
+        let bridge = unsafe { &mut *current };
+        f(&mut Exchange { bridge, next: 0 })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use bridge::with_bridge;
 
 pub(crate) fn log(text: &str) {
     // SAFETY: the pointer and length describe `text`, which outlives the call; the host only reads.

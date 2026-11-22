@@ -1,7 +1,8 @@
 //! Rust SDK for Bayleaf game scripts.
 //!
 //! A script is a type that implements [`Script`], registered with [`script!`], built for
-//! `wasm32-unknown-unknown` as a `cdylib`:
+//! `wasm32-unknown-unknown` as a `cdylib`. A game exported in native mode builds the same crate into
+//! the game instead, with no sandbox: see [`native`].
 //!
 //! ```ignore
 //! use bayleaf_script_sdk::{Property, Script, Transform, property, script};
@@ -27,6 +28,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod abi;
+pub mod native;
 
 /// ABI version this SDK implements; the host checks it at load.
 pub const ABI_VERSION: i32 = 1;
@@ -506,17 +508,28 @@ pub trait Script: Default + Send + 'static {
     }
 }
 
-/// Exports `ty` (a [`Script`]) to the host. Use once per script crate.
+/// Exports `ty` (a [`Script`]) to the host. Use once per script crate. Built for WebAssembly it
+/// exports the ABI's functions; built natively (a game exported in native mode) it gives
+/// `bayleaf_native()`, which the game's player registers.
 #[macro_export]
 macro_rules! script {
     ($ty:ty) => {
+        /// This script for a game that builds it in natively.
+        #[cfg(not(target_arch = "wasm32"))]
+        pub fn bayleaf_native() -> $crate::native::NativeScript {
+            $crate::native::NativeScript::of::<$ty>()
+        }
+
+        #[cfg(target_arch = "wasm32")]
         static BAYLEAF_SCRIPT: ::std::sync::Mutex<Option<$ty>> = ::std::sync::Mutex::new(None);
 
+        #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_abi() -> i32 {
             $crate::ABI_VERSION
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_describe() -> u64 {
             static DESCRIPTION: ::std::sync::OnceLock<String> = ::std::sync::OnceLock::new();
@@ -524,6 +537,7 @@ macro_rules! script {
             $crate::pack(text)
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_init() {
             let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
@@ -531,6 +545,7 @@ macro_rules! script {
             $crate::Script::init(script);
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_start() {
             let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
@@ -538,6 +553,7 @@ macro_rules! script {
             $crate::Script::start(script);
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_update(dt: f32) {
             let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
@@ -545,6 +561,7 @@ macro_rules! script {
             $crate::Script::update(script, dt);
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_message(value: f32) {
             let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());

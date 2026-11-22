@@ -322,3 +322,112 @@ fn bad_handles_stop_the_script_with_a_reason() {
     let faults = host.take_faults();
     assert!(faults[0].error.to_string().contains("no object with handle 999"), "{}", faults[0].error);
 }
+
+/// Scripts built into the game (native mode), registered as the SDK's `script!` does natively.
+mod natives {
+    use bayleaf_script_sdk::{Property, Script, Transform, log, property};
+
+    /// Turns around Y by `speed` degrees a second, and moves to x = the steps it counted itself.
+    #[derive(Default)]
+    pub struct Spin {
+        steps: u32,
+    }
+
+    impl Script for Spin {
+        const PROPERTIES: &'static [Property] = &[Property::Number("speed", 90.0)];
+
+        fn start(&mut self) {
+            log("native start");
+        }
+
+        fn update(&mut self, dt: f32) {
+            self.steps += 1;
+            let mut t = Transform::get();
+            t.rotation[1] += property("speed").unwrap_or(0.0) * dt;
+            t.position[0] = self.steps as f32;
+            t.set();
+        }
+    }
+
+    /// Sets a transform that is not a number.
+    #[derive(Default)]
+    pub struct Broken;
+
+    impl Script for Broken {
+        fn update(&mut self, _dt: f32) {
+            let mut t = Transform::get();
+            t.position[0] = f32::NAN;
+            t.set();
+        }
+    }
+
+    /// Panics on its first step.
+    #[derive(Default)]
+    pub struct Panicky;
+
+    impl Script for Panicky {
+        fn update(&mut self, _dt: f32) {
+            let steps: Vec<u32> = Vec::new();
+            let _ = steps[3];
+        }
+    }
+
+    pub mod spin {
+        bayleaf_script_sdk::script!(super::Spin);
+    }
+    pub mod broken {
+        bayleaf_script_sdk::script!(super::Broken);
+    }
+    pub mod panicky {
+        bayleaf_script_sdk::script!(super::Panicky);
+    }
+}
+
+/// Loads the module at `path` (bytes unused when a native script stands for it) on `object`.
+fn load_native(host: &mut ScriptHost, scene: &mut Scene, object: StableId, path: &str) -> Result<(), ScriptError> {
+    let script =
+        ScriptRef { module: path.into(), properties: scene.get::<Scripts>(object).and_then(|s| s.0.first().map(|s| s.properties.clone())).unwrap_or_default() };
+    host.load_bytes(object, 0, Path::new(path), None, b"", &script, scene, 0.0, &Arc::new(Input::default()))
+}
+
+#[test]
+fn native_scripts_run_through_the_host_each_object_with_its_own_value() {
+    let mut host = super::test_host();
+    host.set_natives(vec![(std::path::PathBuf::from("scripts/spin.wasm"), natives::spin::bayleaf_native())]);
+    let (mut scene, fast, script) = setup(&[("speed", 45.0)]);
+    scene.set(fast, Scripts(vec![script])).unwrap();
+    let plain = scene.create_object(None, "Plain").unwrap();
+    load_native(&mut host, &mut scene, fast, "game/scripts/spin.wasm").unwrap();
+    load_native(&mut host, &mut scene, plain, "game/scripts/spin.wasm").unwrap();
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["native start", "native start"], "each object's script started");
+
+    let input = Arc::new(Input::default());
+    host.update(&mut scene, 1.0, 0.0, &input);
+    host.update(&mut scene, 1.0, 0.0, &input);
+    assert!(host.take_faults().is_empty());
+    assert!((rotation_y(&scene, fast) - 90.0).abs() < 1e-3, "the scene's speed: {}", rotation_y(&scene, fast));
+    assert!((rotation_y(&scene, plain) - 180.0).abs() < 1e-3, "the declared default: {}", rotation_y(&scene, plain));
+    let x = |id| scene.get::<Transform>(id).unwrap().position[0];
+    assert_eq!((x(fast), x(plain)), (2.0, 2.0), "each object counts its own steps");
+}
+
+#[test]
+fn a_native_script_that_breaks_the_rules_or_panics_stops_alone_with_a_reason() {
+    let input = Arc::new(Input::default());
+    for (native, expected) in [(natives::broken::bayleaf_native(), "finite"), (natives::panicky::bayleaf_native(), "panicked")] {
+        let mut host = super::test_host();
+        host.set_natives(vec![(std::path::PathBuf::from("bad.wasm"), native), (std::path::PathBuf::from("spin.wasm"), natives::spin::bayleaf_native())]);
+        let (mut scene, bad, _) = setup(&[]);
+        let good = scene.create_object(None, "Good").unwrap();
+        load_native(&mut host, &mut scene, bad, "bad.wasm").unwrap();
+        load_native(&mut host, &mut scene, good, "spin.wasm").unwrap();
+        host.update(&mut scene, 1.0, 0.0, &input);
+        let faults = host.take_faults();
+        assert_eq!(faults.len(), 1, "{expected}: {faults:?}");
+        assert!(faults[0].error.to_string().contains(expected), "{} does not mention {expected}", faults[0].error);
+        assert!(rotation_y(&scene, good) > 0.0, "the other script keeps running");
+        host.update(&mut scene, 1.0, 0.0, &input);
+        assert!(host.take_faults().is_empty(), "a stopped script does not run again");
+    }
+}

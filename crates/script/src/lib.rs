@@ -18,6 +18,8 @@ use bayleaf_scene::components::Transform;
 use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue};
 
 pub mod actions;
+mod native;
+pub use native::NativeScript;
 pub mod visual;
 
 /// File extension of visual scripts, which compile to modules when loaded.
@@ -467,6 +469,8 @@ struct HostState<L> {
     logs: Vec<String>,
     /// Set by a host function that detected a guest error, so the trap message says why.
     fault: Option<String>,
+    /// This object's value of a native script, when the module is one built into the game.
+    native: Option<Box<dyn bayleaf_script_sdk::native::NativeObject>>,
     /// The runtime's memory and instance limits for this store.
     limits: L,
 }
@@ -494,6 +498,7 @@ impl<L> HostState<L> {
             input: Arc::clone(input),
             logs: Vec::new(),
             fault: None,
+            native: None,
             limits,
         }
     }

@@ -142,7 +142,11 @@ run: `interpreted`, `compiled` or `native` (default: the project's choice for th
 `settings.game.scriptModes`). `project.export.check` (same params, without `folder`) writes nothing
 and returns `{ready, findings, scripts, files}`: each finding an `error`, `warning` or `note` with
 its message and file, and how each script would run. The export refuses while the check finds an
-error. Today only this computer's system and `interpreted` export; the check says so for the rest.
+error. Today games export for this computer's system only; `compiled` needs a desktop system and
+`native` the engine's source and cargo, and the check says when they are missing. In native mode
+`project.export` builds the game's own player with its Rust scripts in (minutes the first time);
+with `wait: false` it returns once the build can start, with `build: {folder, program}` and `native`
+(the modules built in), and a program builds it with `native_export::build` in the background.
 
 `scene.settings` returns the open scene's own settings (`{lighting}`) and `scene.settings.set`
 (`{lighting?}`) changes them, as an undo step. A lighting asset (`.blight`) holds a scene's sky,

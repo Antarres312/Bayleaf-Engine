@@ -128,6 +128,27 @@ project); right-click the folder, Build Script, to build again. Building needs R
 `rustup target add wasm32-unknown-unknown`. A script that is already running reloads when its
 `.wasm` changes.
 
+## Native scripts
+
+A game exported in native mode builds its Rust scripts into its own player: the same crates, built
+for the computer instead of WebAssembly, run as machine code with **no sandbox**. Such a script can
+do anything a program can, and a fault in one (a panic, in a player built to unwind) stops it with
+its reason; built to abort, it stops the game. Fuel and the memory limit do not apply to it.
+
+Off WebAssembly, `script!` gives `bayleaf_native()` instead of the exports above, and the game's
+player registers it under the module it stands for (`scripts/mover.wasm`). Each object gets its own
+value of the script, as each gets its own instance in WebAssembly; a `static` in the crate is shared
+by every object, unlike in WebAssembly. Host calls are the same imports: the SDK copies their texts
+and numbers through a small exchange module that imports every host function, so each check and
+fault applies as for a WebAssembly script. Modules without a crate beside them, and visual
+scripts, stay compiled WebAssembly.
+
+The export writes a Cargo workspace in `.build/native/<platform>/` in the project (the player,
+copies of the script crates, the engine's patches and `Cargo.lock`) and builds it with the engine's
+source (`BAYLEAF_SOURCE_DIR`, else the folder the editor was built from) and cargo. The first build
+takes several minutes; later ones reuse its output. On Windows keep the project in a short path:
+build files nest deep, and paths over 260 characters fail to link.
+
 ## Hot reload
 
 While play mode runs, the host checks each module file for changes about twice a second. A changed

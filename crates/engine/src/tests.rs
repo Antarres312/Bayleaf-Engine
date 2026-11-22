@@ -1759,6 +1759,7 @@ fn a_project_exports_as_a_game_folder_that_runs_without_the_editor() {
     let packed = game.join(crate::export::GAME_FOLDER);
     assert!(std::fs::read(packed.join("scripts/spin.bscript")).unwrap().starts_with(bayleaf_script::WASM_MAGIC), "visual scripts are compiled");
     assert!(packed.join("scripts/mover.wasm").is_file(), "built modules go along");
+    assert!(packed.join("scenes/daylight.blight").is_file(), "the lighting asset the scene names goes along");
     for left in ["scripts/mover/src/lib.rs", "scripts/mover/Cargo.toml", "saves/progress.json", "notes.txt"] {
         assert!(!packed.join(left).exists(), "{left} stays behind");
     }
@@ -1831,8 +1832,14 @@ fn the_export_check_says_what_stops_an_export_for_each_platform_and_script_mode(
     let compiled = check(&mut session, Platform::current(), ScriptMode::Compiled);
     assert_eq!(compiled["ready"], true, "scripts compiled to machine code export for this system: {compiled}");
     assert!(errors(&check(&mut session, Platform::Web, ScriptMode::Compiled)).iter().any(|e| e.contains("browsers")), "but not for the web");
-    assert_eq!(check(&mut session, Platform::current(), ScriptMode::Native)["ready"], false, "a mode this version cannot export is not ready");
     let native = check(&mut session, Platform::current(), ScriptMode::Native);
+    let said = |report: &Value, severity: &str| -> Vec<String> {
+        report["findings"].as_array().unwrap().iter().filter(|f| f["severity"] == severity).map(|f| f["message"].as_str().unwrap().to_owned()).collect()
+    };
+    assert!(said(&native, "warning").iter().any(|w| w.contains("no sandbox")), "native says plainly what it gives up: {native}");
+    // It builds the player here, from the engine's source with cargo: ready when both are found.
+    assert_eq!(native["ready"] == true, ScriptMode::Native.available_for(Platform::current()), "{native}");
+    assert!(errors(&check(&mut session, Platform::Web, ScriptMode::Native)).iter().any(|e| e.contains("on this computer")), "only for this system");
     let runs = |path: &str| native["scripts"].as_array().unwrap().iter().find(|s| s["path"] == path).map(|s| s["runs"].clone()).unwrap();
     assert_eq!(runs("scripts/mover.wasm"), json!("native"), "a Rust script with its source would be native");
     assert_eq!(runs("scripts/spin.bscript"), json!("compiled"), "a visual script would stay compiled WebAssembly");
@@ -1843,11 +1850,13 @@ fn the_export_check_says_what_stops_an_export_for_each_platform_and_script_mode(
     std::fs::write(project.join("scripts/unbuilt/Cargo.toml"), "[package]").unwrap();
     let material = std::fs::read_dir(project.join("materials")).unwrap().flatten().next().unwrap().path();
     std::fs::remove_file(&material).unwrap();
+    std::fs::remove_file(project.join("scenes/daylight.blight")).unwrap();
     let broken = check(&mut session, Platform::current(), ScriptMode::Interpreted);
     let found = errors(&broken);
     assert!(found.iter().any(|e| e.contains("broken.bscript")), "{found:?}");
     assert!(found.iter().any(|e| e.contains("unbuilt") && e.contains("not built")), "{found:?}");
     assert!(found.iter().any(|e| e.contains("not in the project")), "{found:?}");
+    assert!(found.iter().any(|e| e.contains("daylight.blight") && e.contains("not in the project")), "a scene's lighting asset too: {found:?}");
 
     // The export refuses what the check refuses, and writes nothing.
     let out = base.join("out");
@@ -1899,4 +1908,57 @@ fn an_older_scene_s_environment_moves_into_a_lighting_asset_the_scene_then_names
     session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), &[dir.join("elsewhere")]).unwrap()));
     assert!(registry.execute(&mut session, "lighting.set", &json!({"path": dir.join(&lighting), "lighting": changed})).is_err());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_native_export_writes_a_workspace_that_builds_the_player_with_the_rust_scripts() {
+    use crate::export::{Platform, ScriptMode};
+    assert!(
+        ScriptMode::Native.available_for(Platform::current()),
+        "native export needs the engine's source and cargo, which a test run from the source tree has"
+    );
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let base = std::env::temp_dir().join(format!("bayleaf-native-export-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let project = base.join("Native Game");
+    registry.execute(&mut session, "project.new", &json!({"path": project})).unwrap();
+    // A Rust script as a crate of its own: a WebAssembly library with its own workspace, profile and
+    // a dependency by a relative path.
+    std::fs::create_dir_all(project.join("scripts/mover/src")).unwrap();
+    std::fs::write(
+        project.join("scripts/mover/Cargo.toml"),
+        "[package]\nname = \"mover\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nbayleaf-script-sdk = { path = \"../../sdk\" }\nhelper = { path = \"../helper\" }\n\n[workspace]\n\n[profile.release]\nopt-level = \"s\"\n",
+    )
+    .unwrap();
+    std::fs::write(project.join("scripts/mover/src/lib.rs"), "// the mover").unwrap();
+    std::fs::write(project.join("scripts/mover.wasm"), b"\0asm\x01\0\0\0").unwrap();
+    let out = base.join("out");
+
+    let result = registry.execute(&mut session, "project.export", &json!({"folder": out, "mode": "native", "wait": false})).unwrap();
+    assert_eq!(result["native"], json!(["scripts/mover.wasm"]), "the Rust script is built in");
+    let build: crate::native_export::NativeBuild = serde_json::from_value(result["build"].clone()).unwrap();
+    assert!(build.folder.starts_with(&project) && !build.program.exists(), "built later, in the project's build folder: {build:?}");
+    let read = |path: &str| std::fs::read_to_string(build.folder.join(path)).unwrap();
+
+    let root = read("Cargo.toml");
+    assert!(root.contains("[patch.crates-io]"), "the engine's patches, which Cargo takes only from the workspace built:\n{root}");
+    assert!(root.contains("script-sdk") && root.contains("\"scripts/*\""), "{root}");
+    assert!(build.folder.join("Cargo.lock").is_file(), "the engine's dependency versions");
+    let main = read("player/src/main.rs");
+    assert!(main.contains("PathBuf::from(\"scripts/mover.wasm\")") && main.contains("script_0::bayleaf_native()"), "{main}");
+    assert!(read("player/Cargo.toml").contains("package = \"mover\""));
+    let copy = read("scripts/mover/Cargo.toml");
+    assert!(!copy.contains("crate-type") && !copy.contains("[workspace]") && !copy.contains("[profile"), "a plain library of the workspace:\n{copy}");
+    assert!(copy.contains("bayleaf-script-sdk = { workspace = true }"), "the engine's SDK:\n{copy}");
+    let helper = project.join("scripts/mover").join("../helper").to_string_lossy().replace('\\', "/");
+    assert!(copy.contains(&helper), "relative paths still lead where they did:\n{copy}");
+    assert_eq!(read("scripts/mover/src/lib.rs"), "// the mover");
+
+    // The game is exported as native, so its player runs it that way.
+    let found = crate::export::packaged_game(&build.program).unwrap();
+    let mut game = Session::default();
+    registry.execute(&mut game, "project.open", &json!({"path": found})).unwrap();
+    assert_eq!(crate::export::chosen_mode(&game, Platform::current()), ScriptMode::Native);
+    std::fs::remove_dir_all(&base).ok();
 }
