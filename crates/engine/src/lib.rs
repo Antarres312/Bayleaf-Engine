@@ -201,6 +201,14 @@ impl Session {
         }
     }
 
+    /// Whether the pointer is over an interface element that takes it; its mouse buttons then
+    /// reach the interface, not the scripts.
+    pub fn set_pointer_over_interface(&mut self, over: bool) {
+        if self.input.over_interface != over {
+            self.input = std::sync::Arc::new(bayleaf_script::Input { over_interface: over, ..(*self.input).clone() });
+        }
+    }
+
     /// Plays sounds on the output device in play mode, from the next start. The editor and the
     /// player turn it on; the CLI, agents and tests leave it off, and sounds play silently, in time.
     pub fn set_sound(&mut self, on: bool) {

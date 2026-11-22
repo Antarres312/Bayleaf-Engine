@@ -120,8 +120,9 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
     let image = egui::Image::new(egui::load::SizedTexture::new(target.texture, size)).sense(egui::Sense::click_and_drag());
     let response = ui.add(image);
     let playing = editor.session.is_playing();
-    // The game's interfaces over it: answering the player while it plays, a preview before.
-    crate::game_interface::show(ui, response.rect, &mut editor.session, &mut editor.game_interfaces, playing);
+    // The game's interfaces over it: answering the player while it plays, a preview before. Where
+    // an element takes the pointer, its clicks are the interface's, not the game's.
+    let over_interface = crate::game_interface::show(ui, response.rect, &mut editor.session, &mut editor.game_interfaces, playing);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, if playing { "Game view, playing" } else { "Game view" }));
     if response.clicked() {
         response.request_focus();
@@ -133,8 +134,9 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
             [local.x * 2.0 - 1.0, 1.0 - local.y * 2.0]
         });
         let buttons = ui.input(|i| u8::from(i.pointer.primary_down()) | u8::from(i.pointer.secondary_down()) << 1 | u8::from(i.pointer.middle_down()) << 2);
-        // Buttons count only while the pointer is over the view.
-        editor.session.set_pointer(pointer, if pointer.is_some() { buttons } else { 0 });
+        // Buttons count only while the pointer is over the view, and not over the interface.
+        editor.session.set_pointer(pointer, if pointer.is_some() && !over_interface { buttons } else { 0 });
+        editor.session.set_pointer_over_interface(over_interface);
         ui.ctx().request_repaint();
     } else {
         // Before play the view shows where the game starts; say how to run it.

@@ -489,9 +489,9 @@ pub const CATALOG: Catalog = Catalog {
             "pointer",
             "Pointer Position",
             "Inputs",
-            "Where the pointer is over the game view, from -1 to 1 (x right, y up), and whether it is over the view.",
+            "Where the pointer is over the game view, from -1 to 1 (x right, y up), whether it is over the view, and whether it is over an interface element that takes it (its clicks are then the interface's, not the game's).",
             &[],
-            &[pin("position", "Position", Vec3), pin("inside", "Over the View", Bool)],
+            &[pin("position", "Position", Vec3), pin("inside", "Over the View", Bool), pin("overInterface", "Over the Interface", Bool)],
         ),
         NodeDef {
             kind: "mouseDown",
@@ -1962,6 +1962,7 @@ impl Compiler<'_> {
             "scale" => transform(6),
             "time" => Val::F("(f32.demote_f64 (call $time))".to_owned()),
             "pointer" if pin == "inside" => Val::B("(call $pointer_inside)".to_owned()),
+            "pointer" if pin == "overInterface" => Val::B("(call $pointer_over_interface)".to_owned()),
             "pointer" => Val::V(["(call $pointer_x)".to_owned(), "(call $pointer_y)".to_owned(), lit(0.0)]),
             "mouseDown" => {
                 let button = match self.setting_text(node, "button", "Left").as_str() {
@@ -2393,6 +2394,7 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "time" (func $time (result f64)))
   (import "bayleaf" "key_down" (func $key_down (param i32 i32) (result i32)))
   (import "bayleaf" "pointer" (func $pointer (param i32) (result i32)))
+  (import "bayleaf" "pointer_over_interface" (func $pointer_over_interface (result i32)))
   (import "bayleaf" "mouse_down" (func $mouse_down (param i32) (result i32)))
   (import "bayleaf" "self_handle" (func $self_handle (result i32)))
   (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))

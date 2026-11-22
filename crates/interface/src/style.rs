@@ -16,7 +16,7 @@ pub const STYLE_EXTENSION: &str = "bstyle";
 pub const MAX_RULES: usize = 1024;
 
 /// Every style property, with a value to start from when one is added.
-pub const PROPERTIES: [(&str, &str); 24] = [
+pub const PROPERTIES: [(&str, &str); 25] = [
     ("direction", "row"),
     ("gap", "8px"),
     ("padding", "8px"),
@@ -41,6 +41,7 @@ pub const PROPERTIES: [(&str, &str); 24] = [
     ("visible", "true"),
     ("opacity", "1"),
     ("accent", "#5fb3f9"),
+    ("pointer", "pass"),
 ];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -199,6 +200,9 @@ pub struct Style {
     pub opacity: f32,
     /// A control's own colour: a toggle's mark, a slider's fill, a progress bar's fill, the focus ring.
     pub accent: Color,
+    /// Whether it takes the pointer, so a click on it does not also reach the game; `None` for
+    /// the default: controls, elements with On Click and boxes with a background take it.
+    pub pointer: Option<bool>,
 }
 
 const WHITE: Color = Color([255, 255, 255, 255]);
@@ -232,6 +236,7 @@ impl Style {
             visible: true,
             opacity: 1.0,
             accent: ACCENT,
+            pointer: None,
         };
         match kind {
             Kind::Row => style.direction = Direction::Row,
@@ -336,6 +341,7 @@ impl Style {
                 self.opacity = opacity;
             }
             "accent" => self.accent = color(value)?,
+            "pointer" => self.pointer = Some(keyword(value, &[("block", true), ("pass", false)])?),
             other => return Err(format!("{other:?} is not a style property; see the list in docs/interface.md")),
         }
         Ok(())

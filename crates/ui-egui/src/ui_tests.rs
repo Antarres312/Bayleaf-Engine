@@ -2707,3 +2707,76 @@ fn with_a_gpu_clicking_a_panel_with_on_click_reaches_the_scripts() {
     keep_for_review(&panel, "interface-on-click-field");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn with_a_gpu_a_click_on_the_interface_does_not_reach_the_game() {
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-pointer-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let editor = harness.state_mut();
+    editor.dispatch("project.new", &json!({ "path": dir }), None);
+    // A bar with a background along the top; the rest of the screen is the game.
+    let layout = json!({
+        "format": "bayleaf.interface", "version": 1,
+        "root": { "kind": "column", "style": { "width": "100%", "height": "100%" }, "children": [
+            { "kind": "panel", "name": "Bar", "style": { "height": "80px", "background": "#202020e0" },
+              "children": [ { "kind": "text", "text": "Inventory" } ] }
+        ] }
+    });
+    editor.dispatch("ui.layout.set", &json!({ "path": "hud.bui", "layout": layout }), None);
+    // Counts the steps the left button is down for the game, and those the pointer is over the interface.
+    let counter = wat::parse_str(
+        r#"(module
+            (import "bayleaf" "mouse_down" (func $down (param i32) (result i32)))
+            (import "bayleaf" "pointer_over_interface" (func $over (result i32)))
+            (import "bayleaf" "state_get" (func $get (param i32 i32 i32 i32 i32) (result i32)))
+            (import "bayleaf" "state_set" (func $set (param i32 i32 i32 i32 f64) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "clicks")
+            (data (i32.const 120) "over")
+            (func $bump (param $at i32) (param $len i32)
+              (drop (call $get (i32.const 0) (i32.const 0) (local.get $at) (local.get $len) (i32.const 200)))
+              (drop (call $set (i32.const 0) (i32.const 0) (local.get $at) (local.get $len) (f64.add (f64.load (i32.const 200)) (f64.const 1)))))
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param f32)
+              (if (call $down (i32.const 0)) (then (call $bump (i32.const 100) (i32.const 6))))
+              (if (call $over) (then (call $bump (i32.const 120) (i32.const 4))))))"#,
+    )
+    .unwrap();
+    std::fs::write(dir.join("counter.wasm"), counter).unwrap();
+    let components = json!({ "interface": { "layout": "hud.bui", "visible": true, "order": 0 }, "scripts": [{ "module": "counter.wasm" }] });
+    editor.dispatch("scene.object.create", &json!({ "name": "HUD", "components": components }), None);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(4);
+    let view = harness.get_by_label("Game view, playing").rect();
+    let value = |harness: &Harness<'static, Editor>, name: &str| harness.state().session.game_state().and_then(|s| s.game.get(name).copied()).unwrap_or(0.0);
+    let hold = |harness: &mut Harness<'static, Editor>, at: egui::Pos2| {
+        harness.input_mut().events.push(egui::Event::PointerMoved(at));
+        harness.run_steps(1);
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(4);
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(1);
+    };
+
+    // Held on the bar: the interface's, not the game's.
+    hold(&mut harness, view.center_top() + egui::vec2(0.0, 40.0));
+    assert_eq!(value(&harness, "clicks"), 0.0, "the bar takes the click");
+    assert!(value(&harness, "over") > 0.0, "scripts can tell the pointer is over the interface");
+    // Held on the bare game: the game's.
+    hold(&mut harness, view.center());
+    assert!(value(&harness, "clicks") > 0.0, "below the bar the game gets the click");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(2);
+    std::fs::remove_dir_all(&dir).ok();
+}

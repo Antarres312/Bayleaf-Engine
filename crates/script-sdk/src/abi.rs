@@ -21,6 +21,7 @@ mod raw {
         pub fn key_down(name_ptr: *const u8, name_len: usize) -> i32;
         pub fn pointer(out: *mut f32) -> i32;
         pub fn mouse_down(button: i32) -> i32;
+        pub fn pointer_over_interface() -> i32;
         pub fn self_handle() -> i32;
         pub fn find(name_ptr: *const u8, name_len: usize) -> i32;
         pub fn find_with(kind_ptr: *const u8, kind_len: usize, index: i32) -> i32;
@@ -277,6 +278,9 @@ mod raw {
     }
     pub unsafe fn mouse_down(button: i32) -> i32 {
         plain("mouse_down", &[I32(button)])
+    }
+    pub unsafe fn pointer_over_interface() -> i32 {
+        plain("pointer_over_interface", &[])
     }
     pub unsafe fn self_handle() -> i32 {
         plain("self_handle", &[])
@@ -704,6 +708,11 @@ pub(crate) fn pointer() -> Option<[f32; 2]> {
     // SAFETY: `xy` is 2 writable f32, exactly what the host writes.
     let inside = unsafe { raw::pointer(xy.as_mut_ptr()) };
     (inside != 0).then_some(xy)
+}
+
+pub(crate) fn pointer_over_interface() -> bool {
+    // SAFETY: no arguments; a plain number out.
+    unsafe { raw::pointer_over_interface() != 0 }
 }
 
 pub(crate) fn mouse_down(button: i32) -> bool {

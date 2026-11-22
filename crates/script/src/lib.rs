@@ -127,8 +127,11 @@ pub struct Input {
     /// The pointer over the game view, from (-1, -1) at the bottom left to (1, 1) at the top right;
     /// `None` when it is outside the view.
     pub pointer: Option<[f32; 2]>,
-    /// Mouse buttons held: bit 0 left, bit 1 right, bit 2 middle.
+    /// Mouse buttons held: bit 0 left, bit 1 right, bit 2 middle. None while the pointer is over
+    /// an interface element that takes it.
     pub buttons: u8,
+    /// The pointer is over an interface element that takes it (so its clicks are the interface's).
+    pub over_interface: bool,
     /// The first connected gamepad, if any.
     pub pad: Option<Pad>,
 }

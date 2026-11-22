@@ -230,3 +230,19 @@ fn a_part_takes_its_place_once_per_use_with_its_names_kept_apart() {
     no_file.name = "Empty".to_owned();
     assert!(Layout { root: no_file, ..Layout::starter() }.validate().is_err(), "a part names its file");
 }
+
+#[test]
+fn controls_and_boxes_with_a_background_take_the_pointer_and_the_style_can_say_otherwise() {
+    let blocks = |kind: Kind, style: &[(&str, &str)], on_click: &str| {
+        let mut e = element(kind, "E", style);
+        e.on_click = on_click.to_owned();
+        blocks_pointer(&e, &Style::of(&e, &[]))
+    };
+    assert!(blocks(Kind::Button, &[], ""), "a control takes it");
+    assert!(blocks(Kind::Panel, &[("background", "#00000080")], ""), "a box with a background takes it");
+    assert!(blocks(Kind::Image, &[], "open"), "anything with On Click takes it");
+    assert!(!blocks(Kind::Panel, &[], ""), "an empty layout box lets it through");
+    assert!(!blocks(Kind::Text, &[], ""), "text lets it through");
+    assert!(!blocks(Kind::Panel, &[("background", "#000000"), ("pointer", "pass")], ""), "the style lets it through");
+    assert!(blocks(Kind::Text, &[("pointer", "block")], ""), "the style takes it");
+}

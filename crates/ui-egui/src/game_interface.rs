@@ -102,8 +102,11 @@ fn color32(color: Color, opacity: f32) -> egui::Color32 {
 }
 
 /// Draws every visible Interface of the scene inside `area`. With `interactive`, its controls
-/// answer the player and the session hears about it.
-pub fn show(ui: &mut egui::Ui, area: egui::Rect, session: &mut Session, cache: &mut GameInterfaces, interactive: bool) {
+/// answer the player and the session hears about it. Returns whether the pointer is over an
+/// element that takes it, so the game does not also get its clicks.
+pub fn show(ui: &mut egui::Ui, area: egui::Rect, session: &mut Session, cache: &mut GameInterfaces, interactive: bool) -> bool {
+    let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| area.contains(*p));
+    let mut blocked = false;
     let base = session.script_dir();
     let scene = session.scene();
     let mut list: Vec<(StableId, Interface)> = scene
@@ -136,6 +139,13 @@ pub fn show(ui: &mut egui::Ui, area: egui::Rect, session: &mut Session, cache: &
             bayleaf_interface::layout(&root, &loaded.styles, [area.width(), area.height()], 1.0, &measure)
         };
         for (index, item) in placed.iter().enumerate() {
+            if let Some(p) = pointer
+                && !blocked
+                && to_screen(item.clip, area).contains(p)
+                && bayleaf_interface::blocks_pointer(item.element, &item.style)
+            {
+                blocked = true;
+            }
             let drawing = Drawing { painter: &painter, area, object, base: &base, interactive };
             draw(ui, &drawing, index, item, cache, &mut inputs);
         }
@@ -154,6 +164,7 @@ pub fn show(ui: &mut egui::Ui, area: egui::Rect, session: &mut Session, cache: &
         painter.rect_filled(egui::Rect::from_min_size(at, galley.size()).expand(4.0), 4.0, t.warning);
         painter.galley(at, galley, t.on_warning);
     }
+    blocked
 }
 
 /// Screen sizes the preview offers: a name and width by height in points.

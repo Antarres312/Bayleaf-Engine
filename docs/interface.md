@@ -103,6 +103,7 @@ parent's inner size along the same axis) or `auto` (what the content needs). Sha
 | `textAlign` | `start`, `center` or `end` |
 | `visible` | `true` or `false`; a hidden element takes no room |
 | `opacity` | 0 to 1 |
+| `pointer` | `block` or `pass`: whether it takes the pointer, so a click on it does not also reach the game. By default controls, elements with `onClick` and boxes with a background take it; text, images and empty boxes let it through |
 
 Layout is flexible boxes only, one line each, so a layout reads the same way every time: a box lays
 its children along its direction with its gap, gives the room left over to those that grow (or
@@ -138,6 +139,10 @@ object that has the Interface:
   share one handler: On Message in a visual script, `Script::message` in Rust;
 - `changed:<name>` when a toggle, slider or text field changes, with the new value (a text field's
   value is its length in characters).
+
+While the pointer is over an element that takes it, the game does not get its clicks: scripts read
+no mouse button (`mouse_down`, actions bound to the mouse), and `pointer_over_interface` (Rust:
+`pointer_over_interface()`; visual scripts: Pointer Position's Over the Interface) says so.
 
 Scripts change elements with `ui_set_text`, `ui_set_value` and `ui_show`, and build the interface
 while the game plays with `ui_add` (a new element of a kind, or a part from a layout file, into a

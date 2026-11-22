@@ -1010,6 +1010,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             write_guest(&mut caller, out, &bytes, "pointer")?;
             Ok(inside)
         })?;
+        linker.func_wrap("bayleaf", "pointer_over_interface", |caller: Caller<'_, HostState>| -> i32 { i32::from(caller.data().input.over_interface) })?;
         linker.func_wrap("bayleaf", "mouse_down", |caller: Caller<'_, HostState>, button: i32| -> i32 {
             match u32::try_from(button) {
                 Ok(b) if b < 3 => i32::from((caller.data().input.buttons >> b) & 1),

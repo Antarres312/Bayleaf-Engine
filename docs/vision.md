@@ -436,11 +436,13 @@ No crate below L6 may use egui, eframe, winit or rfd.
      and scripts treat it as any other interface.
    - **Interface elements block the pointer, or let it through.** A click on the interface does not
      also reach the game: while the pointer is over an element that takes it, scripts read no mouse
-     button (`mouse_down`, pointer actions), and physics rays from the pointer do not see past it.
+     button (`mouse_down`, pointer actions).
      Each element says whether it takes the pointer with a style property: `pointer: block` or
      `pointer: pass`. By default buttons, toggles, sliders, text fields, elements with On Click and
      boxes with a background block it; text, images and empty boxes let it through, so a display's
      layout panels never stop the game. Scripts can ask whether the pointer is over the interface.
+     (Done: the `pointer` style property, `pointer_over_interface`, and Pointer Position's Over the
+     Interface in visual scripts.)
    - **Graphs in tabs of their own.** Each material and visual script opens in a tab of its own
      instead of sharing one Graph panel, so several graphs are open at once and side by side: the
      tab shows the graph's name and whether it has unsaved changes, and closing a tab with changes

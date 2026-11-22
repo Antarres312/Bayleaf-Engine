@@ -411,6 +411,13 @@ fn expand_in(element: &mut Element, load: &mut dyn FnMut(&str) -> Result<Layout,
     Ok(())
 }
 
+/// Whether a placed element takes the pointer: its style's `pointer`, else by default controls,
+/// elements with On Click and boxes with a background (text, images and empty boxes let it
+/// through, so a display's layout never stops the game).
+pub fn blocks_pointer(element: &Element, style: &Style) -> bool {
+    style.pointer.unwrap_or_else(|| element.kind.is_control() || !element.on_click.is_empty() || style.background.0[3] > 0)
+}
+
 /// Where a bound value comes from: the game's state or the first player's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BindScope {

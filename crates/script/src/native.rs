@@ -25,6 +25,7 @@ const HOST_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("time", "", "f64"),
     ("key_down", "i32 i32", "i32"),
     ("pointer", "i32", "i32"),
+    ("pointer_over_interface", "", "i32"),
     ("mouse_down", "i32", "i32"),
     ("self_handle", "", "i32"),
     ("find", "i32 i32", "i32"),

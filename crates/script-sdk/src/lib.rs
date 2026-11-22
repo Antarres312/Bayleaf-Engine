@@ -165,6 +165,12 @@ pub enum Button {
     Middle = 2,
 }
 
+/// True while the pointer is over an interface element that takes it: its clicks are then the
+/// interface's, and `mouse_down` reads nothing.
+pub fn pointer_over_interface() -> bool {
+    abi::pointer_over_interface()
+}
+
 /// True while the mouse button is held.
 pub fn mouse_down(button: Button) -> bool {
     abi::mouse_down(button as i32)

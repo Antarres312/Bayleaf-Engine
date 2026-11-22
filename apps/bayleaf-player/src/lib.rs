@@ -149,13 +149,15 @@ impl Player {
         let image = egui::Image::new(egui::load::SizedTexture::new(view.texture, size)).sense(egui::Sense::click_and_drag());
         let response = ui.add(image);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Game view"));
-        bayleaf_ui_egui::game_interface::show(ui, response.rect, &mut self.session, &mut self.interfaces, true);
+        let over_interface = bayleaf_ui_egui::game_interface::show(ui, response.rect, &mut self.session, &mut self.interfaces, true);
         let pointer = response.hover_pos().map(|p| {
             let local = (p - response.rect.min) / response.rect.size();
             [local.x * 2.0 - 1.0, 1.0 - local.y * 2.0]
         });
         let buttons = ctx.input(|i| u8::from(i.pointer.primary_down()) | u8::from(i.pointer.secondary_down()) << 1 | u8::from(i.pointer.middle_down()) << 2);
-        self.session.set_pointer(pointer, if pointer.is_some() { buttons } else { 0 });
+        // Clicks on the interface are not the game's.
+        self.session.set_pointer(pointer, if pointer.is_some() && !over_interface { buttons } else { 0 });
+        self.session.set_pointer_over_interface(over_interface);
         self.paint_errors(ui, response.rect);
         ctx.request_repaint();
     }
