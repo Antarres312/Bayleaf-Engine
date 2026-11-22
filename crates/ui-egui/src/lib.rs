@@ -31,6 +31,7 @@ mod scene_settings;
 mod scene_view;
 mod script_info;
 mod script_panel;
+mod style_editor;
 mod theme;
 mod thumbnails;
 mod value_editor;
@@ -101,6 +102,9 @@ pub struct Editor {
     graph_views: std::collections::HashMap<u64, graph_view::GraphView>,
     /// The graph last worked in (pressed in, opened): it stays the one in use between frames.
     graph_focus: Option<u64>,
+    /// A gamepad the UI tests hold, instead of the real one.
+    #[cfg(test)]
+    pub(crate) pad_for_tests: Option<bayleaf_engine::script::Pad>,
     /// The graphs whose tabs were drawn this frame, and last frame.
     graphs_drawn: Vec<u64>,
     graphs_drawn_before: Vec<u64>,
@@ -169,6 +173,8 @@ impl Default for Editor {
             graph_view: graph_view::GraphView::default(),
             graph_views: std::collections::HashMap::new(),
             graph_focus: None,
+            #[cfg(test)]
+            pad_for_tests: None,
             graphs_drawn: Vec::new(),
             graphs_drawn_before: Vec::new(),
             raise_panel: None,
@@ -440,7 +446,11 @@ impl Editor {
         // Keys typed into a text field are not game input.
         let keys = if ctx.text_edit_focused() { Default::default() } else { ctx.input(|i| i.keys_down.iter().map(|k| k.name().to_owned()).collect()) };
         self.session.set_keys(keys);
+        #[cfg(test)]
+        let pad = self.pad_for_tests.or_else(|| self.gamepads.read());
+        #[cfg(not(test))]
         let pad = self.gamepads.read();
+        self.game_interfaces.set_pad(pad.as_ref());
         self.session.set_pad(pad);
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         self.session.tick(dt);

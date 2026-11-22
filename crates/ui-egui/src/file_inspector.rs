@@ -36,6 +36,8 @@ pub(crate) struct Inspected {
     post: Option<Result<bayleaf_engine::scene::post::PostProcessing, String>>,
     /// A model's or image's import settings as read, or why they could not be.
     import: Option<Result<ImportSettings, String>>,
+    /// An interface style file as read (and being edited), or why it could not be.
+    style: Option<Result<bayleaf_interface::StyleSheet, String>>,
 }
 
 impl Inspected {
@@ -51,6 +53,7 @@ impl Inspected {
             lighting: None,
             post: None,
             import: None,
+            style: None,
         }
     }
 
@@ -69,6 +72,8 @@ impl Inspected {
             let is_post = self.path.extension().is_some_and(|e| e == bayleaf_engine::scene::post::EXTENSION);
             self.post = is_post.then(|| bayleaf_engine::scene::post::PostProcessing::load(&self.path).map_err(|e| e.to_string()));
             self.import = ImportSettings::defaults_for(&self.path).map(|defaults| ImportSettings::read_for(&self.path).map(|s| s.unwrap_or(defaults)));
+            let is_style = self.path.extension().is_some_and(|e| e == bayleaf_interface::STYLE_EXTENSION);
+            self.style = is_style.then(|| bayleaf_interface::StyleSheet::load(&self.path));
         }
     }
 }
@@ -91,6 +96,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let mut save_input = None;
     let mut changed_lighting = None;
     let mut changed_post = None;
+    let mut changed_style = None;
     let mut changed_import = None;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -125,6 +131,13 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             && crate::scene_settings::post_editor(ui, post)
         {
             changed_post = Some(post.clone());
+        }
+
+        // An interface style file is edited here; every layout using it changes.
+        if let Some(Ok(style)) = file.style.as_mut()
+            && crate::style_editor::show(ui, style)
+        {
+            changed_style = Some(style.clone());
         }
 
         // How a model or image is read; saved beside it, and every scene using it reads it again.
@@ -220,6 +233,12 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     // An edited lighting asset is written; its new time on disk is taken, so it is not read back.
     if let Some(lighting) = changed_lighting
         && editor.dispatch("lighting.set", &serde_json::json!({ "path": file.path, "lighting": lighting }), None).is_some()
+    {
+        file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
+    }
+    // A style that does not read is not written; the status bar says why, and the edit stays to fix.
+    if let Some(style) = changed_style
+        && editor.dispatch("ui.style.set", &serde_json::json!({ "path": file.path, "style": style }), None).is_some()
     {
         file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
     }

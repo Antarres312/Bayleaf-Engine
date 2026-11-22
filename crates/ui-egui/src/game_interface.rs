@@ -29,6 +29,30 @@ pub struct GameInterfaces {
     /// How far each list is scrolled, in points, by object and the list's name (or its place
     /// among the elements, for a list without one).
     scroll: HashMap<(StableId, String), f32>,
+    /// The gamepad's buttons last frame and this frame (bits as `PAD_BUTTONS`).
+    pad_before: u32,
+    pad_now: u32,
+}
+
+/// Gamepad buttons the interface answers, as bits of `bayleaf_script::PAD_BUTTONS`.
+const PAD_SOUTH: u32 = 1 << 0;
+const PAD_UP: u32 = 1 << 12;
+const PAD_DOWN: u32 = 1 << 13;
+const PAD_LEFT: u32 = 1 << 14;
+const PAD_RIGHT: u32 = 1 << 15;
+
+impl GameInterfaces {
+    /// The gamepad this frame: the D-pad moves the focus between the interface's controls, and the
+    /// bottom face button presses the one with the focus.
+    pub fn set_pad(&mut self, pad: Option<&bayleaf_engine::script::Pad>) {
+        self.pad_before = self.pad_now;
+        self.pad_now = pad.map_or(0, |p| p.buttons);
+    }
+
+    /// Buttons that went down this frame.
+    fn pad_pressed(&self) -> u32 {
+        self.pad_now & !self.pad_before
+    }
 }
 
 /// A list's key in [`GameInterfaces::scroll`]: its name, else its place in the tree.
@@ -140,6 +164,8 @@ pub(crate) fn show_list(
     let mut inputs: Vec<(StableId, String, Input)> = Vec::new();
     let mut problems: Vec<String> = Vec::new();
     let painter = ui.painter_at(area);
+    // The controls drawn, in order, for the D-pad to move the focus between.
+    let mut controls: Vec<(egui::Id, egui::Rect)> = Vec::new();
     for (object, component) in list {
         let state = session.interface_state(object);
         if !state.and_then(|s| s.visible).unwrap_or(component.visible) {
@@ -184,6 +210,10 @@ pub(crate) fn show_list(
             }
             let drawing = Drawing { painter: &painter, area, object, base: &base, interactive };
             draw(ui, &drawing, index, item, cache, &mut inputs);
+            let answers = (item.element.kind.is_control() || !item.element.on_click.is_empty()) && item.element.kind != bayleaf_interface::Kind::TextField;
+            if interactive && answers && item.clip.w > 0.0 && item.clip.h > 0.0 {
+                controls.push((ui.scope_id().with(("game interface", object, index)), to_screen(item.clip, area)));
+            }
             // A list that holds more than it shows scrolls under the wheel, with a bar along its side.
             if let Some([offset, most]) = item.scroll {
                 let clip = to_screen(item.clip, area);
@@ -204,6 +234,7 @@ pub(crate) fn show_list(
             }
         }
     }
+    pad_focus(ui, cache.pad_pressed(), &controls);
     for (object, element, input) in inputs {
         if let Err(problem) = session.interface_input(object, &element, input) {
             problems.push(problem);
@@ -219,6 +250,36 @@ pub(crate) fn show_list(
         painter.galley(at, galley, t.on_warning);
     }
     blocked
+}
+
+/// Moves the focus to the control the D-pad points at from the focused one (the nearest along
+/// that way, preferring ones in line), or to the first control when none has it.
+fn pad_focus(ui: &egui::Ui, pressed: u32, controls: &[(egui::Id, egui::Rect)]) {
+    let direction = match () {
+        () if pressed & PAD_UP != 0 => egui::vec2(0.0, -1.0),
+        () if pressed & PAD_DOWN != 0 => egui::vec2(0.0, 1.0),
+        () if pressed & PAD_LEFT != 0 => egui::vec2(-1.0, 0.0),
+        () if pressed & PAD_RIGHT != 0 => egui::vec2(1.0, 0.0),
+        () => return,
+    };
+    let focused = ui.memory(|m| m.focused());
+    let Some(from) = controls.iter().find(|(id, _)| Some(*id) == focused).map(|(_, r)| r.center()) else {
+        if let Some((first, _)) = controls.first() {
+            ui.memory_mut(|m| m.request_focus(*first));
+        }
+        return;
+    };
+    let best = controls
+        .iter()
+        .filter_map(|(id, rect)| {
+            let delta = rect.center() - from;
+            let along = delta.dot(direction);
+            (along > 1.0).then(|| (*id, along + (delta - direction * along).length() * 2.0))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1));
+    if let Some((id, _)) = best {
+        ui.memory_mut(|m| m.request_focus(id));
+    }
 }
 
 /// Screen sizes the preview offers: a name and width by height in points.
@@ -313,6 +374,8 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
     let Drawing { painter, area, object, base, interactive } = *drawing;
     let style = &item.style;
     let element = item.element;
+    let pad_press = cache.pad_pressed() & PAD_SOUTH != 0;
+    let pressed = |r: &egui::Response| r.clicked() || (pad_press && r.has_focus());
     let rect = to_screen(item.rect, area);
     let clip = to_screen(item.clip, area).intersect(area);
     if clip.width() <= 0.0 || clip.height() <= 0.0 {
@@ -374,7 +437,7 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
             let at = text_at(&galley, inner, element.kind == Kind::Button);
             painter.galley(at, galley, fade(style.color));
             if let Some(r) = response.as_ref().filter(|_| control)
-                && r.clicked()
+                && pressed(r)
             {
                 inputs.push((object, element.name.clone(), Input::Pressed));
             }
@@ -399,7 +462,7 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
             let galley = painter.layout(element.text.clone(), font, fade(style.color), text.width().max(1.0) + 1.0);
             painter.galley(text_at(&galley, text, true), galley, fade(style.color));
             if let Some(r) = response.as_ref().filter(|_| control)
-                && r.clicked()
+                && pressed(r)
             {
                 inputs.push((object, element.name.clone(), Input::Changed(if on { 0.0 } else { 1.0 })));
             }
@@ -469,7 +532,7 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
     // A click on an element with On Click: `pressed:<name>` for one with a name (a button already
     // sent it, a toggle sent its change), then its own message.
     if let Some(r) = response.as_ref().filter(|_| clickable)
-        && r.clicked()
+        && pressed(r)
     {
         if !element.name.is_empty() && !matches!(element.kind, Kind::Button | Kind::Toggle) {
             inputs.push((object, element.name.clone(), Input::Pressed));

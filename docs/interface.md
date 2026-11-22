@@ -122,6 +122,14 @@ you leave it, Add Property lists every style property with a value to start from
 does not read is refused with the reason in the status bar. Undo puts back the layout as it was
 before the last change. Every change is a `ui.element.*` command, written at once.
 
+## Editing a style file
+
+Click a style file (`.bstyle`) in the Project panel to edit it in the Inspector: each rule in order,
+what it picks elements by (a kind from the list, or a class or name typed) and its properties, with
+Add Property, Up and Down (later rules win within their kind of rule), Remove Rule and Add Rule. A
+value is written when its field is left; one that does not read is refused with the reason in the
+status bar and stays to be fixed.
+
 ## The Interface component
 
 `interface` has a `layout` (a `.bui` file), `visible`, and an `order`: interfaces with a higher order
@@ -148,7 +156,9 @@ pointer (the nearest panel answers even behind a wall).
 ## While the game plays
 
 The player moves the focus between buttons, toggles, sliders and text fields with Tab, presses with
-the pointer, Space or Enter, and moves a focused slider with the arrow keys. Each element is in the
+the pointer, Space or Enter, and moves a focused slider with the arrow keys. With a gamepad, the
+D-pad moves the focus to the nearest control that way (the first one when none has it) and the
+bottom face button presses it; the game still reads the pad too. Each element is in the
 accessibility tree with its role and its text. What the player does reaches the scripts of the
 object that has the Interface:
 
@@ -192,6 +202,5 @@ field, as the player would. `asset.create` makes a layout (`interface`) or a sty
 
 ## Not yet
 
-Editing style files in the panel (they are edited as text for now), dragging elements in the tree,
-moving the focus with a gamepad, changing a part's inner text in the bigger layout's file (scripts
+Dragging elements in the tree, changing a part's inner text in the bigger layout's file (scripts
 set it while playing), and right-to-left text.

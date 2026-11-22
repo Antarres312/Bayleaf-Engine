@@ -2958,3 +2958,93 @@ fn with_a_gpu_an_interface_stands_in_the_world_and_answers_the_pointer_there() {
     harness.run_steps(2);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn with_a_gpu_the_gamepad_moves_between_the_interface_s_buttons_and_presses_one() {
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-pad-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let editor = harness.state_mut();
+    editor.dispatch("project.new", &json!({ "path": dir }), None);
+    let layout = json!({
+        "format": "bayleaf.interface", "version": 1,
+        "root": { "kind": "column", "style": { "width": "100%", "height": "100%", "alignItems": "center", "justify": "center", "gap": "12px" }, "children": [
+            { "kind": "text", "name": "Title", "text": "Pick one" },
+            { "kind": "button", "name": "Play", "text": "Play" },
+            { "kind": "button", "name": "Quit", "text": "Quit" }
+        ] }
+    });
+    editor.dispatch("ui.layout.set", &json!({ "path": "menu.bui", "layout": layout }), None);
+    let script = wat::parse_str(
+        r#"(module
+            (import "bayleaf" "message_is" (func $is (param i32 i32) (result i32)))
+            (import "bayleaf" "self_handle" (func $self (result i32)))
+            (import "bayleaf" "ui_set_text" (func $text (param i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "pressed:Quit")
+            (data (i32.const 120) "Title")
+            (data (i32.const 140) "Quitting")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param f32))
+            (func (export "bayleaf_message") (param f32)
+              (if (call $is (i32.const 100) (i32.const 12))
+                (then (drop (call $text (call $self) (i32.const 120) (i32.const 5) (i32.const 140) (i32.const 8)))))))"#,
+    )
+    .unwrap();
+    std::fs::write(dir.join("menu.wasm"), script).unwrap();
+    let made = editor
+        .dispatch("scene.object.create", &json!({ "name": "Menu", "components": { "interface": { "layout": "menu.bui", "visible": true, "order": 0 }, "scripts": [{ "module": "menu.wasm" }] } }), None)
+        .unwrap();
+    let menu = made["id"].clone();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(4);
+    // Down, down, then the bottom face button: from nothing to Play, to Quit, pressed.
+    let tap = |harness: &mut Harness<'static, Editor>, bit: u32| {
+        harness.state_mut().pad_for_tests = Some(bayleaf_engine::script::Pad { buttons: bit, ..Default::default() });
+        harness.run_steps(2);
+        harness.state_mut().pad_for_tests = Some(bayleaf_engine::script::Pad::default());
+        harness.run_steps(2);
+    };
+    tap(&mut harness, 1 << 13);
+    tap(&mut harness, 1 << 13);
+    tap(&mut harness, 1 << 0);
+    let state = harness.state_mut().dispatch("play.ui.state", &json!({ "id": menu }), None).unwrap();
+    let title = state["elements"].as_array().unwrap().iter().find(|e| e["name"] == "Title").unwrap()["text"].clone();
+    assert_eq!(title, "Quitting", "the D-pad reached Quit and the face button pressed it");
+    harness.state_mut().pad_for_tests = None;
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(2);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_style_file_is_edited_rule_by_rule_in_the_inspector() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-style-edit-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().dispatch("asset.create", &json!({ "kind": "interfaceStyle", "folder": "", "name": "look" }), None);
+    let file = dir.join("look.bstyle");
+    harness.state_mut().inspected_file = Some(crate::file_inspector::Inspected::new(file.clone()));
+    harness.run_steps(2);
+    let read = || bayleaf_interface::StyleSheet::load(&file).unwrap();
+    assert!(harness.query_by_label("Every button").is_some(), "the starter's rule, by what it picks");
+    let before = read().rules[0].set.len();
+
+    harness.get_by_label("Add Property").click();
+    harness.run();
+    harness.get_by_label("fontSize").click();
+    harness.run_steps(2);
+    assert_eq!(read().rules[0].set.len(), before + 1, "{}", harness.state().status);
+    assert!(read().rules[0].set.contains_key("fontSize"));
+
+    harness.get_by_label("Add Rule").click();
+    harness.run_steps(2);
+    assert_eq!(read().rules.len(), 2);
+    let removes: Vec<egui::Rect> = harness.query_all_by_label("Remove Rule").map(|n| n.rect()).collect();
+    assert_eq!(removes.len(), 2);
+    harness.query_all_by_label("Remove Rule").last().unwrap().click();
+    harness.run_steps(2);
+    assert_eq!(read().rules.len(), 1, "the new rule went again");
+    std::fs::remove_dir_all(&dir).ok();
+}

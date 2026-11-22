@@ -99,6 +99,7 @@ impl Player {
         let keys = ctx.input(|i| i.keys_down.iter().filter(|k| **k != egui::Key::F11).map(|k| k.name().to_owned()).collect());
         self.session.set_keys(keys);
         let pad = self.gamepads.read();
+        self.interfaces.set_pad(pad.as_ref());
         self.session.set_pad(pad);
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         self.session.tick(dt);
