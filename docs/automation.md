@@ -130,3 +130,9 @@ Rust script, which `script.build` refuses for agents because it runs the crate's
 
 `scene.script.setProperty` takes a value of the property's type: a number, `true`/`false`, three numbers or text
 (an object property's object name); `null` goes back to the script's default.
+
+`project.export` (`{folder, player?}`) writes the open project as a game into a new folder inside
+`folder`, named after the game: the player program under the game's name, and a `game` folder of
+its scenes, assets and scripts (visual scripts compiled). The folder must be inside the write roots;
+`player` (default: `bayleaf-player` beside the running program) must be readable. It exports for the
+system it runs on only.

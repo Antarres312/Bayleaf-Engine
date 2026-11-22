@@ -1,5 +1,5 @@
-//! Bayleaf Engine player: opens a project (or one scene) and runs its game in a window, with no
-//! editor around it. The game sees the keyboard and the mouse; F11 switches full screen.
+//! Bayleaf Engine player: opens a project (or one scene, or the game exported beside it) and runs
+//! its game in a window, with no editor around it. The game sees the keyboard and the mouse; F11 switches full screen.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -16,8 +16,9 @@ use serde_json::json;
 #[derive(Parser)]
 #[command(name = "bayleaf-player", version, about = "Runs a Bayleaf Engine game")]
 struct Args {
-    /// A project (.bproject file or its folder) or a scene (.bscene) to run.
-    game: PathBuf,
+    /// A project (.bproject file or its folder) or a scene (.bscene) to run. Without it, the game
+    /// exported beside this program (its `game` folder).
+    game: Option<PathBuf>,
     /// Start in full screen.
     #[arg(long)]
     fullscreen: bool,
@@ -147,21 +148,41 @@ impl eframe::App for Player {
     }
 }
 
+/// The window icon the project chooses (`settings.game.icon`), if it reads as an image.
+fn game_icon(session: &Session) -> Option<egui::IconData> {
+    let icon = bayleaf_engine::project_cmds::settings_of(session).game.icon;
+    if icon.is_empty() {
+        return None;
+    }
+    let image = render::assets::load_image(&session.script_dir().join(icon)).ok()?;
+    Some(egui::IconData { rgba: image.rgba, width: image.width, height: image.height })
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    let game = match args.game.clone() {
+        Some(game) => game,
+        None => std::env::current_exe()
+            .ok()
+            .and_then(|program| bayleaf_engine::export::packaged_game(&program))
+            .context("give a project or scene to run; no game was exported beside this program")?,
+    };
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();
     session.set_sound(true);
     // A project that does not open fails here, before a window appears; a game that cannot start
     // shows why in the window.
-    let (title, failure) = match open(&registry, &mut session, &args.game) {
+    let (title, failure) = match open(&registry, &mut session, &game) {
         Ok(title) => (title, None),
         Err(e) if session.scene_path().is_some() => ("Bayleaf game".to_owned(), Some(e)),
         Err(e) => return Err(anyhow::anyhow!(e)),
     };
 
     let mut viewport = egui::ViewportBuilder::default().with_title(&title).with_inner_size([1280.0, 720.0]).with_fullscreen(args.fullscreen);
-    if let Some(icon) = bayleaf_ui_egui::brand::window_icon() {
+    // The game's own icon (Project Settings), else the engine's.
+    if let Some(icon) = game_icon(&session) {
+        viewport = viewport.with_icon(icon);
+    } else if let Some(icon) = bayleaf_ui_egui::brand::window_icon() {
         viewport = viewport.with_icon(egui::IconData { rgba: icon.rgba, width: icon.size, height: icon.size });
     }
     let options = eframe::NativeOptions { viewport, persist_window: false, ..Default::default() };

@@ -24,12 +24,21 @@ pub mod visual;
 /// File extension of visual scripts, which compile to modules when loaded.
 pub const VISUAL_EXTENSION: &str = "bscript";
 
-/// The WebAssembly module of a script file: a `.wasm` file as it is, a visual script compiled.
+/// The first bytes of every WebAssembly module.
+pub const WASM_MAGIC: &[u8] = b"\0asm";
+
+/// The WebAssembly module of a script file: a `.wasm` file as it is, a visual script compiled (or
+/// as it is, when an export already compiled it).
 pub fn module_bytes(path: &Path) -> Result<Vec<u8>, ScriptError> {
     let read_error = |e: std::io::Error| ScriptError::Read { path: path.display().to_string(), message: e.to_string() };
     if path.extension().is_some_and(|e| e == VISUAL_EXTENSION) {
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-        let text = std::fs::read_to_string(path).map_err(read_error)?;
+        let bytes = std::fs::read(path).map_err(read_error)?;
+        // An exported game keeps its visual scripts already compiled.
+        if bytes.starts_with(WASM_MAGIC) {
+            return Ok(bytes);
+        }
+        let text = String::from_utf8(bytes).map_err(|e| ScriptError::Invalid(name.clone(), e.to_string()))?;
         let graph = bayleaf_graph::Graph::from_json(&text, &visual::CATALOG).map_err(|e| ScriptError::Invalid(name.clone(), e.to_string()))?;
         return visual::compile(&graph).map_err(|p| ScriptError::Invalid(name, bayleaf_graph::summary(&p)));
     }

@@ -15,9 +15,9 @@ pub const PROJECT_FORMAT: &str = "bayleaf.project";
 /// File extension of project files.
 pub const PROJECT_EXTENSION: &str = "bproject";
 /// Version 2 added `settings`; version 3 moved the input actions into an Input Map asset
-/// (`settings.input.map`); version 4 added the editor preferences (`settings.editor`). Older files
-/// still open; opening one moves its actions.
-const PROJECT_VERSION: u32 = 4;
+/// (`settings.input.map`); version 4 added the editor preferences (`settings.editor`); version 5 added the game's icon
+/// (`settings.game.icon`). Older files still open; opening one moves its actions.
+pub(crate) const PROJECT_VERSION: u32 = 5;
 
 /// A project file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -42,6 +42,17 @@ pub struct ProjectSettings {
     pub input: InputSettings,
     #[serde(default)]
     pub editor: EditorSettings,
+    #[serde(default)]
+    pub game: GameSettings,
+}
+
+/// How the exported game shows itself.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GameSettings {
+    /// A PNG image, relative to the project folder, for the game's window; empty for the engine's.
+    #[serde(default)]
+    pub icon: String,
 }
 
 /// How the editor shows this project. Play mode does not read these.
@@ -136,6 +147,10 @@ impl ProjectSettings {
     fn check(&self) -> Result<(), CommandError> {
         if !self.physics.gravity.iter().all(|g| g.is_finite() && g.abs() <= MAX_GRAVITY) {
             return Err(CommandError::BadParams(format!("gravity values must be finite and at most {MAX_GRAVITY} in size")));
+        }
+        let icon = &self.game.icon;
+        if !(icon.is_empty() || (icon.len() <= 512 && icon.to_ascii_lowercase().ends_with(".png"))) {
+            return Err(CommandError::BadParams("game.icon must be the path of a .png file".to_owned()));
         }
         let map = &self.input.map;
         if !(map.is_empty() || (map.len() <= 512 && map.ends_with(&format!(".{}", crate::input_cmds::INPUT_EXTENSION)))) {

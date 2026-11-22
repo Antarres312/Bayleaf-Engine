@@ -224,7 +224,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
    every camera is past the Keep Margin (scene format version 15; `stream.areas`, `stream.wait`).
    Object > Split into Streamed Areas (`stream.split`) cuts the open scene's top objects into one scene
    file per grid cell, leaving cameras, sun lights, environment, rules and players in place.
-9. **M8 Game export and script speed** (not started). A project builds into a game people run
+9. **M8 Game export and script speed** (started). A project builds into a game people run
    without the editor: the player under the game's name and icon, with its scenes, assets and
    scripts, for Windows, Linux, macOS and the web, built only with the modules the game uses.
    Visual scripts are compiled to WebAssembly at export, not at start. Each project chooses in
@@ -236,13 +236,29 @@ No crate below L6 may use egui, eframe, winit or rfd.
      ahead of time at export, or when the module loads where ahead of time is not possible (the
      web runs WebAssembly natively). Close to native speed. The compiler crate must be on the
      craft-contrib licence list; to check first: wasmtime (Apache-2.0).
-   - **Native** (opt-in, Rust scripts only): the script crate is linked into the player at export,
-     with no sandbox. Fastest, for code its maker trusts (heavy simulation, say); the export warns
-     that a native script can do anything a program can, and a fault in it stops the game. Visual
-     scripts and scripts without their source stay compiled WebAssembly.
+   - **Native** (opt-in): the script crate is linked into the player at export, with no sandbox.
+     Fastest, for code its maker trusts (heavy simulation, say); the export warns that a native
+     script can do anything a program can, and a fault in it stops the game. First Rust scripts;
+     scripts without their source stay compiled WebAssembly.
+   - **Native visual scripts** (later, if the profile shows scripts still weigh on a frame): a
+     second back end of the visual script compiler writes each `.bscript` as Rust on the SDK, built
+     with the Rust scripts in Native mode, so a whole game can be native. Conditions:
+     - Same behaviour as the WebAssembly back end (whole-number division by zero, rounding, text,
+       event order, objects that are gone), guarded by a test that runs the same graphs, the
+       every-node graph among them, through both back ends and compares what they do.
+     - A step guard in generated loops (For Each, loops through links) in place of WebAssembly's
+       fuel, so a script that never ends stops with a message instead of freezing the game.
+     - The export needs a Rust toolchain; the editor checks for it and says what is missing.
+     - A new node kind goes into both back ends; the every-node tests check both.
    The editor's play mode keeps running scripts interpreted or compiled to WebAssembly, so reloading
    while playing works whatever the export uses. Before choosing defaults, a frame profile of the
    demo and a heavier test scene measures how much of a frame scripts take in each mode.
+   Started: File > Export Game (`project.export`) writes a folder named after the game with the
+   player program under that name and a `game` folder of the project's scenes, assets and scripts
+   (visual scripts compiled at export; Rust sources, build output and saved values left behind),
+   which the player runs when started without a path; Project Settings > Game chooses the window
+   icon (project format 5). Still open: other systems than the one exporting, a player built with
+   only the game's modules, the program file's own icon, and the script modes.
 
 ## Open questions
 

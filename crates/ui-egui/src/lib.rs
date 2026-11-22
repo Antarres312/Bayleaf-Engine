@@ -930,6 +930,10 @@ impl Editor {
                 Some(path) => json!({ "path": path }),
                 None => return,
             },
+            Prompt::Folder => match rfd::FileDialog::new().set_title(tl("Choose the folder to export the game into")).pick_folder() {
+                Some(path) => json!({ "folder": path }),
+                None => return,
+            },
             Prompt::OpenProject => match rfd::FileDialog::new().add_filter("Bayleaf project", &[bayleaf_engine::project_cmds::PROJECT_EXTENSION]).pick_file() {
                 Some(path) => json!({ "path": path }),
                 None => return,

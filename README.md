@@ -89,6 +89,10 @@ cargo run -p bayleaf-player -- path/to/Game.bproject    # the game in its own wi
 cargo run -p bayleaf-cli -- commands                    # every command, as JSON
 ```
 
+File > Export Game in the editor (or `project.export`) writes a project as a game folder: the
+player program under the game's name and its files beside it. Build the player first
+(`cargo build --release -p bayleaf-player` for a smaller, faster game).
+
 Two optional build inputs come from sibling Craft repositories:
 
 - `CRAFT_FONTS_DIR` (a craft-fonts checkout) embeds the interface faces.

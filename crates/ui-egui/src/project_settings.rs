@@ -23,16 +23,18 @@ enum Category {
     #[default]
     Physics,
     Input,
+    Game,
     Preferences,
 }
 
 impl Category {
-    const ALL: [Category; 3] = [Category::Physics, Category::Input, Category::Preferences];
+    const ALL: [Category; 4] = [Category::Physics, Category::Input, Category::Game, Category::Preferences];
 
     fn label(self) -> &'static str {
         match self {
             Category::Physics => "Physics",
             Category::Input => "Input",
+            Category::Game => "Game",
             Category::Preferences => "Preferences",
         }
     }
@@ -41,6 +43,7 @@ impl Category {
         match self {
             Category::Physics => "Physics in play mode, gravity and precision",
             Category::Input => "The project's Input Map",
+            Category::Game => "How the exported game shows itself",
             Category::Preferences => "How the editor shows this project",
         }
     }
@@ -62,6 +65,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let project = editor.project_settings.project.clone();
     let before = settings.clone();
     let input_files = editor.project.input_map_files();
+    let images = editor.project.image_files();
     let mut edit = None;
     let mut category = editor.project_settings.category;
     // The categories on the left; the chosen one's settings on the right.
@@ -90,9 +94,10 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 match category {
                     Category::Physics => physics_section(ui, t, &mut settings),
                     Category::Input => edit = input_section(ui, t, &input_files, &mut settings),
+                    Category::Game => game_section(ui, t, &images, &mut settings),
                     Category::Preferences => preferences_section(ui, t, &mut settings),
                 }
-                if category != Category::Preferences {
+                if !matches!(category, Category::Preferences | Category::Game) {
                     ui.add_space(theme::GAP);
                     ui.label(egui::RichText::new(tl("Play mode uses these settings from its next start.")).small().color(t.text_muted));
                 }
@@ -218,4 +223,48 @@ fn input_section(ui: &mut egui::Ui, t: &theme::Tokens, files: &[String], setting
         ui.add(egui::Label::new(egui::RichText::new(note).small().color(t.text_muted)).wrap());
     });
     edit
+}
+
+/// How the exported game shows itself: its window's icon.
+fn game_section(ui: &mut egui::Ui, t: &theme::Tokens, images: &[String], settings: &mut ProjectSettings) {
+    theme::headed(t, "Game").show(ui, |ui| {
+        crate::value_editor::row(ui, t, "Icon", |ui, label, width| {
+            let current = settings.game.icon.clone();
+            let pngs: Vec<&String> = images.iter().filter(|f| f.to_ascii_lowercase().ends_with(".png")).collect();
+            let shown = if current.is_empty() { tl("The engine's").to_owned() } else { current.clone() };
+            let list = craft_ui::ComboBox::from_id_salt("game icon")
+                .width((width - 1.0).max(16.0))
+                .truncate()
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(current.is_empty(), tl("The engine's")).clicked() {
+                        settings.game.icon.clear();
+                    }
+                    for file in &pngs {
+                        if ui.selectable_label(current == **file, file.as_str()).clicked() {
+                            settings.game.icon = (*file).clone();
+                        }
+                    }
+                    if pngs.is_empty() {
+                        ui.label(egui::RichText::new(tl("No PNG images in the project folder")).color(t.text_muted));
+                    }
+                })
+                .response
+                .labelled_by(label);
+            // A PNG can also be dragged here from the Project panel.
+            if let Some(dropped) = crate::value_editor::file_drop(ui, &list, |path| path.to_ascii_lowercase().ends_with(".png")) {
+                settings.game.icon = dropped;
+            }
+        });
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(tl(
+                    "The exported game's window shows this image (a square PNG). File > Export Game writes the game into a folder of its own.",
+                ))
+                .small()
+                .color(t.text_muted),
+            )
+            .wrap(),
+        );
+    });
 }

@@ -10,6 +10,7 @@ pub mod asset_info;
 mod builtin;
 pub mod code_scripts;
 pub mod confine;
+pub mod export;
 mod graph_cmds;
 pub mod input_cmds;
 mod play;
@@ -368,6 +369,8 @@ pub enum Prompt {
     NewProject,
     /// `{"path"}` of a `.bproject` file.
     OpenProject,
+    /// `{"folder"}`: a folder to write into.
+    Folder,
     /// A form of named values, sent as an object of them.
     Fields(&'static [PromptField]),
 }
@@ -433,6 +436,7 @@ impl CommandRegistry {
         commands.extend(play::commands());
         commands.extend(sound::commands());
         commands.extend(stream::commands());
+        commands.extend(export::commands());
         commands.extend(graph_cmds::commands());
         commands.extend(project_cmds::commands());
         commands.extend(prefab_cmds::commands());

@@ -1348,7 +1348,8 @@ fn opening_an_old_project_moves_its_inline_actions_into_an_input_map() {
     let moved = registry.execute(&mut session, "input.asset", &json!({"path": "input/actions.binput"})).unwrap();
     assert_eq!(moved["asset"]["maps"][0]["name"], "Default", "the actions go into the map Default");
     assert_eq!(moved["asset"]["maps"][0]["actions"][0]["name"], "Jump", "keeping their names");
-    assert!(std::fs::read_to_string(&file).unwrap().contains("\"version\": 4"), "written at the current project version");
+    let written: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(written["version"], crate::project_cmds::PROJECT_VERSION, "written at the current project version");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -1718,4 +1719,57 @@ fn a_build_without_streaming_says_so() {
     assert!(registry.execute(&mut session, "stream.areas", &Value::Null).is_err());
     assert!(session.console.iter().any(|l| l.text.contains("no world streaming")));
     registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+}
+
+#[test]
+fn a_project_exports_as_a_game_folder_that_runs_without_the_editor() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let base = std::env::temp_dir().join(format!("bayleaf-export-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let project = base.join("Space Race");
+    registry.execute(&mut session, "project.new", &json!({"path": project})).unwrap();
+    // A Rust script's crate (its built module beside it), saved values, and a note the game does not use.
+    std::fs::create_dir_all(project.join("scripts/mover/src")).unwrap();
+    std::fs::write(project.join("scripts/mover/Cargo.toml"), "[package]").unwrap();
+    std::fs::write(project.join("scripts/mover/src/lib.rs"), "// source").unwrap();
+    std::fs::write(project.join("scripts/mover.wasm"), b"\0asm\x01\0\0\0").unwrap();
+    std::fs::create_dir_all(project.join("saves")).unwrap();
+    std::fs::write(project.join("saves/progress.json"), "{}").unwrap();
+    std::fs::write(project.join("notes.txt"), "todo").unwrap();
+    let player = base.join("player-program");
+    std::fs::write(&player, b"the player").unwrap();
+    let out = base.join("out");
+
+    let missing = registry.execute(&mut session, "project.export", &json!({"folder": out, "player": base.join("nothing")}));
+    assert!(matches!(missing, Err(CommandError::Failed(m)) if m.contains("player program")), "a missing player says so");
+    assert!(registry.execute(&mut session, "project.export", &json!({"folder": project, "player": player})).is_err(), "not into the project itself");
+
+    let result = registry.execute(&mut session, "project.export", &json!({"folder": out, "player": player})).unwrap();
+    let game = out.join("Space Race");
+    let program = game.join(format!("Space Race{}", std::env::consts::EXE_SUFFIX));
+    assert_eq!(std::fs::read(&program).unwrap(), b"the player", "the player under the game's name");
+    let packed = game.join(crate::export::GAME_FOLDER);
+    assert!(std::fs::read(packed.join("scripts/spin.bscript")).unwrap().starts_with(bayleaf_script::WASM_MAGIC), "visual scripts are compiled");
+    assert!(packed.join("scripts/mover.wasm").is_file(), "built modules go along");
+    for left in ["scripts/mover/src/lib.rs", "scripts/mover/Cargo.toml", "saves/progress.json", "notes.txt"] {
+        assert!(!packed.join(left).exists(), "{left} stays behind");
+    }
+    let skipped: Vec<&str> = result["skipped"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(skipped.contains(&"notes.txt") && skipped.contains(&"saves"), "and is listed: {skipped:?}");
+    assert!(registry.execute(&mut session, "project.export", &json!({"folder": out, "player": player})).is_err(), "not over an earlier export");
+
+    // The player finds the game beside it, and it plays from the compiled scripts.
+    let found = crate::export::packaged_game(&program).expect("the game beside the program");
+    let mut game_session = Session::default();
+    registry.execute(&mut game_session, "project.open", &json!({"path": found})).unwrap();
+    let started = registry.execute(&mut game_session, "play.start", &Value::Null).unwrap();
+    assert!(started["running"].as_u64().unwrap() > 0, "its scripts run: {started}");
+    assert!(game_session.console().iter().all(|l| l.level != crate::Level::Error), "{:?}", game_session.console());
+    registry.execute(&mut game_session, "play.stop", &Value::Null).unwrap();
+
+    // Agents export only into their write roots.
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&base), std::slice::from_ref(&project)).unwrap()));
+    assert!(registry.execute(&mut session, "project.export", &json!({"folder": base.join("elsewhere"), "player": player})).is_err());
+    std::fs::remove_dir_all(&base).ok();
 }
