@@ -1,0 +1,39 @@
+{
+  "format": "bayleaf.lighting",
+  "version": 1,
+  "lighting": {
+    "skyColor": [
+      0.18,
+      0.36,
+      0.72
+    ],
+    "horizonColor": [
+      0.62,
+      0.72,
+      0.82
+    ],
+    "groundColor": [
+      0.22,
+      0.2,
+      0.18
+    ],
+    "ambient": 1.0,
+    "showSky": true,
+    "fogDistance": 0.0,
+    "sun": {
+      "enabled": false,
+      "rotation": [
+        -50.0,
+        30.0,
+        0.0
+      ],
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "intensity": 3.0,
+      "shadows": true
+    }
+  }
+}

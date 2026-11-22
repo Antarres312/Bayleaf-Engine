@@ -1,0 +1,85 @@
+[
+  {"cmd": "ui.layout.set", "params": {"path": "ui/card.bui", "layout": {
+    "format": "bayleaf.interface", "version": 2,
+    "root": {"kind": "column", "name": "Card",
+      "style": {"width": "230px", "padding": "10px", "gap": "2px", "background": "#161b20cc", "radius": "8px"},
+      "children": [
+        {"kind": "text", "name": "Name", "text": "Feature", "style": {"fontSize": "17px", "color": "#f2f5f2"}},
+        {"kind": "text", "name": "Detail", "text": "What it does", "style": {"fontSize": "13px", "color": "#c3cfc6"}}
+      ]}}}},
+  {"cmd": "ui.layout.set", "params": {"path": "ui/hud.bui", "layout": {
+    "format": "bayleaf.interface", "version": 2,
+    "root": {"kind": "column", "name": "HUD",
+      "style": {"width": "100%", "height": "100%", "padding": "20px", "gap": "8px", "alignItems": "center", "justify": "end"},
+      "children": [
+        {"kind": "row", "name": "Cards", "style": {"gap": "10px"}, "children": [
+        {"kind": "part", "name": "Animation", "layout": "ui/card.bui",
+          "texts": {"Name": "Animated glTF model", "Detail": "The windmill's sails turn: Model Animation"}},
+        {"kind": "part", "name": "Obj", "layout": "ui/card.bui",
+          "texts": {"Name": "OBJ crates", "Detail": "Read with their MTL library and texture"}},
+        {"kind": "part", "name": "Sparks", "layout": "ui/card.bui",
+          "texts": {"Name": "Particles from a surface", "Detail": "Size and colour curves, added light"}},
+        {"kind": "part", "name": "Look", "layout": "ui/card.bui",
+          "texts": {"Name": "Post-processing", "Detail": "Bloom, occlusion, vignette, a warm lookup image"}},
+        {"kind": "part", "name": "Sign", "layout": "ui/card.bui",
+          "texts": {"Name": "Interface in the world", "Detail": "The sign is a panel you can click"}}
+        ]}
+      ]}}}},
+  {"cmd": "ui.layout.set", "params": {"path": "ui/sign.bui", "layout": {
+    "format": "bayleaf.interface", "version": 2,
+    "root": {"kind": "column", "name": "Sign",
+      "style": {"width": "100%", "height": "100%", "padding": "24px", "gap": "14px", "alignItems": "center", "justify": "center",
+        "background": "#1d2b23eb", "radius": "28px", "borderColor": "#7ea98d", "borderWidth": "4px"},
+      "children": [
+        {"kind": "text", "name": "Title", "text": "Bayleaf Engine", "style": {"fontSize": "72px", "color": "#eef5ee"}},
+        {"kind": "text", "name": "Line", "text": "An interface standing in the world", "style": {"fontSize": "30px", "color": "#a9c9b2"}},
+        {"kind": "button", "name": "Wave", "text": "Wave back", "onClick": "wave", "style": {"fontSize": "30px"}}
+      ]}}}},
+  {"cmd": "asset.create", "params": {"kind": "postProcessing", "folder": "post", "name": "showcase"}},
+  {"cmd": "post.set", "params": {"path": "post/showcase.bpost", "post": {
+    "toneMapping": {"enabled": true, "exposure": 1.6},
+    "bloom": {"enabled": true, "strength": 0.5, "threshold": 1.0},
+    "color": {"enabled": true, "contrast": 1.05, "saturation": 1.1, "lookup": "post/warm.png", "lookupStrength": 0.5},
+    "vignette": {"enabled": true, "strength": 0.22, "smoothness": 0.5},
+    "depthFog": {"enabled": false, "color": [0.7, 0.75, 0.8], "start": 20.0, "end": 200.0},
+    "occlusion": {"enabled": true, "strength": 0.4, "radius": 0.5},
+    "antialiasing": true}}},
+  {"cmd": "scene.settings.set", "params": {"postProcessing": "post/showcase.bpost"}},
+  {"cmd": "scene.object.delete", "params": {"id": "0b1f6e3a8c2d4e5f9a7b6c5d4e3f2a13"}},
+  {"cmd": "scene.component.set", "params": {"id": "0b1f6e3a8c2d4e5f9a7b6c5d4e3f2a10", "component": "transform",
+    "value": {"position": [0.2, 2.3, 6.0], "rotation": [-9.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]}}},
+  {"cmd": "scene.object.create", "params": {"name": "Windmill", "components": {
+    "transform": {"position": [-3.2, 0.0, -1.2], "rotation": [0.0, 18.0, 0.0], "scale": [1.0, 1.0, 1.0]},
+    "mesh": {"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "models/windmill.gltf"},
+    "modelAnimation": {"animation": "Spin", "playing": true, "looping": true, "speed": 1.0}}}},
+  {"cmd": "scene.object.create", "params": {"name": "Crate", "components": {
+    "transform": {"position": [2.0, 0.0, 0.4], "rotation": [0.0, 20.0, 0.0], "scale": [1.0, 1.0, 1.0]},
+    "mesh": {"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.8, "model": "models/crate.obj"}}}},
+  {"cmd": "scene.object.create", "params": {"name": "Crate 2", "components": {
+    "transform": {"position": [3.1, 0.0, -0.5], "rotation": [0.0, -12.0, 0.0], "scale": [1.0, 1.0, 1.0]},
+    "mesh": {"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.8, "model": "models/crate.obj"}}}},
+  {"cmd": "scene.object.create", "params": {"name": "Crate 3", "components": {
+    "transform": {"position": [2.6, 1.0, -0.1], "rotation": [0.0, 40.0, 0.0], "scale": [0.8, 0.8, 0.8]},
+    "mesh": {"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.8, "model": "models/crate.obj"}}}},
+  {"cmd": "scene.object.create", "params": {"name": "Spark Orb", "components": {
+    "transform": {"position": [0.0, 1.1, 1.6], "rotation": [0.0, 0.0, 0.0], "scale": [0.7, 0.7, 0.7]},
+    "mesh": {"shape": "sphere", "color": [1.0, 0.78, 0.36, 1], "metallic": 0.1, "roughness": 0.4},
+    "particleEmitter": {
+      "angle": 25.0, "blend": "additive", "boxSize": [1.0, 1.0, 1.0], "burst": 0,
+      "colorKeys": [
+        {"at": 0.0, "color": [1.0, 0.95, 0.6, 1.0]},
+        {"at": 0.35, "color": [1.0, 0.6, 0.15, 0.9]},
+        {"at": 1.0, "color": [0.8, 0.15, 0.05, 0.0]}],
+      "drag": 0.5, "duration": 5.0, "endColor": [1.0, 1.0, 1.0, 0.0], "endSize": 0.05, "flipbookColumns": 1, "flipbookRows": 1,
+      "gravity": 0.3, "image": "", "lifetime": [1.2, 2.2], "looping": true, "material": "", "maxParticles": 600,
+      "meshShape": "cube", "middleColor": [1.0, 1.0, 1.0, 0.8], "middleSize": 0.1, "playing": true, "radius": 0.5,
+      "rate": 140.0, "render": "sprite", "shape": "surface",
+      "sizeKeys": [{"at": 0.0, "size": 0.04}, {"at": 0.25, "size": 0.12}, {"at": 1.0, "size": 0.0}],
+      "space": "world", "speed": [0.3, 0.9], "spin": [0.0, 0.0], "startColor": [1.0, 1.0, 1.0, 1.0], "startSize": 0.1}}}},
+  {"cmd": "scene.object.create", "params": {"name": "Sign", "components": {
+    "transform": {"position": [0.2, 3.1, -2.6], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]},
+    "interface": {"layout": "ui/sign.bui", "visible": true, "order": 0, "space": "world", "size": [3.6, 1.8], "pointsPerUnit": 220.0, "faceCamera": true}}}},
+  {"cmd": "scene.object.create", "params": {"name": "HUD", "components": {
+    "interface": {"layout": "ui/hud.bui", "visible": true, "order": 0, "space": "screen", "size": [2.0, 1.0], "pointsPerUnit": 200.0, "faceCamera": false}}}},
+  {"cmd": "scene.save", "params": {}}
+]

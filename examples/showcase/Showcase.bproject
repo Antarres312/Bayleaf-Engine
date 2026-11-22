@@ -1,0 +1,41 @@
+{
+  "format": "bayleaf.project",
+  "version": 8,
+  "name": "Showcase",
+  "mainScene": "scenes/main.bscene",
+  "settings": {
+    "physics": {
+      "enabled": true,
+      "gravity": [
+        0.0,
+        -9.81,
+        0.0
+      ],
+      "precision": "single"
+    },
+    "input": {
+      "map": "input/game.binput"
+    },
+    "editor": {
+      "hideExtensions": true
+    },
+    "game": {
+      "icon": ""
+    },
+    "graphics": {
+      "shadowResolution": 2048,
+      "shadowCascades": 3,
+      "shadowDistance": 0.0,
+      "shadowLights": 1,
+      "effects": {
+        "toneMapping": true,
+        "bloom": true,
+        "color": true,
+        "vignette": true,
+        "depthFog": true,
+        "occlusion": true,
+        "antialiasing": true
+      }
+    }
+  }
+}

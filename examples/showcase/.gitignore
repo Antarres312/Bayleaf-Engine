@@ -1,0 +1,4 @@
+# Files the editor or build tools make again.
+/build/
+/.build/
+*.wasm

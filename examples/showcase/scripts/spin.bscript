@@ -1,0 +1,19 @@
+{
+  "format": "bayleaf.graph",
+  "version": 1,
+  "domain": "script",
+  "nodes": [
+    { "id": 1, "kind": "update", "position": [40.0, 40.0] },
+    { "id": 2, "kind": "property", "position": [40.0, 200.0], "values": { "name": "speed", "default": 45.0 } },
+    { "id": 3, "kind": "multiply", "position": [300.0, 200.0] },
+    { "id": 4, "kind": "vector", "position": [540.0, 200.0] },
+    { "id": 5, "kind": "rotateBy", "position": [780.0, 40.0] }
+  ],
+  "links": [
+    { "from": { "node": 2, "pin": "value" }, "to": { "node": 3, "pin": "a" } },
+    { "from": { "node": 1, "pin": "dt" }, "to": { "node": 3, "pin": "b" } },
+    { "from": { "node": 3, "pin": "result" }, "to": { "node": 4, "pin": "y" } },
+    { "from": { "node": 1, "pin": "then" }, "to": { "node": 5, "pin": "run" } },
+    { "from": { "node": 4, "pin": "vector" }, "to": { "node": 5, "pin": "degrees" } }
+  ]
+}

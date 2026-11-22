@@ -2763,3 +2763,29 @@ fn a_visual_script_bursts_and_stops_an_emitter() {
     run(&mut session, "play.stop", Value::Null);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn the_showcase_example_opens_and_everything_it_names_reads() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let project = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/showcase/Showcase.bproject");
+    registry.execute(&mut session, "project.open", &json!({"path": project})).unwrap();
+    for model in ["models/windmill.gltf", "models/crate.obj"] {
+        let info = registry.execute(&mut session, "asset.info", &json!({"path": model})).unwrap();
+        assert_eq!(info["problems"], json!([]), "{model}: {info}");
+    }
+    let windmill = registry.execute(&mut session, "asset.info", &json!({"path": "models/windmill.gltf"})).unwrap();
+    assert!(windmill.to_string().contains("Spin"), "the windmill keeps its animation");
+    for layout in ["ui/hud.bui", "ui/sign.bui", "ui/card.bui"] {
+        registry.execute(&mut session, "ui.layout.get", &json!({"path": layout})).unwrap();
+    }
+    let hud = bayleaf_interface::Layout::load(&session.script_dir().join("ui/hud.bui")).unwrap();
+    let mut load = |path: &str| bayleaf_interface::Layout::load(&session.script_dir().join(path)).map_err(|e| e.to_string());
+    bayleaf_interface::expand(&hud, &mut load).expect("the cards' texts name elements inside the card");
+    let post = registry.execute(&mut session, "post.get", &json!({"path": "post/showcase.bpost"})).unwrap();
+    assert_eq!(post["post"]["color"]["lookup"], "post/warm.png");
+    let objects = registry.execute(&mut session, "scene.objects", &json!({})).unwrap().to_string();
+    for name in ["Windmill", "Crate", "Spark Orb", "Sign", "HUD"] {
+        assert!(objects.contains(name), "{name} is in the scene");
+    }
+}

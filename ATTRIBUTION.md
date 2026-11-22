@@ -6,6 +6,10 @@ Third-party Rust crates are listed with their licences in `NOTICE`, written by
 
 | Path | Source | Licence | Notes |
 |---|---|---|---|
-| `assets/brand/bayleaf-logo.png` | Bayleaf Engine project owner, own work | Project brand asset | Temporary logo; embedded as the window icon and menu bar mark |
+| `assets/brand/bayleaf-logo.png` | Bayleaf Engine project owner, own work | Project brand asset | The logo, on a transparent background; embedded as the window icon and menu bar mark, shown in the README |
 | `examples/demo/materials/*.bmaterial`, `examples/demo/scripts/bob.bscript` | Bayleaf Engine project, own work | Project licence | Demo material graphs and visual script, made with the `graph.*` commands |
-| `docs/images/demo-scene.png` | Bayleaf Engine project, own work | Project licence | The demo scene rendered by `bayleaf-cli batch` (`scene.open`, then `scene.render` at 1280 × 720), for the README |
+| `examples/showcase/models/windmill.gltf`, `windmill.bin` | Bayleaf Engine project, own work | Project licence | Tower, sails and their `Spin` animation, written by a script that builds boxes and quaternion keys |
+| `examples/showcase/models/crate.obj`, `crate.mtl`, `crate.png` | Bayleaf Engine project, own work | Project licence | A cube written by hand; the plank texture drawn by a script (stripes and a sine grain) |
+| `examples/showcase/post/warm.png` | Bayleaf Engine project, own work | Project licence | A 16-step colour lookup image computed by a script (red lifted, blue lowered) |
+| `examples/showcase/ui/*.bui`, `post/showcase.bpost`, `scenes/main.bscene` | Bayleaf Engine project, own work | Project licence | Made by `examples/showcase/build.json` with `bayleaf-cli batch` |
+| `docs/images/showcase-game.png`, `showcase-editor.png`, `interface-panel.png` | Bayleaf Engine project, own work | Project licence | The editor drawn offscreen by its UI test harness on the GPU, with the showcase open and playing, for the README |

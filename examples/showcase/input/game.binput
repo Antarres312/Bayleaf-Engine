@@ -1,0 +1,104 @@
+{
+  "format": "bayleaf.input",
+  "version": 2,
+  "start": "Player",
+  "maps": [
+    {
+      "name": "Player",
+      "actions": [
+        {
+          "name": "MoveForward",
+          "kind": "value",
+          "bindings": [
+            "key:W",
+            "key:ArrowUp",
+            "axis:LeftY+"
+          ]
+        },
+        {
+          "name": "MoveBack",
+          "kind": "value",
+          "bindings": [
+            "key:S",
+            "key:ArrowDown",
+            "axis:LeftY-"
+          ]
+        },
+        {
+          "name": "MoveLeft",
+          "kind": "value",
+          "bindings": [
+            "key:A",
+            "key:ArrowLeft",
+            "axis:LeftX-"
+          ]
+        },
+        {
+          "name": "MoveRight",
+          "kind": "value",
+          "bindings": [
+            "key:D",
+            "key:ArrowRight",
+            "axis:LeftX+"
+          ]
+        },
+        {
+          "name": "Jump",
+          "kind": "trigger",
+          "bindings": [
+            "key:Space",
+            "pad:South"
+          ]
+        },
+        {
+          "name": "Fire",
+          "kind": "held",
+          "bindings": [
+            "mouse:Left",
+            "axis:RightTrigger+"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Menu",
+      "actions": [
+        {
+          "name": "Up",
+          "kind": "trigger",
+          "bindings": [
+            "key:ArrowUp",
+            "key:W",
+            "pad:Up"
+          ]
+        },
+        {
+          "name": "Down",
+          "kind": "trigger",
+          "bindings": [
+            "key:ArrowDown",
+            "key:S",
+            "pad:Down"
+          ]
+        },
+        {
+          "name": "Confirm",
+          "kind": "trigger",
+          "bindings": [
+            "key:Enter",
+            "key:Space",
+            "pad:South"
+          ]
+        },
+        {
+          "name": "Back",
+          "kind": "trigger",
+          "bindings": [
+            "key:Escape",
+            "pad:East"
+          ]
+        }
+      ]
+    }
+  ]
+}
