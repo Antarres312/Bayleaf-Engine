@@ -208,7 +208,11 @@ No crate below L6 may use egui, eframe, winit or rfd.
    all), script raycasts against colliders' exact shapes, and `physics.raycast` for agents (scene
    format version 9). Then: a Joint component (fixed, hinge, ball, slider) holds a body to another
    object, by name, or to the world, with limits and a motor whose speed scripts can change (Set
-   Component; scene format version 13).
+   Component; scene format version 13). Audio is started: the `audio` feature (`crates/audio`) plays
+   Audio Source components (scene format version 14) and scripts' sounds (`sound_play`,
+   `sound_stop`, `sound_play_at`; Play Sound, Stop Sound and Play Sound At nodes; `audio.*`
+   commands), decoded with craft-audio and heard through the first camera on the default output
+   (cpal). The editor and the player play them out loud; the CLI, agents and tests silently.
 
 ## Open questions
 

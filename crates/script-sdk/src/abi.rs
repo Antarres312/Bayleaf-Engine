@@ -22,6 +22,9 @@ mod raw {
         pub fn name_of(handle: i32, out: *mut u8, cap: usize) -> i32;
         pub fn object_ref(handle: i32) -> i32;
         pub fn scene_load(path_ptr: *const u8, path_len: usize, additive: i32) -> i32;
+        pub fn sound_play(handle: i32) -> i32;
+        pub fn sound_stop(handle: i32) -> i32;
+        pub fn sound_play_at(path_ptr: *const u8, path_len: usize, x: f32, y: f32, z: f32, volume: f32) -> i32;
         pub fn scene_unload(path_ptr: *const u8, path_len: usize) -> i32;
         pub fn object_of(reference: i32) -> i32;
         pub fn component_get(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, out: *mut f32) -> i32;
@@ -95,6 +98,15 @@ mod raw {
         0
     }
     pub unsafe fn scene_load(_: *const u8, _: usize, _: i32) -> i32 {
+        0
+    }
+    pub unsafe fn sound_play(_: i32) -> i32 {
+        0
+    }
+    pub unsafe fn sound_stop(_: i32) -> i32 {
+        0
+    }
+    pub unsafe fn sound_play_at(_: *const u8, _: usize, _: f32, _: f32, _: f32, _: f32) -> i32 {
         0
     }
     pub unsafe fn scene_unload(_: *const u8, _: usize) -> i32 {
@@ -241,6 +253,22 @@ pub(crate) fn find_with(kind: &str, index: i32) -> i32 {
 pub(crate) fn count_with(kind: &str) -> i32 {
     // SAFETY: the pointer and length describe `kind`; the host only reads.
     unsafe { raw::count_with(kind.as_ptr(), kind.len()) }
+}
+
+pub(crate) fn sound_play(handle: i32) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::sound_play(handle) != 0 }
+}
+
+pub(crate) fn sound_stop(handle: i32) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::sound_stop(handle) != 0 }
+}
+
+pub(crate) fn sound_play_at(path: &str, position: [f32; 3], volume: f32) -> bool {
+    let [x, y, z] = position;
+    // SAFETY: the pointer and length describe `path`; the host only reads.
+    unsafe { raw::sound_play_at(path.as_ptr(), path.len(), x, y, z, volume) != 0 }
 }
 
 pub(crate) fn scene_load(path: &str, additive: bool) -> bool {

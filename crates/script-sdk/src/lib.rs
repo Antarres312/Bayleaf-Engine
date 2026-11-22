@@ -90,6 +90,11 @@ pub fn mouse_down(button: Button) -> bool {
     abi::mouse_down(button as i32)
 }
 
+/// Plays a sound file (relative to the project folder) once from a world position, after this step.
+pub fn play_sound_at(path: &str, position: [f32; 3], volume: f32) -> bool {
+    abi::sound_play_at(path, position, volume)
+}
+
 /// After this step, loads a scene file (a `.bscene` relative to the project folder): in place of the
 /// playing scene (every script starts again; the game's values stay), or with `additive` its objects
 /// join the playing scene. False when this call already asked too often.
@@ -143,6 +148,16 @@ impl Object {
     /// How many objects have a component, a tag or a script (see `find_with`).
     pub fn count_with(kind: &str) -> usize {
         usize::try_from(abi::count_with(kind)).unwrap_or(0)
+    }
+
+    /// Plays its Audio Source after this step; false when this call asked too often.
+    pub fn play_sound(self) -> bool {
+        abi::sound_play(self.0)
+    }
+
+    /// Stops the sounds it plays after this step.
+    pub fn stop_sound(self) -> bool {
+        abi::sound_stop(self.0)
     }
 
     /// Its name, as the step began.

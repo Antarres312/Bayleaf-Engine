@@ -14,6 +14,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("bayleaf-gameplay", 4),
     ("bayleaf-streaming", 4),
     ("bayleaf-physics", 4),
+    ("bayleaf-audio", 4),
     ("bayleaf-engine", 5),
     ("bayleaf-ui-egui", 6),
     ("bayleaf-automation", 6),

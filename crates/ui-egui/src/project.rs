@@ -68,6 +68,8 @@ enum Kind {
     /// An Input Map (`.binput`): input actions in maps.
     InputMap,
     Image,
+    /// A sound file an Audio Source plays.
+    Sound,
     Other,
 }
 
@@ -83,6 +85,7 @@ impl Kind {
             Some(bayleaf_engine::input_cmds::INPUT_EXTENSION) => Kind::InputMap,
             Some("png" | "jpg" | "jpeg" | "webp" | "ktx2") => Kind::Image,
             Some("glb" | "gltf") => Kind::Model,
+            Some(ext) if bayleaf_engine::scene::components::SOUND_EXTENSIONS.contains(&ext) => Kind::Sound,
             _ => Kind::Other,
         }
     }
@@ -100,6 +103,7 @@ impl Kind {
             Kind::Material => "Material",
             Kind::InputMap => "Input Map",
             Kind::Image => "Image",
+            Kind::Sound => "Sound",
             Kind::Other => "File",
         }
     }
@@ -186,6 +190,11 @@ impl ProjectView {
     /// Every 3D model (`.glb`, `.gltf`) in the project.
     pub(crate) fn model_files(&self) -> Vec<String> {
         self.files_of(&[Kind::Model])
+    }
+
+    /// Every sound file in the project.
+    pub(crate) fn sound_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::Sound])
     }
 
     /// Every PNG and JPEG image in the project (the image formats the engine reads).
@@ -1147,7 +1156,7 @@ fn default_action(entry: &Entry) -> Option<Action> {
         Kind::Prefab => Some(Action::PlacePrefab(path)),
         // A Rust script: its source, in the code editor.
         Kind::ScriptSource | Kind::Script => source_file(entry).map(Action::OpenExternal),
-        Kind::Model | Kind::Image | Kind::Other => Some(Action::OpenExternal(path)),
+        Kind::Model | Kind::Image | Kind::Sound | Kind::Other => Some(Action::OpenExternal(path)),
     }
 }
 
@@ -1241,7 +1250,7 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             painter.circle(center, s * 0.36, t.surface_active, stroke(t.pin_color));
             painter.circle_filled(center + egui::vec2(-s * 0.1, -s * 0.1), s * 0.14, t.pin_color);
         }
-        Kind::Script | Kind::ScriptSource | Kind::VisualScript | Kind::InputMap | Kind::Image | Kind::Other => {
+        Kind::Script | Kind::ScriptSource | Kind::VisualScript | Kind::InputMap | Kind::Image | Kind::Sound | Kind::Other => {
             // A page with a folded corner.
             let fold = s * 0.22;
             let (l, r, top, bottom) = (rect.left() + s * 0.18, rect.right() - s * 0.18, rect.top() + s * 0.08, rect.bottom() - s * 0.08);
@@ -1251,6 +1260,7 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                 Kind::VisualScript => t.pin_any,
                 Kind::InputMap => t.pin_bool,
                 Kind::Image => t.axis_y,
+                Kind::Sound => t.pin_text,
                 _ => t.text_muted,
             };
             painter.add(egui::Shape::convex_polygon(page, t.surface_active, stroke(accent)));
@@ -1286,6 +1296,16 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                         egui::Stroke::NONE,
                     ));
                     painter.circle_filled(inner.right_top() + egui::vec2(-s * 0.06, s * 0.06), s * 0.05, t.warning);
+                }
+                Kind::Sound => {
+                    // A sound wave: bars of different heights.
+                    let bars = [0.35, 0.8, 0.55, 1.0, 0.45];
+                    let width = inner.width() / bars.len() as f32;
+                    for (i, height) in bars.into_iter().enumerate() {
+                        let x = inner.left() + width * (i as f32 + 0.5);
+                        let half = inner.height() * height * 0.5;
+                        painter.line_segment([egui::pos2(x, inner.center().y - half), egui::pos2(x, inner.center().y + half)], stroke(accent));
+                    }
                 }
                 Kind::Other if s >= 24.0 => {
                     for i in 0..3 {

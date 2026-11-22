@@ -58,6 +58,8 @@ impl App {
     fn new(cc: &eframe::CreationContext<'_>, scene: Option<PathBuf>, setup: Option<ControlSetup>) -> anyhow::Result<Self> {
         bayleaf_ui_egui::install_fonts(&cc.egui_ctx);
         let mut editor = Editor::default();
+        // The editor plays sounds out loud in play mode.
+        editor.hear_sounds();
         if let Some(text) = cc.storage.and_then(|s| s.get_string(LAYOUT_KEY)) {
             // A layout from another version is ignored; the editor keeps its default layout.
             let _restored = editor.restore_layout(&text);

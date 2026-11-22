@@ -1330,13 +1330,16 @@ fn setting_row(
                 requests.end_gesture = true;
             }
             // A file setting takes a file of its kind dragged from the Project panel.
-            let extension = match setting.name {
-                "scene" => Some(".bscene"),
-                "prefab" => Some(".bprefab"),
-                _ => None,
+            let accepts = |path: &str| match setting.name {
+                "scene" => path.ends_with(".bscene"),
+                "prefab" => path.ends_with(".bprefab"),
+                "sound" => {
+                    path.rsplit_once('.').is_some_and(|(_, e)| bayleaf_engine::scene::components::SOUND_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+                }
+                _ => false,
             };
-            if let Some(extension) = extension
-                && let Some(path) = crate::value_editor::file_drop(ui, &response, |path| path.ends_with(extension))
+            if matches!(setting.name, "scene" | "prefab" | "sound")
+                && let Some(path) = crate::value_editor::file_drop(ui, &response, accepts)
             {
                 requests.run("graph.node.set", json!({ "node": node.id, "name": setting.name, "value": path }));
             }

@@ -140,6 +140,12 @@ pub enum Request {
     Walk { by: StableId, object: StableId, velocity: [f32; 3] },
     /// Make a character on the ground jump with an upward speed.
     Jump { by: StableId, object: StableId, speed: f32 },
+    /// Play the object's Audio Source.
+    PlaySound { by: StableId, object: StableId },
+    /// Stop the sounds the object plays.
+    StopSound { by: StableId, object: StableId },
+    /// Play a sound file once (relative to the project folder) from a world position, at a volume.
+    PlaySoundAt { by: StableId, path: String, position: [f32; 3], volume: f32 },
     /// Load a scene file (relative to the project folder): in place of the playing one, or added to it.
     LoadScene { by: StableId, path: String, additive: bool },
     /// Remove the scenes added from this file while playing.
@@ -1688,6 +1694,37 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             state.requests.push(Request::Spawn { by, prefab, position: [x, y, z] });
             Ok(1)
         })?;
+        for (name, stop) in [("sound_play", false), ("sound_stop", true)] {
+            linker.func_wrap("bayleaf", name, move |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, wasmi::Error> {
+                let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                    return Err(fault(&mut caller, format!("{name}: there is no object with handle {handle}")));
+                };
+                let state = caller.data_mut();
+                if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+                    return Ok(0);
+                }
+                let by = state.object;
+                state.requests.push(if stop { Request::StopSound { by, object } } else { Request::PlaySound { by, object } });
+                Ok(1)
+            })?;
+        }
+        linker.func_wrap(
+            "bayleaf",
+            "sound_play_at",
+            |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, x: f32, y: f32, z: f32, volume: f32| -> Result<i32, wasmi::Error> {
+                let path = read_text(&caller, ptr, len, 512).map_err(|m| fault(&mut caller, format!("sound_play_at: {m}")))?;
+                if ![x, y, z, volume].iter().all(|v| v.is_finite()) {
+                    return Err(fault(&mut caller, "sound_play_at: give a finite position and volume".to_owned()));
+                }
+                let state = caller.data_mut();
+                if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+                    return Ok(0);
+                }
+                let by = state.object;
+                state.requests.push(Request::PlaySoundAt { by, path, position: [x, y, z], volume: volume.clamp(0.0, 4.0) });
+                Ok(1)
+            },
+        )?;
         linker.func_wrap("bayleaf", "scene_load", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, additive: i32| -> Result<i32, wasmi::Error> {
             let path = read_text(&caller, ptr, len, 512).map_err(|m| fault(&mut caller, format!("scene_load: {m}")))?;
             if !path.ends_with(".bscene") {

@@ -1568,3 +1568,76 @@ fn agents_list_a_projects_files_as_the_project_panel_does_inside_their_folders()
     assert!(registry.execute(&mut session, "asset.list", &json!({"path": "materials"})).is_ok());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A mono 16-bit WAV file of `seconds` at 8 kHz.
+#[cfg(feature = "audio")]
+fn beep(seconds: f64) -> Vec<u8> {
+    let frames = (8_000.0 * seconds) as u32;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + frames * 2).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    for value in [1u16, 1] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [8_000u32, 16_000] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [2u16, 16] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&(frames * 2).to_le_bytes());
+    for _ in 0..frames {
+        bytes.extend_from_slice(&8_000i16.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(feature = "audio")]
+#[test]
+fn sounds_play_from_audio_sources_scripts_and_agents_silently_in_tests() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-sound-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hum.wav"), beep(1.0)).unwrap();
+    std::fs::write(dir.join("click.wav"), beep(0.25)).unwrap();
+    script_file(&dir.join("clicker.bscript"), &[("playSoundAt", json!({ "sound": "click.wav" }))]);
+    let speaker = create(
+        &registry,
+        &mut session,
+        json!({"name": "Speaker", "components": {"audioSource": {"clip": "hum.wav", "volume": 1, "looping": true, "playOnStart": true, "spatial": true, "range": 30}}}),
+    );
+    create(&registry, &mut session, json!({"name": "Clicker", "components": {"scripts": [{"module": "clicker.bscript"}]}}));
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("noise.bscene")})).unwrap();
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.05})).unwrap();
+    let playing = registry.execute(&mut session, "audio.playing", &Value::Null).unwrap();
+    assert_eq!(playing["heard"], false, "tests play sound silently");
+    let sources: Vec<&str> = playing["sounds"].as_array().unwrap().iter().filter_map(|s| s["source"].as_str()).collect();
+    assert!(sources.contains(&"hum.wav") && sources.contains(&"click.wav"), "the Audio Source and the script's sound: {sources:?}");
+
+    // The click is a quarter second long; the hum loops.
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.5})).unwrap();
+    let playing = registry.execute(&mut session, "audio.playing", &Value::Null).unwrap();
+    assert_eq!(playing["sounds"].as_array().unwrap().len(), 1, "only the looping hum is left: {playing}");
+    assert_eq!(registry.execute(&mut session, "audio.stop", &json!({"id": speaker})).unwrap()["stopped"], 1);
+    assert!(registry.execute(&mut session, "audio.playing", &Value::Null).unwrap()["sounds"].as_array().unwrap().is_empty());
+    registry.execute(&mut session, "audio.play", &json!({"id": speaker})).unwrap();
+    assert_eq!(registry.execute(&mut session, "audio.playing", &Value::Null).unwrap()["sounds"][0]["object"], speaker.as_str());
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(not(feature = "audio"))]
+#[test]
+fn a_build_without_sound_says_so() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    let error = registry.execute(&mut session, "audio.playing", &Value::Null).unwrap_err().to_string();
+    assert!(error.contains("no sound"), "{error}");
+}

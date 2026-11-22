@@ -37,6 +37,9 @@ pub(crate) struct Play {
     /// Whether play mode already said single-precision physics is too far from the centre.
     #[cfg(feature = "physics")]
     told_far: bool,
+    /// Sound for this play session (heard or silent).
+    #[cfg(feature = "audio")]
+    pub(crate) audio: Option<bayleaf_audio::Audio>,
     /// Scenes added while playing (Load Scene with Add), with their top objects, in load order.
     loaded: Vec<(String, Vec<bayleaf_core::StableId>)>,
 }
@@ -259,6 +262,8 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     }
     host.load_scene(&mut session.scene, &dir, 0.0, &input);
     let (scripts, running) = (host.len(), host.running());
+    #[cfg(feature = "audio")]
+    let sound_open = crate::sound::open(session);
     #[cfg(feature = "physics")]
     let physics = build_physics(session);
     session.play = Some(Play {
@@ -276,7 +281,16 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         paused: false,
         since_reload_check: 0.0,
         loaded: Vec::new(),
+        #[cfg(feature = "audio")]
+        audio: Some(sound_open.0),
     });
+    #[cfg(feature = "audio")]
+    if let Some(why) = sound_open.1 {
+        session.log(Level::Info, why);
+    }
+    for problem in crate::sound::start_sources(session, None) {
+        session.log(Level::Error, problem);
+    }
     session.log(Level::Info, format!("Play mode started: {running} of {scripts} scripts running."));
     for problem in input_problems {
         session.log(Level::Error, problem);
@@ -353,6 +367,9 @@ pub(crate) fn load_scene(session: &mut Session, relative: &str, additive: bool) 
         let objects = loaded.export(loaded.children(None)).map_err(|e| e.to_string())?;
         let roots = session.scene.import(&objects, None, None).map_err(|e| e.to_string())?;
         start_scripts_of(session, &roots)?;
+        for problem in crate::sound::start_sources(session, Some(&roots)) {
+            session.log(Level::Error, problem);
+        }
         drain(session);
         if let Some(play) = session.play.as_mut() {
             play.loaded.push((relative.to_owned(), roots.clone()));
@@ -376,6 +393,8 @@ pub(crate) fn load_scene(session: &mut Session, relative: &str, additive: bool) 
         play.host = host;
         play.input_assets = input_assets;
         play.loaded.clear();
+        #[cfg(feature = "audio")]
+        play.audio.as_ref().inspect(|audio| audio.with(bayleaf_audio::Mixer::stop_all));
         #[cfg(feature = "physics")]
         {
             play.physics = physics;
@@ -385,6 +404,9 @@ pub(crate) fn load_scene(session: &mut Session, relative: &str, additive: bool) 
         session.log(Level::Error, problem);
     }
     session.log(Level::Info, format!("Loaded the scene {relative}."));
+    for problem in crate::sound::start_sources(session, None) {
+        session.log(Level::Error, problem);
+    }
     #[cfg(feature = "gameplay")]
     spawn_player(session);
     drain(session);
@@ -610,6 +632,7 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
         if let Some((camera, placed)) = bayleaf_gameplay::controller::follow_camera(&session.scene) {
             let _ = session.scene.set(camera, placed);
         }
+        crate::sound::update(session, f64::from(dt));
         #[cfg(feature = "gameplay")]
         apply_rules(session);
         report_outcome(session, &input);
@@ -695,6 +718,22 @@ fn apply_requests(session: &mut Session) {
                     None
                 };
             }),
+            Request::PlaySound { by, object } => {
+                if let Err(error) = crate::sound::play_object(session, object) {
+                    sound_problem(session, by, object, &error);
+                }
+            }
+            Request::StopSound { by, object } => {
+                if let Err(error) = crate::sound::stop_object(session, object) {
+                    sound_problem(session, by, object, &error);
+                }
+            }
+            Request::PlaySoundAt { by, path, position, volume } => {
+                if let Err(error) = crate::sound::play_at(session, &path, position, volume) {
+                    let who = session.scene.name(by).unwrap_or("Object").to_owned();
+                    session.log(Level::Error, format!("[{who}] cannot play {path}: {error}"));
+                }
+            }
             Request::LoadScene { by, path, additive } => {
                 if let Err(error) = load_scene(session, &path, additive) {
                     let who = session.scene.name(by).unwrap_or("Object").to_owned();
@@ -732,6 +771,13 @@ fn apply_requests(session: &mut Session) {
             }
         }
     }
+}
+
+/// Says once per play session why a script's sound request did nothing.
+fn sound_problem(session: &mut Session, by: bayleaf_core::StableId, object: bayleaf_core::StableId, error: &str) {
+    let who = session.scene.name(by).unwrap_or("Object").to_owned();
+    let target = session.scene.name(object).unwrap_or("Object").to_owned();
+    session.log(Level::Error, format!("[{who}] cannot play the sound of {target}: {error}"));
 }
 
 /// Applies a script's push or velocity change: `apply` gives `None` without physics (a build
@@ -1086,6 +1132,9 @@ fn spawn_with(session: &mut Session, prefab: &str, place: impl FnOnce(&mut bayle
     session.scene.set(id, transform).map_err(|e| e.to_string())?;
     session.scene.set(id, bayleaf_scene::components::Prefab::new(prefab)).map_err(|e| e.to_string())?;
     start_scripts_of(session, &[id])?;
+    for problem in crate::sound::start_sources(session, Some(&[id])) {
+        session.log(Level::Error, problem);
+    }
     Ok(id)
 }
 

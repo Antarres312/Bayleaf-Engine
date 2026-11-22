@@ -36,5 +36,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Load Scene, Unload Scene, Add to This Scene, Scene File | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Read Console, List Assets (command labels) | not yet | Not checked yet | Generic terms; same |
 | Joint, Fixed, Hinge, Ball, Slider, Connected, Anchor, Axis, Limited, Lower, Upper, Motor Speed, Motor Force | not yet | Not checked yet | Generic physics terms; same |
+| Audio Source, Clip, Volume, Looping, Play on Start, Spatial, Range, Sound (file kind), Play Sound, Stop Sound, Play Sound At, Sound File | not yet | Not checked yet | Generic audio terms; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

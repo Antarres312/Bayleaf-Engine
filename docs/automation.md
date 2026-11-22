@@ -22,7 +22,8 @@ required; without them the agent entry point refuses to start.
 
 Relative paths in commands start at the first write root. Paths are resolved before the check, so
 `..` and symbolic links cannot reach outside. A refused command fails with a message that names the
-path and the allowed folders, and nothing is written. While playing, `play.scene.load` (`{path, additive}`), `play.scene.unload` and `play.scene.list`
+path and the allowed folders, and nothing is written. While playing, `audio.playing` lists the sounds playing, and `audio.play` and `audio.stop` play
+or stop an object's Audio Source; agents' sessions play them silently, in time. While playing, `play.scene.load` (`{path, additive}`), `play.scene.unload` and `play.scene.list`
 load scenes in place of the playing one or on top of it, as scripts can; the scene file and its
 scripts must be inside the readable folders. Scripts that `play.start` would load must also
 be inside a readable folder.

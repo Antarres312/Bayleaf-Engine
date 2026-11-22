@@ -382,6 +382,11 @@ impl Editor {
         dock::to_text(&self.dock)
     }
 
+    /// Plays sounds out loud in play mode (the app does; tests stay silent).
+    pub fn hear_sounds(&mut self) {
+        self.session.set_sound(true);
+    }
+
     /// Restores a layout saved by [`Self::saved_layout`]. Returns false and keeps the current
     /// layout when the data is from another version or broken.
     pub fn restore_layout(&mut self, text: &str) -> bool {

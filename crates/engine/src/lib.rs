@@ -17,6 +17,7 @@ pub mod prefab_cmds;
 pub mod project_cmds;
 pub mod saved;
 mod scene_cmds;
+mod sound;
 
 /// Optional world streaming, present only with the `streaming` feature.
 #[cfg(feature = "streaming")]
@@ -132,6 +133,8 @@ pub struct Session {
     graph: Option<GraphDoc>,
     /// The project folder the open scene belongs to, if any.
     project_dir: Option<PathBuf>,
+    /// Sounds are heard in play mode (the editor and the player); otherwise they play silently.
+    sound: bool,
 }
 
 /// How important a console line is.
@@ -180,6 +183,12 @@ impl Session {
         if self.input.pointer != pointer || self.input.buttons != buttons {
             self.input = std::sync::Arc::new(bayleaf_script::Input { pointer, buttons, ..(*self.input).clone() });
         }
+    }
+
+    /// Plays sounds on the output device in play mode, from the next start. The editor and the
+    /// player turn it on; the CLI, agents and tests leave it off, and sounds play silently, in time.
+    pub fn set_sound(&mut self, on: bool) {
+        self.sound = on;
     }
 
     /// The gamepad scripts see (`None`: none connected). Axes are clamped to their ranges.
@@ -405,6 +414,7 @@ impl CommandRegistry {
         let mut commands = builtin::commands();
         commands.extend(scene_cmds::commands());
         commands.extend(play::commands());
+        commands.extend(sound::commands());
         commands.extend(graph_cmds::commands());
         commands.extend(project_cmds::commands());
         commands.extend(prefab_cmds::commands());

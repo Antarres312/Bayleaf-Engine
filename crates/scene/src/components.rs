@@ -664,6 +664,52 @@ impl SceneComponent for Collider {
     }
 }
 
+/// The file extensions an Audio Source's clip may have.
+pub const SOUND_EXTENSIONS: &[&str] = &["wav", "ogg", "mp3", "aif", "aiff", "opus", "m4a", "aac"];
+
+/// A sound the object plays in play mode: from its own place when spatial, heard from the first
+/// camera (quieter with distance, from the side it is on), or the same everywhere.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AudioSource {
+    /// A sound file (WAV, Ogg Vorbis, MP3, Opus, AIFF, AAC), relative to the project folder; empty
+    /// for none.
+    pub clip: String,
+    /// 0 silent, 1 as recorded, up to 4.
+    pub volume: f32,
+    pub looping: bool,
+    /// Starts when play starts, or when the object appears during play.
+    pub play_on_start: bool,
+    /// Heard from where the object is, rather than the same everywhere.
+    pub spatial: bool,
+    /// How far a spatial sound is heard, in world units; it fades out toward it.
+    pub range: f32,
+}
+
+impl Default for AudioSource {
+    fn default() -> Self {
+        Self { clip: String::new(), volume: 1.0, looping: false, play_on_start: true, spatial: true, range: 30.0 }
+    }
+}
+
+impl SceneComponent for AudioSource {
+    const NAME: &'static str = "audioSource";
+    const LABEL: &'static str = "Audio Source";
+    const MENU: &'static str = "Audio/Audio Source";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        file_field("clip", &self.clip, SOUND_EXTENSIONS)?;
+        if !(self.volume.is_finite() && (0.0..=4.0).contains(&self.volume)) {
+            return Err("volume must be between 0 and 4".to_owned());
+        }
+        if !(self.range.is_finite() && self.range > 0.0 && self.range <= 100_000.0) {
+            return Err("range must be more than 0 and at most 100000".to_owned());
+        }
+        Ok(())
+    }
+}
+
 /// How a joint lets its object move against what it holds on to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

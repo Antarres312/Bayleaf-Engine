@@ -16,6 +16,7 @@ bayleaf-core = { path = "crates/core" }
 bayleaf-ecs = { path = "crates/ecs" }
 bayleaf-scene = { path = "crates/scene" }
 bayleaf-physics = { path = "crates/physics" }
+bayleaf-audio = { path = "crates/audio" }
 bayleaf-gameplay = { path = "crates/gameplay" }
 bayleaf-graph = { path = "crates/graph" }
 bayleaf-assets = { path = "crates/assets" }
@@ -40,6 +41,10 @@ craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063
 craft-fonts-build = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
 craft-markdown = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
 craft-flow = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
+craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
+craft-audio-dsp = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
+# Sound output on Windows, macOS and Linux (Apache-2.0).
+cpal = "0.15"
 # Same version eframe uses for its saved state; it keeps non-finite floats that JSON cannot.
 ron = "0.12"
 egui = { version = "0.37", default-features = false }

@@ -491,6 +491,18 @@ pub const CATALOG: Catalog = Catalog {
             settings: &[fields::COMPONENT, fields::FIELDS],
             unique: false,
         },
+        action("playSound", "Play Sound", "Plays the Audio Source of the linked object (else this object), after this step.", &[RUN, TARGET]),
+        action("stopSound", "Stop Sound", "Stops the sounds the linked object (else this object) plays, after this step.", &[RUN, TARGET]),
+        NodeDef {
+            kind: "playSoundAt",
+            label: "Play Sound At",
+            category: "Actions",
+            description: "Plays a sound file once from a world position, after this step, heard from the first camera.",
+            inputs: &[RUN, vector("position", "Position", [0.0; 3]), number("volume", "Volume", Float, 1.0)],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "sound", label: "Sound File", kind: SettingKind::Text("") }],
+            unique: false,
+        },
         NodeDef {
             kind: "loadScene",
             label: "Load Scene",
@@ -1265,6 +1277,21 @@ impl Compiler<'_> {
                 let [x, y, z] = vec3(self, "position")?;
                 let _ = writeln!(code, "{indent}(drop (call $spawn (i32.const {at}) (i32.const {len}) {x} {y} {z}))");
             }
+            "playSound" | "stopSound" => {
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
+                let _ = writeln!(code, "{indent}(drop (call $sound_{} {handle}))", if n.kind == "playSound" { "play" } else { "stop" });
+            }
+            "playSoundAt" => {
+                let sound = self.setting_text(next, "sound", "");
+                let extension = sound.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+                if !bayleaf_scene::components::SOUND_EXTENSIONS.contains(&extension.as_str()) {
+                    return Err(Problem::on(next, format!("choose a sound file ({})", bayleaf_scene::components::SOUND_EXTENSIONS.join(", "))));
+                }
+                let (at, len) = self.text(sound.as_bytes());
+                let [x, y, z] = vec3(self, "position")?;
+                let volume = self.input(next, "volume").and_then(|v| as_float(next, v))?;
+                let _ = writeln!(code, "{indent}(drop (call $sound_play_at (i32.const {at}) (i32.const {len}) {x} {y} {z} {volume}))");
+            }
             "loadScene" | "unloadScene" => {
                 let scene = self.setting_text(next, "scene", "");
                 if !scene.ends_with(".bscene") {
@@ -1794,6 +1821,9 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "component_set" (func $component_set (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "name_of" (func $name_of (param i32 i32 i32) (result i32)))
   (import "bayleaf" "scene_load" (func $scene_load (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "sound_play" (func $sound_play (param i32) (result i32)))
+  (import "bayleaf" "sound_stop" (func $sound_stop (param i32) (result i32)))
+  (import "bayleaf" "sound_play_at" (func $sound_play_at (param i32 i32 f32 f32 f32 f32) (result i32)))
   (import "bayleaf" "scene_unload" (func $scene_unload (param i32 i32) (result i32)))
   (import "bayleaf" "object_ref" (func $object_ref (param i32) (result i32)))
   (import "bayleaf" "object_of" (func $object_of (param i32) (result i32)))

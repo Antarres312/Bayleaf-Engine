@@ -15,6 +15,8 @@ streaming = ["dep:bayleaf-streaming"]
 physics = ["dep:bayleaf-physics"]
 # Gameplay roles (Player Control). Projects without them leave it off.
 gameplay = ["dep:bayleaf-gameplay", "bayleaf-gameplay/controller", "bayleaf-gameplay/rules"]
+# Sound in play mode (cpal output, craft-audio decoding). Projects without sound leave it off.
+audio = ["dep:bayleaf-audio"]
 
 [dependencies]
 bayleaf-core = { workspace = true }
@@ -24,6 +26,7 @@ bayleaf-render = { workspace = true }
 bayleaf-script = { workspace = true }
 bayleaf-streaming = { workspace = true, optional = true }
 bayleaf-physics = { workspace = true, optional = true }
+bayleaf-audio = { workspace = true, optional = true }
 bayleaf-gameplay = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,0 +1,17 @@
+[package]
+name = "bayleaf-audio"
+description = "L4: sound for play mode: decodes clips (craft-audio), mixes voices and plays them on the default output (cpal). Opt-in: the engine's `audio` feature."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bayleaf-core = { workspace = true }
+craft-audio = { workspace = true, features = ["decode-native", "vorbis-decode"] }
+craft-audio-dsp = { workspace = true }
+cpal = { workspace = true }
+
+[lints]
+workspace = true

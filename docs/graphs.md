@@ -174,6 +174,9 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   objects join the playing one and their scripts start; **Unload Scene** removes what was added from
   that file. Drag a `.bscene` (or, for Spawn Prefab, a `.bprefab`) from the Project panel onto the
   node's file field. Stop still brings back the scene as edited.
+- **Play Sound** and **Stop Sound** play or stop the linked object's Audio Source (else this
+  object's); **Play Sound At** plays a sound file once from a position, at a volume (drag a sound
+  file onto its Sound File).
 - Data nodes have no side effects. They are computed where an action needs them.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a

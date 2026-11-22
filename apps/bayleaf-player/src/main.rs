@@ -151,6 +151,7 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();
+    session.set_sound(true);
     // A project that does not open fails here, before a window appears; a game that cannot start
     // shows why in the window.
     let (title, failure) = match open(&registry, &mut session, &args.game) {
