@@ -131,7 +131,7 @@ pub const CATALOG: Catalog = Catalog {
     starter: &[("start", [40.0, 40.0]), ("update", [40.0, 200.0])],
     variant: fields::variant,
     upgrade,
-    fractional: &["sine", "squareRoot"],
+    fractional: &["sine", "squareRoot", "lerp"],
     nodes: &[
         node(
             "init",
@@ -960,6 +960,22 @@ pub const CATALOG: Catalog = Catalog {
             "How long a vector is: the distance from 0 to the point it names.",
             &[vector("vector", "Vector", [0.0, 0.0, 0.0])],
             &[pin("length", "Length", Float)],
+        ),
+        node(
+            "lerp",
+            "Lerp",
+            "Math",
+            "Linear interpolation: from A (factor 0) to B (factor 1) on a straight line; factors outside 0 to 1 go past A or B. For vectors, each part.",
+            &[number("a", "A", Any, 0.0), number("b", "B", Any, 1.0), number("factor", "Factor", Float, 0.5)],
+            MATH_OUT,
+        ),
+        node(
+            "inverseLerp",
+            "Inverse Lerp",
+            "Math",
+            "Where the value lies from A to B: 0 at A, 1 at B, 0.5 halfway, and past 0 or 1 beyond them; 0 when A and B are equal.",
+            &[number("a", "A", Float, 0.0), number("b", "B", Float, 1.0), number("value", "Value", Float, 0.5)],
+            &[pin("result", "Result", Float)],
         ),
         node(
             "choose",
@@ -2305,6 +2321,18 @@ impl Compiler<'_> {
                 Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
             },
             "power" | "squareRoot" | "vectorLength" => self.power_and_roots(node, &n.kind)?,
+            "lerp" => {
+                let a = self.input(node, "a")?;
+                let b = self.input(node, "b")?;
+                let factor = self.input(node, "factor").and_then(|v| as_float(node, v))?;
+                zip(node, a, b, |a, b| format!("(call $lerp {a} {b} {factor})"))?
+            }
+            "inverseLerp" => {
+                let a = self.input(node, "a").and_then(|v| as_float(node, v))?;
+                let b = self.input(node, "b").and_then(|v| as_float(node, v))?;
+                let value = self.input(node, "value").and_then(|v| as_float(node, v))?;
+                Val::F(format!("(call $unlerp {a} {b} {value})"))
+            }
             "choose" => {
                 let condition = self.input(node, "condition").and_then(|v| as_bool(node, v))?;
                 let a = self.input(node, "a")?;
@@ -2929,6 +2957,13 @@ const PRELUDE: &str = r#"(module
   ;; The length of the vector (x, y, z).
   (func $len3 (param $x f32) (param $y f32) (param $z f32) (result f32)
     (f32.sqrt (f32.add (f32.add (f32.mul (local.get $x) (local.get $x)) (f32.mul (local.get $y) (local.get $y))) (f32.mul (local.get $z) (local.get $z)))))
+  ;; From a (t 0) to b (t 1) on a straight line.
+  (func $lerp (param $a f32) (param $b f32) (param $t f32) (result f32)
+    (f32.add (local.get $a) (f32.mul (f32.sub (local.get $b) (local.get $a)) (local.get $t))))
+  ;; Where v lies from a (0) to b (1); 0 when a and b are equal.
+  (func $unlerp (param $a f32) (param $b f32) (param $v f32) (result f32)
+    (if (f32.eq (local.get $a) (local.get $b)) (then (return (f32.const 0))))
+    (f32.div (f32.sub (local.get $v) (local.get $a)) (f32.sub (local.get $b) (local.get $a))))
   ;; Sine: reduce to [-pi/2, pi/2], then the Taylor series to x^9.
   (func $sin (param $x f32) (result f32) (local $x2 f32)
     (local.set $x (f32.sub (local.get $x) (f32.mul (f32.nearest (f32.mul (local.get $x) (f32.const 0.15915494))) (f32.const 6.2831855))))

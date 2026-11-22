@@ -230,10 +230,18 @@ pub const CATALOG: Catalog = Catalog {
         node("divide", "Divide", "Math", "A ÷ B.", &[number("a", "A", Any, 1.0), number("b", "B", Any, 1.0)], MATH_OUT),
         node(
             "blend",
-            "Blend",
+            "Lerp",
             "Math",
-            "From A (factor 0) to B (factor 1).",
+            "Linear interpolation (a blend): from A (factor 0) to B (factor 1) on a straight line; factors outside 0 to 1 go past A or B.",
             &[number("a", "A", Any, 0.0), number("b", "B", Any, 1.0), number("factor", "Factor", Float, 0.5)],
+            MATH_OUT,
+        ),
+        node(
+            "inverseLerp",
+            "Inverse Lerp",
+            "Math",
+            "Where the value lies from A to B: 0 at A, 1 at B, 0.5 halfway, and past 0 or 1 beyond them; 0 when A and B are equal.",
+            &[number("a", "A", Float, 0.0), number("b", "B", Float, 1.0), number("value", "Value", Any, 0.5)],
             MATH_OUT,
         ),
         node(
@@ -628,6 +636,14 @@ impl Compiler<'_> {
                 let (a, b) = self.pair(node, "a", "b")?;
                 let factor = self.input_as(node, "factor", Ty::F)?;
                 (format!("mix({}, {}, {factor})", a.0, b.0), a.1)
+            }
+            "inverseLerp" => {
+                let (v, ty) = self.input(node, "value")?;
+                let (a, b) = (self.input_as(node, "a", Ty::F)?, self.input_as(node, "b", Ty::F)?);
+                // Equal ends give 0 instead of dividing by zero.
+                let span = format!("select({b} - {a}, 1.0, {b} == {a})");
+                let zero = widen("0.0", ty);
+                (format!("select(({v} - {}) / {span}, {zero}, {b} == {a})", widen(&a, ty)), ty)
             }
             "power" => {
                 let (base, ty) = self.input(node, "base")?;

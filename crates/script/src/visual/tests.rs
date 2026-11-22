@@ -198,9 +198,15 @@ fn every_node_kind_compiles_and_runs() {
     let total = b.node("add", json!({}));
     b.link(root, "result", total, "a");
     b.link(length, "length", total, "b");
+    // Lerp from the total to itself is the total, whatever Inverse Lerp gives as the factor.
+    let unlerp = b.node("inverseLerp", json!({}));
+    let lerp = b.node("lerp", json!({}));
+    b.link(total, "result", lerp, "a");
+    b.link(total, "result", lerp, "b");
+    b.link(unlerp, "result", lerp, "factor");
     let log = b.node("log", json!({}));
     b.link(start, "then", log, "run");
-    b.link(total, "result", log, "value");
+    b.link(lerp, "result", log, "value");
     let mut previous = (log, "then");
     for (kind, pin) in [("setPosition", "position"), ("moveBy", "offset"), ("setRotation", "rotation"), ("rotateBy", "degrees"), ("setScale", "scale")] {
         let action = b.node(kind, json!({}));
@@ -1582,6 +1588,49 @@ fn a_visual_scripts_inspector_options_reach_its_description() {
     // Options the host would refuse are found before the script is saved.
     b.0.set_property_options("speed", PropertyOptions { choices: vec!["a".into()], ..PropertyOptions::default() }).unwrap();
     assert!(super::check_inspector(&b.0).unwrap_err().contains("choices"));
+}
+
+#[test]
+fn lerp_goes_between_and_past_its_ends_and_inverse_lerp_undoes_it() {
+    use bayleaf_graph::PinType;
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let quarter = b.node("lerp", json!({ "a": 2.0, "b": 6.0, "factor": 0.25 }));
+    let past = b.node("lerp", json!({ "a": 2.0, "b": 6.0, "factor": 1.5 }));
+    let (two, three) = (b.node("wholeNumber", json!({ "value": 2 })), b.node("wholeNumber", json!({ "value": 3 })));
+    let whole = b.node("lerp", json!({}));
+    b.link(two, "result", whole, "a");
+    b.link(three, "result", whole, "b");
+    let position = b.node("vector", json!({ "x": 4.0, "y": 8.0 }));
+    let moved = b.node("lerp", json!({ "factor": 0.5 }));
+    b.link(position, "vector", moved, "b");
+    let parts = b.node("split", json!({}));
+    b.link(moved, "result", parts, "vector");
+    let back = b.node("inverseLerp", json!({ "a": 2.0, "b": 6.0 }));
+    b.link(quarter, "result", back, "value");
+    let flat = b.node("inverseLerp", json!({ "a": 3.0, "b": 3.0, "value": 7.0 }));
+    let mut previous = (start, "then");
+    for (message, node, pin) in [
+        ("quarter", quarter, "result"),
+        ("past", past, "result"),
+        ("whole", whole, "result"),
+        ("y", parts, "y"),
+        ("back", back, "result"),
+        ("flat", flat, "result"),
+    ] {
+        let log = b.node("log", json!({ "message": message }));
+        b.link(previous.0, previous.1, log, "run");
+        b.link(node, pin, log, "value");
+        previous = (log, "then");
+    }
+    let ty = |b: &Builder, node: u32| b.0.output_type(&CATALOG, &PinRef::new(node, "result"));
+    assert_eq!(ty(&b, whole), PinType::Float, "between two whole numbers lies a fraction");
+    assert_eq!(ty(&b, moved), PinType::Vec3, "between vectors lies a vector");
+
+    let (mut scene, _, mut host) = run(&b.bytes(), &[]);
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["quarter 3", "past 8", "whole 2.5", "y 4", "back 0.25", "flat 0"]);
 }
 
 #[test]

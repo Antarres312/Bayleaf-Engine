@@ -93,7 +93,8 @@ For a stylised look (cel shading, say), **Main Light** gives the main light at t
 direction towards it, its colour, and how much of it the shadows let through), **Other Lights** the
 light the others give, added up, and **View Direction** and **Screen Position** where the point is
 seen from. **Dot Product**, **Normalize**, **Step**, **Smooth Step**, **Posterize** (flat bands),
-**Remap**, **Power**, **Square Root**, **Vector Length**, **Clamp 0 to 1**, **Blend**, **Split Vector** and
+**Remap**, **Power**, **Square Root**, **Vector Length**, **Clamp 0 to 1**, **Lerp** (from A to B by a factor),
+**Inverse Lerp** (where a value lies from A to B, 0 to 1), **Split Vector** and
 **Make Vector** shape them, and
 an **Image** read at a computed coordinate makes a ramp. A **Custom Lighting Output** in place of the
 Material Output shows its colour as it is: the graph does the lighting. Either output has an outline
@@ -126,7 +127,9 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   **Set Property** node sets it on this object for the rest of play.
 - **Negate** turns the sign of a number, a whole number or a vector. **Power** raises a number, a whole
   number (staying whole) or each part of a vector; **Square Root** takes the root of a number or of each
-  part (0 below 0); **Vector Length** says how long a vector is. Get and Set Component read and set another script's number,
+  part (0 below 0); **Vector Length** says how long a vector is. **Lerp** goes from A (factor 0) to B
+  (factor 1) on a straight line, for numbers or each part of vectors, and **Inverse Lerp** says where a
+  value lies from A to B (0 when they are equal). Get and Set Component read and set another script's number,
   whole-number, true/false, vector and colour properties as pins of those types.
 - **Set Variable** keeps a number under a name and **Variable** reads it; **Set Vector Variable**
   and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False
