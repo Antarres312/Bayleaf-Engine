@@ -405,6 +405,20 @@ fn every_node_kind_compiles_and_runs() {
     b.link(text_log, "then", named_gate, "run");
     b.link(by_name, "found", named_gate, "condition");
     b.link(named_gate, "true", keep_text, "run");
+    // Whole numbers: typed, made whole, divided with a remainder, kept in a variable.
+    let seven = b.node("wholeNumber", json!({ "value": 7 }));
+    let made = b.node("toWhole", json!({ "rounding": "Up" }));
+    b.link(time, "seconds", made, "value");
+    let rest = b.node("remainder", json!({}));
+    b.link(seven, "result", rest, "a");
+    b.link(made, "result", rest, "b");
+    let keep_whole = b.node("setWholeVariable", json!({}));
+    b.link(keep_color, "then", keep_whole, "run");
+    b.link(rest, "result", keep_whole, "value");
+    let read_whole = b.node("wholeVariable", json!({}));
+    let whole_log = b.node("log", json!({ "message": "whole" }));
+    b.link(keep_whole, "then", whole_log, "run");
+    b.link(read_whole, "value", whole_log, "value");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -1078,4 +1092,54 @@ fn object_text_and_color_variables_last_from_step_to_step() {
     let step = |there: &str| [format!("box {there}"), "note Hi".to_owned(), "long 614".to_owned(), "green 0.25".to_owned()];
     let expected: Vec<String> = [step("1"), step("1"), step("0")].concat();
     assert_eq!(lines, expected);
+}
+
+/// Whole numbers stay whole through math, divide without trapping, round as asked, and print every
+/// digit; mixed with a number they take part as a number.
+#[test]
+fn whole_numbers_add_divide_round_and_print_exactly() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let mut previous = (start, "then");
+    let mut line = |b: &mut Builder, message: &str, value: (u32, &str)| {
+        let log = b.node("log", json!({ "message": message }));
+        b.link(previous.0, previous.1, log, "run");
+        b.link(value.0, value.1, log, "value");
+        previous = (log, "then");
+    };
+    let whole = |b: &mut Builder, n: i64| b.node("wholeNumber", json!({ "value": n }));
+    let math = |b: &mut Builder, kind: &str, a: u32, c: u32| {
+        let node = b.node(kind, json!({}));
+        b.link(a, "result", node, "a");
+        b.link(c, "result", node, "b");
+        node
+    };
+    let (seven, two, zero, minus_seven) = (whole(&mut b, 7), whole(&mut b, 2), whole(&mut b, 0), whole(&mut b, -7));
+    let sum = math(&mut b, "add", seven, two);
+    line(&mut b, "sum", (sum, "result"));
+    let quotient = math(&mut b, "divide", seven, two);
+    line(&mut b, "quotient", (quotient, "result"));
+    let by_zero = math(&mut b, "divide", seven, zero);
+    line(&mut b, "by zero", (by_zero, "result"));
+    let rest = math(&mut b, "remainder", minus_seven, two);
+    line(&mut b, "remainder", (rest, "result"));
+    let big = whole(&mut b, 123_456_789);
+    line(&mut b, "big", (big, "result"));
+    for (value, rounding) in [(2.5, "Nearest"), (-2.5, "Nearest"), (-1.5, "Down"), (1.2, "Up"), (-1.9, "Toward Zero")] {
+        let made = b.node("toWhole", json!({ "value": value, "rounding": rounding }));
+        line(&mut b, rounding, (made, "result"));
+    }
+    let half = b.node("number", json!({ "value": 0.5 }));
+    let mixed = b.node("add", json!({}));
+    b.link(seven, "result", mixed, "a");
+    b.link(half, "value", mixed, "b");
+    line(&mut b, "mixed", (mixed, "result"));
+
+    let (_, _, mut host) = run(&b.bytes(), &[]);
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(
+        lines,
+        ["sum 9", "quotient 3", "by zero 0", "remainder -1", "big 123456789", "Nearest 3", "Nearest -3", "Down -2", "Up 2", "Toward Zero -1", "mixed 7.5",]
+    );
 }

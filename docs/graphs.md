@@ -54,7 +54,7 @@ not change what the graph compiles to. Each has an `id`, `text` (at most 2000 ch
 `position` (its top-left corner) and a `size` of at least 120 × 60. A graph without comments leaves
 the field out. Limit: 500 comments.
 
-A visual script may also have `variables`: each with a `name`, a `type` (`number`, `vector`,
+A visual script may also have `variables`: each with a `name`, a `type` (`number`, `wholeNumber`, `vector`,
 `trueFalse`, `text`, `object` or `color`) and a `start` value that fits the type (text of at most 256
 characters; `null` for an object). A graph without them leaves the field out.
 Limit: 256 variables. Version 1 files, which have no variables, still open.
@@ -161,6 +161,14 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   **Log** writes its message, then its linked Text, then its linked Value; **Find Object Named**
   takes a linked Name. Text made while a script runs lives until that call ends: keep numbers, not
   text, in variables.
+- **Whole Number** pins (rings with a dot) carry 32-bit whole numbers: **Whole Number** types one,
+  **To Whole Number** makes a number whole (Nearest, with halves away from zero; Down; Up; Toward
+  Zero), and **Remainder** gives what is left after a whole division. Add, Subtract, Multiply and
+  Divide on two whole numbers stay whole (they wrap past the 32-bit range; Divide keeps the whole
+  part and gives 0 for a divisor of 0); a whole number links anywhere a number does. Text Length,
+  Find in Text, Count Objects With and For Each Object With's Index are whole numbers, and Log and
+  Number to Text print whole numbers with every digit. **Set Whole Number Variable** and **Whole
+  Number Variable** keep one.
 - Data nodes have no side effects. They are computed where an action needs them.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a

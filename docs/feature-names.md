@@ -32,5 +32,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Get Component, Try Get Component, Set Component, Component (setting), unchanged | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | On Init, Text (pin type and node), Join Text, Text Length, Number to Text, Text to Number, Valid, Same Text, Text Contains, Starts With, Ends With, Find in Text, Part of Text, Replace Text, Upper Case, Lower Case, Trim Text, Name Of | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Text Variable, Set Text Variable, Object Variable, Set Object Variable, Color Variable, Set Color Variable | not yet | Not checked yet | Generic terms for visual script nodes; same |
+| Whole Number (pin type, node and variable), To Whole Number, Rounding, Nearest, Down, Up, Toward Zero, Remainder, Whole Number Variable, Set Whole Number Variable | not yet | Not checked yet | Generic terms for visual script nodes; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

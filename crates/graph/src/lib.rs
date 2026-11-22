@@ -47,6 +47,8 @@ pub enum PinType {
     Object,
     /// Text (visual scripts).
     Text,
+    /// A whole number (visual scripts): 32 bits, from -2147483648 to 2147483647.
+    Int,
 }
 
 impl PinType {
@@ -61,6 +63,7 @@ impl PinType {
             PinType::Any => "Number or Vector",
             PinType::Object => "Object",
             PinType::Text => "Text",
+            PinType::Int => "Whole Number",
         }
     }
 
@@ -68,10 +71,16 @@ impl PinType {
     /// and colours; vectors and colours convert into each other. Whether an `Any` output really
     /// fits is checked when the graph is compiled.
     pub fn connects_to(self, to: PinType) -> bool {
-        use PinType::{Any, Bool, Color, Float, Flow, Object, Text, Vec3};
+        use PinType::{Any, Bool, Color, Float, Flow, Int, Object, Text, Vec3};
         match (self, to) {
-            (Flow, Flow) | (Bool, Bool) | (Object, Object) | (Text, Text) => true,
+            (Flow, Flow) | (Bool, Bool) | (Object, Object) | (Text, Text) | (Int, Int) => true,
             (Flow | Bool | Object | Text, _) | (_, Flow | Bool | Object | Text) => false,
+            // A whole number widens to a number (and on to a vector); a number becomes whole only
+            // through To Whole Number, which says how to round.
+            (Int, Float | Vec3 | Color | Any) => true,
+            // Math on whole numbers stays whole; the compiler checks what an `Any` output carries.
+            (Any, Int) => true,
+            (_, Int) => false,
             (Float | Vec3 | Color | Any, Float | Vec3 | Color | Any) => !(matches!(self, Vec3 | Color) && to == Float),
         }
     }
@@ -86,6 +95,7 @@ pub enum PinDefault {
     Color([f32; 3]),
     Bool(bool),
     Text(&'static str),
+    Int(i32),
     /// Filled in by the domain (for example the surface position in a material).
     Implicit(&'static str),
 }
@@ -349,6 +359,8 @@ pub enum VariableType {
     Number,
     Vector,
     TrueFalse,
+    /// A 32-bit whole number.
+    WholeNumber,
     Text,
     /// An object of the scene; it starts as none and is set while the game plays.
     Object,
@@ -356,8 +368,15 @@ pub enum VariableType {
 }
 
 impl VariableType {
-    pub const ALL: [VariableType; 6] =
-        [VariableType::Number, VariableType::Vector, VariableType::TrueFalse, VariableType::Text, VariableType::Object, VariableType::Color];
+    pub const ALL: [VariableType; 7] = [
+        VariableType::Number,
+        VariableType::WholeNumber,
+        VariableType::Vector,
+        VariableType::TrueFalse,
+        VariableType::Text,
+        VariableType::Object,
+        VariableType::Color,
+    ];
 
     /// English name shown to people.
     pub fn label(self) -> &'static str {
@@ -365,6 +384,7 @@ impl VariableType {
             VariableType::Number => "Number",
             VariableType::Vector => "Vector",
             VariableType::TrueFalse => "True/False",
+            VariableType::WholeNumber => "Whole Number",
             VariableType::Text => "Text",
             VariableType::Object => "Object",
             VariableType::Color => "Color",
@@ -377,6 +397,7 @@ impl VariableType {
             VariableType::Number => Value::from(0.0),
             VariableType::Vector => serde_json::json!([0.0, 0.0, 0.0]),
             VariableType::TrueFalse => Value::Bool(false),
+            VariableType::WholeNumber => Value::from(0),
             VariableType::Text => Value::from(""),
             VariableType::Object => Value::Null,
             VariableType::Color => serde_json::json!([1.0, 1.0, 1.0]),
@@ -391,6 +412,7 @@ impl VariableType {
             VariableType::Number => number(value),
             VariableType::Vector | VariableType::Color => value.as_array().is_some_and(|a| a.len() == 3 && a.iter().all(number)),
             VariableType::TrueFalse => value.is_boolean(),
+            VariableType::WholeNumber => value.as_i64().is_some_and(|n| i32::try_from(n).is_ok()),
             VariableType::Text => value.as_str().is_some_and(|t| t.chars().count() <= MAX_TEXT),
             VariableType::Object => value.is_null(),
         }
@@ -924,6 +946,10 @@ fn check_value(def: &NodeDef, name: &str, value: &Value) -> Result<(), GraphErro
         PinType::Bool if value.is_boolean() => Ok(()),
         PinType::Bool => Err(bad("true or false")),
         PinType::Object => Err(GraphError::Refused(format!("{} · {name} takes an object only from a link", def.label))),
+        PinType::Int => match value.as_i64() {
+            Some(n) if i32::try_from(n).is_ok() => Ok(()),
+            _ => Err(bad("a whole number from -2147483648 to 2147483647")),
+        },
         PinType::Text => match value.as_str() {
             Some(text) if text.chars().count() <= MAX_TEXT => Ok(()),
             _ => Err(bad(&format!("text of at most {MAX_TEXT} characters"))),

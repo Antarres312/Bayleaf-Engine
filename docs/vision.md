@@ -168,7 +168,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
    `Object::set_field` in the Rust SDK). Scripts are components there too: their properties become pins.
    Then: On Init (`bayleaf_init`, `Script::init`): a scene's scripts all load, then all init, then
    all start; Text pins and text nodes, and `name_of` (`Object::name`). Then: text, object and colour
-   variables (`object_ref` and `object_of`, `Object::keep` in the Rust SDK, keep objects from step to step).
+   variables (`object_ref` and `object_of`, `Object::keep` in the Rust SDK, keep objects from step to step). Then: whole numbers (a Whole Number pin type and variables, To Whole Number,
+   Remainder; counts and indexes are whole).
 7. **M6 Gameplay framework** as opt-in modules (`gameplay` feature of `bayleaf-engine`). Started:
    input actions in the project settings (named actions bound to keys, mouse, gamepad buttons and
    sticks; `action` in the ABI, Action and On Action Pressed nodes, the Input Actions panel); since

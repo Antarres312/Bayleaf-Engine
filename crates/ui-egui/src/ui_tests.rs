@@ -1563,3 +1563,19 @@ fn text_and_object_variables_are_added_in_the_panel_with_their_own_start_values(
     harness.run();
     assert_eq!(declared(&harness, "object"), Some((bayleaf_engine::graph::VariableType::Object, serde_json::Value::Null)), "an object starts as none");
 }
+
+#[test]
+fn whole_number_variables_and_pins_say_what_they_carry() {
+    let mut harness = graph_harness("script");
+    let whole = harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "wholeNumber", "position": [300, 260] }), None).unwrap()["node"]
+        .as_u64()
+        .unwrap() as u32;
+    harness.run();
+    assert!(harness.query_by_label_contains(&format!("Output Result (Whole Number) of Whole Number {whole}")).is_some());
+    harness.get_by_label("Add Variable").click();
+    harness.run();
+    harness.query_all_by_label("Whole Number").find(|n| n.rect().top() > 60.0 && n.rect().width() < 400.0).expect("the menu entry").click();
+    harness.run();
+    let declared = graph(&harness).variable("whole").map(|v| (v.ty, v.start.clone()));
+    assert_eq!(declared, Some((bayleaf_engine::graph::VariableType::WholeNumber, json!(0))));
+}

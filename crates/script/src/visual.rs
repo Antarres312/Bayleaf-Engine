@@ -49,6 +49,7 @@ const FLAG: SettingDef = SettingDef { name: "name", label: "Name", kind: Setting
 const TEXT_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("label") };
 const OBJECT_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("thing") };
 const COLOR_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("tint") };
+const WHOLE_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("total") };
 /// Most bytes a text variable keeps; longer text is cut at a character.
 pub const TEXT_VARIABLE_BYTES: u32 = 1024;
 /// The object an action works on or a value is read from, from a search or This Object; when it is not
@@ -189,6 +190,26 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[],
             outputs: &[pin("value", "Value", Bool)],
             settings: &[FLAG],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setWholeVariable",
+            label: "Set Whole Number Variable",
+            category: "Variables",
+            description: "Keeps a whole number under a name, for this script on this object. It starts where the Variables panel says, or at 0.",
+            inputs: &[RUN, PinDef::with("value", "Value", PinType::Int, PinDefault::Int(0))],
+            outputs: &[THEN],
+            settings: &[WHOLE_VARIABLE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "wholeVariable",
+            label: "Whole Number Variable",
+            category: "Variables",
+            description: "The whole number Set Whole Number Variable last kept under this name, or what it starts at.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", PinType::Int)],
+            settings: &[WHOLE_VARIABLE],
             unique: false,
         },
         NodeDef {
@@ -414,7 +435,7 @@ pub const CATALOG: Catalog = Catalog {
             category: "Find",
             description: "How many objects have a component (Point Light, Character…), a tag, or run a script (by its name), as the step began.",
             inputs: &[],
-            outputs: &[pin("count", "Count", Float)],
+            outputs: &[pin("count", "Count", PinType::Int)],
             settings: &[KIND],
             unique: false,
         },
@@ -424,7 +445,7 @@ pub const CATALOG: Catalog = Catalog {
             category: "Find",
             description: "Runs Each once for every object that has a component, a tag, or runs a script, in hierarchy order as the step began, with that object and its index (from 0); then runs Then.",
             inputs: &[RUN],
-            outputs: &[pin("each", "Each", Flow), pin("object", "Object", PinType::Object), pin("index", "Index", Float), THEN],
+            outputs: &[pin("each", "Each", Flow), pin("object", "Object", PinType::Object), pin("index", "Index", PinType::Int), THEN],
             settings: &[KIND],
             unique: false,
         },
@@ -645,9 +666,35 @@ pub const CATALOG: Catalog = Catalog {
         node("and", "And", "Logic", "True when both are true.", &[pin("a", "A", Bool), pin("b", "B", Bool)], &[pin("result", "Result", Bool)]),
         node("or", "Or", "Logic", "True when either is true.", &[pin("a", "A", Bool), pin("b", "B", Bool)], &[pin("result", "Result", Bool)]),
         node("not", "Not", "Logic", "True when the input is false.", &[pin("value", "Value", Bool)], &[pin("result", "Result", Bool)]),
+        node(
+            "wholeNumber",
+            "Whole Number",
+            "Values",
+            "A whole number typed here.",
+            &[PinDef::with("value", "Value", PinType::Int, PinDefault::Int(0))],
+            &[pin("result", "Result", PinType::Int)],
+        ),
+        NodeDef {
+            kind: "toWhole",
+            label: "To Whole Number",
+            category: "Math",
+            description: "A number made whole: Nearest (halves away from zero), Down, Up or Toward Zero. Numbers past the 32-bit range stop at its ends.",
+            inputs: &[number("value", "Value", Float, 0.0)],
+            outputs: &[pin("result", "Result", PinType::Int)],
+            settings: &[SettingDef { name: "rounding", label: "Rounding", kind: SettingKind::Choice(&["Nearest", "Down", "Up", "Toward Zero"]) }],
+            unique: false,
+        },
+        node(
+            "remainder",
+            "Remainder",
+            "Math",
+            "What is left after dividing A by B as whole numbers (its sign is A's); 0 when B is 0.",
+            &[PinDef::with("a", "A", PinType::Int, PinDefault::Int(0)), PinDef::with("b", "B", PinType::Int, PinDefault::Int(1))],
+            &[pin("result", "Result", PinType::Int)],
+        ),
         node("text", "Text", "Text", "Text typed here.", &[text("value", "Value", "")], TEXT_OUT),
         node("joinText", "Join Text", "Text", "A followed by B.", &[text("a", "A", ""), text("b", "B", "")], TEXT_OUT),
-        node("textLength", "Text Length", "Text", "How many characters the text has.", &[text("text", "Text", "")], &[pin("result", "Length", Float)]),
+        node("textLength", "Text Length", "Text", "How many characters the text has.", &[text("text", "Text", "")], &[pin("result", "Length", PinType::Int)]),
         node("numberToText", "Number to Text", "Text", "The number as text, with up to three decimals.", &[number("value", "Value", Float, 0.0)], TEXT_OUT),
         node(
             "textToNumber",
@@ -695,7 +742,7 @@ pub const CATALOG: Catalog = Catalog {
             "Text",
             "Where Part first appears in the text, counted in characters from 0; -1 when it does not.",
             &[text("text", "Text", ""), text("part", "Part", "")],
-            &[pin("result", "Index", Float)],
+            &[pin("result", "Index", PinType::Int)],
         ),
         node(
             "textPart",
@@ -735,6 +782,8 @@ enum Val {
     O(String),
     /// Text: `i64` of its address << 32 | its length in bytes, in this module's memory.
     T(String),
+    /// A whole number (`i32`).
+    I(String),
 }
 
 /// What a Get, Try Get or Set Component node works on.
@@ -764,6 +813,7 @@ pub fn variable_kinds(ty: VariableType) -> [&'static str; 2] {
         VariableType::Number => ["variable", "setVariable"],
         VariableType::Vector => ["vectorVariable", "setVectorVariable"],
         VariableType::TrueFalse => ["flag", "setFlag"],
+        VariableType::WholeNumber => ["wholeVariable", "setWholeVariable"],
         VariableType::Text => ["textVariable", "setTextVariable"],
         VariableType::Object => ["objectVariable", "setObjectVariable"],
         VariableType::Color => ["colorVariable", "setColorVariable"],
@@ -902,6 +952,9 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         for (index, part) in ["r", "g", "b"].into_iter().enumerate() {
             let _ = writeln!(out, "  (global $col_{name}_{part} (mut f32) (f32.const {:?}))", number(&start[index]));
         }
+    }
+    for (name, start) in named(VariableType::WholeNumber, "total") {
+        let _ = writeln!(out, "  (global $int_{name} (mut i32) (i32.const {}))", start.as_i64().and_then(|n| i32::try_from(n).ok()).unwrap_or(0));
     }
     for (name, _) in named(VariableType::Object, "thing") {
         let _ = writeln!(out, "  (global $obj_{name} (mut i32) (i32.const 0))");
@@ -1105,7 +1158,7 @@ impl Compiler<'_> {
                     let part = if is_text {
                         self.input(next, input).and_then(|v| as_text(next, v))?
                     } else {
-                        format!("(call $num_text {})", self.input(next, input).and_then(|v| as_float(next, v))?)
+                        self.input(next, input).and_then(|v| number_text(next, v))?
                     };
                     if joined {
                         let space = self.literal(" ");
@@ -1242,6 +1295,11 @@ impl Compiler<'_> {
                 let _ =
                     writeln!(code, "{indent}(global.set $vec_{name}_x {x})\n{indent}(global.set $vec_{name}_y {y})\n{indent}(global.set $vec_{name}_z {z})");
             }
+            "setWholeVariable" => {
+                let name = self.setting_text(next, "name", "total");
+                let value = self.input(next, "value").and_then(|v| as_int(next, v))?;
+                let _ = writeln!(code, "{indent}(global.set $int_{name} {value})");
+            }
             "setTextVariable" => {
                 let name = self.setting_text(next, "name", "label");
                 let at = self.text_vars.get(&name).map_or(0, |(at, _)| *at);
@@ -1290,6 +1348,14 @@ impl Compiler<'_> {
         if let Some(link) = graph.link_into(node, pin) {
             return self.output(link.from.node, &link.from.pin);
         }
+        if pin_def.ty == PinType::Int {
+            let stored = graph.value(node, pin).and_then(serde_json::Value::as_i64).and_then(|n| i32::try_from(n).ok());
+            let default = match pin_def.default {
+                PinDefault::Int(n) => n,
+                _ => 0,
+            };
+            return Ok(Val::I(format!("(i32.const {})", stored.unwrap_or(default))));
+        }
         if pin_def.ty == PinType::Text {
             let typed = graph.value(node, pin).and_then(|v| v.as_str()).map(str::to_owned);
             let default = match pin_def.default {
@@ -1334,6 +1400,7 @@ impl Compiler<'_> {
                 Val::V(["x", "y", "z"].map(|axis| format!("(global.get $vec_{name}_{axis})")))
             }
             "flag" => Val::B(format!("(global.get $flag_{})", self.setting_text(node, "name", "done"))),
+            "wholeVariable" => Val::I(format!("(global.get $int_{})", self.setting_text(node, "name", "total"))),
             "textVariable" => {
                 let name = self.setting_text(node, "name", "label");
                 let at = self.text_vars.get(&name).map_or(0, |(at, _)| *at);
@@ -1412,6 +1479,22 @@ impl Compiler<'_> {
                 }
             }
             "text" => Val::T(self.input(node, "value").and_then(|v| as_text(node, v))?),
+            "wholeNumber" => Val::I(self.input(node, "value").and_then(|v| as_int(node, v))?),
+            "toWhole" => {
+                let v = self.input(node, "value").and_then(|v| as_float(node, v))?;
+                let rounded = match self.setting_text(node, "rounding", "Nearest").as_str() {
+                    "Down" => format!("(f32.floor {v})"),
+                    "Up" => format!("(f32.ceil {v})"),
+                    "Toward Zero" => v,
+                    _ => format!("(call $round {v})"),
+                };
+                Val::I(format!("(i32.trunc_sat_f32_s {rounded})"))
+            }
+            "remainder" => {
+                let a = self.input(node, "a").and_then(|v| as_int(node, v))?;
+                let b = self.input(node, "b").and_then(|v| as_int(node, v))?;
+                Val::I(format!("(call $irem {a} {b})"))
+            }
             "joinText" | "sameText" | "textContains" | "startsWith" | "endsWith" | "findText" => {
                 let (first, second) = if matches!(n.kind.as_str(), "joinText" | "sameText") { ("a", "b") } else { ("text", "part") };
                 let a = self.input(node, first).and_then(|v| as_text(node, v))?;
@@ -1422,11 +1505,11 @@ impl Compiler<'_> {
                     "textContains" => Val::B(format!("(i32.ge_s (call $find_bytes {a} {b} (i32.const 0)) (i32.const 0))")),
                     "startsWith" => Val::B(format!("(call $at {a} {b} (i32.const 0))")),
                     "endsWith" => Val::B(format!("(call $ends {a} {b})")),
-                    _ => Val::F(format!("(f32.convert_i32_s (call $find_chars {a} {b}))")),
+                    _ => Val::I(format!("(call $find_chars {a} {b})")),
                 }
             }
-            "textLength" => Val::F(format!("(f32.convert_i32_u (call $length {}))", self.input(node, "text").and_then(|v| as_text(node, v))?)),
-            "numberToText" => Val::T(format!("(call $num_text {})", self.input(node, "value").and_then(|v| as_float(node, v))?)),
+            "textLength" => Val::I(format!("(call $length {})", self.input(node, "text").and_then(|v| as_text(node, v))?)),
+            "numberToText" => Val::T(self.input(node, "value").and_then(|v| number_text(node, v))?),
             "textToNumber" => {
                 let t = self.input(node, "text").and_then(|v| as_text(node, v))?;
                 if pin == "valid" { Val::B(format!("(call $is_number {t})")) } else { Val::F(format!("(call $number_or_zero {t})")) }
@@ -1467,10 +1550,10 @@ impl Compiler<'_> {
             }
             "countWith" => {
                 let (at, len) = self.kind(node)?;
-                Val::F(format!("(f32.convert_i32_s (call $count_with (i32.const {at}) (i32.const {len})))"))
+                Val::I(format!("(call $count_with (i32.const {at}) (i32.const {len}))"))
             }
             "forEachWith" if pin == "object" => Val::O(format!("(global.get $each_{node})")),
-            "forEachWith" if pin == "index" => Val::F(format!("(f32.convert_i32_s (global.get $each_index_{node}))")),
+            "forEachWith" if pin == "index" => Val::I(format!("(global.get $each_index_{node})")),
             "gameValue" => {
                 let (target, at, len) = self.state_target(node)?;
                 let get = format!("(call $state_get {target} (i32.const {at}) (i32.const {len}) (i32.const 128))");
@@ -1535,18 +1618,34 @@ impl Compiler<'_> {
                 };
                 let a = self.input(node, "a")?;
                 let b = self.input(node, "b")?;
-                zip(node, a, b, |a, b| format!("({op} {a} {b})"))?
+                // Two whole numbers stay whole: they wrap past the 32-bit range, and division gives the
+                // whole part (0 when dividing by 0).
+                if let (Val::I(a), Val::I(b)) = (&a, &b) {
+                    Val::I(match n.kind.as_str() {
+                        "add" => format!("(i32.add {a} {b})"),
+                        "subtract" => format!("(i32.sub {a} {b})"),
+                        "multiply" => format!("(i32.mul {a} {b})"),
+                        _ => format!("(call $idiv {a} {b})"),
+                    })
+                } else {
+                    zip(node, a, b, |a, b| format!("({op} {a} {b})"))?
+                }
             }
             "sine" => match self.input(node, "value")? {
                 Val::F(v) => Val::F(format!("(call $sin {v})")),
                 Val::V(v) => Val::V(v.map(|c| format!("(call $sin {c})"))),
+                Val::I(i) => Val::F(format!("(call $sin (f32.convert_i32_s {i}))")),
                 Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
             },
             "choose" => {
                 let condition = self.input(node, "condition").and_then(|v| as_bool(node, v))?;
                 let a = self.input(node, "a")?;
                 let b = self.input(node, "b")?;
-                zip(node, a, b, |a, b| format!("(select {a} {b} {condition})"))?
+                if let (Val::I(a), Val::I(b)) = (&a, &b) {
+                    Val::I(format!("(select {a} {b} {condition})"))
+                } else {
+                    zip(node, a, b, |a, b| format!("(select {a} {b} {condition})"))?
+                }
             }
             "greater" => {
                 let a = self.input(node, "a").and_then(|v| as_float(node, v))?;
@@ -1566,7 +1665,12 @@ impl Compiler<'_> {
 
 /// Applies `op` to two numbers, or to each part when either is a vector.
 fn zip(node: u32, a: Val, b: Val, op: impl Fn(&str, &str) -> String) -> Result<Val, Problem> {
-    Ok(match (a, b) {
+    // A whole number beside a number or a vector takes part as a number.
+    let widen = |v: Val| match v {
+        Val::I(i) => Val::F(format!("(f32.convert_i32_s {i})")),
+        other => other,
+    };
+    Ok(match (widen(a), widen(b)) {
         (Val::F(a), Val::F(b)) => Val::F(op(&a, &b)),
         (Val::V(a), Val::V(b)) => Val::V([op(&a[0], &b[0]), op(&a[1], &b[1]), op(&a[2], &b[2])]),
         (Val::V(a), Val::F(b)) => Val::V(a.map(|c| op(&c, &b))),
@@ -1578,6 +1682,7 @@ fn zip(node: u32, a: Val, b: Val, op: impl Fn(&str, &str) -> String) -> Result<V
 fn as_float(node: u32, value: Val) -> Result<String, Problem> {
     match value {
         Val::F(f) => Ok(f),
+        Val::I(i) => Ok(format!("(f32.convert_i32_s {i})")),
         Val::V(_) => Err(Problem::on(node, "this input takes a number but gets a vector; use Split Vector")),
         Val::B(_) => Err(Problem::on(node, "this input takes a number but gets true/false; use Choose")),
         Val::O(_) => Err(Problem::on(node, "this input takes a number but gets an object; use Position Of")),
@@ -1588,10 +1693,30 @@ fn as_float(node: u32, value: Val) -> Result<String, Problem> {
 fn as_vec(node: u32, value: Val) -> Result<[String; 3], Problem> {
     match value {
         Val::V(v) => Ok(v),
+        Val::I(i) => {
+            let f = format!("(f32.convert_i32_s {i})");
+            Ok([f.clone(), f.clone(), f])
+        }
         Val::F(f) => Ok([f.clone(), f.clone(), f]),
         Val::B(_) => Err(Problem::on(node, "this input takes a vector but gets true/false")),
         Val::O(_) => Err(Problem::on(node, "this input takes a vector but gets an object; use Position Of")),
         Val::T(_) => Err(Problem::on(node, "this input takes a vector but gets text")),
+    }
+}
+
+fn as_int(node: u32, value: Val) -> Result<String, Problem> {
+    match value {
+        Val::I(i) => Ok(i),
+        Val::F(_) => Err(Problem::on(node, "this input takes a whole number but gets a number; use To Whole Number")),
+        _ => Err(Problem::on(node, "this input takes a whole number")),
+    }
+}
+
+/// A number or a whole number as text: a whole number keeps every digit.
+fn number_text(node: u32, value: Val) -> Result<String, Problem> {
+    match value {
+        Val::I(i) => Ok(format!("(call $int_text {i})")),
+        other => Ok(format!("(call $num_text {})", as_float(node, other)?)),
     }
 }
 
@@ -1851,6 +1976,37 @@ const PRELUDE: &str = r#"(module
           (br $back)))))
     (memory.copy (local.get $dst) (call $tp (local.get $t)) (local.get $n))
     (local.get $n))
+  ;; Whole-number division and remainder that never trap: 0 for a divisor of 0; the one overflow
+  ;; (-2147483648 / -1) wraps.
+  (func $idiv (param $a i32) (param $b i32) (result i32)
+    (if (result i32) (i32.eqz (local.get $b))
+      (then (i32.const 0))
+      (else
+        (if (result i32) (i32.and (i32.eq (local.get $a) (i32.const -2147483648)) (i32.eq (local.get $b) (i32.const -1)))
+          (then (local.get $a))
+          (else (i32.div_s (local.get $a) (local.get $b)))))))
+  (func $irem (param $a i32) (param $b i32) (result i32)
+    (if (result i32) (i32.eqz (local.get $b)) (then (i32.const 0)) (else (i32.rem_s (local.get $a) (local.get $b)))))
+  ;; Rounds to the nearest whole number, halves away from zero.
+  (func $round (param $v f32) (result f32)
+    (f32.trunc (f32.add (local.get $v) (f32.copysign (f32.const 0.5) (local.get $v)))))
+  ;; A whole number as text, every digit.
+  (func $int_text (param $v i32) (result i64) (local $p i32) (local $n i64) (local $i i32) (local $neg i32)
+    (local.set $p (call $alloc (i32.const 12)))
+    (local.set $n (i64.extend_i32_s (local.get $v)))
+    (local.set $neg (i64.lt_s (local.get $n) (i64.const 0)))
+    (if (local.get $neg) (then (local.set $n (i64.sub (i64.const 0) (local.get $n)))))
+    (local.set $i (i32.const 12))
+    (loop $digits
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (i32.store8 (i32.add (local.get $p) (local.get $i)) (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_u (local.get $n) (i64.const 10)))))
+      (local.set $n (i64.div_u (local.get $n) (i64.const 10)))
+      (br_if $digits (i64.ne (local.get $n) (i64.const 0))))
+    (if (local.get $neg)
+      (then
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (i32.store8 (i32.add (local.get $p) (local.get $i)) (i32.const 45))))
+    (call $mk (i32.add (local.get $p) (local.get $i)) (i32.sub (i32.const 12) (local.get $i))))
   (func $num_text (param $v f32) (result i64) (local $p i32)
     (local.set $p (call $alloc (i32.const 32)))
     (call $mk (local.get $p) (call $fmt (local.get $v) (local.get $p))))

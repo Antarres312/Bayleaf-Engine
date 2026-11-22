@@ -49,7 +49,9 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
         if graph.variables.is_empty() {
             ui.add(
                 egui::Label::new(
-                    egui::RichText::new("Numbers, vectors, true/false, text, objects and colours this script keeps, per object.").small().color(t.text_muted),
+                    egui::RichText::new("Numbers, whole numbers, vectors, true/false, text, objects and colours this script keeps, per object.")
+                        .small()
+                        .color(t.text_muted),
                 )
                 .wrap(),
             );
@@ -110,6 +112,7 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                         VariableType::Number => "number",
                         VariableType::Vector => "vector",
                         VariableType::TrueFalse => "flag",
+                        VariableType::WholeNumber => "whole",
                         VariableType::Text => "text",
                         VariableType::Object => "object",
                         VariableType::Color => "color",
@@ -147,6 +150,12 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
             let field = ui.checkbox(&mut b, "");
             ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
             field.changed().then(|| json!(b))
+        }
+        VariableType::WholeNumber => {
+            let mut v = start.as_i64().and_then(|n| i32::try_from(n).ok()).unwrap_or(0);
+            let field = ui.add(egui::DragValue::new(&mut v).speed(0.1));
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(format!("Start of {name}")));
+            field.changed().then(|| json!(v))
         }
         VariableType::Text => {
             let mut text = start.as_str().unwrap_or_default().to_owned();
