@@ -250,6 +250,7 @@ steps. Automation file access to graphs is confined like any other file (`docs/a
 | Edit or delete a comment | Double-click its title; right-click it | Enter; Delete |
 | Pan and zoom | Hold the right (or middle) button and drag, also over a node; the mouse wheel | Ctrl + Plus, Minus; Ctrl + 0 or Fit All shows every node |
 | Select nodes in a box | Drag the left button over the background (Ctrl or Shift adds) | |
+| Save the graph | Save in the toolbar | Ctrl+S while the graph is in use (a node, the canvas or the script panel has the keyboard, or the graph panel was clicked last); a graph never saved asks where |
 
 A visual script has a panel left of its canvas. **Variables** lists the script's variables: rename
 one (its nodes follow), set where it **Starts at**, place a node that reads it (**Get**) or sets it

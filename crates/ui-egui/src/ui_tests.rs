@@ -1871,3 +1871,41 @@ fn export_game_opens_its_own_window_that_checks_the_project_for_the_chosen_mode(
     assert!(harness.state().export_window.is_none(), "Close closes the window");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn ctrl_s_saves_the_graph_while_it_is_in_use_and_the_scene_otherwise() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-ctrl-s-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut harness = graph_harness("script");
+    let editor = harness.state_mut();
+    editor.dispatch("scene.saveAs", &json!({ "path": dir.join("level.bscene") }), None);
+    editor.dispatch("graph.save", &json!({ "path": dir.join("mover.bscript") }), None);
+    editor.dispatch("graph.node.add", &json!({ "kind": "log", "position": [300, 40] }), None);
+    editor.dispatch("scene.object.create", &json!({ "name": "Box" }), None);
+    harness.run();
+    let dirty = |h: &Harness<'static, Editor>| (h.state().session.graph().is_some_and(|g| g.dirty), h.state().session.is_dirty());
+    assert_eq!(dirty(&harness), (true, true));
+
+    // In use: a click on the graph's canvas, then Ctrl+S saves the graph and not the scene.
+    let canvas = harness.get_by_label("Graph canvas").rect();
+    let spot = canvas.right_bottom() - egui::vec2(20.0, 20.0);
+    harness.hover_at(spot);
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton { pos: spot, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        harness.run();
+    }
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+    harness.run();
+    assert_eq!(dirty(&harness), (false, true), "the graph was saved, the scene left as it is");
+
+    // After a click in the hierarchy, Ctrl+S saves the scene.
+    harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "log", "position": [300, 200] }), None);
+    harness.get_by_label("Box").click();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+    harness.run();
+    assert_eq!(dirty(&harness), (true, false), "the scene was saved, the graph left as it is");
+    std::fs::remove_dir_all(&dir).ok();
+}

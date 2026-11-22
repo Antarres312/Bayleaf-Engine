@@ -83,9 +83,11 @@ pub(crate) struct GraphView {
     moving: Option<Moving>,
     /// A selection box being dragged on the background, from this point on the screen.
     boxing: Option<Pos2>,
-    /// The graph was last clicked, dragged in or selected from, and nothing outside it since, so
-    /// Delete and the clipboard keys act on its selected nodes.
+    /// The graph panel (canvas, script panel, toolbar) was pressed last, so Delete, the clipboard keys
+    /// and Ctrl+S act on the graph.
     pub(crate) active: bool,
+    /// Where the graph panel is, when it was shown this frame.
+    pub(crate) panel_rect: Option<Rect>,
 }
 
 /// Nodes being dragged: where the pointer was on the canvas when the drag began, and each moving
@@ -179,6 +181,7 @@ impl Default for GraphView {
             moving: None,
             boxing: None,
             active: false,
+            panel_rect: None,
             editing_comment: None,
             focus_comment: None,
             show_preview: true,
@@ -255,6 +258,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
         return;
     };
     let mut view = std::mem::take(&mut editor.graph_view);
+    // Where the panel is this frame, so a press elsewhere hands the keys back to the rest of the editor.
+    view.panel_rect = Some(ui.max_rect());
     let key = (doc.graph.domain.clone(), doc.path.clone());
     if view.shown.as_ref() != Some(&key) {
         let (preview, show_preview) = (view.preview.take(), view.show_preview);
@@ -486,6 +491,18 @@ fn add_comment(editor: &mut Editor, view: &mut GraphView, graph: &Graph, catalog
     }
 }
 
+/// Saves the open graph (Ctrl+S while the graph is in use): to its file, or where the person chooses
+/// for a graph never saved, as Save As does.
+pub(crate) fn save_open(editor: &mut Editor) {
+    let Some(doc) = editor.session.graph().cloned() else { return };
+    let Some(catalog) = doc.catalog() else { return };
+    if doc.path.is_some() {
+        editor.dispatch("graph.save", &Value::Null, None);
+    } else {
+        save_as(editor, catalog);
+    }
+}
+
 fn save_as(editor: &mut Editor, catalog: &Catalog) {
     if let Some(path) = rfd::FileDialog::new().add_filter(catalog.label, &[catalog.extension]).set_file_name(format!("new.{}", catalog.extension)).save_file() {
         let path = if path.extension().is_none() { path.with_extension(catalog.extension) } else { path };
@@ -652,10 +669,6 @@ fn canvas(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, catalog: &Catal
         view.active = true;
     }
     box_select(ui, graph, catalog, &canvas_response, area, to_scene, view);
-    // A press anywhere outside the canvas hands the keys back to the rest of the editor.
-    if ui.input(|i| i.pointer.any_pressed() && i.pointer.press_origin().is_some_and(|p| !area.contains(p))) {
-        view.active = false;
-    }
     // Delete removes the selected nodes while the graph is active and no node or pin has the
     // keyboard (a focused node removes them itself).
     if view.active && !view.focused && !view.selected.is_empty() && !ui.ctx().text_edit_focused() && ui.input(|i| i.key_pressed(egui::Key::Delete)) {

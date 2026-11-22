@@ -186,7 +186,12 @@ impl Editor {
                 ui.label(egui::RichText::new(&self.status).color(t.text_muted));
             });
         });
+        self.graph_view.panel_rect = None;
         egui::CentralPanel::default().frame(egui::Frame::new().fill(t.backdrop)).show(ui, |ui| dock::show(self, ui, gpu));
+        // A press outside the graph panel (or while it is not shown) hands the keys back from the graph.
+        if let Some(pressed) = ui.input(|i| if i.pointer.any_pressed() { i.pointer.press_origin() } else { None }) {
+            self.graph_view.active = self.graph_view.panel_rect.is_some_and(|panel| panel.contains(pressed));
+        }
         self.apply_raise();
         self.update_title(ui.ctx());
         if let Some(text) = self.copy_out.take() {
@@ -856,6 +861,11 @@ impl Editor {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        // Ctrl+S saves the graph while it is in use, also while typing in its panel; otherwise the scene.
+        let graph_in_use = self.session.graph().is_some() && (self.graph_view.focused || self.graph_view.active);
+        if graph_in_use && ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S))) {
+            graph_view::save_open(self);
+        }
         // Only typing blocks shortcuts; a focused button or the scene view does not.
         if ctx.text_edit_focused() {
             return;
