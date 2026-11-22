@@ -191,6 +191,7 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
         }
         .map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", target.display())))?;
     }
+    record_mode(&game, platform, mode)?;
     let program = out.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(&player, &program).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", program.display())))?;
 
@@ -288,9 +289,23 @@ impl ScriptMode {
         }
     }
 
-    /// Whether this version of the engine can export games in this mode.
-    pub fn available(self) -> bool {
-        self == ScriptMode::Interpreted
+    /// Whether this version of the engine can export games for `platform` in this mode: compiled
+    /// scripts need a desktop system (the player built with them), and native ones are not there yet.
+    pub fn available_for(self, platform: Platform) -> bool {
+        match self {
+            ScriptMode::Interpreted => true,
+            ScriptMode::Compiled => platform != Platform::Web,
+            ScriptMode::Native => false,
+        }
+    }
+
+    /// How play mode runs scripts exported in this mode (native scripts are not built yet, so they
+    /// stay compiled WebAssembly).
+    pub fn runtime(self) -> bayleaf_script::Runtime {
+        match self {
+            ScriptMode::Interpreted => bayleaf_script::Runtime::Interpreted,
+            ScriptMode::Compiled | ScriptMode::Native => bayleaf_script::Runtime::Compiled,
+        }
     }
 }
 
@@ -344,6 +359,18 @@ pub struct Report {
 /// The script mode Project Settings choose for `platform`.
 pub fn chosen_mode(session: &Session, platform: Platform) -> ScriptMode {
     crate::project_cmds::settings_of(session).game.script_modes.get(&platform).copied().unwrap_or_default()
+}
+
+/// Writes into the exported game's project file the mode its scripts were exported in, so the
+/// player runs them that way.
+fn record_mode(game: &Path, platform: Platform, mode: ScriptMode) -> Result<(), CommandError> {
+    let Some(file) = crate::project_cmds::project_file_in(game) else { return Ok(()) };
+    let failed = |e: String| CommandError::Failed(format!("cannot write {}: {e}", file.display()));
+    let text = std::fs::read_to_string(&file).map_err(|e| failed(e.to_string()))?;
+    let mut project: crate::project_cmds::ProjectFile = serde_json::from_str(&text).map_err(|e| failed(e.to_string()))?;
+    project.settings.game.script_modes.insert(platform, mode);
+    let text = serde_json::to_string_pretty(&project).map_err(|e| failed(e.to_string()))?;
+    std::fs::write(&file, text).map_err(|e| failed(e.to_string()))
 }
 
 /// The player program to copy: `given`, else the one built beside this program.
@@ -434,8 +461,12 @@ pub fn check(session: &Session, platform: Platform, mode: ScriptMode, player: Op
             None,
         );
     }
-    if !mode.available() {
-        found(Severity::Error, format!("{} is not available yet in this version; choose Interpreted to export now.", mode.label()), None);
+    if !mode.available_for(platform) {
+        let why = match mode {
+            ScriptMode::Compiled => format!("{} is not available for {}: browsers run scripts interpreted.", mode.label(), platform.label()),
+            _ => format!("{} is not available yet in this version; choose Interpreted or Compiled to machine code.", mode.label()),
+        };
+        found(Severity::Error, why, None);
     }
     match player_program(session, player) {
         Ok(path) if path.is_file() => {}
@@ -524,8 +555,8 @@ pub fn check(session: &Session, platform: Platform, mode: ScriptMode, player: Op
             found(Severity::Error, format!("{shown} uses {missing}, which is not in the project."), Some(shown.clone()));
         }
     }
-    if mode == ScriptMode::Interpreted && findings.iter().all(|f| f.severity != Severity::Error) {
-        findings.push(Finding { severity: Severity::Note, message: ScriptMode::Interpreted.summary().to_owned(), file: None });
+    if findings.iter().all(|f| f.severity != Severity::Error) {
+        findings.push(Finding { severity: Severity::Note, message: mode.summary().to_owned(), file: None });
     }
     let ready = findings.iter().all(|f| f.severity != Severity::Error);
     Ok(Report { platform, mode, ready, findings, scripts, files: files.len() })

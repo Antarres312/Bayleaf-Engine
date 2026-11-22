@@ -12,6 +12,7 @@ accesskit_macos 0.27.2: MIT OR Apache-2.0 <https://github.com/AccessKit/accesski
 accesskit_unix 0.24.1: MIT OR Apache-2.0 <https://github.com/AccessKit/accesskit>
 accesskit_windows 0.35.2: MIT OR Apache-2.0 <https://github.com/AccessKit/accesskit>
 accesskit_winit 0.34.2: Apache-2.0 <https://github.com/AccessKit/accesskit>
+addr2line 0.26.1: Apache-2.0 OR MIT <https://github.com/gimli-rs/addr2line>
 adler2 2.0.1: 0BSD OR MIT OR Apache-2.0 <https://github.com/oyvindln/adler2>
 ahash 0.8.12: MIT OR Apache-2.0 <https://github.com/tkaitchuck/ahash>
 aho-corasick 1.1.5: Unlicense OR MIT <https://github.com/BurntSushi/aho-corasick>
@@ -25,6 +26,7 @@ anstyle-query 1.1.5: MIT OR Apache-2.0 <https://github.com/rust-cli/anstyle.git>
 anstyle-wincon 3.0.11: MIT OR Apache-2.0 <https://github.com/rust-cli/anstyle.git>
 anyhow 1.0.104: MIT OR Apache-2.0 <https://github.com/dtolnay/anyhow>
 approx 0.5.1: Apache-2.0 <https://github.com/brendanzab/approx>
+arbitrary 1.5.0: MIT OR Apache-2.0 <https://github.com/rust-fuzz/arbitrary/>
 arrayvec 0.7.8: MIT OR Apache-2.0 <https://github.com/bluss/arrayvec>
 as-raw-xcb-connection 1.0.1: MIT OR Apache-2.0 <https://github.com/psychon/as-raw-xcb-connection>
 ash 0.38.0+1.3.281: MIT OR Apache-2.0 <https://github.com/ash-rs/ash>
@@ -49,6 +51,7 @@ bit-set 0.10.0: Apache-2.0 OR MIT <https://github.com/contain-rs/bit-set>
 bit-vec 0.9.1: Apache-2.0 OR MIT <https://github.com/contain-rs/bit-vec>
 bitflags 1.3.2: MIT/Apache-2.0 <https://github.com/bitflags/bitflags>
 bitflags 2.13.2: MIT OR Apache-2.0 <https://github.com/bitflags/bitflags>
+block-buffer 0.10.4: MIT OR Apache-2.0 <https://github.com/RustCrypto/utils>
 block2 0.5.1: MIT <https://github.com/madsmtm/objc2>
 block2 0.6.2: MIT <https://github.com/madsmtm/objc2>
 blocking 1.7.0: Apache-2.0 OR MIT <https://github.com/smol-rs/blocking>
@@ -81,6 +84,8 @@ core-graphics-types 0.1.3: MIT OR Apache-2.0 <https://github.com/servo/core-foun
 coreaudio-rs 0.11.3: MIT/Apache-2.0 <https://github.com/RustAudio/coreaudio-rs.git>
 coreaudio-sys 0.2.18: MIT <https://github.com/RustAudio/coreaudio-sys.git>
 cpal 0.15.3: Apache-2.0 <https://github.com/rustaudio/cpal>
+cpp_demangle 0.5.1: MIT OR Apache-2.0 <https://github.com/gimli-rs/cpp_demangle>
+cpufeatures 0.2.17: MIT OR Apache-2.0 <https://github.com/RustCrypto/utils>
 craft-audio 0.1.0: MIT OR Apache-2.0 <https://github.com/storytold/craft-libs>
 craft-audio-dsp 0.1.0: MIT OR Apache-2.0 <https://github.com/storytold/craft-libs>
 craft-flow 0.1.0: MIT OR Apache-2.0 <https://github.com/storytold/craft-libs>
@@ -93,10 +98,25 @@ craft-media 0.1.0: MIT OR Apache-2.0 <https://github.com/storytold/craft-libs>
 craft-ui 0.1.0: MIT OR Apache-2.0 <https://github.com/storytold/craft-libs>
 craft-wordmodel 0.1.0: MIT OR Apache-2.0 <https://github.com/storytold/craft-libs>
 craft-xml 0.1.0: MIT OR Apache-2.0 <https://github.com/storytold/craft-libs>
+cranelift-assembler-x64 0.138.0: Apache-2.0 WITH LLVM-exception
+cranelift-assembler-x64-meta 0.138.0: Apache-2.0 WITH LLVM-exception
+cranelift-bforest 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+cranelift-bitset 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+cranelift-codegen 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+cranelift-codegen-meta 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+cranelift-codegen-shared 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+cranelift-control 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+cranelift-entity 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+cranelift-frontend 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+cranelift-isle 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle>
+cranelift-native 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+cranelift-srcgen 0.138.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
 crc32fast 1.5.5: MIT OR Apache-2.0 <https://github.com/srijs/rust-crc32fast>
 crossbeam-utils 0.8.23: MIT OR Apache-2.0 <https://github.com/crossbeam-rs/crossbeam>
+crypto-common 0.1.7: MIT OR Apache-2.0 <https://github.com/RustCrypto/traits>
 cursor-icon 1.2.0: MIT OR Apache-2.0 OR Zlib <https://github.com/rust-windowing/cursor-icon>
 dasp_sample 0.11.0: MIT OR Apache-2.0 <https://github.com/rustaudio/sample.git>
+digest 0.10.7: MIT OR Apache-2.0 <https://github.com/RustCrypto/traits>
 dispatch 0.2.0: MIT <http://github.com/SSheldon/rust-dispatch>
 dispatch2 0.3.1: Zlib OR Apache-2.0 OR MIT <https://github.com/madsmtm/objc2>
 displaydoc 0.2.7: MIT OR Apache-2.0 <https://github.com/yaahc/displaydoc>
@@ -115,6 +135,8 @@ egui_dock 0.22.0: MIT <https://github.com/anhosh/egui_dock>
 egui_kittest 0.37.0: MIT OR Apache-2.0 <https://github.com/emilk/egui>
 either 1.19.0: MIT OR Apache-2.0 <https://github.com/rayon-rs/either>
 emath 0.37.0: MIT OR Apache-2.0 <https://github.com/emilk/egui/tree/main/crates/emath>
+embedded-io 0.4.0: MIT OR Apache-2.0 <https://github.com/embassy-rs/embedded-io>
+embedded-io 0.6.1: MIT OR Apache-2.0 <https://github.com/rust-embedded/embedded-hal>
 ena 0.14.4: MIT OR Apache-2.0 <https://github.com/rust-lang/ena>
 endi 1.1.1: MIT <https://github.com/zeenix/endi>
 enumflags2 0.7.12: MIT OR Apache-2.0 <https://github.com/meithecatte/enumflags2>
@@ -141,18 +163,23 @@ fontique 0.11.1: Apache-2.0 OR MIT <https://github.com/linebender/parley>
 foreign-types 0.5.0: MIT/Apache-2.0 <https://github.com/sfackler/foreign-types>
 foreign-types-macros 0.2.4: MIT/Apache-2.0 <https://github.com/sfackler/foreign-types>
 foreign-types-shared 0.3.1: MIT/Apache-2.0 <https://github.com/sfackler/foreign-types>
+futures 0.3.34: MIT OR Apache-2.0 <https://github.com/rust-lang/futures-rs>
+futures-channel 0.3.34: MIT OR Apache-2.0 <https://github.com/rust-lang/futures-rs>
 futures-core 0.3.34: MIT OR Apache-2.0 <https://github.com/rust-lang/futures-rs>
 futures-io 0.3.34: MIT OR Apache-2.0 <https://github.com/rust-lang/futures-rs>
 futures-lite 2.6.1: Apache-2.0 OR MIT <https://github.com/smol-rs/futures-lite>
 futures-macro 0.3.34: MIT OR Apache-2.0 <https://github.com/rust-lang/futures-rs>
+futures-sink 0.3.34: MIT OR Apache-2.0 <https://github.com/rust-lang/futures-rs>
 futures-task 0.3.34: MIT OR Apache-2.0 <https://github.com/rust-lang/futures-rs>
 futures-util 0.3.34: MIT OR Apache-2.0 <https://github.com/rust-lang/futures-rs>
+generic-array 0.14.7: MIT <https://github.com/fizyk20/generic-array.git>
 gethostname 1.1.0: Apache-2.0 <https://codeberg.org/swsnr/gethostname.rs.git>
 getrandom 0.3.4: MIT OR Apache-2.0 <https://github.com/rust-random/getrandom>
 getrandom 0.4.3: MIT OR Apache-2.0 <https://github.com/rust-random/getrandom>
 gif 0.14.2: MIT OR Apache-2.0 <https://github.com/image-rs/image-gif>
 gilrs 0.11.2: Apache-2.0/MIT <https://gitlab.com/gilrs-project/gilrs>
 gilrs-core 0.6.8: Apache-2.0/MIT <https://gitlab.com/gilrs-project/gilrs>
+gimli 0.33.0: MIT OR Apache-2.0 <https://github.com/gimli-rs/gimli>
 gl_generator 0.14.0: Apache-2.0 <https://github.com/brendanzab/gl-rs/>
 glam 0.30.10: MIT OR Apache-2.0 <https://github.com/bitshifter/glam-rs>
 glam 0.31.1: MIT OR Apache-2.0 <https://github.com/bitshifter/glam-rs>
@@ -199,6 +226,7 @@ inotify 0.11.5: ISC <https://github.com/hannobraun/inotify-rs>
 inotify-sys 0.1.8: ISC <https://github.com/hannobraun/inotify-sys>
 is_terminal_polyfill 1.70.2: MIT OR Apache-2.0 <https://github.com/polyfill-rs/is_terminal_polyfill>
 itertools 0.13.0: MIT OR Apache-2.0 <https://github.com/rust-itertools/itertools>
+itertools 0.14.0: MIT OR Apache-2.0 <https://github.com/rust-itertools/itertools>
 itertools 0.15.0: MIT OR Apache-2.0 <https://github.com/rust-itertools/itertools>
 itoa 1.0.19: MIT OR Apache-2.0 <https://github.com/dtolnay/itoa>
 jiff 1.0.2: Unlicense OR MIT <https://github.com/BurntSushi/jiff>
@@ -223,8 +251,10 @@ litrs 1.0.1: MIT OR Apache-2.0 <https://github.com/LukasKalbertodt/litrs>
 lock_api 0.4.14: MIT OR Apache-2.0 <https://github.com/Amanieu/parking_lot>
 log 0.4.35: MIT OR Apache-2.0 <https://github.com/rust-lang/log>
 mach2 0.4.3: BSD-2-Clause OR MIT OR Apache-2.0 <https://github.com/JohnTitor/mach2>
+mach2 0.6.0: BSD-2-Clause OR MIT OR Apache-2.0 <https://github.com/JohnTitor/mach2>
 matrixmultiply 0.3.11: MIT/Apache-2.0 <https://github.com/bluss/matrixmultiply/>
 memchr 2.8.3: Unlicense OR MIT <https://github.com/BurntSushi/memchr>
+memfd 0.6.6: MIT OR Apache-2.0 <https://github.com/lucab/memfd-rs>
 memmap2 0.9.12: MIT OR Apache-2.0 <https://github.com/RazrFalcon/memmap2-rs>
 memoffset 0.9.1: MIT <https://github.com/Gilnaa/memoffset>
 minimal-lexical 0.2.1: MIT/Apache-2.0 <https://github.com/Alexhuszagh/minimal-lexical>
@@ -263,6 +293,7 @@ objc2-metal 0.2.2: MIT <https://github.com/madsmtm/objc2>
 objc2-metal 0.3.2: Zlib OR Apache-2.0 OR MIT <https://github.com/madsmtm/objc2>
 objc2-quartz-core 0.2.2: MIT <https://github.com/madsmtm/objc2>
 objc2-quartz-core 0.3.2: Zlib OR Apache-2.0 OR MIT <https://github.com/madsmtm/objc2>
+object 0.40.0: Apache-2.0 OR MIT <https://github.com/gimli-rs/object>
 once_cell 1.21.4: MIT OR Apache-2.0 <https://github.com/matklad/once_cell>
 once_cell_polyfill 1.70.2: MIT OR Apache-2.0 <https://github.com/polyfill-rs/once_cell_polyfill>
 ordered-float 5.5.1: MIT <https://github.com/reem/rust-ordered-float>
@@ -298,6 +329,8 @@ proc-macro2 1.0.107: MIT OR Apache-2.0 <https://github.com/dtolnay/proc-macro2>
 proc-macro2-diagnostics 0.10.1: MIT/Apache-2.0 <https://github.com/SergioBenitez/proc-macro2-diagnostics>
 profiling 1.0.18: MIT OR Apache-2.0 <https://github.com/aclysma/profiling>
 profiling-procmacros 1.0.18: MIT OR Apache-2.0 <https://github.com/aclysma/profiling>
+pulley-interpreter 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime/tree/main/pulley>
+pulley-macros 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime/tree/main/pulley/macros>
 pxfm 0.1.30: BSD-3-Clause OR Apache-2.0 <https://github.com/awxkee/pxfm>
 quick-error 2.0.1: MIT/Apache-2.0 <http://github.com/tailhook/quick-error>
 quick-xml 0.41.0: MIT <https://github.com/tafia/quick-xml>
@@ -309,6 +342,7 @@ raw-window-handle 0.6.2: MIT OR Apache-2.0 OR Zlib <https://github.com/rust-wind
 raw-window-metal 1.1.0: MIT OR Apache-2.0 <https://github.com/rust-windowing/raw-window-metal>
 rawpointer 0.2.1: MIT/Apache-2.0 <https://github.com/bluss/rawpointer/>
 read-fonts 0.41.0: MIT OR Apache-2.0 <https://github.com/googlefonts/fontations>
+regalloc2 0.15.3: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/regalloc2>
 regex 1.13.2: MIT OR Apache-2.0 <https://github.com/rust-lang/regex>
 regex-automata 0.4.19: MIT OR Apache-2.0 <https://github.com/rust-lang/regex>
 regex-syntax 0.8.12: MIT OR Apache-2.0 <https://github.com/rust-lang/regex>
@@ -318,6 +352,7 @@ robust 1.2.0: MIT OR Apache-2.0 <https://github.com/georust/robust>
 ron 0.12.3: MIT OR Apache-2.0 <https://github.com/ron-rs/ron>
 roxmltree 0.21.2: MIT OR Apache-2.0 <https://github.com/RazrFalcon/roxmltree>
 rstar 0.13.1: MIT OR Apache-2.0 <https://github.com/georust/rstar>
+rustc-demangle 0.1.28: MIT/Apache-2.0 <https://github.com/rust-lang/rustc-demangle>
 rustc-hash 1.1.0: Apache-2.0/MIT <https://github.com/rust-lang-nursery/rustc-hash>
 rustc-hash 2.1.3: Apache-2.0 OR MIT <https://github.com/rust-lang/rustc-hash>
 rustix 0.38.44: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT <https://github.com/bytecodealliance/rustix>
@@ -336,6 +371,7 @@ serde_derive 1.0.229: MIT OR Apache-2.0 <https://github.com/serde-rs/serde>
 serde_json 1.0.154: MIT OR Apache-2.0 <https://github.com/serde-rs/json>
 serde_repr 0.1.21: MIT OR Apache-2.0 <https://github.com/dtolnay/serde-repr>
 serde_spanned 1.1.3: MIT OR Apache-2.0 <https://github.com/toml-rs/toml>
+sha2 0.10.9: MIT OR Apache-2.0 <https://github.com/RustCrypto/hashes>
 shlex 1.3.0: MIT OR Apache-2.0 <https://github.com/comex/rust-shlex>
 shlex 2.0.1: MIT OR Apache-2.0 <https://github.com/comex/rust-shlex>
 signal-hook-registry 1.4.8: MIT OR Apache-2.0 <https://github.com/vorner/signal-hook>
@@ -359,6 +395,7 @@ syn 2.0.119: MIT OR Apache-2.0 <https://github.com/dtolnay/syn>
 syn 3.0.10: MIT OR Apache-2.0 <https://github.com/dtolnay/syn>
 synstructure 0.14.0: MIT <https://github.com/mystor/synstructure>
 sys-locale 0.3.2: MIT OR Apache-2.0 <https://github.com/1Password/sys-locale>
+target-lexicon 0.13.6: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/target-lexicon>
 tempfile 3.27.0: MIT OR Apache-2.0 <https://github.com/Stebalien/tempfile>
 termcolor 1.4.1: Unlicense OR MIT <https://github.com/BurntSushi/termcolor>
 thiserror 1.0.69: MIT OR Apache-2.0 <https://github.com/dtolnay/thiserror>
@@ -410,6 +447,17 @@ wasmi_core 2.0.2: MIT/Apache-2.0 <https://github.com/wasmi-labs/wasmi>
 wasmi_ir 2.0.2: MIT/Apache-2.0 <https://github.com/wasmi-labs/wasmi>
 wasmparser 0.228.0: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT <https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser>
 wasmparser 0.263.0: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT <https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser>
+wasmprinter 0.263.0: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT <https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmprinter>
+wasmtime 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+wasmtime-environ 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+wasmtime-internal-component-util 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+wasmtime-internal-core 51.0.0: Apache-2.0 WITH LLVM-exception
+wasmtime-internal-cranelift 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+wasmtime-internal-fiber 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+wasmtime-internal-jit-debug 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+wasmtime-internal-jit-icache-coherence 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+wasmtime-internal-unwinder 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
+wasmtime-internal-versioned-export-macros 51.0.0: Apache-2.0 WITH LLVM-exception <https://github.com/bytecodealliance/wasmtime>
 wast 263.0.0: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT <https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wast>
 wat 1.263.0: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT <https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wat>
 wayland-backend 0.3.17: MIT <https://github.com/smithay/wayland-rs>

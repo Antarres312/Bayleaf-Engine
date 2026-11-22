@@ -55,7 +55,9 @@ fn open(registry: &CommandRegistry, session: &mut Session, game: &Path) -> Resul
         registry.execute(session, "project.open", &json!({ "path": game }))
     };
     let opened = opened.map_err(|e| format!("Cannot open {}: {e}", game.display()))?;
-    registry.execute(session, "play.start", &json!({})).map_err(|e| format!("The game cannot start: {e}"))?;
+    // Scripts run the way the game was exported: interpreted, or compiled to machine code.
+    let mode = bayleaf_engine::export::chosen_mode(session, bayleaf_engine::export::Platform::current());
+    registry.execute(session, "play.start", &json!({ "scripts": mode.runtime() })).map_err(|e| format!("The game cannot start: {e}"))?;
     let title = opened.get("name").and_then(serde_json::Value::as_str).map(str::to_owned);
     Ok(title.unwrap_or_else(|| game.file_stem().map_or_else(|| "Bayleaf game".to_owned(), |s| s.to_string_lossy().into_owned())))
 }

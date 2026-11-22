@@ -295,7 +295,10 @@ No crate below L6 may use egui, eframe, winit or rfd.
    - **The two faster script modes from M8.** Compiled to machine code: exported games run their
      WebAssembly modules through an ahead-of-time compiler (wasmtime, once its licence is checked
      against the craft-contrib list), with the same ABI, fuel and memory limits and faults as the
-     interpreter, and the same tests passing in both. Native: Rust scripts with their source in the
+     interpreter, and the same tests passing in both. (Done: wasmtime is Apache-2.0 WITH
+     LLVM-exception, on the list; the player compiles each module when the game starts, since loading
+     machine code compiled earlier needs `unsafe`, which the engine allows only in the guest ABI.)
+     Native: Rust scripts with their source in the
      project are built into the player at export, with no sandbox; the export says plainly that such
      a script can do anything a program can, and scripts without source stay compiled WebAssembly.
      The Export window's check then reports these modes as available, and Project Settings keeps

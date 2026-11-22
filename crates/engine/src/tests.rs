@@ -1774,6 +1774,26 @@ fn a_project_exports_as_a_game_folder_that_runs_without_the_editor() {
     assert!(started["running"].as_u64().unwrap() > 0, "its scripts run: {started}");
     assert!(game_session.console().iter().all(|l| l.level != crate::Level::Error), "{:?}", game_session.console());
     registry.execute(&mut game_session, "play.stop", &Value::Null).unwrap();
+    assert_eq!(started["runtime"], "interpreted", "exported interpreted, it plays interpreted");
+
+    // Exported compiled to machine code, the game says so, and the player runs it that way (or
+    // says why it interprets them).
+    let fast = base.join("fast");
+    registry.execute(&mut session, "project.export", &json!({"folder": fast, "player": player, "mode": "compiled"})).unwrap();
+    let found = crate::export::packaged_game(&fast.join("Space Race").join(format!("Space Race{}", std::env::consts::EXE_SUFFIX))).unwrap();
+    let mut game_session = Session::default();
+    registry.execute(&mut game_session, "project.open", &json!({"path": found})).unwrap();
+    let mode = crate::export::chosen_mode(&game_session, crate::export::Platform::current());
+    assert_eq!(mode, crate::export::ScriptMode::Compiled, "the exported project keeps the mode");
+    let started = registry.execute(&mut game_session, "play.start", &json!({"scripts": mode.runtime()})).unwrap();
+    assert!(started["running"].as_u64().unwrap() > 0, "its scripts run: {started}");
+    if cfg!(feature = "compiled-scripts") {
+        assert_eq!(started["runtime"], "compiled");
+    } else {
+        assert_eq!(started["runtime"], "interpreted");
+        assert!(game_session.console().iter().any(|l| l.text.contains("Scripts are interpreted")), "it says why: {:?}", game_session.console());
+    }
+    registry.execute(&mut game_session, "play.stop", &Value::Null).unwrap();
 
     // Agents export only into their write roots.
     session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&base), std::slice::from_ref(&project)).unwrap()));
@@ -1809,7 +1829,9 @@ fn the_export_check_says_what_stops_an_export_for_each_platform_and_script_mode(
     let elsewhere = Platform::ALL.into_iter().find(|p| *p != Platform::current()).unwrap();
     assert!(errors(&check(&mut session, elsewhere, ScriptMode::Interpreted)).iter().any(|e| e.contains("not available yet")), "other systems say so");
     let compiled = check(&mut session, Platform::current(), ScriptMode::Compiled);
-    assert_eq!(compiled["ready"], false, "a mode this version cannot export is not ready");
+    assert_eq!(compiled["ready"], true, "scripts compiled to machine code export for this system: {compiled}");
+    assert!(errors(&check(&mut session, Platform::Web, ScriptMode::Compiled)).iter().any(|e| e.contains("browsers")), "but not for the web");
+    assert_eq!(check(&mut session, Platform::current(), ScriptMode::Native)["ready"], false, "a mode this version cannot export is not ready");
     let native = check(&mut session, Platform::current(), ScriptMode::Native);
     let runs = |path: &str| native["scripts"].as_array().unwrap().iter().find(|s| s["path"] == path).map(|s| s["runs"].clone()).unwrap();
     assert_eq!(runs("scripts/mover.wasm"), json!("native"), "a Rust script with its source would be native");

@@ -2,7 +2,7 @@
 
 use bayleaf_scene::Scene;
 use bayleaf_scene::doc::SceneDoc;
-use bayleaf_script::{Request, ScriptFault, ScriptHost};
+use bayleaf_script::{Request, Runtime, ScriptFault, ScriptHost};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -56,7 +56,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Play",
             menu: "Play/Play",
             shortcut: "Ctrl+P",
-            params: "none; returns {scripts, running}",
+            params: "{scripts?: \"interpreted\" | \"compiled\"} (default interpreted); returns {scripts, running, runtime}",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: |s| if s.is_playing() { Err("play mode is already running".to_owned()) } else { Ok(()) },
@@ -233,6 +233,14 @@ pub(crate) struct NoParams {}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct StartParams {
+    /// How the scripts run: interpreted (the default) or compiled to machine code.
+    #[serde(default)]
+    scripts: Runtime,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StepParams {
     #[serde(default = "default_seconds")]
     seconds: f32,
@@ -249,14 +257,14 @@ fn one() -> u32 {
 }
 
 fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
-    parse::<NoParams>(params)?;
+    let p: StartParams = parse(params)?;
     let dir = session.script_dir();
     readable_modules(session, &session.scene)?;
     let snapshot = session.scene.to_doc();
     let input = std::sync::Arc::clone(&session.input);
     // Input: the project's Input Map, and objects' own, ready before any script starts. A map that
     // cannot be read is reported, and play runs without it.
-    let (mut host, input_assets, input_problems) = fresh_host(session);
+    let (mut host, input_assets, input_problems) = fresh_host(session, p.scripts);
     // Saved values from earlier plays, before any script starts.
     let (saved_on_disk, saved_problem) = match crate::saved::read_saved(session) {
         Ok(values) => (Some(values), None),
@@ -310,7 +318,8 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     #[cfg(feature = "gameplay")]
     spawn_player(session);
     drain(session);
-    Ok(json!({ "scripts": scripts, "running": running }))
+    let runtime = session.play.as_ref().map(|p| p.host.runtime());
+    Ok(json!({ "scripts": scripts, "running": running, "runtime": runtime }))
 }
 
 /// Under automation every script module of `scene` must be inside the readable folders.
@@ -326,9 +335,13 @@ fn readable_modules(session: &Session, scene: &Scene) -> Result<(), CommandError
 
 /// A script host with the project's Input Map and objects' own, before any script starts, and what
 /// could not be read.
-fn fresh_host(session: &Session) -> (ScriptHost, InputAssets, Vec<String>) {
-    let host = ScriptHost::new();
+fn fresh_host(session: &Session, runtime: Runtime) -> (ScriptHost, InputAssets, Vec<String>) {
     let mut problems = Vec::new();
+    // Scripts that cannot run as asked are interpreted, and the console says so.
+    let host = ScriptHost::with_runtime(runtime).unwrap_or_else(|why| {
+        problems.push(format!("Scripts are interpreted: {why}."));
+        ScriptHost::new()
+    });
     match project_input(session) {
         Ok(maps) => host.with_input(|set| set.project = maps.map(bayleaf_script::actions::InputState::new)),
         Err(problem) => problems.push(format!("The project's Input Map: {problem}")),
@@ -399,7 +412,8 @@ pub(crate) fn load_scene(session: &mut Session, relative: &str, additive: bool) 
     let state = session.play.as_ref().map(|p| p.host.state()).unwrap_or_default();
     session.scene = loaded;
     let input = std::sync::Arc::clone(&session.input);
-    let (mut host, input_assets, problems) = fresh_host(session);
+    let runtime = session.play.as_ref().map_or_else(Runtime::default, |p| p.host.runtime());
+    let (mut host, input_assets, problems) = fresh_host(session, runtime);
     host.with_state(|s| *s = state);
     let time = session.play.as_ref().map_or(0.0, |p| p.time);
     let dir = session.script_dir();

@@ -87,7 +87,11 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
     // How its scripts run, saved for the platform in the project's settings.
     theme::headed(t, "Scripts").show(ui, |ui| {
         for mode in ScriptMode::ALL {
-            let title = if mode.available() { tl(mode.label()).to_owned() } else { tf("{mode} (not available yet)", &[("mode", tl(mode.label()))]) };
+            let title = if mode.available_for(window.platform) {
+                tl(mode.label()).to_owned()
+            } else {
+                tf("{mode} (not available here)", &[("mode", tl(mode.label()))])
+            };
             if ui.radio(window.mode == mode, title).clicked() && window.mode != mode {
                 window.mode = mode;
                 save_mode(editor, window.platform, mode);

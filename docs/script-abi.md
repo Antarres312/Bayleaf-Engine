@@ -115,6 +115,9 @@ objects with `position_get_of` and `position_set_of`, as visual scripts' Move By
   error is reported in the console and in `play.status`. Other scripts keep running.
 - Linear memory may grow to 64 MiB.
 - Scripts reach the world only through these imports: no files, network or clock beyond `time`.
+- The editor interprets scripts (wasmi). A game exported in the mode "Compiled to machine code"
+  compiles each module with wasmtime when the game starts, then runs it with the same imports, fuel
+  and memory limits and faults; the script tests run against both.
 
 ## Scripts in Rust
 

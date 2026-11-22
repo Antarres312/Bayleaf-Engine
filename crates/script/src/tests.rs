@@ -6,7 +6,8 @@ use bayleaf_core::StableId;
 use bayleaf_scene::Scene;
 use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue, ScriptRef, Scripts, Transform};
 
-use crate::{Input, ScriptError, ScriptHost};
+use super::host::ScriptHost;
+use crate::{Input, ScriptError};
 
 const IMPORTS: &str = r#"
   (import "bayleaf" "log" (func $log (param i32 i32)))
@@ -63,7 +64,7 @@ fn rotation_y(scene: &Scene, id: StableId) -> f32 {
 #[test]
 fn update_moves_the_object_by_its_property() {
     let (mut scene, id, script) = setup(&[("speed", 90.0)]);
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     load(&mut host, &mut scene, id, &script, &module(1, ROTATE)).unwrap();
     let input = Arc::new(Input::default());
     for _ in 0..10 {
@@ -76,7 +77,7 @@ fn update_moves_the_object_by_its_property() {
 #[test]
 fn start_runs_once_and_its_log_reaches_the_host() {
     let (mut scene, id, script) = setup(&[]);
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     let body = r#"(func (export "bayleaf_start") (call $log (i32.const 120) (i32.const 5)))"#;
     load(&mut host, &mut scene, id, &script, &module(1, body)).unwrap();
     let logs = host.take_logs();
@@ -89,7 +90,7 @@ fn start_runs_once_and_its_log_reaches_the_host() {
 fn an_endless_loop_is_stopped_and_other_scripts_keep_running() {
     let (mut scene, looping, script) = setup(&[("speed", 90.0)]);
     let healthy = scene.create_object(None, "Healthy").unwrap();
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     let endless = r#"(func (export "bayleaf_update") (param f32) (loop $l (br $l)))"#;
     load(&mut host, &mut scene, looping, &script, &module(1, endless)).unwrap();
     load(&mut host, &mut scene, healthy, &script, &module(1, ROTATE)).unwrap();
@@ -103,9 +104,35 @@ fn an_endless_loop_is_stopped_and_other_scripts_keep_running() {
 }
 
 #[test]
+fn memory_stays_within_the_limit() {
+    let (mut scene, id, script) = setup(&[]);
+    let mut host = super::test_host();
+    let pages = |bytes: usize| bytes / 65536;
+    // Growing past the limit fails (the script sees -1 and logs); growing within it works.
+    let body = format!(
+        r#"(func (export "bayleaf_start")
+             (if (i32.eq (memory.grow (i32.const {over})) (i32.const -1)) (then (call $log (i32.const 120) (i32.const 5))))
+             (if (i32.ne (memory.grow (i32.const 4)) (i32.const -1)) (then (call $log (i32.const 140) (i32.const 1)))))"#,
+        over = pages(crate::MEMORY_LIMIT) + 1
+    );
+    load(&mut host, &mut scene, id, &script, &module(1, &body)).unwrap();
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["hello", "W"], "the large growth was refused and the small one allowed");
+
+    // A module that asks for more memory than the limit at the start does not load.
+    let greedy = wat::parse_str(format!(
+        r#"(module (memory (export "memory") {}) (func (export "bayleaf_abi") (result i32) i32.const 1))"#,
+        pages(crate::MEMORY_LIMIT) + 1
+    ))
+    .unwrap();
+    let (mut scene, id, script) = setup(&[]);
+    assert!(load(&mut host, &mut scene, id, &script, &greedy).is_err());
+}
+
+#[test]
 fn modules_that_break_the_abi_are_refused() {
     let (mut scene, id, script) = setup(&[]);
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     assert!(matches!(load(&mut host, &mut scene, id, &script, &module(7, "")), Err(ScriptError::AbiMismatch { found: 7, .. })));
     let no_abi = wat::parse_str(r#"(module (memory (export "memory") 1))"#).unwrap();
     assert!(matches!(load(&mut host, &mut scene, id, &script, &no_abi), Err(ScriptError::Invalid(..))));
@@ -128,7 +155,7 @@ fn bad_pointers_and_values_stop_only_that_script_with_a_reason() {
     ] {
         let (mut scene, id, script) = setup(&[]);
         let before = scene.get::<Transform>(id).cloned();
-        let mut host = ScriptHost::new();
+        let mut host = super::test_host();
         load(&mut host, &mut scene, id, &script, &module(1, body)).unwrap();
         host.update(&mut scene, 0.1, 0.0, &input);
         let faults = host.take_faults();
@@ -143,7 +170,7 @@ fn bad_pointers_and_values_stop_only_that_script_with_a_reason() {
 #[test]
 fn key_down_sees_the_keys_held_this_frame() {
     let (mut scene, id, script) = setup(&[]);
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     // position.x = key_down("W")
     let body = r#"(func (export "bayleaf_update") (param f32)
         (call $get (i32.const 0))
@@ -159,7 +186,7 @@ fn key_down_sees_the_keys_held_this_frame() {
 
 #[test]
 fn a_changed_module_file_is_reloaded_and_restarted() {
-    let dir = std::env::temp_dir().join(format!("bayleaf-script-reload-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("bayleaf-script-reload-{}-{}", std::process::id(), module_path!().replace("::", "-")));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("hot.wasm");
     std::fs::write(&path, module(1, "")).unwrap();
@@ -167,7 +194,7 @@ fn a_changed_module_file_is_reloaded_and_restarted() {
     script.module = "hot.wasm".into();
     scene.set(id, Scripts(vec![script.clone()])).unwrap();
 
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     let input = Arc::new(Input::default());
     host.load_scene(&mut scene, &dir, 0.0, &input);
     assert!(host.take_faults().is_empty());
@@ -201,13 +228,13 @@ fn described(body_extra: &str) -> Vec<u8> {
 fn declared_defaults_apply_unless_the_scene_overrides_them() {
     let input = Arc::new(Input::default());
     let (mut scene, id, script) = setup(&[]);
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     load(&mut host, &mut scene, id, &script, &described("")).unwrap();
     host.update(&mut scene, 1.0, 0.0, &input);
     assert!((rotation_y(&scene, id) - 45.0).abs() < 1e-3, "the declared default 45 is used");
 
     let (mut scene, id, script) = setup(&[("speed", 10.0)]);
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     load(&mut host, &mut scene, id, &script, &described("")).unwrap();
     host.update(&mut scene, 1.0, 0.0, &input);
     assert!((rotation_y(&scene, id) - 10.0).abs() < 1e-3, "the scene's value wins");
@@ -220,7 +247,7 @@ fn declared_defaults_apply_unless_the_scene_overrides_them() {
 #[test]
 fn two_scripts_on_one_object_both_run() {
     let (mut scene, id, script) = setup(&[("speed", 30.0)]);
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     load_at(&mut host, &mut scene, id, 0, &script, &module(1, ROTATE)).unwrap();
     load_at(&mut host, &mut scene, id, 1, &script, &module(1, ROTATE)).unwrap();
     assert_eq!(host.len(), 2);
@@ -261,7 +288,7 @@ fn scripts_move_other_objects_read_the_mouse_and_ask_for_spawns_and_destroys() {
     let (mut scene, mover, script) = setup(&[]);
     let target = scene.create_object(None, "Target").unwrap();
     let junk = scene.create_object(None, "Junk").unwrap();
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     load(&mut host, &mut scene, mover, &script, &bytes).unwrap();
 
     let idle = Arc::new(Input { pointer: Some([0.25, -0.5]), ..Input::default() });
@@ -289,7 +316,7 @@ fn bad_handles_stop_the_script_with_a_reason() {
         (func (export "bayleaf_abi") (result i32) i32.const 1)
         (func (export "bayleaf_update") (param f32) (call $get_of (i32.const 999) (i32.const 0))))"#;
     let (mut scene, id, script) = setup(&[]);
-    let mut host = ScriptHost::new();
+    let mut host = super::test_host();
     load(&mut host, &mut scene, id, &script, &wat::parse_str(text).unwrap()).unwrap();
     host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
     let faults = host.take_faults();

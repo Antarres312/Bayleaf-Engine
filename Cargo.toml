@@ -58,6 +58,8 @@ trash = "5"
 getrandom = "0.3"
 # Pure-Rust WebAssembly interpreter: runs inside the web build too, with fuel metering.
 wasmi = "2"
+# Compiles scripts to machine code for exported desktop games (the `compiled` feature of bayleaf-script).
+wasmtime = { version = "51", default-features = false, features = ["runtime", "cranelift", "std"] }
 wat = "1"
 # Must match the wgpu version egui-wgpu uses.
 wgpu = "30"

@@ -15,8 +15,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 wasmi = { workspace = true }
+# Compiled scripts (exported desktop games); not for the web build.
+wasmtime = { workspace = true, optional = true }
 # Assembles the WebAssembly text that visual scripts compile to.
 wat = { workspace = true }
+
+[features]
+default = []
+# Runs scripts compiled to machine code (wasmtime) as well as interpreted.
+compiled = ["dep:wasmtime"]
 
 [lints]
 workspace = true

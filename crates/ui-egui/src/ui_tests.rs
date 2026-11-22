@@ -1952,7 +1952,7 @@ fn export_game_opens_its_own_window_that_checks_the_project_for_the_chosen_mode(
     assert!(harness.query_by_label_contains("How each script would run").is_some(), "the window lists the check's findings and scripts");
 
     // A mode this version cannot export yet: the check says so and Export stays off.
-    harness.query_all_by_label_contains("Native (not available yet)").next().expect("the modes, with what is not available yet").click();
+    harness.query_all_by_label_contains("Native (not available here)").next().expect("the modes, with what is not available").click();
     harness.run_steps(3);
     assert!(harness.query_all_by_label_contains("Error: Native is not available yet").next().is_some(), "errors are named as errors, not only coloured");
     harness.get_by_role_and_label(egui::accesskit::Role::Button, "Export").click();

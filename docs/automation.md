@@ -29,7 +29,9 @@ being read, so an agent can step play and know what is there; `stream.split` (no
 open scene into Streamed Areas and writes their scene files, which must be inside the write roots. While playing, `play.scene.load` (`{path, additive}`), `play.scene.unload` and `play.scene.list`
 load scenes in place of the playing one or on top of it, as scripts can; the scene file and its
 scripts must be inside the readable folders. Scripts that `play.start` would load must also
-be inside a readable folder.
+be inside a readable folder. `play.start` takes `{scripts?}`: `interpreted` (the default) or
+`compiled` (machine code, in programs built with the `compiled-scripts` feature, as the player is);
+a program without it interprets them and says so in the console. Its result names the `runtime` used.
 
 The limits apply only to the agent's requests: in the editor, your own commands are not limited.
 

@@ -17,6 +17,8 @@ physics = ["dep:bayleaf-physics"]
 gameplay = ["dep:bayleaf-gameplay", "bayleaf-gameplay/controller", "bayleaf-gameplay/rules"]
 # Sound in play mode (cpal output, craft-audio decoding). Projects without sound leave it off.
 audio = ["dep:bayleaf-audio"]
+# Scripts compiled to machine code (wasmtime) in play mode, for exported desktop games.
+compiled-scripts = ["bayleaf-script/compiled"]
 
 [dependencies]
 bayleaf-core = { workspace = true }
