@@ -205,7 +205,7 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
         .map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", target.display())))?;
     }
     record_mode(&game, platform, mode)?;
-    let program = out.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    let program = out.join(format!("{name}{}", if platform == Platform::Windows { ".exe" } else { "" }));
     // The plain player, or (native mode) one built with the game's Rust scripts in it.
     let mut pending = None;
     let natives = crate::native_export::sources(&project, &files);
@@ -223,6 +223,10 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
                 pending = Some(plan);
             }
         }
+    }
+
+    if platform == Platform::Linux {
+        linux_files(&out, &name, &project)?;
     }
 
     let shown = |list: &[PathBuf]| list.iter().map(|p| p.to_string_lossy().replace('\\', "/")).collect::<Vec<_>>();
@@ -406,6 +410,90 @@ fn record_mode(game: &Path, platform: Platform, mode: ScriptMode) -> Result<(), 
     std::fs::write(&file, text).map_err(|e| failed(e.to_string()))
 }
 
+/// What exporting for `platform` from this computer needs: the web is not there yet, and another
+/// desktop system takes a player built there, since this computer cannot build one.
+fn system_findings(session: &Session, platform: Platform, player: Option<&Path>) -> Vec<(Severity, String)> {
+    let mut findings = Vec::new();
+    let mut push = |severity: Severity, message: String| findings.push((severity, message));
+    if platform == Platform::Web {
+        push(Severity::Error, "Export for the web is not available yet: browsers need a player built for them, which is still to come.".to_owned());
+    } else if platform != Platform::current() {
+        // This computer cannot build a player for another system: the export copies one built there.
+        match player.map(|p| session.allowed(p, Access::Read)) {
+            None => push(
+                Severity::Error,
+                format!(
+                    "Export for {} needs a player built for {}: choose one (bayleaf-player, built on {} with cargo build --release -p bayleaf-player).",
+                    platform.label(),
+                    platform.label(),
+                    platform.label()
+                ),
+            ),
+            Some(Err(e)) => push(Severity::Error, e.to_string()),
+            Some(Ok(path)) => match program_system(&path) {
+                Some(system) if system == platform => {
+                    push(Severity::Note, format!("The game uses the {} player you chose: {}.", platform.label(), path.display()));
+                }
+                Some(other) => {
+                    push(Severity::Error, format!("{} is a program for {}, not for {}.", path.display(), other.label(), platform.label()));
+                }
+                None => push(Severity::Error, format!("{} is not a program for {}.", path.display(), platform.label())),
+            },
+        }
+        if platform == Platform::Linux {
+            push(Severity::Note,
+                "On Linux, run install.sh in the game's folder once: it makes the game runnable and adds it to the applications menu with its icon. The game runs on Wayland and X11.".to_owned());
+        }
+    }
+    findings
+}
+
+/// Which system a program is for, by its first bytes: an ELF file is Linux's, `MZ` Windows', and
+/// a Mach-O file the Mac's.
+pub fn program_system(path: &Path) -> Option<Platform> {
+    let mut head = [0u8; 4];
+    let mut file = std::fs::File::open(path).ok()?;
+    std::io::Read::read_exact(&mut file, &mut head).ok()?;
+    match head {
+        [0x7F, b'E', b'L', b'F'] => Some(Platform::Linux),
+        [b'M', b'Z', _, _] => Some(Platform::Windows),
+        [0xCF, 0xFA, 0xED, 0xFE] | [0xCE, 0xFA, 0xED, 0xFE] | [0xCA, 0xFE, 0xBA, 0xBE] => Some(Platform::Mac),
+        _ => None,
+    }
+}
+
+/// Beside a Linux game: a desktop entry that starts it from its own folder, its icon, and
+/// `install.sh`, which marks the program runnable (a copy made on Windows loses that) and adds
+/// the game to the applications menu with full paths, as desktops want.
+fn linux_files(out: &Path, name: &str, project: &Path) -> Result<(), CommandError> {
+    let write = |file: &str, text: &str| {
+        let path = out.join(file);
+        std::fs::write(&path, text).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", path.display())))
+    };
+    let icon = crate::project_cmds::project_file_in(project)
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v["settings"]["game"]["icon"].as_str().map(str::to_owned))
+        .filter(|i| !i.is_empty())
+        .map(|i| project.join(i))
+        .filter(|p| p.is_file());
+    if let Some(icon) = &icon {
+        std::fs::copy(icon, out.join("icon.png")).map_err(|e| CommandError::Failed(format!("cannot copy the icon {}: {e}", icon.display())))?;
+    }
+    // Quotes and backslashes cannot reach the entry: the name has only letters, digits, spaces, - and _.
+    let icon_line = if icon.is_some() { "Icon=icon.png\n" } else { "" };
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName={name}\nExec=sh -c 'cd \"$(dirname \"%k\")\" && exec ./\"{name}\"'\n{icon_line}Terminal=false\nCategories=Game;\n"
+    );
+    write(&format!("{name}.desktop"), &entry)?;
+    let id: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
+    let icon_install = if icon.is_some() { "Icon=$here/icon.png" } else { "" };
+    let install = format!(
+        "#!/bin/sh\n# Makes {name} runnable and adds it to the applications menu.\nset -e\nhere=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nchmod +x \"$here/{name}\"\nmkdir -p \"$HOME/.local/share/applications\"\ncat > \"$HOME/.local/share/applications/{id}.desktop\" <<ENTRY\n[Desktop Entry]\nType=Application\nName={name}\nExec=\"$here/{name}\"\nPath=$here\n{icon_install}\nTerminal=false\nCategories=Game;\nENTRY\necho \"{name} is in the applications menu.\"\n"
+    );
+    write("install.sh", &install)
+}
+
 /// The player program to copy: `given`, else the one built beside this program.
 fn player_program(session: &Session, given: Option<&Path>) -> Result<PathBuf, CommandError> {
     match given {
@@ -486,16 +574,8 @@ pub fn check(session: &Session, platform: Platform, mode: ScriptMode, player: Op
     let mut found = |severity: Severity, message: String, file: Option<String>| findings.push(Finding { severity, message, file });
     let relative = |path: &Path| path.strip_prefix(&project).unwrap_or(path).to_string_lossy().replace('\\', "/");
 
-    if platform != Platform::current() {
-        found(
-            Severity::Error,
-            format!(
-                "Export for {} is not available yet: this version exports games for the system the editor runs on ({}).",
-                platform.label(),
-                Platform::current().label()
-            ),
-            None,
-        );
+    for (severity, message) in system_findings(session, platform, player) {
+        found(severity, message, None);
     }
     if !mode.available_for(platform) {
         let why = match mode {
@@ -517,7 +597,7 @@ pub fn check(session: &Session, platform: Platform, mode: ScriptMode, player: Op
             None,
         );
         found(Severity::Note, "The export builds the game's own player; the first build takes several minutes, later ones less.".to_owned(), None);
-    } else {
+    } else if platform == Platform::current() {
         match player_program(session, player) {
             Ok(path) if path.is_file() => {}
             Ok(path) => found(

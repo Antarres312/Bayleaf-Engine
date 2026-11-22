@@ -363,6 +363,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
      what does not work on the web (native scripts, compiled mode, threads). Linux: export from
      Windows for Linux once the player can be built there (or pick a prebuilt Linux player), with
      a `.desktop` file and the game's icon, Wayland and X11 both, and an option for an AppImage.
+     (Done: export for another desktop system with a player built there, chosen in the Export
+     window; a Linux game gets a `.desktop` file, its icon and `install.sh`. Still to do: the web
+     player and its packing, building a Linux player from Windows, and AppImages.)
    - **Post-processing.** A Post-processing asset named by the camera or the scene's settings: tone
      mapping (with exposure), bloom, colour adjustment (contrast, saturation, a lookup texture),
      vignette, fog by depth, ambient occlusion in screen space, and an antialiasing choice beyond

@@ -1828,7 +1828,8 @@ fn the_export_check_says_what_stops_an_export_for_each_platform_and_script_mode(
     let here = check(&mut session, Platform::current(), ScriptMode::Interpreted);
     assert_eq!(here["ready"], true, "a fresh project exports for this system, interpreted: {here}");
     let elsewhere = Platform::ALL.into_iter().find(|p| *p != Platform::current()).unwrap();
-    assert!(errors(&check(&mut session, elsewhere, ScriptMode::Interpreted)).iter().any(|e| e.contains("not available yet")), "other systems say so");
+    // Another system takes a player built there; this "player" is not a program for it.
+    assert!(errors(&check(&mut session, elsewhere, ScriptMode::Interpreted)).iter().any(|e| e.contains("not")), "other systems say what is missing");
     let compiled = check(&mut session, Platform::current(), ScriptMode::Compiled);
     assert_eq!(compiled["ready"], true, "scripts compiled to machine code export for this system: {compiled}");
     assert!(errors(&check(&mut session, Platform::Web, ScriptMode::Compiled)).iter().any(|e| e.contains("browsers")), "but not for the web");
@@ -2376,4 +2377,50 @@ fn an_interface_tells_its_scripts_what_the_player_did_and_shows_what_they_set() 
     assert_eq!(text_of(&mut session, "Title"), "My Game", "stopping put the interface back");
     registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_game_exports_for_another_system_with_a_player_built_there() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let base = std::env::temp_dir().join(format!("bayleaf-export-other-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let project = base.join("Space Game");
+    registry.execute(&mut session, "project.new", &json!({"path": project})).unwrap();
+    let other = if crate::export::Platform::current() == crate::export::Platform::Linux { "windows" } else { "linux" };
+    let errors = |report: &Value| report["findings"].as_array().unwrap().iter().filter(|f| f["severity"] == "error").count();
+
+    // Without a player built there, the check says what to choose.
+    let check = registry.execute(&mut session, "project.export.check", &json!({"platform": other, "mode": "interpreted"})).unwrap();
+    assert_eq!(check["ready"], false);
+    assert!(check.to_string().contains("needs a player built for"), "{check}");
+    // A program for the wrong system is refused.
+    let wrong = base.join("wrong-player");
+    std::fs::write(&wrong, if other == "linux" { b"MZ\x90\x00rest".to_vec() } else { b"\x7fELFrest".to_vec() }).unwrap();
+    let check = registry.execute(&mut session, "project.export.check", &json!({"platform": other, "mode": "interpreted", "player": wrong})).unwrap();
+    assert!(errors(&check) > 0 && check.to_string().contains("is a program for"), "{check}");
+    // The web is not there yet, whatever is given.
+    let web = registry.execute(&mut session, "project.export.check", &json!({"platform": "web", "mode": "interpreted"})).unwrap();
+    assert!(web.to_string().contains("not available yet"), "{web}");
+
+    let player = base.join("bayleaf-player-other");
+    std::fs::write(&player, if other == "linux" { b"\x7fELF\x02\x01\x01rest".to_vec() } else { b"MZ\x90\x00rest".to_vec() }).unwrap();
+    let check = registry.execute(&mut session, "project.export.check", &json!({"platform": other, "mode": "interpreted", "player": player})).unwrap();
+    assert_eq!(errors(&check), 0, "{check}");
+    let out = base.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let done = registry.execute(&mut session, "project.export", &json!({"folder": out, "platform": other, "mode": "interpreted", "player": player})).unwrap();
+    let program = std::path::PathBuf::from(done["program"].as_str().unwrap());
+    assert_eq!(std::fs::read(&program).unwrap(), std::fs::read(&player).unwrap(), "the chosen player is the game's program");
+    let game = program.parent().unwrap();
+    if other == "linux" {
+        assert!(program.extension().is_none(), "no .exe on Linux: {}", program.display());
+        let entry = std::fs::read_to_string(game.join("Space Game.desktop")).unwrap();
+        assert!(entry.contains("[Desktop Entry]") && entry.contains("Exec=") && entry.contains("Space Game"), "{entry}");
+        let install = std::fs::read_to_string(game.join("install.sh")).unwrap();
+        assert!(install.starts_with("#!/bin/sh") && install.contains("chmod +x"), "{install}");
+    } else {
+        assert!(program.extension().is_some_and(|e| e == "exe"));
+    }
+    std::fs::remove_dir_all(&base).ok();
 }

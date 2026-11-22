@@ -142,8 +142,12 @@ run: `interpreted`, `compiled` or `native` (default: the project's choice for th
 `settings.game.scriptModes`). `project.export.check` (same params, without `folder`) writes nothing
 and returns `{ready, findings, scripts, files}`: each finding an `error`, `warning` or `note` with
 its message and file, and how each script would run. The export refuses while the check finds an
-error. Today games export for this computer's system only; `compiled` needs a desktop system and
-`native` the engine's source and cargo, and the check says when they are missing. In native mode
+error. For another desktop system, `player` must be a player built there (the check reads its first
+bytes to tell which system a program is for), since this computer cannot build one; the web is not
+there yet. A Linux game also gets `<game>.desktop`, its icon as `icon.png`, and `install.sh`, which
+makes the program runnable (a copy made on Windows loses that) and adds the game to the applications
+menu. `compiled` needs a desktop system and `native` the engine's source and cargo (and this
+computer's system), and the check says when they are missing. In native mode
 `project.export` builds the game's own player with its Rust scripts in (minutes the first time);
 with `wait: false` it returns once the build can start, with `build: {folder, program}` and `native`
 (the modules built in), and a program builds it with `native_export::build` in the background.

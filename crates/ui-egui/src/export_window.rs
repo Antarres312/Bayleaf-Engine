@@ -15,8 +15,10 @@ pub(crate) struct ExportWindow {
     platform: Platform,
     mode: ScriptMode,
     folder: String,
+    /// A player built for another system, for exporting there.
+    player: String,
     /// The last check, for the platform and mode it was made for: its report, or why it failed.
-    report: Option<((Platform, ScriptMode), Result<Value, String>)>,
+    report: Option<(CheckedFor, Result<Value, String>)>,
     /// What the last export said: where it went, or why not.
     outcome: Option<Result<String, String>>,
     /// A native player being built in the background: the game's folder, and the build's answer.
@@ -28,19 +30,36 @@ impl ExportWindow {
     pub(crate) fn new(editor: &Editor) -> Self {
         let platform = Platform::current();
         let mode = bayleaf_engine::export::chosen_mode(&editor.session, platform);
-        Self { platform, mode, folder: String::new(), report: None, outcome: None, building: None }
+        Self { platform, mode, folder: String::new(), player: String::new(), report: None, outcome: None, building: None }
     }
 }
 
+/// What a check was made for: the platform, the mode and the chosen player.
+type CheckedFor = (Platform, ScriptMode, String);
+
 /// Runs the check again when the choices changed since the last one.
 fn refresh(editor: &mut Editor, window: &mut ExportWindow) {
-    let wanted = (window.platform, window.mode);
+    let wanted = (window.platform, window.mode, window.player.trim().to_owned());
     if window.report.as_ref().is_some_and(|(made, _)| *made == wanted) {
         return;
     }
-    let params = json!({ "platform": window.platform, "mode": window.mode });
+    let params = check_params(window);
     let result = editor.registry.execute(&mut editor.session, "project.export.check", &params).map_err(|e| e.to_string());
     window.report = Some((wanted, result));
+}
+
+/// The platform and mode, and a player for another system when one is chosen.
+fn check_params(window: &ExportWindow) -> Value {
+    let mut params = json!({ "platform": window.platform, "mode": window.mode });
+    if needs_player(window.platform) && !window.player.trim().is_empty() {
+        params["player"] = json!(window.player.trim());
+    }
+    params
+}
+
+/// Whether exporting for `platform` takes a player built there: another desktop system.
+fn needs_player(platform: Platform) -> bool {
+    platform != Platform::current() && platform != Platform::Web
 }
 
 /// Shows the window while it is open.
@@ -69,8 +88,15 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
     // Where the game goes.
     theme::headed(t, "Platform").show(ui, |ui| {
         crate::value_editor::row(ui, t, "Platform", |ui, label, width| {
-            let shown =
-                |p: Platform| if p == Platform::current() { tl(p.label()).to_owned() } else { tf("{platform} (not yet)", &[("platform", tl(p.label()))]) };
+            let shown = |p: Platform| {
+                if p == Platform::current() {
+                    tl(p.label()).to_owned()
+                } else if p == Platform::Web {
+                    tf("{platform} (not yet)", &[("platform", tl(p.label()))])
+                } else {
+                    tf("{platform} (with a player built there)", &[("platform", tl(p.label()))])
+                }
+            };
             craft_ui::ComboBox::from_id_salt("export platform")
                 .width(width)
                 .selected_text(shown(window.platform))
@@ -85,6 +111,23 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
                 .response
                 .labelled_by(label);
         });
+        // Another system's player: this computer cannot build one, so it is chosen.
+        if needs_player(window.platform) {
+            crate::value_editor::row(ui, t, "Player", |ui, label, width| {
+                ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(tl("Choose…")).clicked()
+                        && let Some(path) = rfd::FileDialog::new().set_title(tl("Choose the player built for that system")).pick_file()
+                    {
+                        window.player = path.display().to_string();
+                    }
+                    ui.add_sized(
+                        [ui.available_width(), ROW_HEIGHT],
+                        egui::TextEdit::singleline(&mut window.player).hint_text(tl("bayleaf-player built on that system")),
+                    )
+                    .labelled_by(label);
+                });
+            });
+        }
     });
     ui.add_space(theme::SECTION_GAP);
 
@@ -161,7 +204,9 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
             if export.clicked() {
                 // A native player builds for minutes: the export returns when it can start, and it
                 // builds in the background while the editor stays in use.
-                let params = json!({ "folder": window.folder.trim(), "platform": window.platform, "mode": window.mode, "wait": false });
+                let mut params = check_params(window);
+                params["folder"] = json!(window.folder.trim());
+                params["wait"] = json!(false);
                 match editor.registry.execute(&mut editor.session, "project.export", &params) {
                     Ok(result) => {
                         let path = result["path"].as_str().unwrap_or_default().to_owned();
