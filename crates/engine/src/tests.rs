@@ -2343,6 +2343,20 @@ fn files_brought_in_are_checked_copied_with_their_settings_and_placed() {
     assert_eq!((got["settings"]["model"]["scale"].as_f64(), got["saved"].as_bool()), (Some(2.0), Some(true)));
     assert!(registry.execute(&mut session, "asset.importSettings.set", &json!({"path": model, "settings": {"image": {"mipmaps": false}}})).is_err());
     assert!(registry.execute(&mut session, "asset.importSettings.set", &json!({"path": model, "settings": {"model": {"scale": -1.0}}})).is_err());
+    // Block compression only for sides in multiples of 4; plain numbers for any image.
+    bayleaf_render::Image { width: 6, height: 4, pixels: vec![200; 96] }.write_png(&project.join("assets/odd.png")).unwrap();
+    bayleaf_render::Image { width: 8, height: 4, pixels: vec![200; 128] }.write_png(&project.join("assets/even.png")).unwrap();
+    let odd = registry.execute(&mut session, "asset.importSettings.set", &json!({"path": "assets/odd.png", "settings": {"image": {"compression": "bc1"}}}));
+    assert!(odd.unwrap_err().to_string().contains("multiples of 4"));
+    registry
+        .execute(
+            &mut session,
+            "asset.importSettings.set",
+            &json!({"path": "assets/even.png", "settings": {"image": {"compression": "bc3", "colorSpace": "data"}}}),
+        )
+        .unwrap();
+    let even = bayleaf_render::assets::load_image(&project.join("assets/even.png")).unwrap();
+    assert!(even.data && even.blocks.is_some(), "the settings apply when the image is read");
 
     // Placing a model and a sound, and an image as an object's look; each one undo step.
     let placed = registry.execute(&mut session, "scene.file.place", &json!({"path": model, "position": [1.0, 0.0, 2.0]})).unwrap();

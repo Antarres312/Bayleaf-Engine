@@ -1,6 +1,7 @@
 //! Import settings: a small JSON file beside a model or image brought into a project
 //! (`robot.glb.bimport` beside `robot.glb`), saying how to read it: a model's scale and which way
-//! is up, whether an image gets smaller copies for far away. The loaders apply them, and read the
+//! is up, whether an image gets smaller copies for far away, holds colour or plain numbers, and is
+//! kept block-compressed on the GPU. The loaders apply them, and read the
 //! file again when the settings change. A file without settings is read with the defaults.
 
 use std::path::{Path, PathBuf};
@@ -57,12 +58,43 @@ pub enum UpAxis {
 pub struct ImageImport {
     /// Smaller copies for far away, so it does not shimmer; off keeps every pixel sharp (pixel art).
     pub mipmaps: bool,
+    /// Whether the pixels are colours (stored as sRGB) or plain numbers (a normal map, a mask).
+    #[serde(default)]
+    pub color_space: ColorSpace,
+    /// How it is kept on the GPU: as it is, or in 4 x 4 blocks that take an eighth or a quarter
+    /// of the memory and lose a little detail.
+    #[serde(default)]
+    pub compression: Compression,
 }
 
 impl Default for ImageImport {
     fn default() -> Self {
-        Self { mipmaps: true }
+        Self { mipmaps: true, color_space: ColorSpace::Color, compression: Compression::None }
     }
+}
+
+/// What an image's pixels are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorSpace {
+    /// Colours, stored as sRGB: shown as they look.
+    #[default]
+    Color,
+    /// Plain numbers (normals, roughness, masks): read as stored.
+    Data,
+}
+
+/// How an image is kept on the GPU.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Compression {
+    /// Every pixel as it is: 4 bytes each.
+    #[default]
+    None,
+    /// BC1: half a byte a pixel; transparency only on or off.
+    Bc1,
+    /// BC3: a byte a pixel, with smooth transparency.
+    Bc3,
 }
 
 /// What kind of file settings are kept for, by its extension.

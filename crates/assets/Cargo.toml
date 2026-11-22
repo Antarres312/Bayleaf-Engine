@@ -12,6 +12,7 @@ glam = { workspace = true }
 gltf = { workspace = true }
 craft-mesh = { workspace = true }
 craft-exr = { workspace = true }
+craft-dds = { workspace = true }
 png = { workspace = true }
 zune-core = { workspace = true }
 zune-jpeg = { workspace = true }

@@ -418,8 +418,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
      models with their MTL libraries and images (craft-mesh), OpenEXR images (craft-exr; kept at 8
      bits, so light above 1 clips) and FLAC sounds (craft-audio) are read. Waiting: FBX, which
      craft-mesh reads through craft-zip, whose `zip` brings `constant_time_eq` (CC0-1.0 OR MIT-0 OR
-     Apache-2.0; MIT-0 is not on the licence list); KTX2, which no craft-libs crate reads yet. Still
-     to do: compression and colour space for images, streamed sounds, and a model's animations.)
+     Apache-2.0; MIT-0 is not on the licence list); KTX2, which no craft-libs crate reads yet. Images
+     take a colour space (colours or plain numbers) and BC1 or BC3 block compression (craft-dds).
+     Still to do: streamed sounds, and a model's animations.)
    - **Fix: material previews draw only the sphere.** The material pictures (Project panel tiles,
      the Inspector, the Graph panel's preview) show the sky behind the sphere. Draw them with a
      transparent background instead, so only the sphere shows over the panel; the sphere is still

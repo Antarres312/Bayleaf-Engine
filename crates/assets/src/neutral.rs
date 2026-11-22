@@ -194,8 +194,8 @@ fn material_of(
         metallic: finite(m.metallic, 0.0),
         roughness: finite(m.roughness, 1.0),
         image: image(m.base_color_texture),
-        metal_roughness: image(m.metallic_roughness_texture),
-        normal: image(m.normal_texture),
+        metal_roughness: image(m.metallic_roughness_texture).map(crate::as_data),
+        normal: image(m.normal_texture).map(crate::as_data),
     }
 }
 

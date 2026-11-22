@@ -49,6 +49,7 @@ craft-audio-dsp = { git = "https://github.com/storytold/craft-libs", rev = "c60e
 craft-i18n = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
 craft-mesh = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1", default-features = false, features = ["obj"] }
 craft-exr = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1", features = ["decode"] }
+craft-dds = { git = "https://github.com/storytold/craft-libs", rev = "c60e7a20063313b80a994075adb4f797b24ab4f1" }
 # Sound output on Windows, macOS and Linux (Apache-2.0).
 cpal = "0.15"
 # Same version eframe uses for its saved state; it keeps non-finite floats that JSON cannot.

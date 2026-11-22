@@ -33,6 +33,57 @@ pub struct Image {
     pub rgba: Vec<u8>,
     /// Drawn with smaller copies for far away (its import settings can turn them off).
     pub mipmaps: bool,
+    /// Plain numbers rather than colours (a normal map, a mask): read as stored, not as sRGB.
+    pub data: bool,
+    /// The image in 4 x 4 blocks for the GPU, when its import settings ask for it: each level of
+    /// [`mip_levels`] too when it has mipmaps.
+    pub blocks: Option<Arc<Blocks>>,
+}
+
+/// An image block-compressed for the GPU.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Blocks {
+    pub compression: import::Compression,
+    /// The blocks of the image, then of each smaller copy.
+    pub levels: Vec<Vec<u8>>,
+}
+
+impl Image {
+    /// An image of `rgba` pixels: colours, with mipmaps, kept as it is.
+    pub fn new(id: u64, width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self { id, width, height, rgba, mipmaps: true, data: false, blocks: None }
+    }
+}
+
+/// Block-compresses `image` (and its smaller copies when it has mipmaps). Its sides must be
+/// multiples of 4.
+pub fn compress(image: &Image, compression: import::Compression) -> Result<Blocks, String> {
+    let kind = match compression {
+        import::Compression::None => return Err("no compression asked for".to_owned()),
+        import::Compression::Bc1 => craft_dds::DdsCompression::Bc1,
+        import::Compression::Bc3 => craft_dds::DdsCompression::Bc3,
+    };
+    if !image.width.is_multiple_of(4) || !image.height.is_multiple_of(4) {
+        return Err(format!("block compression needs sides that are multiples of 4; this image is {} x {}", image.width, image.height));
+    }
+    let mut sizes = vec![(image.width, image.height, image.rgba.clone())];
+    if image.mipmaps {
+        sizes.extend(mip_levels(image));
+    }
+    let options = craft_dds::DdsOptions { compression: kind, mipmaps: false };
+    let block_bytes = if kind == craft_dds::DdsCompression::Bc1 { 8 } else { 16 };
+    let mut levels = Vec::with_capacity(sizes.len());
+    for (width, height, pixels) in sizes {
+        let file = craft_dds::encode(width, height, craft_dds::Layout::Rgba, &pixels, options).map_err(|e| format!("{e:?}"))?;
+        // The blocks follow the 128-byte header ("DDS " and DDS_HEADER; BC1 and BC3 need no DX10 one).
+        let blocks = file.get(128..).ok_or("the compressed image came out empty")?;
+        let expected = width.div_ceil(4) as usize * height.div_ceil(4) as usize * block_bytes;
+        if blocks.len() != expected {
+            return Err(format!("the compressed image has {} bytes, not {expected}", blocks.len()));
+        }
+        levels.push(blocks.to_vec());
+    }
+    Ok(Blocks { compression, levels })
 }
 
 /// A model's triangles, every mesh of its default scene merged, with node transforms applied.
@@ -111,7 +162,14 @@ pub fn load_image(path: &Path) -> Result<Image, String> {
     let (bytes, modified) = read_limited(path)?;
     let mut image = decode_image(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     image.id = file_id(path, modified);
-    image.mipmaps = settings.and_then(|s| s.image).unwrap_or_default().mipmaps;
+    let settings = settings.and_then(|s| s.image).unwrap_or_default();
+    image.mipmaps = settings.mipmaps;
+    image.data = settings.color_space == import::ColorSpace::Data;
+    if settings.compression != import::Compression::None {
+        // asset.importSettings.set refuses sides that cannot be compressed; a file changed since
+        // keeps its pixels as they are (its asset info says so).
+        image.blocks = compress(&image, settings.compression).ok().map(Arc::new);
+    }
     Ok(image)
 }
 
@@ -120,9 +178,11 @@ pub type MipLevel = (u32, u32, Vec<u8>);
 
 /// The smaller copies of an image, each half the size of the one before (rounded down, at least
 /// 1), down to 1 x 1, not counting the image itself. Colours are averaged as light (in linear
-/// space, not as sRGB numbers), so a fine black and white pattern turns light grey, not dark grey.
+/// space, not as sRGB numbers), so a fine black and white pattern turns light grey, not dark grey;
+/// a data image's numbers are averaged as they are.
 pub fn mip_levels(image: &Image) -> Vec<MipLevel> {
-    let to_linear: Vec<f32> = (0..=255u8).map(|v| srgb_to_linear(f32::from(v) / 255.0)).collect();
+    let to_linear: Vec<f32> = (0..=255u8).map(|v| if image.data { f32::from(v) / 255.0 } else { srgb_to_linear(f32::from(v) / 255.0) }).collect();
+    let back = |v: f32| if image.data { v.clamp(0.0, 1.0) } else { linear_to_srgb(v) };
     let mut levels = Vec::new();
     let (mut w, mut h, mut src) = (image.width.max(1), image.height.max(1), image.rgba.clone());
     while w > 1 || h > 1 {
@@ -141,7 +201,7 @@ pub fn mip_levels(image: &Image) -> Vec<MipLevel> {
                 }
                 let at = ((y * nw + x) * 4) as usize;
                 for c in 0..3 {
-                    out[at + c] = (linear_to_srgb(sum[c] / 4.0) * 255.0).round() as u8;
+                    out[at + c] = (back(sum[c] / 4.0) * 255.0).round() as u8;
                 }
                 out[at + 3] = (sum[3] / 4.0 * 255.0).round() as u8;
             }
@@ -208,7 +268,7 @@ pub fn decode_exr(bytes: &[u8]) -> Result<Image, String> {
         rgba.extend([r[i], g[i], b[i]].map(|v| to_byte(linear_to_srgb(finite(v).clamp(0.0, 1.0)))));
         rgba.push(alpha.map_or(255, |a| to_byte(finite(a[i]))));
     }
-    Ok(Image { id: 0, width, height, rgba, mipmaps: true })
+    Ok(Image::new(0, width, height, rgba))
 }
 
 /// Decodes JPEG bytes into RGBA (JPEG has no transparency, so alpha is 255). The id is left at 0.
@@ -227,7 +287,7 @@ pub fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
     if rgba.len() != width * height * 4 {
         return Err("broken JPEG image: wrong number of pixels".to_owned());
     }
-    Ok(Image { id: 0, width: width as u32, height: height as u32, rgba, mipmaps: true })
+    Ok(Image::new(0, width as u32, height as u32, rgba))
 }
 
 /// Decodes PNG bytes into RGBA. The id is left at 0.
@@ -251,7 +311,7 @@ pub fn decode_png(bytes: &[u8]) -> Result<Image, String> {
         png::ColorType::Grayscale => pixels.iter().flat_map(|g| [*g, *g, *g, 255]).collect(),
         png::ColorType::Indexed => return Err("unexpected palette image after expansion".to_owned()),
     };
-    Ok(Image { id: 0, width: frame.width, height: frame.height, rgba, mipmaps: true })
+    Ok(Image::new(0, frame.width, frame.height, rgba))
 }
 
 /// The files a model names beside it (glTF buffers and images, OBJ material libraries and
@@ -392,8 +452,8 @@ fn model_material(material: &gltf::Material<'_>, buffers: &[Vec<u8>], folder: &P
         _ => Ok(None),
     };
     let image = read(pbr.base_color_texture().map(|i| (i.texture(), i.tex_coord())), "base colour")?;
-    let metal_roughness = read(pbr.metallic_roughness_texture().map(|i| (i.texture(), i.tex_coord())), "metallic and roughness")?;
-    let normal = read(material.normal_texture().map(|i| (i.texture(), i.tex_coord())), "normal")?;
+    let metal_roughness = read(pbr.metallic_roughness_texture().map(|i| (i.texture(), i.tex_coord())), "metallic and roughness")?.map(as_data);
+    let normal = read(material.normal_texture().map(|i| (i.texture(), i.tex_coord())), "normal")?.map(as_data);
     let finite = |v: f32, fallback: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { fallback };
     Ok(ModelMaterial {
         base_color: pbr.base_color_factor().map(|c| finite(c, 1.0)),
@@ -403,6 +463,15 @@ fn model_material(material: &gltf::Material<'_>, buffers: &[Vec<u8>], folder: &P
         metal_roughness,
         normal,
     })
+}
+
+/// The same image read as plain numbers (a model's normal or metallic and roughness image).
+fn as_data(image: Arc<Image>) -> Arc<Image> {
+    if image.data {
+        return image;
+    }
+    // Its own id: the same file may also be shown as a colour.
+    Arc::new(Image { data: true, id: image.id ^ 0x2, ..(*image).clone() })
 }
 
 /// The image a glTF texture shows: inside the binary buffer, or a file beside the model.

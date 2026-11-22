@@ -244,7 +244,7 @@ fn new_panel(device: &wgpu::Device, id: StableId, points: [u32; 2]) -> Panel {
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let ctx = egui::Context::default();
     crate::fonts::install_fonts(&ctx);
-    let image = Arc::new(bayleaf_render::assets::Image { id: picture_id(id, points), width: 1, height: 1, rgba: vec![0; 4], mipmaps: false });
+    let image = Arc::new(bayleaf_render::assets::Image { mipmaps: false, ..bayleaf_render::assets::Image::new(picture_id(id, points), 1, 1, vec![0; 4]) });
     Panel { ctx, texture, view, points, image, hovered: false }
 }
 

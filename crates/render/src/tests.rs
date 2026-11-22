@@ -1008,3 +1008,26 @@ fn a_device_that_writes_timestamps_measures_the_gpu_s_time_for_a_frame() {
         assert_eq!(stats.gpu_ms, None, "an adapter that cannot measure says so");
     }
 }
+
+#[test]
+fn a_data_image_draws_its_numbers_and_a_compressed_one_keeps_its_colour() {
+    let Some(gpu) = gpu() else { return };
+    let mut scene = Scene::new();
+    mesh(&mut scene, "cube", [0.0, 0.0, 0.0]);
+    object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3}), [0.0; 3], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 50.0, 1.0);
+    let with = |image: bayleaf_assets::Image| {
+        let mut frame = extract(&scene, camera, OPTIONS);
+        frame.items[0].textures = vec![Some(Arc::new(image))];
+        gpu.render(&frame, 64, 64).unwrap().pixel(32, 32).unwrap()
+    };
+    let grey = [128u8, 128, 128, 255].repeat(16);
+    let colour = with(bayleaf_assets::Image::new(11, 4, 4, grey.clone()));
+    let data = with(bayleaf_assets::Image { data: true, ..bayleaf_assets::Image::new(13, 4, 4, grey) });
+    assert!(brightness(data) > brightness(colour) + 30, "128 as a number is brighter than 128 as an sRGB colour: {data:?} {colour:?}");
+
+    let mut red = bayleaf_assets::Image::new(15, 4, 4, [230u8, 20, 20, 255].repeat(16));
+    red.blocks = Some(Arc::new(bayleaf_assets::compress(&red, bayleaf_assets::import::Compression::Bc1).unwrap()));
+    let drawn = with(red);
+    assert!(drawn[0] > drawn[2] + 60, "the compressed red image draws red: {drawn:?}");
+}

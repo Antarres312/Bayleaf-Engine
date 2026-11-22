@@ -262,8 +262,9 @@ pub struct Renderer {
     outline_layout: wgpu::BindGroupLayout,
     texture_sampler: wgpu::Sampler,
     /// Uploaded images by id; 0 is a white pixel.
-    textures: HashMap<u64, (wgpu::Texture, wgpu::TextureView)>,
-    /// Texture bind groups by the images in their four slots.
+    textures: HashMap<u64, GpuImage>,
+    /// Texture bind groups by the images in their four slots (an id with [`RAW`] set reads that
+    /// image's plain numbers).
     texture_groups: HashMap<[u64; 4], wgpu::BindGroup>,
     /// Uploaded models by id.
     models: HashMap<u64, GpuMesh>,
@@ -473,10 +474,12 @@ impl Renderer {
         let image_bytes = self
             .textures
             .values()
-            .map(|(texture, _)| {
-                let size = texture.size();
-                // Four bytes a pixel, and a third more for the smaller copies.
-                u64::from(size.width) * u64::from(size.height) * 4 * 4 / 3
+            .map(|image| {
+                let texture = &image.texture;
+                // The first level's bytes (a quarter or an eighth of four a pixel when compressed),
+                // and a third more for the smaller copies.
+                let first = texture.format().theoretical_memory_footprint(texture.size());
+                if texture.mip_level_count() > 1 { first * 4 / 3 } else { first }
             })
             .sum();
         let timer = self.timer.as_ref().and_then(Option::as_ref);
@@ -533,19 +536,17 @@ impl Renderer {
     /// image: a picture drawn on the GPU each frame (an interface standing in the world). Image
     /// groups made with an earlier texture of that id are made again.
     pub fn set_texture(&mut self, id: u64, texture: wgpu::Texture, view: wgpu::TextureView) {
-        self.textures.insert(id, (texture, view));
-        self.texture_groups.retain(|key, _| !key.contains(&id));
+        self.textures.insert(id, GpuImage { texture, color: view.clone(), raw: view });
+        self.texture_groups.retain(|key, _| !key.iter().any(|k| k & !RAW == id));
     }
 
     /// Puts the frame's images and models on the GPU the first time they are drawn, and makes
     /// the image groups its items need.
     fn upload_assets(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) {
-        self.textures
-            .entry(0)
-            .or_insert_with(|| upload_image(device, queue, &bayleaf_assets::Image { id: 0, width: 1, height: 1, rgba: vec![255; 4], mipmaps: true }));
-        // A normal straight out of the surface, stored as sRGB so the shader's re-encoding gives (0.5, 0.5, 1).
+        self.textures.entry(0).or_insert_with(|| upload_image(device, queue, &bayleaf_assets::Image::new(0, 1, 1, vec![255; 4])));
+        // A normal straight out of the surface: (0.5, 0.5, 1) read as plain numbers.
         self.textures.entry(FLAT_NORMAL).or_insert_with(|| {
-            upload_image(device, queue, &bayleaf_assets::Image { id: FLAT_NORMAL, width: 1, height: 1, rgba: vec![128, 128, 255, 255], mipmaps: true })
+            upload_image(device, queue, &bayleaf_assets::Image { data: true, ..bayleaf_assets::Image::new(FLAT_NORMAL, 1, 1, vec![128, 128, 255, 255]) })
         });
         let mut keys = vec![[0u64; 4]];
         for item in &frame.items {
@@ -563,7 +564,10 @@ impl Renderer {
             if self.texture_groups.contains_key(&key) {
                 continue;
             }
-            let view = |slot: usize| self.textures.get(&key[slot]).or_else(|| self.textures.get(&0)).map(|(_, view)| view);
+            let view = |slot: usize| {
+                let image = self.textures.get(&(key[slot] & !RAW)).or_else(|| self.textures.get(&0))?;
+                Some(if key[slot] & RAW == 0 { &image.color } else { &image.raw })
+            };
             let (Some(v0), Some(v1), Some(v2), Some(v3)) = (view(0), view(1), view(2), view(3)) else { continue };
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("bayleaf images"),
@@ -1327,9 +1331,9 @@ fn grid_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &
 pub(crate) const DEFAULT_SURFACE: &str = "fn surface(s: SurfaceIn) -> Surface {
     let image = textureSample(t0, material_sampler, s.uv);
     // glTF images: roughness in green and metallic in blue (t1), a tangent-space normal map (t2).
-    // Both hold plain numbers, not colours, so the sRGB decoding of the texture is undone.
-    let metal_rough = bl_srgb(textureSample(t1, material_sampler, s.uv).rgb);
-    let mapped = bl_srgb(textureSample(t2, material_sampler, s.uv).rgb) * 2.0 - vec3<f32>(1.0);
+    // Both hold plain numbers, not colours, and are bound to be read as stored.
+    let metal_rough = textureSample(t1, material_sampler, s.uv).rgb;
+    let mapped = textureSample(t2, material_sampler, s.uv).rgb * 2.0 - vec3<f32>(1.0);
     let normal = bl_normal_map(s.normal, s.position, s.uv, mapped);
     return Surface(s.color.rgb * image.rgb, s.params.x * metal_rough.b, s.params.y * metal_rough.g, vec3<f32>(0.0), s.color.a * image.a, normal);
 }
@@ -1419,30 +1423,47 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// An image on the GPU, with its smaller copies so it does not shimmer far away (unless its import
-/// settings turn them off). Images hold sRGB colours.
-fn upload_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &bayleaf_assets::Image) -> (wgpu::Texture, wgpu::TextureView) {
-    let levels = if image.mipmaps { bayleaf_assets::mip_levels(image) } else { Vec::new() };
-    let mut data = image.rgba.clone();
-    for (_, _, pixels) in &levels {
-        data.extend_from_slice(pixels);
-    }
+/// settings turn them off): its 4 x 4 blocks when it has them and the device reads them, else its
+/// pixels. Its colour view reads the stored numbers as sRGB colour, its raw view as they are.
+fn upload_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &bayleaf_assets::Image) -> GpuImage {
+    use bayleaf_assets::import::Compression;
+    let blocks = image.blocks.as_deref().filter(|_| device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC));
+    let (formats, levels, data) = match blocks {
+        Some(blocks) => {
+            let formats = match blocks.compression {
+                Compression::Bc1 | Compression::None => (wgpu::TextureFormat::Bc1RgbaUnorm, wgpu::TextureFormat::Bc1RgbaUnormSrgb),
+                Compression::Bc3 => (wgpu::TextureFormat::Bc3RgbaUnorm, wgpu::TextureFormat::Bc3RgbaUnormSrgb),
+            };
+            (formats, blocks.levels.len() as u32, blocks.levels.concat())
+        }
+        None => {
+            let levels = if image.mipmaps { bayleaf_assets::mip_levels(image) } else { Vec::new() };
+            let mut data = image.rgba.clone();
+            for (_, _, pixels) in &levels {
+                data.extend_from_slice(pixels);
+            }
+            ((wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Rgba8UnormSrgb), levels.len() as u32 + 1, data)
+        }
+    };
+    let (raw_format, color_format) = formats;
     let texture = device.create_texture_with_data(
         queue,
         &wgpu::TextureDescriptor {
             label: Some("bayleaf image"),
             size: wgpu::Extent3d { width: image.width.max(1), height: image.height.max(1), depth_or_array_layers: 1 },
-            mip_level_count: levels.len() as u32 + 1,
+            mip_level_count: levels.max(1),
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: raw_format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
+            view_formats: &[color_format],
         },
         wgpu::util::TextureDataOrder::LayerMajor,
         &data,
     );
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (texture, view)
+    let view = |format| texture.create_view(&wgpu::TextureViewDescriptor { format: Some(format), ..Default::default() });
+    let (color, raw) = (view(color_format), view(raw_format));
+    GpuImage { texture, color, raw }
 }
 
 /// A model on the GPU.
@@ -1477,11 +1498,14 @@ fn mesh_key(item: &DrawItem) -> u64 {
 
 /// The images in an item's four texture slots; 0 for an empty or missing slot.
 fn texture_key(item: &DrawItem) -> [u64; 4] {
-    // The built-in surface reads a normal map in slot 2, so an empty one there is flat, not white.
-    let mut key = if item.material.is_none() { [0, 0, FLAT_NORMAL, 0] } else { [0; 4] };
-    for (slot, image) in key.iter_mut().zip(&item.textures) {
+    // The built-in surface reads a normal map in slot 2, so an empty one there is flat, not white;
+    // its slots 1 and 2 (metallic and roughness, normals) hold plain numbers whatever the image says.
+    let built_in = item.material.is_none();
+    let mut key = if built_in { [0, 0, FLAT_NORMAL | RAW, 0] } else { [0; 4] };
+    for (slot, (id, image)) in key.iter_mut().zip(&item.textures).enumerate() {
         if let Some(image) = image {
-            *slot = image.id;
+            let raw = image.data || (built_in && (slot == 1 || slot == 2));
+            *id = if raw { image.id | RAW } else { image.id };
         }
     }
     key
@@ -1489,6 +1513,16 @@ fn texture_key(item: &DrawItem) -> [u64; 4] {
 
 /// Texture id of the one-pixel flat normal map (image ids from files are odd, 0 is white).
 const FLAT_NORMAL: u64 = 2;
+
+/// Set in a texture key's id: that image read as plain numbers, not as sRGB colour.
+const RAW: u64 = 1 << 63;
+
+/// An image on the GPU: one texture, read through two views, as colour and as plain numbers.
+struct GpuImage {
+    texture: wgpu::Texture,
+    color: wgpu::TextureView,
+    raw: wgpu::TextureView,
+}
 
 /// The sky: drawn first, behind everything, without touching the depth buffer.
 fn sky_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> wgpu::RenderPipeline {

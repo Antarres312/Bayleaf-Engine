@@ -224,14 +224,6 @@ fn bl_noise(p: vec3<f32>) -> f32 {
     return mix(a, b, u.z);
 }
 
-// sRGB-encoded numbers from a texture that the sampler decoded as colour (normal and
-// metal/roughness images are stored as plain numbers).
-fn bl_srgb(c: vec3<f32>) -> vec3<f32> {
-    let low = c * 12.92;
-    let high = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
-    return select(high, low, c <= vec3<f32>(0.0031308));
-}
-
 // Bends normal n by a tangent-space normal map value. The tangent frame comes from how position
 // and texture coordinates change across the screen, so models need no stored tangents (the
 // cotangent frame of Schüler 2013, "Normal Mapping Without Precomputed Tangents"). Texture v

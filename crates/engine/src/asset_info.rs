@@ -126,6 +126,18 @@ fn image(path: &Path) -> Info {
             info.row("Size", format!("{} × {} pixels", image.width, image.height));
             let opaque = image.rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255);
             info.row("Transparency", if opaque { "None" } else { "Yes" });
+            let asked = bayleaf_render::assets::import::ImportSettings::read_for(path).ok().flatten().and_then(|s| s.image).unwrap_or_default();
+            if image.data {
+                info.row("Pixels", "Plain numbers, read as stored");
+            }
+            match (&image.blocks, asked.compression) {
+                (Some(blocks), _) => {
+                    let name = if blocks.compression == bayleaf_render::assets::import::Compression::Bc3 { "BC3" } else { "BC1" };
+                    info.row("Compression", format!("{name}, where the graphics device reads it"));
+                }
+                (None, bayleaf_render::assets::import::Compression::None) => {}
+                (None, _) => info.problems.push("kept uncompressed: block compression needs sides that are multiples of 4".to_owned()),
+            }
             if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exr")) {
                 info.row("Range", "Kept at 8 bits per channel: light brighter than 1 shows as white");
             }

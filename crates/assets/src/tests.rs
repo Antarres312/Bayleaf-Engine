@@ -130,7 +130,7 @@ fn jpeg_images_decode_by_their_bytes_and_oversized_ones_are_refused() {
 fn smaller_copies_halve_down_to_one_pixel_and_average_as_light() {
     // A 4 x 3 black and white checkerboard.
     let rgba = (0..12).flat_map(|i| if (i % 4 + i / 4) % 2 == 0 { [0, 0, 0, 255] } else { [255, 255, 255, 255] }).collect();
-    let levels = mip_levels(&Image { id: 1, width: 4, height: 3, rgba, mipmaps: true });
+    let levels = mip_levels(&Image::new(1, 4, 3, rgba));
     let sizes: Vec<(u32, u32)> = levels.iter().map(|(w, h, _)| (*w, *h)).collect();
     assert_eq!(sizes, [(2, 1), (1, 1)]);
     assert!(levels.iter().all(|(w, h, p)| p.len() == (*w * *h * 4) as usize));
@@ -251,4 +251,20 @@ fn an_obj_model_reads_its_material_library_and_image_beside_it() {
     std::fs::write(dir.join("empty.obj"), "# nothing\n").unwrap();
     assert!(load_model(&dir.join("empty.obj")).is_err(), "a model with nothing to draw");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_data_image_averages_its_numbers_and_compression_keeps_every_level_in_blocks() {
+    let checker: Vec<u8> = (0..16).flat_map(|i| if (i % 4 + i / 4) % 2 == 0 { [0, 0, 0, 255] } else { [255, 255, 255, 255] }).collect();
+    let colour = mip_levels(&Image::new(1, 4, 4, checker.clone()))[0].2[0];
+    let data = mip_levels(&Image { data: true, ..Image::new(1, 4, 4, checker.clone()) })[0].2[0];
+    assert!(data.abs_diff(128) <= 1 && colour > data + 40, "numbers average as numbers ({data}), colours as light ({colour})");
+
+    let image = Image::new(1, 8, 8, checker.repeat(4));
+    let bc1 = super::compress(&image, super::import::Compression::Bc1).unwrap();
+    let sizes: Vec<usize> = bc1.levels.iter().map(Vec::len).collect();
+    assert_eq!(sizes, [32, 8, 8, 8], "8 x 8 down to 1 x 1, 8 bytes a 4 x 4 block");
+    let bc3 = super::compress(&image, super::import::Compression::Bc3).unwrap();
+    assert!(bc3.levels[0].len() == bc1.levels[0].len() * 2, "BC3 keeps twice the bytes, for smooth alpha");
+    assert!(super::compress(&Image::new(1, 6, 4, vec![0; 96]), super::import::Compression::Bc1).is_err(), "sides must be multiples of 4");
 }

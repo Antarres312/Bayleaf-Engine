@@ -62,8 +62,8 @@ impl HeadlessGpu {
             .map_err(|e| RenderError::NoGpu(e.to_string()))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("bayleaf headless"),
-            // GPU time for the profiler, where the adapter can measure it.
-            required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+            // GPU time for the profiler and block-compressed images, where the adapter has them.
+            required_features: adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TEXTURE_COMPRESSION_BC),
             required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
             ..Default::default()
         }))

@@ -337,6 +337,20 @@ fn import_settings_set(session: &mut Session, params: &Value) -> Result<Value, C
         }
     }
     settings.validate().map_err(CommandError::BadParams)?;
+    if let Some(image) = &settings.image
+        && image.compression != bayleaf_render::assets::import::Compression::None
+    {
+        let bytes = std::fs::read(&file).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", file.display())))?;
+        let pixels = bayleaf_render::assets::decode_image(&bytes).map_err(|e| CommandError::Failed(format!("{}: {e}", file.display())))?;
+        if !pixels.width.is_multiple_of(4) || !pixels.height.is_multiple_of(4) {
+            return Err(CommandError::BadParams(format!(
+                "block compression needs sides that are multiples of 4; {} is {} x {}",
+                file.display(),
+                pixels.width,
+                pixels.height
+            )));
+        }
+    }
     let path = settings_path(&file);
     std::fs::write(&path, settings.to_text()).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", path.display())))?;
     Ok(json!({ "path": path }))

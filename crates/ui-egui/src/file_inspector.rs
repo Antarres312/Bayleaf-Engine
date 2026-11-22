@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use bayleaf_engine::asset_info::{self, Info};
-use bayleaf_render::assets::import::{ImportSettings, UpAxis};
+use bayleaf_render::assets::import::{ColorSpace, Compression, ImportSettings, UpAxis};
 
 use crate::Editor;
 use crate::theme::{self, ROW_HEIGHT};
@@ -326,7 +326,7 @@ fn interface_preview(ui: &mut egui::Ui, editor: &mut Editor, path: &Path) {
     ui.add_space(theme::SECTION_GAP);
 }
 
-/// A model's scale and up axis, or an image's mipmaps. True when a change is finished (a drag let
+/// A model's scale and up axis, or an image's mipmaps, colour space and compression. True when a change is finished (a drag let
 /// go, a number typed in, a choice made), so the file is not written on every step of a drag.
 fn import_settings(ui: &mut egui::Ui, settings: &mut ImportSettings) -> bool {
     let t = theme::tokens(ui);
@@ -354,13 +354,33 @@ fn import_settings(ui: &mut egui::Ui, settings: &mut ImportSettings) -> bool {
                 }
             });
         }
-        if let Some(image) = settings.image.as_mut()
-            && ui
+        if let Some(image) = settings.image.as_mut() {
+            if ui
                 .checkbox(&mut image.mipmaps, tl("Mipmaps"))
                 .on_hover_text(tl("Smaller copies for far away, so it does not shimmer; off keeps every pixel sharp, as pixel art wants"))
                 .changed()
-        {
-            done = true;
+            {
+                done = true;
+            }
+            crate::value_editor::row(ui, t, "Pixels Are", |ui, _, _| {
+                for (space, label, hint) in [
+                    (ColorSpace::Color, "Colors", "Colours, stored as sRGB: shown as they look"),
+                    (ColorSpace::Data, "Data", "Plain numbers, read as stored: normal maps, roughness, masks"),
+                ] {
+                    done |= ui.radio_value(&mut image.color_space, space, tl(label)).on_hover_text(tl(hint)).changed();
+                }
+            });
+            crate::value_editor::row(ui, t, "Compression", |ui, _, _| {
+                ui.vertical(|ui| {
+                    for (kind, label, hint) in [
+                        (Compression::None, "None", "Every pixel as it is: 4 bytes each"),
+                        (Compression::Bc1, "BC1", "Half a byte a pixel; transparency only on or off. Sides must be multiples of 4"),
+                        (Compression::Bc3, "BC3", "A byte a pixel, with smooth transparency. Sides must be multiples of 4"),
+                    ] {
+                        done |= ui.radio_value(&mut image.compression, kind, tl(label)).on_hover_text(tl(hint)).changed();
+                    }
+                });
+            });
         }
     });
     done

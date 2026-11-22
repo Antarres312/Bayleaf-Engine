@@ -507,6 +507,7 @@ dependencies = [
 name = "bayleaf-assets"
 version = "0.2.0"
 dependencies = [
+ "craft-dds",
  "craft-exr",
  "craft-mesh",
  "glam 0.30.10",
@@ -1162,6 +1163,11 @@ dependencies = [
 
 [[package]]
 name = "craft-audio-dsp"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=c60e7a20063313b80a994075adb4f797b24ab4f1#c60e7a20063313b80a994075adb4f797b24ab4f1"
+
+[[package]]
+name = "craft-dds"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=c60e7a20063313b80a994075adb4f797b24ab4f1#c60e7a20063313b80a994075adb4f797b24ab4f1"
 
