@@ -1190,3 +1190,165 @@ impl SceneComponent for InputMap {
         Ok(())
     }
 }
+
+/// Particles: many small images (or shapes) that start from the object, move, change size and
+/// colour over their life, and go. The engine simulates them while the game plays, and the Scene
+/// view plays the selected emitter.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ParticleEmitter {
+    /// Starts emitting when the game starts; scripts start and stop it otherwise.
+    pub playing: bool,
+    /// Starts again at the end of each cycle; off, it emits for one cycle.
+    pub looping: bool,
+    /// Seconds in a cycle.
+    pub duration: f32,
+    /// Particles a second.
+    pub rate: f32,
+    /// Particles at once at the start of each cycle.
+    pub burst: u32,
+    /// Most particles alive at once.
+    pub max_particles: u32,
+    /// Where particles start: `point`, `sphere`, `cone` or `box`.
+    pub shape: String,
+    /// The sphere's radius, or the cone's at its base.
+    pub radius: f32,
+    /// How wide the cone opens, degrees from its axis (the object's +Y).
+    pub angle: f32,
+    /// The box's size.
+    pub box_size: [f32; 3],
+    /// Shortest and longest life, seconds.
+    pub lifetime: [f32; 2],
+    /// Slowest and fastest start, units a second.
+    pub speed: [f32; 2],
+    /// How much gravity pulls them: 1 as falling things do, 0 not at all, less than 0 up.
+    pub gravity: f32,
+    /// How fast air slows them, 0 for not at all.
+    pub drag: f32,
+    pub start_size: f32,
+    pub middle_size: f32,
+    pub end_size: f32,
+    pub start_color: [f32; 4],
+    pub middle_color: [f32; 4],
+    pub end_color: [f32; 4],
+    /// Slowest and fastest spin, degrees a second.
+    pub spin: [f32; 2],
+    /// How they draw: `sprite` (facing the camera), `stretched` (along their motion) or `mesh`.
+    pub render: String,
+    /// The image of a sprite, relative to the project folder; empty for a soft dot.
+    pub image: String,
+    /// The image as a grid of frames shown one after another over each particle's life.
+    pub flipbook_columns: u32,
+    pub flipbook_rows: u32,
+    /// The shape a `mesh` particle is.
+    pub mesh_shape: Shape,
+    /// A material graph (`.bmaterial`) for the particles; empty for their colour and image.
+    pub material: String,
+    /// `alpha` blends them over what is behind; `additive` adds their light (fire, sparks).
+    pub blend: String,
+    /// `world`: particles stay where they started as the object moves; `local`: they move with it.
+    pub space: String,
+}
+
+impl Default for ParticleEmitter {
+    fn default() -> Self {
+        Self {
+            playing: true,
+            looping: true,
+            duration: 5.0,
+            rate: 10.0,
+            burst: 0,
+            max_particles: 500,
+            shape: "cone".to_owned(),
+            radius: 0.2,
+            angle: 25.0,
+            box_size: [1.0, 1.0, 1.0],
+            lifetime: [1.5, 2.5],
+            speed: [1.0, 2.0],
+            gravity: 0.0,
+            drag: 0.0,
+            start_size: 0.2,
+            middle_size: 0.25,
+            end_size: 0.1,
+            start_color: [1.0, 1.0, 1.0, 1.0],
+            middle_color: [1.0, 1.0, 1.0, 0.8],
+            end_color: [1.0, 1.0, 1.0, 0.0],
+            spin: [0.0, 0.0],
+            render: "sprite".to_owned(),
+            image: String::new(),
+            flipbook_columns: 1,
+            flipbook_rows: 1,
+            mesh_shape: Shape::Cube,
+            material: String::new(),
+            blend: "alpha".to_owned(),
+            space: "world".to_owned(),
+        }
+    }
+}
+
+/// Most particles one emitter may keep alive.
+pub const MAX_PARTICLES: u32 = 10_000;
+
+impl SceneComponent for ParticleEmitter {
+    const NAME: &'static str = "particleEmitter";
+    const LABEL: &'static str = "Particle Emitter";
+    const MENU: &'static str = "Effects/Particle Emitter";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        let range = |name: &str, v: f32, low: f32, high: f32| {
+            if v.is_finite() && (low..=high).contains(&v) { Ok(()) } else { Err(format!("{name} must be between {low} and {high}")) }
+        };
+        range("duration", self.duration, 0.01, 3600.0)?;
+        range("rate", self.rate, 0.0, 10_000.0)?;
+        if self.burst > MAX_PARTICLES || self.max_particles > MAX_PARTICLES {
+            return Err(format!("burst and maxParticles are at most {MAX_PARTICLES}"));
+        }
+        range("radius", self.radius, 0.0, 10_000.0)?;
+        range("angle", self.angle, 0.0, 180.0)?;
+        for v in self.box_size {
+            range("boxSize", v, 0.0, 10_000.0)?;
+        }
+        for (name, [low, high], top) in [("lifetime", self.lifetime, 3600.0), ("speed", self.speed, 10_000.0), ("spin", self.spin, 100_000.0)] {
+            let bottom = if name == "spin" { -top } else { 0.0 };
+            range(name, low, bottom, top)?;
+            range(name, high, bottom, top)?;
+            if high < low {
+                return Err(format!("{name}: the second number is the larger"));
+            }
+        }
+        if self.lifetime[1] <= 0.0 {
+            return Err("lifetime must be more than 0".to_owned());
+        }
+        range("gravity", self.gravity, -100.0, 100.0)?;
+        range("drag", self.drag, 0.0, 100.0)?;
+        for v in [self.start_size, self.middle_size, self.end_size] {
+            range("size", v, 0.0, 10_000.0)?;
+        }
+        for c in [self.start_color, self.middle_color, self.end_color] {
+            for v in c {
+                range("color", v, 0.0, 1.0)?;
+            }
+        }
+        if !(1..=64).contains(&self.flipbook_columns) || !(1..=64).contains(&self.flipbook_rows) {
+            return Err("flipbookColumns and flipbookRows are 1 to 64".to_owned());
+        }
+        for (field, value) in [("shape", &self.shape), ("render", &self.render), ("blend", &self.blend), ("space", &self.space)] {
+            if !Self::options(field).contains(&value.as_str()) {
+                return Err(format!("{field} is one of {}", Self::options(field).join(", ")));
+            }
+        }
+        file_field("image", &self.image, &["png", "jpg", "jpeg"])?;
+        file_field("material", &self.material, &["bmaterial"])
+    }
+
+    fn options(field: &str) -> &'static [&'static str] {
+        match field {
+            "shape" => &["point", "sphere", "cone", "box"],
+            "render" => &["sprite", "stretched", "mesh"],
+            "blend" => &["alpha", "additive"],
+            "space" => &["world", "local"],
+            _ => &[],
+        }
+    }
+}

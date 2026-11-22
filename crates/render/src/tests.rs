@@ -962,3 +962,26 @@ fn post_processing_effects_each_change_the_picture_as_they_say() {
     let smoothed = render(PostSettings { antialiasing: true, ..PostSettings::default() });
     assert_eq!(at(&smoothed, centre), at(&plain, centre));
 }
+
+#[test]
+fn an_additive_item_adds_its_light_and_an_alpha_one_covers() {
+    let Some(gpu) = gpu() else { return };
+    // A red unlit quad behind, a blue unlit quad in front: covering, it shows blue; adding, purple.
+    let mut scene = Scene::new();
+    object(&mut scene, "sprite", json!({"image": "", "color": [1.0, 0.0, 0.0, 1.0], "size": [2.0, 2.0]}), [0.0, 0.0, -0.5], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 50.0, 1.0);
+    let base = extract(&scene, camera, OPTIONS);
+    let front = |additive: bool| {
+        let mut frame = base.clone();
+        let mut item = frame.items[0].clone();
+        item.model = bayleaf_core::math::Mat4::from_translation(Vec3::new(0.0, 0.0, 0.5) - frame.camera.origin.as_vec3());
+        item.color = Vec4::new(0.0, 0.0, 1.0, 1.0);
+        item.additive = additive;
+        frame.items.push(item);
+        gpu.render(&frame, 32, 32).unwrap().pixel(16, 16).unwrap()
+    };
+    let covered = front(false);
+    let added = front(true);
+    assert!(covered[2] > 200 && covered[0] < 40, "covering: blue {covered:?}");
+    assert!(added[2] > 200 && added[0] > 200, "adding: red and blue {added:?}");
+}

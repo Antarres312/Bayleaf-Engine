@@ -33,6 +33,8 @@ struct InstanceIn {
     @location(9) color: vec4<f32>,
     // x: metallic, y: roughness, z: selected (outlined in its own pass), w: unlit
     @location(10) params: vec4<f32>,
+    // The part of the images shown: offset xy, size zw (a flipbook's frame).
+    @location(12) uv_rect: vec4<f32>,
 };
 
 struct VertexOut {
@@ -55,7 +57,7 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VertexOut {
     out.normal = normal_matrix * v.normal;
     out.color = i.color;
     out.params = i.params;
-    out.uv = v.uv;
+    out.uv = v.uv * i.uv_rect.zw + i.uv_rect.xy;
     return out;
 }
 
@@ -360,7 +362,7 @@ fn vs_outline(v: VertexIn, i: InstanceIn) -> VertexOut {
     out.normal = normal;
     out.color = i.color;
     out.params = i.params;
-    out.uv = v.uv;
+    out.uv = v.uv * i.uv_rect.zw + i.uv_rect.xy;
     return out;
 }
 

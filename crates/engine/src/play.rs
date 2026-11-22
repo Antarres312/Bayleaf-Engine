@@ -21,6 +21,8 @@ pub(crate) struct Play {
     pub(crate) host: ScriptHost,
     pub(crate) time: f64,
     pub(crate) paused: bool,
+    /// The scene's particles while it plays.
+    pub(crate) particles: bayleaf_particles::Particles,
     since_reload_check: f32,
     /// Bodies of the objects with a Rigid Body or a Collider; `None` when the project turns physics off.
     #[cfg(feature = "physics")]
@@ -339,6 +341,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         snapshot,
         host,
         time: 0.0,
+        particles: bayleaf_particles::Particles::new(),
         paused: false,
         since_reload_check: 0.0,
         loaded: Vec::new(),
@@ -657,6 +660,7 @@ fn status(session: &mut Session, params: &Value) -> Result<Value, CommandError> 
         "time": session.play_time(),
         "scripts": scripts,
         "running": running,
+        "particles": session.play.as_ref().map_or(0, |p| p.particles.count(None)),
         "console": tail,
     }))
 }
@@ -692,6 +696,9 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
         drive_players(play, &mut session.scene, &input);
         play.host.update(&mut session.scene, dt, play.time, &input);
         apply_requests(session);
+        if let Some(play) = session.play.as_mut() {
+            play.particles.step(&session.scene, dt);
+        }
         #[cfg(feature = "physics")]
         if let Some(play) = session.play.as_mut()
             && let Some(physics) = play.physics.as_mut()
@@ -801,6 +808,14 @@ fn apply_requests(session: &mut Session) {
                     None
                 };
             }),
+            Request::Particles { object, action, .. } => {
+                let Some(play) = session.play.as_mut() else { continue };
+                match action {
+                    bayleaf_script::ParticleAction::Play => play.particles.play(object),
+                    bayleaf_script::ParticleAction::Stop => play.particles.stop(object),
+                    bayleaf_script::ParticleAction::Burst(count) => play.particles.burst(&session.scene, object, count),
+                }
+            }
             Request::PlaySound { by, object } => {
                 if let Err(error) = crate::sound::play_object(session, object) {
                     sound_problem(session, by, object, &error);
@@ -1086,6 +1101,11 @@ fn report_outcome(session: &mut Session, input: &std::sync::Arc<bayleaf_script::
 }
 
 impl Session {
+    /// The scene's particles while it plays.
+    pub fn particles(&self) -> Option<&bayleaf_particles::Particles> {
+        self.play.as_ref().map(|p| &p.particles)
+    }
+
     /// The game's state while it plays: the game's values, each player's, the saved ones and how
     /// the game ended. `None` outside play mode.
     pub fn game_state(&self) -> Option<bayleaf_script::GameState> {

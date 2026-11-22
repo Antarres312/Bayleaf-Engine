@@ -4,8 +4,8 @@ use bayleaf_ecs::{Entity, World};
 use serde_json::Value;
 
 use crate::components::{
-    AudioSource, Camera, CharacterBody, Collider, DirectionalLight, Environment, GameRules, InputMap, Joint, Mesh, Name, PlayerControl, PlayerStart,
-    PointLight, Prefab, RigidBody, SceneComponent, Scripts, SpotLight, Sprite, StreamedArea, Tags, Transform,
+    AudioSource, Camera, CharacterBody, Collider, DirectionalLight, Environment, GameRules, InputMap, Joint, Mesh, Name, ParticleEmitter, PlayerControl,
+    PlayerStart, PointLight, Prefab, RigidBody, SceneComponent, Scripts, SpotLight, Sprite, StreamedArea, Tags, Transform,
 };
 
 /// One component type known to the scene.
@@ -115,6 +115,7 @@ impl ComponentRegistry {
                 ComponentKind::of::<CharacterBody>(),
                 ComponentKind::of::<Joint>(),
                 ComponentKind::of::<AudioSource>(),
+                ComponentKind::of::<ParticleEmitter>(),
                 ComponentKind::of::<StreamedArea>(),
                 ComponentKind::of::<PlayerControl>(),
                 ComponentKind::of::<GameRules>(),

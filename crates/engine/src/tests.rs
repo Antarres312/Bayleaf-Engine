@@ -2120,3 +2120,43 @@ fn a_scenes_post_processing_asset_changes_its_render_as_far_as_the_project_allow
     assert!(registry.execute(&mut session, "post.get", &json!({"path": base.join("elsewhere.bpost")})).is_err());
     std::fs::remove_dir_all(&base).ok();
 }
+
+#[test]
+fn particles_play_with_the_game_and_scripts_burst_them() {
+    // A script that bursts 40 particles from its own object when it starts.
+    let burster = wat::parse_str(
+        r#"(module
+            (import "bayleaf" "self_handle" (func $me (result i32)))
+            (import "bayleaf" "particles_burst" (func $burst (param i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_start") (drop (call $burst (call $me) (i32.const 40)))))"#,
+    )
+    .unwrap();
+    let (registry, mut session, id, dir) = scripted_scene("particles", &burster);
+    let emitter = json!({"playing": false, "rate": 0, "lifetime": [5, 5]});
+    let object = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    registry.execute(&mut session, "scene.component.add", &json!({"id": object, "component": "particleEmitter"})).unwrap();
+    let mut value = session.scene().component(object, "particleEmitter").unwrap();
+    for (key, v) in emitter.as_object().unwrap() {
+        value[key] = v.clone();
+    }
+    registry.execute(&mut session, "scene.component.set", &json!({"id": object, "component": "particleEmitter", "value": value})).unwrap();
+    let rising = create(
+        &registry,
+        &mut session,
+        json!({"name": "Fountain", "components": {"particleEmitter": serde_json::to_value(bayleaf_scene::components::ParticleEmitter::default()).unwrap()}}),
+    );
+
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 1.0 / 60.0, "steps": 60})).unwrap();
+    let particles = session.particles().unwrap();
+    assert_eq!(particles.count(Some(object)), 40, "the script's burst, from an emitter that is not playing");
+    let fountain = bayleaf_core::StableId::parse_hex(&rising).unwrap();
+    assert!(particles.count(Some(fountain)) > 0, "a playing emitter emits with the game");
+    let status = registry.execute(&mut session, "play.status", &Value::Null).unwrap();
+    assert!(status["particles"].as_u64().unwrap() >= 40);
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert!(session.particles().is_none(), "stopping takes them away");
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -28,6 +28,9 @@ mod raw {
         pub fn name_of(handle: i32, out: *mut u8, cap: usize) -> i32;
         pub fn object_ref(handle: i32) -> i32;
         pub fn scene_load(path_ptr: *const u8, path_len: usize, additive: i32) -> i32;
+        pub fn particles_play(handle: i32) -> i32;
+        pub fn particles_stop(handle: i32) -> i32;
+        pub fn particles_burst(handle: i32, count: i32) -> i32;
         pub fn sound_play(handle: i32) -> i32;
         pub fn sound_stop(handle: i32) -> i32;
         pub fn sound_play_at(path_ptr: *const u8, path_len: usize, x: f32, y: f32, z: f32, volume: f32) -> i32;
@@ -302,6 +305,15 @@ mod raw {
     pub unsafe fn scene_load(ptr: *const u8, n: usize, additive: i32) -> i32 {
         // SAFETY: the safe wrappers pass a live slice.
         text_call("scene_load", unsafe { bytes(ptr, n) }, &[I32(additive)])
+    }
+    pub unsafe fn particles_play(handle: i32) -> i32 {
+        plain("particles_play", &[I32(handle)])
+    }
+    pub unsafe fn particles_stop(handle: i32) -> i32 {
+        plain("particles_stop", &[I32(handle)])
+    }
+    pub unsafe fn particles_burst(handle: i32, count: i32) -> i32 {
+        plain("particles_burst", &[I32(handle), I32(count)])
     }
     pub unsafe fn sound_play(handle: i32) -> i32 {
         plain("sound_play", &[I32(handle)])
@@ -655,6 +667,21 @@ pub(crate) fn find_with(kind: &str, index: i32) -> i32 {
 pub(crate) fn count_with(kind: &str) -> i32 {
     // SAFETY: the pointer and length describe `kind`; the host only reads.
     unsafe { raw::count_with(kind.as_ptr(), kind.len()) }
+}
+
+pub(crate) fn particles_play(handle: i32) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::particles_play(handle) != 0 }
+}
+
+pub(crate) fn particles_stop(handle: i32) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::particles_stop(handle) != 0 }
+}
+
+pub(crate) fn particles_burst(handle: i32, count: u32) -> bool {
+    // SAFETY: plain numbers in and out.
+    unsafe { raw::particles_burst(handle, i32::try_from(count).unwrap_or(i32::MAX)) != 0 }
 }
 
 pub(crate) fn sound_play(handle: i32) -> bool {

@@ -28,6 +28,7 @@ mod stream;
 pub use bayleaf_streaming as streaming;
 
 pub use bayleaf_graph as graph;
+pub use bayleaf_particles as particles;
 pub use bayleaf_render as render;
 pub use bayleaf_scene as scene;
 pub use bayleaf_script as script;

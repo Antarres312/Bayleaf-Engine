@@ -715,6 +715,20 @@ fn fault(caller: &mut Caller<'_, HostState>, message: String) -> Error {
     error(message)
 }
 
+/// Records a request to the Particle Emitter of the object with `handle`, applied after the step.
+fn particles_request(caller: &mut Caller<'_, HostState>, what: &str, handle: i32, action: crate::ParticleAction) -> Result<i32, Error> {
+    let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+        return Err(fault(caller, format!("{what}: there is no object with handle {handle}")));
+    };
+    let state = caller.data_mut();
+    if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+        return Ok(0);
+    }
+    let by = state.object;
+    state.requests.push(Request::Particles { by, object, action });
+    Ok(1)
+}
+
 /// Records a physics request for the object with `handle`, applied after the step.
 fn physics_request(
     caller: &mut Caller<'_, HostState>,
@@ -1238,6 +1252,15 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             let by = state.object;
             state.requests.push(Request::Spawn { by, prefab, position: [x, y, z] });
             Ok(1)
+        })?;
+        for (name, action) in [("particles_play", crate::ParticleAction::Play), ("particles_stop", crate::ParticleAction::Stop)] {
+            linker.func_wrap("bayleaf", name, move |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, Error> {
+                particles_request(&mut caller, name, handle, action)
+            })?;
+        }
+        linker.func_wrap("bayleaf", "particles_burst", |mut caller: Caller<'_, HostState>, handle: i32, count: i32| -> Result<i32, Error> {
+            let count = u32::try_from(count).map_err(|_| fault(&mut caller, "particles_burst: the count must not be negative".to_owned()))?;
+            particles_request(&mut caller, "particles_burst", handle, crate::ParticleAction::Burst(count))
         })?;
         for (name, stop) in [("sound_play", false), ("sound_stop", true)] {
             linker.func_wrap("bayleaf", name, move |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, Error> {

@@ -182,3 +182,11 @@ with kind `postProcessing` makes one. `scene.settings.set` takes `postProcessing
 a Camera component's `postProcessing` field names its own (used by the Game view, the player and
 `scene.render` through that camera), and `settings.graphics.effects` in the project settings turns
 effects off for every scene (project format 8; scene format 18).
+
+A Particle Emitter component (`particleEmitter`, scene format 19) starts particles while the game
+plays: its cycle (`playing`, `looping`, `duration`, `rate`, `burst`, `maxParticles`), where they start
+(`shape`: `point`, `sphere`, `cone` or `box`, with `radius`, `angle` and `boxSize`), how they live
+(`lifetime`, `speed`, `gravity`, `drag`, `spin`, and size and colour at the start, middle and end of
+their life) and how they draw (`render`: `sprite`, `stretched` or `mesh` with `meshShape`; `image`,
+`flipbookColumns`/`flipbookRows`, `material`, `blend`: `alpha` or `additive`; `space`: `world` or
+`local`). `play.status` counts the particles alive; scripts start, stop and burst emitters.

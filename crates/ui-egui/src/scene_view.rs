@@ -87,6 +87,11 @@ pub(crate) struct SceneView {
     pub show_colliders: bool,
     /// Shows the scene's post-processing; off, the plain picture.
     pub show_effects: bool,
+    /// The selected emitter's particles while the game is not playing, paused or not.
+    pub(crate) preview: bayleaf_engine::particles::Particles,
+    preview_paused: bool,
+    /// When the preview last moved on.
+    preview_at: Option<std::time::Instant>,
     gpu: Option<GpuView>,
     framed_once: bool,
     /// Back was pressed with the open prefab changed: the bar asks what to do with the changes.
@@ -129,7 +134,9 @@ impl SceneView {
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgpu::RenderState>) {
     prefab_bar(editor, ui);
+    particles_bar(editor, ui);
     let mut view = std::mem::take(&mut editor.scene_view);
+    step_preview(&mut view, editor, ui);
     if let Some(command) = toolbar(&mut view, editor, ui) {
         editor.dispatch(command, &serde_json::Value::Null, None);
     }
@@ -198,6 +205,68 @@ fn prefab_bar(editor: &mut Editor, ui: &mut egui::Ui) {
         }
         editor.dispatch(id, &params, None);
     }
+}
+
+/// Particles: the game's while it plays; otherwise the selected emitter's, played here.
+fn add_particles(
+    preview: &bayleaf_engine::particles::Particles,
+    editor: &Editor,
+    frame: &mut bayleaf_render::Frame,
+    assets: &mut dyn bayleaf_render::AssetSource,
+) {
+    let scene = editor.session.scene();
+    let particles = editor.session.particles().unwrap_or(preview);
+    frame.items.extend(particles.draw_items(scene, &frame.camera, assets));
+}
+
+/// Moves the selected emitter's preview on by the time since the last frame (unless it is paused
+/// or the game plays, when the game's particles show).
+fn step_preview(view: &mut SceneView, editor: &Editor, ui: &egui::Ui) {
+    let now = std::time::Instant::now();
+    let dt = view.preview_at.map_or(0.0, |at| now.duration_since(at).as_secs_f32());
+    view.preview_at = Some(now);
+    if editor.session.is_playing() {
+        ui.ctx().request_repaint();
+        return;
+    }
+    let scene = editor.session.scene();
+    let Some(id) = editor.selected.filter(|id| scene.get::<bayleaf_engine::scene::components::ParticleEmitter>(*id).is_some()) else {
+        view.preview = bayleaf_engine::particles::Particles::new();
+        return;
+    };
+    if !view.preview_paused {
+        view.preview.step_one(scene, id, dt);
+        ui.ctx().request_repaint();
+    }
+}
+
+/// With an emitter selected and the game not playing: its particles' preview, to pause, play and
+/// start again.
+fn particles_bar(editor: &mut Editor, ui: &mut egui::Ui) {
+    let scene = editor.session.scene();
+    let Some(id) = editor.selected.filter(|id| scene.get::<bayleaf_engine::scene::components::ParticleEmitter>(*id).is_some()) else { return };
+    if editor.session.is_playing() {
+        return;
+    }
+    let t = theme::tokens(ui);
+    let view = &mut editor.scene_view;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(tl("Particle Emitter")).color(t.text_muted));
+        let (label, hint) = if view.preview_paused { ("Play", "Go on with the preview") } else { ("Pause", "Hold the particles where they are") };
+        let toggle = ui.button(tl(label)).on_hover_text(tl(hint));
+        ui.ctx().accesskit_node_builder(toggle.id, |node| node.set_label(crate::i18n::tf("{action} particles", &[("action", tl(label))])));
+        if toggle.clicked() {
+            view.preview_paused = !view.preview_paused;
+        }
+        let restart = ui.button(tl("Restart")).on_hover_text(tl("Start the emitter again from nothing"));
+        ui.ctx().accesskit_node_builder(restart.id, |node| node.set_label(tl("Restart particles")));
+        if restart.clicked() {
+            view.preview.restart(id);
+            view.preview_paused = false;
+        }
+        let count = view.preview.count(Some(id)) as u64;
+        ui.label(egui::RichText::new(crate::i18n::tn(count, "1 particle", "{n} particles")).small().color(t.text_muted));
+    });
 }
 
 /// View controls and the play controls. Returns a play command to run.
@@ -303,6 +372,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let mut assets = bayleaf_render::FileAssets { base, materials: &mut view.materials, cache: &mut view.assets, allow: &allow, warnings: Vec::new() };
     let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time, shadows, effects };
     let mut frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut assets);
+    add_particles(&view.preview, editor, &mut frame, &mut assets);
     frame.highlighted = editor.also_selected.clone();
     // The object a dragged script would go to is outlined too.
     frame.highlighted.extend(view.script_target);

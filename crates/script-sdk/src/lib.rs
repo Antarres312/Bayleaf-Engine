@@ -230,6 +230,21 @@ impl Object {
         usize::try_from(abi::count_with(kind)).unwrap_or(0)
     }
 
+    /// Starts the object's Particle Emitter (a new cycle, with its burst). False when it has none.
+    pub fn play_particles(self) -> bool {
+        abi::particles_play(self.0)
+    }
+
+    /// Stops the object's Particle Emitter starting particles; those alive live out their lives.
+    pub fn stop_particles(self) -> bool {
+        abi::particles_stop(self.0)
+    }
+
+    /// Starts `count` particles at once from the object's Particle Emitter.
+    pub fn burst_particles(self, count: u32) -> bool {
+        abi::particles_burst(self.0, count)
+    }
+
     /// Plays its Audio Source after this step; false when this call asked too often.
     pub fn play_sound(self) -> bool {
         abi::sound_play(self.0)

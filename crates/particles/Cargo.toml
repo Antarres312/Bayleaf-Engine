@@ -1,0 +1,19 @@
+[package]
+name = "bayleaf-particles"
+description = "L4: particles: Particle Emitter components simulated on the CPU and drawn as camera-facing images, stretched images or small shapes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bayleaf-core = { workspace = true }
+bayleaf-scene = { workspace = true }
+bayleaf-render = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

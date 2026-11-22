@@ -2227,3 +2227,31 @@ fn the_scene_s_settings_make_a_post_processing_asset_the_inspector_edits() {
     assert!(!after.tone_mapping.enabled, "unticking Tone Mapping writes the file through post.set");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_selected_emitter_plays_its_particles_in_the_scene_view_and_pauses() {
+    let mut harness = harness();
+    let editor = harness.state_mut();
+    let id = editor.dispatch("scene.object.create", &json!({ "name": "Smoke" }), None).unwrap()["id"].as_str().map(str::to_owned).unwrap();
+    let id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    editor.dispatch("scene.component.add", &json!({ "id": id, "component": "particleEmitter" }), None);
+    editor.select_only(Some(id));
+    harness.run_steps(2);
+    let count = |harness: &Harness<'static, Editor>| harness.state().scene_view.preview.count(Some(id));
+    // The preview runs on time as it passes between frames.
+    for _ in 0..5 {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        harness.run_steps(1);
+    }
+    assert!(count(&harness) > 0, "the preview emits");
+    assert!(harness.query_by_label("Image").is_some(), "the emitter's image is picked from the project's files");
+    harness.get_by_label("Pause particles").click();
+    harness.run_steps(1);
+    let held = count(&harness);
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    harness.run_steps(2);
+    assert_eq!(count(&harness), held, "paused, nothing moves on");
+    harness.get_by_label("Restart particles").click();
+    harness.run_steps(1);
+    assert!(count(&harness) <= 1, "restart starts from nothing");
+}

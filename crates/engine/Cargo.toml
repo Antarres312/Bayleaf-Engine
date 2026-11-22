@@ -26,6 +26,7 @@ bayleaf-graph = { workspace = true }
 bayleaf-scene = { workspace = true }
 bayleaf-render = { workspace = true }
 bayleaf-script = { workspace = true }
+bayleaf-particles = { workspace = true }
 bayleaf-streaming = { workspace = true, optional = true }
 bayleaf-physics = { workspace = true, optional = true }
 bayleaf-audio = { workspace = true, optional = true }

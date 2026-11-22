@@ -607,8 +607,32 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
     let rules = scene.get::<GameRules>(id).is_some();
     let audio = scene.get::<AudioSource>(id).cloned();
     let camera = scene.get::<bayleaf_engine::scene::components::Camera>(id).cloned();
+    let emitter = scene.get::<bayleaf_engine::scene::components::ParticleEmitter>(id).cloned();
     let streamed = scene.get::<StreamedArea>(id).cloned();
     let mut fields = Vec::new();
+    if let Some(emitter) = emitter {
+        let missing = |path: &str| (!path.is_empty() && !base.join(path).is_file()).then(|| crate::i18n::tf("{file} is not there", &[("file", path)]));
+        fields.push(FileField {
+            component: "particleEmitter",
+            field: "image",
+            label: "Image",
+            none: "None (a soft dot)",
+            no_files: "No PNG or JPEG images in the project folder",
+            files: editor.project.image_files(),
+            problem: missing(&emitter.image),
+            editable: false,
+        });
+        fields.push(FileField {
+            component: "particleEmitter",
+            field: "material",
+            label: "Material",
+            none: "None (colour and image)",
+            no_files: "No .bmaterial files in the project folder",
+            files: editor.project.material_files(),
+            problem: missing(&emitter.material),
+            editable: true,
+        });
+    }
     if let Some(camera) = camera {
         let missing = !camera.post_processing.is_empty() && !base.join(&camera.post_processing).is_file();
         fields.push(FileField {

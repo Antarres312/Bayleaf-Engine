@@ -199,7 +199,15 @@ pub struct DrawItem {
     pub textures: Vec<Option<Arc<Image>>>,
     /// The model's triangles this item draws (first index, count); None for all of them.
     pub part: Option<(u32, u32)>,
+    /// Adds its light to what is behind instead of covering it (fire, sparks).
+    pub additive: bool,
+    /// The part of its images it shows: offset x and y, then width and height, in texture
+    /// coordinates; `[0, 0, 1, 1]` for all (a flipbook's frame is less).
+    pub uv_rect: [f32; 4],
 }
+
+/// The whole image, as most items show it.
+pub const WHOLE_IMAGE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 
 impl DrawItem {
     /// The box around the item before its model matrix: the model's, or the unit shape's.
@@ -453,6 +461,8 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
                 material,
                 mesh: model.clone(),
                 part: None,
+                additive: false,
+                uv_rect: WHOLE_IMAGE,
             };
             // A model's own materials tint the mesh colour and set metallic and roughness, unless a
             // material graph is chosen; a model with several draws one item per part.
@@ -490,6 +500,8 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
                 mesh: None,
                 textures: if sprite.image.is_empty() { Vec::new() } else { vec![assets.image(&sprite.image)] },
                 part: None,
+                additive: false,
+                uv_rect: WHOLE_IMAGE,
             });
         }
         let direction = world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Y);
@@ -596,6 +608,8 @@ pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Ar
         mesh: None,
         textures,
         part: None,
+        additive: false,
+        uv_rect: WHOLE_IMAGE,
     };
     Frame {
         camera: CameraView::look_at(Vec3::new(0.0, 0.3, 1.9), Vec3::ZERO, 36.0, aspect),

@@ -17,8 +17,9 @@ pub const FORMAT: &str = "bayleaf.scene";
 /// `audioSource`; version 15 added `streamedArea`; version 16 lets
 /// script properties be true/false, three numbers or text; version 17 added the scene's `settings` (its lighting
 /// asset), into which opening an older scene moves its Environment component; version 18 added the
-/// post-processing asset a scene's settings and a camera may name. Older files still load.
-pub const VERSION: u32 = 18;
+/// post-processing asset a scene's settings and a camera may name; version 19 added `particleEmitter`.
+/// Older files still load.
+pub const VERSION: u32 = 19;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.

@@ -72,6 +72,9 @@ this: there is no list property type yet.
 | `position_get_of` | `(handle: i32, out: i32)` | writes 3 little-endian `f64`: the object's local position in double precision, as this call last set it, else as the step began |
 | `position_set_of` | `(handle: i32, ptr: i32)` | reads 3 `f64` and sets the position, keeping rotation and scale; applied when the call ends; non-finite values are an error |
 | `spawn` | `(path_ptr: i32, path_len: i32, x: f32, y: f32, z: f32) -> i32` | asks for a copy of a `.bprefab` file (relative to the project folder) at a world position, after the step; `1` when asked, `0` when this call already asked 64 times |
+| `particles_play` | `(handle: i32) -> i32` | starts the object's Particle Emitter after the step (a new cycle, with its burst); `1` when asked, `0` when this call already asked 64 times; Rust: `Object::play_particles` |
+| `particles_stop` | `(handle: i32) -> i32` | stops it starting particles (those alive live out their lives); as `particles_play`; Rust: `Object::stop_particles` |
+| `particles_burst` | `(handle: i32, count: i32) -> i32` | starts `count` particles at once (as many as it has room for); as `particles_play`; Rust: `Object::burst_particles` |
 | `sound_play` | `(handle: i32) -> i32` | plays the object's Audio Source after the step; `1` when asked, `0` when this call already asked 64 times |
 | `sound_stop` | `(handle: i32) -> i32` | stops the sounds the object plays, after the step; `1` or `0` as above |
 | `sound_play_at` | `(path_ptr: i32, path_len: i32, x: f32, y: f32, z: f32, volume: f32) -> i32` | plays a sound file (relative to the project folder) once from a world position after the step, at a volume from 0 to 4; `1` or `0` as above |

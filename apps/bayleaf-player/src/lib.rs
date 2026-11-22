@@ -121,7 +121,10 @@ impl Player {
         // The game camera's own post-processing, else the scene's, as the project allows.
         let effects = render::Effects { show: true, allowed: self.effects, camera: render::camera_object(scene) };
         let options = FrameOptions { show_grid: false, selected: None, time: self.session.play_time() as f32, shadows: self.shadows, effects };
-        let frame = render::extract_with(scene, camera, options, &mut assets);
+        let mut frame = render::extract_with(scene, camera, options, &mut assets);
+        if let Some(particles) = self.session.particles() {
+            frame.items.extend(particles.draw_items(scene, &frame.camera, &mut assets));
+        }
         view.renderer.render(&gpu.device, &gpu.queue, &view.target, &frame);
 
         let image = egui::Image::new(egui::load::SizedTexture::new(view.texture, size)).sense(egui::Sense::click_and_drag());

@@ -78,6 +78,7 @@ struct InstanceRaw {
     normal: [[f32; 4]; 3],
     color: [f32; 4],
     params: [f32; 4],
+    uv_rect: [f32; 4],
 }
 
 impl InstanceRaw {
@@ -88,6 +89,7 @@ impl InstanceRaw {
             normal: [n.x_axis.extend(0.0).to_array(), n.y_axis.extend(0.0).to_array(), n.z_axis.extend(0.0).to_array()],
             color: item.color.to_array(),
             params: [item.metallic, item.roughness, f32::from(u8::from(selected)), f32::from(u8::from(item.unlit))],
+            uv_rect: item.uv_rect,
         }
     }
 }
@@ -221,6 +223,8 @@ pub struct Renderer {
     pipelines: HashMap<u64, Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>>,
     /// Outline pipelines of the materials that have an outline, by material key.
     outlines: HashMap<u64, wgpu::RenderPipeline>,
+    /// Additive pipelines by material key (0 the built-in surface).
+    additive: HashMap<u64, wgpu::RenderPipeline>,
     post: crate::post::Post,
     /// Why the last refused material shader was refused.
     material_error: Option<String>,
@@ -387,6 +391,7 @@ impl Renderer {
         let sky = sky_pipeline(device, &layout, &sky_shader);
         let (mask_pipeline, outline_pipeline, outline_layout) = outline_pipelines(device, &globals_layout);
         let post = crate::post::Post::new(device, &globals_layout, with_common(include_str!("shaders/post.wgsl")));
+        let additive = HashMap::from([(0, additive_mesh_pipeline(device, &layout, &mesh_shader))]);
 
         let meshes = Shape::ALL
             .iter()
@@ -414,6 +419,7 @@ impl Renderer {
             layout,
             pipelines,
             outlines: HashMap::new(),
+            additive,
             post,
             material_error: None,
             grid,
@@ -463,11 +469,13 @@ impl Renderer {
         });
         let pipelines = (mesh_pipeline(device, &self.layout, &shader, false), mesh_pipeline(device, &self.layout, &shader, true));
         let outline = material.outline.is_some().then(|| outline_mesh_pipeline(device, &self.layout, &shader));
+        let additive = additive_mesh_pipeline(device, &self.layout, &shader);
         let entry = match pollster::block_on(scope.pop()) {
             None => {
                 if let Some(outline) = outline {
                     self.outlines.insert(material.key, outline);
                 }
+                self.additive.insert(material.key, additive);
                 Some(pipelines)
             }
             Some(error) => {
@@ -682,9 +690,12 @@ impl Renderer {
             }
 
             for (offset, item) in transparent.iter().enumerate() {
-                if let (Some(pipeline), Some(mesh), Some(group)) =
-                    (self.pipeline(material_key(item), true), self.gpu_mesh(item), self.texture_groups.get(&texture_key(item)))
-                {
+                let pipeline = if item.additive {
+                    self.additive.get(&material_key(item)).or_else(|| self.additive.get(&0))
+                } else {
+                    self.pipeline(material_key(item), true)
+                };
+                if let (Some(pipeline), Some(mesh), Some(group)) = (pipeline, self.gpu_mesh(item), self.texture_groups.get(&texture_key(item))) {
                     let index = (opaque.len() + offset) as u32;
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(2, group, &[]);
@@ -1112,14 +1123,19 @@ fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
 }
 
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 11 => Float32x2];
-const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
     2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
     6 => Float32x4, 7 => Float32x4, 8 => Float32x4,
-    9 => Float32x4, 10 => Float32x4,
+    9 => Float32x4, 10 => Float32x4, 12 => Float32x4,
 ];
 
 fn mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, transparent: bool) -> wgpu::RenderPipeline {
     mesh_pipeline_with(device, layout, shader, transparent, false)
+}
+
+/// Items that add their light (particles of fire and sparks): no depth written, colour added.
+fn additive_mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
+    mesh_pipeline_build(device, layout, shader, true, false, true)
 }
 
 /// A material's outline: its back faces only (front faces culled), grown by `vs_outline`.
@@ -1133,6 +1149,23 @@ fn mesh_pipeline_with(
     shader: &wgpu::ShaderModule,
     transparent: bool,
     outline: bool,
+) -> wgpu::RenderPipeline {
+    mesh_pipeline_build(device, layout, shader, transparent, outline, false)
+}
+
+/// Light added to what is behind, weighted by the item's opacity.
+const ADDITIVE: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+    alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+};
+
+fn mesh_pipeline_build(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    transparent: bool,
+    outline: bool,
+    additive: bool,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(if outline {
@@ -1177,7 +1210,7 @@ fn mesh_pipeline_with(
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format: HDR_FORMAT,
-                blend: transparent.then_some(wgpu::BlendState::ALPHA_BLENDING),
+                blend: if additive { Some(ADDITIVE) } else { transparent.then_some(wgpu::BlendState::ALPHA_BLENDING) },
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),

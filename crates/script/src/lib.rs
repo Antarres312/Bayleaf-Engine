@@ -73,6 +73,15 @@ pub enum ScriptError {
     Unavailable(String),
 }
 
+/// What a script asks of a Particle Emitter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParticleAction {
+    Play,
+    Stop,
+    /// Start this many particles at once.
+    Burst(u32),
+}
+
 /// One problem with one of an object's scripts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScriptFault {
@@ -154,6 +163,8 @@ pub enum Request {
     Walk { by: StableId, object: StableId, velocity: [f32; 3] },
     /// Make a character on the ground jump with an upward speed.
     Jump { by: StableId, object: StableId, speed: f32 },
+    /// Start, stop or burst the object's Particle Emitter.
+    Particles { by: StableId, object: StableId, action: ParticleAction },
     /// Play the object's Audio Source.
     PlaySound { by: StableId, object: StableId },
     /// Stop the sounds the object plays.
