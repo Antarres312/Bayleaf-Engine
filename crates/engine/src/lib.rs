@@ -18,6 +18,7 @@ pub mod project_cmds;
 pub mod saved;
 mod scene_cmds;
 mod sound;
+mod stream;
 
 /// Optional world streaming, present only with the `streaming` feature.
 #[cfg(feature = "streaming")]
@@ -367,6 +368,22 @@ pub enum Prompt {
     NewProject,
     /// `{"path"}` of a `.bproject` file.
     OpenProject,
+    /// A form of named values, sent as an object of them.
+    Fields(&'static [PromptField]),
+}
+
+/// One value a [`Prompt::Fields`] form asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptField {
+    /// The params key.
+    pub name: &'static str,
+    /// English label. It is the translation key.
+    pub label: &'static str,
+    /// What the form starts with.
+    pub default: &'static str,
+    /// Sent as a number rather than text.
+    pub number: bool,
 }
 
 /// One registered command.
@@ -415,6 +432,7 @@ impl CommandRegistry {
         commands.extend(scene_cmds::commands());
         commands.extend(play::commands());
         commands.extend(sound::commands());
+        commands.extend(stream::commands());
         commands.extend(graph_cmds::commands());
         commands.extend(project_cmds::commands());
         commands.extend(prefab_cmds::commands());

@@ -1595,3 +1595,44 @@ fn a_scene_file_is_dragged_onto_a_load_scene_node() {
     assert_eq!(graph(&harness).value(load, "scene").and_then(|v| v.as_str()), Some("level.bscene"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn split_into_streamed_areas_asks_with_a_form_that_takes_the_keyboard() {
+    let mut harness = harness();
+    let base = std::env::temp_dir().join(format!("bayleaf-ui-split-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": base.join("World") }), None);
+    harness.state_mut().dispatch("scene.object.create", &json!({ "name": "Tree" }), None);
+    harness.run();
+    // The menu bar's Object, above the panels' own.
+    harness.query_all_by_label("Object").min_by(|a, b| a.rect().top().total_cmp(&b.rect().top())).unwrap().click();
+    harness.run();
+    harness.query_all_by_label_contains("Split into Streamed Areas…").next().unwrap().click();
+    harness.run();
+    let size = harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Cell Size");
+    assert!(size.is_focused(), "the first field takes focus");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Cell Size").type_text("wide");
+    harness.run();
+    harness.get_by_role_and_label(egui::accesskit::Role::Button, "Split into Streamed Areas").click();
+    harness.run();
+    assert!(harness.query_by_label_contains("Cell Size must be a number").is_some(), "the form says what is wrong and stays");
+    assert!(harness.state().session.scene().children(None).iter().all(|id| harness.state().session.scene().name(*id) != Some("Streamed World")));
+
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Cell Size").click();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Cell Size").type_text("50");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(
+        harness.query_by_role_and_label(egui::accesskit::Role::TextInput, "Cell Size").is_none(),
+        "the form closes once it ran: {}",
+        harness.state().status
+    );
+    let scene = harness.state().session.scene();
+    assert!(scene.children(None).iter().any(|id| scene.name(*id) == Some("Streamed World")), "the split happened");
+    assert!(base.join("World/cells").is_dir());
+    std::fs::remove_dir_all(&base).ok();
+}

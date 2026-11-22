@@ -1641,3 +1641,81 @@ fn a_build_without_sound_says_so() {
     let error = registry.execute(&mut session, "audio.playing", &Value::Null).unwrap_err().to_string();
     assert!(error.contains("no sound"), "{error}");
 }
+
+/// The object named `name` in the session's scene, if any.
+#[cfg(feature = "streaming")]
+fn named(session: &Session, name: &str) -> Option<bayleaf_core::StableId> {
+    session.scene().world_matrices().into_iter().map(|(id, _)| id).find(|id| session.scene().name(*id) == Some(name))
+}
+
+#[cfg(feature = "streaming")]
+#[test]
+fn a_split_world_streams_its_cells_in_and_out_around_the_camera() {
+    use bayleaf_scene::components::Transform;
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-stream-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let place = |x: f64, z: f64| json!({"position": [x, 0.0, z], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0]});
+    let camera = create(
+        &registry,
+        &mut session,
+        json!({"name": "Camera", "components": {"transform": place(0.0, 0.0), "camera": serde_json::to_value(bayleaf_scene::components::Camera::default()).unwrap()}}),
+    );
+    create(&registry, &mut session, json!({"name": "Tree", "components": {"transform": place(30.0, 0.0)}}));
+    create(&registry, &mut session, json!({"name": "Rock", "components": {"transform": place(210.0, 5.0)}}));
+    create(
+        &registry,
+        &mut session,
+        json!({"name": "Lost", "components": {"streamedArea": {"scene": "cells/missing.bscene", "loadDistance": 10, "keepMargin": 1}}}),
+    );
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("world.bscene")})).unwrap();
+
+    assert!(registry.execute(&mut session, "stream.split", &json!({"cellSize": 100, "folder": "../outside"})).is_err());
+    let split = registry.execute(&mut session, "stream.split", &json!({"cellSize": 100, "folder": "cells"})).unwrap();
+    assert_eq!(split["moved"], 2, "the camera and the area stay: {split}");
+    assert_eq!(split["areas"].as_array().unwrap().len(), 2, "one area per cell with objects");
+    assert!(named(&session, "Tree").is_none() && named(&session, "Camera").is_some());
+    assert!(dir.join("cells/cell_0_0.bscene").is_file() && dir.join("cells/cell_2_0.bscene").is_file());
+    assert!(registry.execute(&mut session, "stream.split", &json!({"cellSize": 100, "folder": "cells"})).is_err(), "nothing left to split");
+
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "stream.wait", &json!({})).unwrap();
+    let areas = registry.execute(&mut session, "stream.areas", &Value::Null).unwrap();
+    let state = |areas: &Value, scene: &str| areas["areas"].as_array().unwrap().iter().find(|a| a["scene"] == scene).map(|a| a["state"].clone()).unwrap();
+    assert_eq!(state(&areas, "cells/cell_0_0.bscene"), "here", "the near cell came: {areas}");
+    assert_eq!(state(&areas, "cells/cell_2_0.bscene"), "away", "the far one did not");
+    assert_eq!(state(&areas, "cells/missing.bscene"), "failed");
+    assert!(session.console.iter().any(|l| l.text.contains("missing.bscene could not be added")), "the failure is in the console");
+    let tree = named(&session, "Tree").expect("the tree came back with its cell");
+    let at = session.scene().world_matrix(tree).unwrap().w_axis.truncate();
+    assert!(at.distance(bayleaf_core::math::DVec3::new(30.0, 0.0, 0.0)) < 1e-9, "where it was before the split: {at}");
+
+    let camera = bayleaf_core::StableId::parse_hex(&camera).unwrap();
+    session.scene.set(camera, Transform { position: [250.0, 0.0, 50.0], ..Transform::default() }).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.02})).unwrap();
+    registry.execute(&mut session, "stream.wait", &json!({})).unwrap();
+    let areas = registry.execute(&mut session, "stream.areas", &Value::Null).unwrap();
+    assert_eq!(state(&areas, "cells/cell_0_0.bscene"), "away", "the cell left behind went: {areas}");
+    assert_eq!(state(&areas, "cells/cell_2_0.bscene"), "here");
+    assert!(named(&session, "Tree").is_none() && named(&session, "Rock").is_some());
+
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert!(named(&session, "Rock").is_none(), "stop brings back the scene without streamed objects");
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert!(named(&session, "Tree").is_some() && named(&session, "Streamed World").is_none(), "the split undoes");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(not(feature = "streaming"))]
+#[test]
+fn a_build_without_streaming_says_so() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    create(&registry, &mut session, json!({"name": "Area", "components": {"streamedArea": {"scene": "a.bscene", "loadDistance": 10, "keepMargin": 1}}}));
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    assert!(registry.execute(&mut session, "stream.areas", &Value::Null).is_err());
+    assert!(session.console.iter().any(|l| l.text.contains("no world streaming")));
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+}

@@ -192,6 +192,11 @@ impl ProjectView {
         self.files_of(&[Kind::Model])
     }
 
+    /// Every scene file in the project.
+    pub(crate) fn scene_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::Scene])
+    }
+
     /// Every sound file in the project.
     pub(crate) fn sound_files(&self) -> Vec<String> {
         self.files_of(&[Kind::Sound])

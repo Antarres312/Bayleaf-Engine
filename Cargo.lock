@@ -659,6 +659,10 @@ version = "0.1.0"
 [[package]]
 name = "bayleaf-streaming"
 version = "0.1.0"
+dependencies = [
+ "bayleaf-core",
+ "bayleaf-scene",
+]
 
 [[package]]
 name = "bayleaf-ui-egui"

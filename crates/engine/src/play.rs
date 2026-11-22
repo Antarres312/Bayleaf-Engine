@@ -42,6 +42,11 @@ pub(crate) struct Play {
     pub(crate) audio: Option<bayleaf_audio::Audio>,
     /// Scenes added while playing (Load Scene with Add), with their top objects, in load order.
     loaded: Vec<(String, Vec<bayleaf_core::StableId>)>,
+    /// Streamed Areas that are not away.
+    #[cfg(feature = "streaming")]
+    pub(crate) streamer: bayleaf_streaming::Streamer,
+    /// Whether play mode already said Streamed Areas cannot work (no camera, or no streaming in this build).
+    pub(crate) told_streaming: bool,
 }
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
@@ -281,6 +286,9 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         paused: false,
         since_reload_check: 0.0,
         loaded: Vec::new(),
+        #[cfg(feature = "streaming")]
+        streamer: bayleaf_streaming::Streamer::new(),
+        told_streaming: false,
         #[cfg(feature = "audio")]
         audio: Some(sound_open.0),
     });
@@ -292,6 +300,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         session.log(Level::Error, problem);
     }
     session.log(Level::Info, format!("Play mode started: {running} of {scripts} scripts running."));
+    crate::stream::update(session);
     for problem in input_problems {
         session.log(Level::Error, problem);
     }
@@ -351,6 +360,23 @@ fn read_scene(session: &Session, relative: &str) -> Result<Scene, String> {
     Ok(scene)
 }
 
+/// Adds a scene read while playing to the playing scene, under `parent` (or at the top): its
+/// objects join, their scripts and sounds start. Returns the new top objects.
+pub(crate) fn add_scene(session: &mut Session, loaded: &Scene, parent: Option<bayleaf_core::StableId>) -> Result<Vec<bayleaf_core::StableId>, String> {
+    readable_modules(session, loaded).map_err(|e| e.to_string())?;
+    if session.scene.object_count() + loaded.object_count() > MAX_OBJECTS {
+        return Err(format!("the scene would have more than {MAX_OBJECTS} objects"));
+    }
+    let objects = loaded.export(loaded.children(None)).map_err(|e| e.to_string())?;
+    let roots = session.scene.import(&objects, parent, None).map_err(|e| e.to_string())?;
+    start_scripts_of(session, &roots)?;
+    for problem in crate::sound::start_sources(session, Some(&roots)) {
+        session.log(Level::Error, problem);
+    }
+    drain(session);
+    Ok(roots)
+}
+
 /// Loads a scene while playing. Added (`additive`), its objects join the playing scene, their
 /// scripts start, and Unload Scene removes them again. Otherwise it takes the playing scene's
 /// place: every script starts again with the game's state kept, and physics starts over. Stop
@@ -361,16 +387,7 @@ pub(crate) fn load_scene(session: &mut Session, relative: &str, additive: bool) 
     }
     let loaded = read_scene(session, relative)?;
     if additive {
-        if session.scene.object_count() + loaded.object_count() > MAX_OBJECTS {
-            return Err(format!("the scene would have more than {MAX_OBJECTS} objects"));
-        }
-        let objects = loaded.export(loaded.children(None)).map_err(|e| e.to_string())?;
-        let roots = session.scene.import(&objects, None, None).map_err(|e| e.to_string())?;
-        start_scripts_of(session, &roots)?;
-        for problem in crate::sound::start_sources(session, Some(&roots)) {
-            session.log(Level::Error, problem);
-        }
-        drain(session);
+        let roots = add_scene(session, &loaded, None)?;
         if let Some(play) = session.play.as_mut() {
             play.loaded.push((relative.to_owned(), roots.clone()));
         }
@@ -393,6 +410,7 @@ pub(crate) fn load_scene(session: &mut Session, relative: &str, additive: bool) 
         play.host = host;
         play.input_assets = input_assets;
         play.loaded.clear();
+        crate::stream::clear(play);
         #[cfg(feature = "audio")]
         play.audio.as_ref().inspect(|audio| audio.with(bayleaf_audio::Mixer::stop_all));
         #[cfg(feature = "physics")]
@@ -633,6 +651,7 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
             let _ = session.scene.set(camera, placed);
         }
         crate::sound::update(session, f64::from(dt));
+        crate::stream::update(session);
         #[cfg(feature = "gameplay")]
         apply_rules(session);
         report_outcome(session, &input);

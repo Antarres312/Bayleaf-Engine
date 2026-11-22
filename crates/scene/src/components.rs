@@ -710,6 +710,44 @@ impl SceneComponent for AudioSource {
     }
 }
 
+/// A part of the world kept in its own scene file and added under the object while playing, in
+/// the background, when a camera comes within Load Distance; it goes again once every camera is
+/// further than Load Distance and Keep Margin. Its objects are placed relative to the object.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StreamedArea {
+    /// A `.bscene` file, relative to the project folder; empty for none.
+    pub scene: String,
+    /// How near a camera comes before the scene is added, in world units.
+    pub load_distance: f64,
+    /// How much further the cameras go before it is removed again, so it does not come and go at the edge.
+    pub keep_margin: f64,
+}
+
+impl Default for StreamedArea {
+    fn default() -> Self {
+        Self { scene: String::new(), load_distance: 100.0, keep_margin: 20.0 }
+    }
+}
+
+impl SceneComponent for StreamedArea {
+    const NAME: &'static str = "streamedArea";
+    const LABEL: &'static str = "Streamed Area";
+    const MENU: &'static str = "World/Streamed Area";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        file_field("scene", &self.scene, &["bscene"])?;
+        if !(self.load_distance.is_finite() && self.load_distance > 0.0 && self.load_distance <= 1.0e7) {
+            return Err("load distance must be more than 0 and at most 10000000".to_owned());
+        }
+        if !(self.keep_margin.is_finite() && (0.0..=1.0e7).contains(&self.keep_margin)) {
+            return Err("keep margin must be between 0 and 10000000".to_owned());
+        }
+        Ok(())
+    }
+}
+
 /// How a joint lets its object move against what it holds on to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

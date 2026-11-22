@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 bayleaf-automation = { workspace = true }
-bayleaf-engine = { workspace = true, features = ["physics", "gameplay", "audio"] }
+bayleaf-engine = { workspace = true, features = ["physics", "gameplay", "audio", "streaming"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

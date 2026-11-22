@@ -473,13 +473,14 @@ fn file_row(
 /// The file fields of `id`'s components, with the project's files of each kind and whether the
 /// chosen file loads.
 fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path::Path) -> Vec<FileField> {
-    use bayleaf_engine::scene::components::{AudioSource, GameRules, InputMap, Mesh, Sprite};
+    use bayleaf_engine::scene::components::{AudioSource, GameRules, InputMap, Mesh, Sprite, StreamedArea};
     let scene = editor.session.scene();
     let mesh = scene.get::<Mesh>(id).cloned();
     let sprite = scene.get::<Sprite>(id).cloned();
     let input_map = scene.get::<InputMap>(id).cloned();
     let rules = scene.get::<GameRules>(id).is_some();
     let audio = scene.get::<AudioSource>(id).cloned();
+    let streamed = scene.get::<StreamedArea>(id).cloned();
     let mut fields = Vec::new();
     if let Some(source) = audio {
         let missing = !source.clip.is_empty() && !base.join(&source.clip).is_file();
@@ -491,6 +492,19 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
             no_files: "No sound files (WAV, Ogg Vorbis, MP3…) in the project folder",
             files: editor.project.sound_files(),
             problem: missing.then(|| format!("{} is not there", source.clip)),
+            editable: false,
+        });
+    }
+    if let Some(area) = streamed {
+        let missing = !area.scene.is_empty() && !base.join(&area.scene).is_file();
+        fields.push(FileField {
+            component: "streamedArea",
+            field: "scene",
+            label: "Scene",
+            none: "None (stays empty)",
+            no_files: "No .bscene files in the project folder",
+            files: editor.project.scene_files(),
+            problem: missing.then(|| format!("{} is not there", area.scene)),
             editable: false,
         });
     }

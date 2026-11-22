@@ -81,6 +81,8 @@ pub struct Editor {
     copy_out: Option<String>,
     /// The window was asked to close while there are unsaved changes.
     close_asked: bool,
+    /// The form a command asks with, while it is open.
+    form: Option<Form>,
     /// Closing was confirmed; the next close request is let through.
     close_confirmed: bool,
     /// Script builds running in the background: the script's name and where the result arrives.
@@ -122,6 +124,7 @@ impl Default for Editor {
             clipboard: None,
             copy_out: None,
             close_asked: false,
+            form: None,
             close_confirmed: false,
             builds: Vec::new(),
             inspected_file: None,
@@ -172,6 +175,7 @@ impl Editor {
         if let Some(text) = self.copy_out.take() {
             ui.ctx().copy_text(text);
         }
+        self.show_form(ui.ctx());
         self.guard_close(ui.ctx());
         if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
             self.selected = self.also_selected.pop();
@@ -645,6 +649,71 @@ impl Editor {
         }
     }
 
+    /// Shows the form a [`Prompt::Fields`] command asks with, and runs the command when sent.
+    fn show_form(&mut self, ctx: &egui::Context) {
+        let Some(mut form) = self.form.take() else { return };
+        let t = theme::tokens_for(ctx);
+        let mut send = false;
+        let mut cancel = false;
+        let modal = egui::Modal::new(egui::Id::unique(("command form", form.id))).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.heading(form.label.trim_end_matches('…'));
+            ui.add_space(theme::GAP);
+            egui::Grid::new("form fields").num_columns(2).spacing([theme::GAP * 2.0, theme::GAP]).show(ui, |ui| {
+                for (index, (field, value)) in form.fields.iter().zip(form.values.iter_mut()).enumerate() {
+                    let label = ui.label(field.label);
+                    let edit = ui.add(egui::TextEdit::singleline(value).desired_width(220.0)).labelled_by(label.id);
+                    if index == 0 && std::mem::take(&mut form.focus) {
+                        edit.request_focus();
+                    }
+                    if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        send = true;
+                    }
+                    ui.end_row();
+                }
+            });
+            if let Some(problem) = &form.problem {
+                ui.add_space(theme::GAP);
+                ui.label(egui::RichText::new(format!("Not done: {problem}")).color(t.error));
+            }
+            ui.add_space(theme::GAP * 2.0);
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(egui::RichText::new(form.label.trim_end_matches('…')).color(t.on_accent)).fill(t.accent)).clicked() {
+                    send = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if cancel || modal.should_close() {
+            return;
+        }
+        if send {
+            let mut params = serde_json::Map::new();
+            for (field, value) in form.fields.iter().zip(&form.values) {
+                let value = if field.number {
+                    match value.trim().parse::<f64>() {
+                        Ok(number) => json!(number),
+                        Err(_) => {
+                            form.problem = Some(format!("{} must be a number", field.label));
+                            self.form = Some(form);
+                            return;
+                        }
+                    }
+                } else {
+                    json!(value.trim())
+                };
+                params.insert(field.name.to_owned(), value);
+            }
+            if self.dispatch(form.id, &Value::Object(params), None).is_some() {
+                return;
+            }
+            form.problem = Some(self.status.clone());
+        }
+        self.form = Some(form);
+    }
+
     /// Stops the window from closing while there are unsaved changes, and asks what to do.
     fn guard_close(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.viewport().close_requested()) && !self.close_confirmed && self.has_unsaved_changes() {
@@ -829,6 +898,17 @@ impl Editor {
                 }
                 return;
             }
+            Prompt::Fields(fields) => {
+                self.form = Some(Form {
+                    id: info.id,
+                    label: info.label,
+                    fields,
+                    values: fields.iter().map(|f| f.default.to_owned()).collect(),
+                    problem: None,
+                    focus: true,
+                });
+                return;
+            }
             Prompt::SelectedObject => match self.selected {
                 Some(selected) => json!({ "id": selected }),
                 None => {
@@ -912,6 +992,18 @@ fn parse_shortcut(text: &str) -> Option<egui::KeyboardShortcut> {
         };
     }
     Some(egui::KeyboardShortcut::new(modifiers, key))
+}
+
+/// A command's form ([`Prompt::Fields`]) while it is open.
+struct Form {
+    id: &'static str,
+    label: &'static str,
+    fields: &'static [bayleaf_engine::PromptField],
+    values: Vec<String>,
+    /// Why the last try did not run.
+    problem: Option<String>,
+    /// The first field still has to take the keyboard focus.
+    focus: bool,
 }
 
 #[cfg(test)]

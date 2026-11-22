@@ -212,7 +212,12 @@ No crate below L6 may use egui, eframe, winit or rfd.
    Audio Source components (scene format version 14) and scripts' sounds (`sound_play`,
    `sound_stop`, `sound_play_at`; Play Sound, Stop Sound and Play Sound At nodes; `audio.*`
    commands), decoded with craft-audio and heard through the first camera on the default output
-   (cpal). The editor and the player play them out loud; the CLI, agents and tests silently.
+   (cpal). The editor and the player play them out loud; the CLI, agents and tests silently. World
+   streaming is started: the `streaming` feature (`crates/streaming`) adds a Streamed Area's scene
+   under it, read on worker threads, when a camera comes within its Load Distance, and removes it once
+   every camera is past the Keep Margin (scene format version 15; `stream.areas`, `stream.wait`).
+   Object > Split into Streamed Areas (`stream.split`) cuts the open scene's top objects into one scene
+   file per grid cell, leaving cameras, sun lights, environment, rules and players in place.
 
 ## Open questions
 

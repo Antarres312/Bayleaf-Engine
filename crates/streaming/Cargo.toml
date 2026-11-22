@@ -1,6 +1,6 @@
 [package]
 name = "bayleaf-streaming"
-description = "L4: optional cell-based world streaming. Enabled in the engine with the streaming feature."
+description = "L4: optional world streaming: Streamed Area scenes read in the background and added near the cameras. Enabled in the engine with the streaming feature."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,8 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+bayleaf-core = { workspace = true }
+bayleaf-scene = { workspace = true }
 
 [lints]
 workspace = true

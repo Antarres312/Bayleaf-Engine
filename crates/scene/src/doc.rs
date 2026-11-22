@@ -14,8 +14,8 @@ pub const FORMAT: &str = "bayleaf.scene";
 /// added `rigidBody` and `collider`; version 9 added
 /// `characterBody`; version 10 added `playerControl`; version 11
 /// added `gameRules` and `playerStart`; version 12 added `inputMap`; version 13 added `joint`; version 14 added
-/// `audioSource`. Older files still load.
-pub const VERSION: u32 = 14;
+/// `audioSource`; version 15 added `streamedArea`. Older files still load.
+pub const VERSION: u32 = 15;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.
