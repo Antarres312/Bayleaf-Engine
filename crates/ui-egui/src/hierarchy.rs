@@ -40,6 +40,11 @@ const SAVE_PREFAB: &str = "editor.savePrefab";
 #[derive(Clone, Copy)]
 struct Dragged(StableId);
 
+/// The object being dragged from the hierarchy, if one is.
+pub(crate) fn dragged_object(ctx: &egui::Context) -> Option<StableId> {
+    egui::DragAndDrop::payload::<Dragged>(ctx).map(|d| d.0)
+}
+
 /// Where an object would land if dropped now.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Drop {

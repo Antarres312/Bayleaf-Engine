@@ -320,6 +320,8 @@ enum Action {
     Refresh,
     /// Ask before deleting this file or folder.
     AskDelete(PathBuf),
+    /// Save this object (and its children) as a new prefab in this folder.
+    MakePrefab(bayleaf_core::StableId, PathBuf),
 }
 
 /// What the panel's parts ask for after drawing.
@@ -428,6 +430,15 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     // Keep the field open with the reason, so the name can be fixed.
                     Err(error) => editor.project.naming = Some(Naming { error: Some(error), focused: false, text: name, ..naming }),
                 }
+            }
+        }
+        Some(Action::MakePrefab(object, folder)) => {
+            let name = editor.session.scene().name(object).unwrap_or("Prefab").to_owned();
+            let path = new_prefab_path(&folder, &name);
+            if editor.dispatch("scene.prefab.create", &json!({ "id": object, "path": path }), None).is_some() {
+                editor.project.scanned = None;
+                editor.project.current = folder;
+                editor.project.selected = Some(path);
             }
         }
         Some(Action::StartRename(path)) => {
@@ -735,6 +746,7 @@ fn top_folders(ui: &mut egui::Ui, view: &ProjectView, rows: &mut Vec<egui::Rect>
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, open || view.current.starts_with(&dir) && !dir.as_os_str().is_empty())
             .show_header(ui, |ui| {
                 let response = folder_row(ui, name, at_top).on_hover_text(hover);
+                object_drop(ui, &response, &dir, outcome);
                 folder_menu(&response, view, &dir, outcome);
                 if response.clicked() {
                     outcome.enter = Some(dir.clone());
@@ -760,6 +772,7 @@ fn folder_tree(ui: &mut egui::Ui, view: &ProjectView, dir: &Path, rows: &mut Vec
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, open_by_default)
                 .show_header(ui, |ui| {
                     let response = folder_row(ui, &entry.name, is_current);
+                    object_drop(ui, &response, &entry.path, outcome);
                     folder_menu(&response, view, &entry.path, outcome);
                     folder_menu(&response, view, &entry.path, outcome);
                     if response.clicked() {
@@ -772,6 +785,7 @@ fn folder_tree(ui: &mut egui::Ui, view: &ProjectView, dir: &Path, rows: &mut Vec
             ui.horizontal(|ui| {
                 ui.add_space(18.0);
                 let response = folder_row(ui, &entry.name, is_current);
+                object_drop(ui, &response, &entry.path, outcome);
                 if response.clicked() {
                     outcome.enter = Some(entry.path.clone());
                 }
@@ -779,6 +793,37 @@ fn folder_tree(ui: &mut egui::Ui, view: &ProjectView, dir: &Path, rows: &mut Vec
             });
         }
     }
+}
+
+/// An object dragged from the hierarchy onto a folder (a row, a tile, or the open folder's free
+/// space) becomes a prefab in it: the folder is ringed while the object is over it.
+fn object_drop(ui: &egui::Ui, response: &egui::Response, folder: &Path, outcome: &mut Outcome) {
+    let Some(object) = crate::hierarchy::dragged_object(ui.ctx()) else { return };
+    // The visible part of the folder; egui does not count it as under the pointer while another
+    // widget is being dragged.
+    let area = response.interact_rect;
+    if !ui.ctx().pointer_interact_pos().is_some_and(|p| area.contains(p)) {
+        return;
+    }
+    let t = theme::tokens(ui);
+    ui.painter().rect_stroke(response.rect, theme::RADIUS, egui::Stroke::new(2.0, t.focus), egui::StrokeKind::Inside);
+    if ui.input(|i| i.pointer.any_released()) {
+        egui::DragAndDrop::clear_payload(ui.ctx());
+        outcome.action = Some(Action::MakePrefab(object, folder.to_path_buf()));
+    }
+}
+
+/// A prefab file for an object named `name` in `folder` that is not there yet: `Crate.bprefab`,
+/// then `Crate 2.bprefab`, … Characters file names cannot hold become `_`.
+fn new_prefab_path(folder: &Path, name: &str) -> PathBuf {
+    let extension = bayleaf_engine::prefab_cmds::PREFAB_EXTENSION;
+    let clean: String =
+        name.trim().chars().map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '_' } else { c }).collect();
+    let stem = if clean.trim_matches('.').is_empty() { "Prefab".to_owned() } else { clean };
+    (1..)
+        .map(|n| folder.join(if n == 1 { format!("{stem}.{extension}") } else { format!("{stem} {n}.{extension}") }))
+        .find(|path| !path.exists())
+        .unwrap_or_else(|| folder.join(format!("{stem}.{extension}")))
 }
 
 fn folder_row(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
@@ -793,6 +838,10 @@ fn files(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Naming>, sel
     let background = ui.interact(ui.max_rect(), egui::Id::unique("project files background"), egui::Sense::click());
     background.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Group, true, "Folder contents"));
     file_entries(ui, view, naming, selected_object, outcome);
+    // After the folder tiles, which take a drop onto them first.
+    if !view.current.as_os_str().is_empty() {
+        object_drop(ui, &background, &view.current, outcome);
+    }
     if background.clicked() {
         outcome.deselect = true;
     }
@@ -962,6 +1011,9 @@ fn list_row(ui: &mut egui::Ui, entry: &Entry, selected: bool, hide: bool) -> egu
 
 /// Clicks, double-clicks, dragging and the context menu, shared by tiles and list rows.
 fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry: &Entry, selected_object: bool, outcome: &mut Outcome) {
+    if entry.kind == Kind::Folder {
+        object_drop(ui, response, &entry.path, outcome);
+    }
     // Project files are referred to relative to the project; engine files by their full path.
     let relative = match &view.root {
         Some(root) if entry.path.starts_with(root) => relative_path(root, &entry.path),

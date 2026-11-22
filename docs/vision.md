@@ -91,7 +91,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    the Project panel, and refuses others. Project Settings has Preferences (project format
    4, `settings.editor`): the Project panel hides file extensions unless it is turned off; renaming
    keeps the extension. The project file (`.bproject`) is not listed: the File menu opens projects. A double-click on a panel's tab (or Maximise in its menu) fills the dock area with that
-   panel; another double-click (or Restore Layout) brings the layout back.
+   panel; another double-click (or Restore Layout) brings the layout back. Dragging an object from
+   the hierarchy onto a folder in the Project panel saves it there as a new prefab (`Crate.bprefab`,
+   then `Crate 2.bprefab`) linked to the object.
 3. **M2 Render (done, 2026-11-21):** `bayleaf-render` with built-in shapes (cube, sphere, plane, quad),
    a metallic/roughness material (GGX), directional lights, unlit transparent sprites, the editor ground
    grid, ray picking, and headless PNG output (`scene.render`). The editor has an orbiting scene view with

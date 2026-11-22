@@ -1516,3 +1516,24 @@ fn a_tab_maximises_its_panel_and_restores_the_layout() {
     assert_eq!(harness.state().maximized, None);
     assert!(harness.query_by_label("Hierarchy").is_some(), "the layout is back as it was");
 }
+
+#[test]
+fn dragging_an_object_onto_a_folder_makes_a_prefab_there() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-drag-prefab-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    std::fs::create_dir_all(dir.join("things")).unwrap();
+    harness.state_mut().project.rescan_soon();
+    harness.run_steps(2);
+    create_named(&mut harness, "Crate");
+    drag_entry(&mut harness, "Crate", "things, Folder");
+    assert!(dir.join("things").join("Crate.bprefab").is_file(), "the object became a prefab in the folder");
+    let crate_id = harness.state().selected.unwrap();
+    assert!(harness.state().session.scene().get::<bayleaf_engine::scene::components::Prefab>(crate_id).is_some(), "and is linked to it");
+    // The panel now shows the folder; its free space takes the next one. Linked to a prefab, the
+    // object's row says so.
+    drag_entry(&mut harness, "Crate prefab", "Folder contents");
+    assert!(dir.join("things").join("Crate 2.bprefab").is_file(), "a second one does not overwrite the first");
+    std::fs::remove_dir_all(&dir).ok();
+}
