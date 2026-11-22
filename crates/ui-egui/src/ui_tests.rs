@@ -2467,6 +2467,7 @@ fn with_a_gpu_a_game_interface_answers_the_player_and_reads_in_the_accessibility
     std::fs::remove_dir_all(&dir).ok();
     harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
     harness.state_mut().dispatch("asset.create", &json!({ "kind": "interface", "folder": "", "name": "menu" }), None);
+    harness.state_mut().dispatch("asset.create", &json!({ "kind": "interfaceStyle", "folder": "", "name": "look" }), None);
     // The Start button's script changes the title.
     let menu = wat::parse_str(
         r#"(module
@@ -3259,4 +3260,34 @@ fn dragging_a_row_in_the_interface_tree_moves_the_element_before_into_or_after_a
     assert_eq!(layout.root.children.len(), 2, "Title left the root: {:?}", names());
     assert_eq!(layout.root.children[1].children[0].name, "Title", "and went into the panel");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_interface_panels_keep_their_widths_while_the_mouse_moves_and_leave_the_preview_room() {
+    // A wide window and a narrow one, so the panel's tab is narrow too.
+    for width in [1440.0_f32, 820.0] {
+        let dir = std::env::temp_dir().join(format!("bayleaf-ui-interface-widths-{width}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let mut harness =
+            Harness::builder().with_size(egui::vec2(width, 760.0)).build_ui_state(|ui, editor: &mut Editor| editor.ui(ui, None), Editor::default());
+        harness.run();
+        harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+        harness.state_mut().dispatch("asset.create", &json!({ "kind": "interface", "folder": "", "name": "menu" }), None);
+        harness.state_mut().open_interface(&dir.join("menu.bui"));
+        harness.run_steps(2);
+        // The title has a style property, so its row with a remove button shows.
+        harness.get_by_label("Text: Title").click();
+        harness.run_steps(2);
+        let fields = |harness: &Harness<'static, Editor>| harness.get_by_label("Element").rect();
+        let preview = |harness: &Harness<'static, Editor>| harness.query_by_label("Interface preview").map(|n| n.rect().width()).unwrap_or(0.0);
+        let before = fields(&harness);
+        for step in 0..30 {
+            harness.hover_at(before.center() + egui::vec2((step % 7) as f32 * 9.0, (step % 5) as f32 * 30.0));
+            harness.run();
+        }
+        let after = fields(&harness);
+        assert!((after.left() - before.left()).abs() < 1.0, "{width}: the fields' column grew from {before:?} to {after:?} as the mouse moved");
+        assert!(preview(&harness) > 100.0, "{width}: the preview is squeezed to {}", preview(&harness));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

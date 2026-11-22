@@ -87,6 +87,19 @@ pub(crate) fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, body: impl FnOn
     .inner
 }
 
+/// A text field with a × button after it that removes what it edits, in the row's room: the button
+/// first, from the right, and the field in what is left, so the row is never wider than its room (a
+/// wider row would widen a resizable panel a little more every frame). Returns whether the edit was
+/// finished (the field left) and whether × was pressed.
+pub(crate) fn removable_text(ui: &mut egui::Ui, value: &mut String, label: egui::Id, remove_hint: &str) -> (bool, bool) {
+    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let removed = ui.small_button("×").on_hover_text(remove_hint).clicked();
+        let field = ui.add_sized([ui.available_width().max(16.0), ROW_HEIGHT], egui::TextEdit::singleline(value)).labelled_by(label);
+        (field.lost_focus(), removed)
+    })
+    .inner
+}
+
 /// Lets a field take a file dragged from the Project panel. While a file that `accepts` takes is
 /// over the field, the field is ringed; a file it does not take shows a no-drop pointer and is
 /// left for whatever else may take it. Returns the dropped file's path (relative to the project).

@@ -110,9 +110,10 @@ pub(crate) fn show(ui: &mut egui::Ui, style: &mut StyleSheet) -> bool {
                 // Its properties.
                 let mut drop_property = None;
                 for (property, value) in &mut rule.set {
-                    crate::value_editor::row(ui, t, property, |ui, label, width| {
-                        done |= ui.add_sized([(width - 28.0).max(40.0), ROW_HEIGHT], egui::TextEdit::singleline(value)).labelled_by(label).lost_focus();
-                        if ui.small_button("×").on_hover_text(tf("Remove {property}", &[("property", property)])).clicked() {
+                    crate::value_editor::row(ui, t, property, |ui, label, _| {
+                        let (edited, removed) = crate::value_editor::removable_text(ui, value, label, &tf("Remove {property}", &[("property", property)]));
+                        done |= edited;
+                        if removed {
                             drop_property = Some(property.clone());
                         }
                     });

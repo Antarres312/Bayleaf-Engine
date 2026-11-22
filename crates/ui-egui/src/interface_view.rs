@@ -16,6 +16,11 @@ use crate::theme::{self, ROW_HEIGHT};
 /// Most changes Undo goes back through.
 const HISTORY: usize = 100;
 
+/// The most of the tab's width the element tree and the element's fields may take; the preview
+/// keeps the rest.
+const TREE_SHARE: f32 = 0.3;
+const FIELDS_SHARE: f32 = 0.4;
+
 /// The panel's own state: the layout open, the element picked, and the fields being edited.
 #[derive(Default)]
 pub(crate) struct InterfaceView {
@@ -175,7 +180,11 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         view.draft = picked.map(|e| (view.selected.clone(), e));
     }
 
-    egui::Panel::left("interface tree").resizable(true).default_size(180.0).min_size(140.0).frame(egui::Frame::new()).show(ui, |ui| {
+    // The tree and the element's fields share the tab with the preview: each keeps to its part of
+    // the tab, however wide it was dragged or its content pushed it, so the preview never goes.
+    let room = ui.available_width();
+    let (tree_max, fields_max) = (room * TREE_SHARE, room * FIELDS_SHARE);
+    egui::Panel::left("interface tree").resizable(true).default_size(180.0).min_size(140.0).max_size(tree_max).frame(egui::Frame::new()).show(ui, |ui| {
         tree_tools(ui, layout, &view, &mut change);
         ui.separator();
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -187,6 +196,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         .resizable(true)
         .default_size(250.0)
         .min_size(200.0)
+        .max_size(fields_max)
         .frame(egui::Frame::new().inner_margin(egui::Margin { left: 8, ..egui::Margin::ZERO }))
         .show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -489,10 +499,10 @@ fn element_fields(
     theme::headed(t, "Style").show(ui, |ui| {
         let mut remove = None;
         for (property, value) in &mut draft.style {
-            crate::value_editor::row(ui, t, property, |ui, label, width| {
-                let r = ui.add_sized([(width - 28.0).max(40.0), ROW_HEIGHT], egui::TextEdit::singleline(value)).labelled_by(label);
-                done |= r.lost_focus();
-                if ui.small_button("×").on_hover_text(tf("Remove {property}", &[("property", property)])).clicked() {
+            crate::value_editor::row(ui, t, property, |ui, label, _| {
+                let (edited, removed) = crate::value_editor::removable_text(ui, value, label, &tf("Remove {property}", &[("property", property)]));
+                done |= edited;
+                if removed {
                     remove = Some(property.clone());
                 }
             });
