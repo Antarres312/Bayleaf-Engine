@@ -5,7 +5,7 @@
 <h1 align="center">Bayleaf Engine</h1>
 
 <p align="center">
-  <a href="docs/releasing.md"><img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-3f8f4f?style=flat-square"></a>
+  <a href="docs/releasing.md"><img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-3f8f4f?style=flat-square"></a>
   <a href="docs/vision.md"><img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-c98a2b?style=flat-square"></a>
   <img alt="Rust 1.95 or newer" src="https://img.shields.io/badge/rust-1.95%2B-b7410e?style=flat-square&logo=rust&logoColor=white">
   <a href="#license"><img alt="License: MIT or Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-4b6cb7?style=flat-square"></a>
@@ -124,7 +124,7 @@ Setup for Claude Code and the editor bridge is in [docs/automation.md](docs/auto
 ## Versions
 
 `main` holds released versions, each tagged `vX.Y.Z` by Semantic Versioning. Work happens on
-`develop`. The current version is **0.1.0**. See [docs/releasing.md](docs/releasing.md).
+`develop`. The current version is **0.2.0**. See [docs/releasing.md](docs/releasing.md).
 
 ## License
 
