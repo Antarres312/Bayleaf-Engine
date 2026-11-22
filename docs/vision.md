@@ -369,7 +369,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
      texture), Screen Position, and a Custom Lighting output that replaces the engine's lighting
      with the graph's own result. An outline option on the material draws the back faces grown
      along their normals in a colour, with a width. An example toon material ships with the
-     engine to show them together.
+     engine to show them together. (Done: these nodes, the Custom Lighting Output, the outline option and
+     `examples/demo/materials/toon.bmaterial`; a graph reads the main light and the others summed.)
    - **Editing prefabs on their own.** Opening a prefab (double-click it, or Open Prefab on an
      instance) swaps the Scene view and the hierarchy to the prefab's own space for a while: only
      its objects, around the origin, with a bar saying which prefab is open and buttons to save it

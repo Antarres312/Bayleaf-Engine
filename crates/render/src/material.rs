@@ -36,6 +36,12 @@ const fn node(
 
 const MATH_OUT: &[PinDef] = &[pin("result", "Result", Any)];
 
+/// The outline option of a material's output: back faces grown by the width, in the colour.
+const OUTLINE_SETTINGS: &[SettingDef] = &[
+    SettingDef { name: "outlineWidth", label: "Outline Width", kind: SettingKind::Float(0.0) },
+    SettingDef { name: "outlineColor", label: "Outline Color", kind: SettingKind::Color([0.0, 0.0, 0.0]) },
+];
+
 /// The node kinds of material graphs.
 pub const CATALOG: Catalog = Catalog {
     domain: "material",
@@ -49,7 +55,7 @@ pub const CATALOG: Catalog = Catalog {
             kind: "output",
             label: "Material Output",
             category: "Output",
-            description: "What the surface looks like. Every material has exactly one.",
+            description: "What the surface looks like, lit by the engine. A material has one output: this or Custom Lighting Output.",
             inputs: &[
                 PinDef::with("baseColor", "Base Color", Color, PinDefault::Color([0.8, 0.8, 0.8])),
                 number("metallic", "Metallic", Float, 0.0),
@@ -58,9 +64,91 @@ pub const CATALOG: Catalog = Catalog {
                 number("opacity", "Opacity", Float, 1.0),
             ],
             outputs: &[],
-            settings: &[],
+            settings: OUTLINE_SETTINGS,
             unique: true,
         },
+        NodeDef {
+            kind: "customLighting",
+            label: "Custom Lighting Output",
+            category: "Output",
+            description: "The colour the surface shows, worked out by the graph itself (with Main Light and Other Lights) instead of the engine's lighting.",
+            inputs: &[PinDef::with("color", "Color", Color, PinDefault::Color([0.8, 0.8, 0.8])), number("alpha", "Opacity", Float, 1.0)],
+            outputs: &[],
+            settings: OUTLINE_SETTINGS,
+            unique: true,
+        },
+        node(
+            "mainLight",
+            "Main Light",
+            "Lights",
+            "The main light at this point (the sun when there is one): the direction towards it, its colour and strength, and how much of it the shadows let through (1 lit).",
+            &[],
+            &[pin("direction", "Direction", Vec3), pin("color", "Color", Color), pin("shadow", "Shadow", Float)],
+        ),
+        node(
+            "otherLights",
+            "Other Lights",
+            "Lights",
+            "The light every other light gives this point, added up (facing them, past shadows).",
+            &[],
+            &[pin("color", "Color", Color)],
+        ),
+        node("viewDirection", "View Direction", "Inputs", "From the point towards the camera.", &[], &[pin("direction", "Direction", Vec3)]),
+        node(
+            "screenPosition",
+            "Screen Position",
+            "Inputs",
+            "Where the pixel is on the screen, 0 to 1 from the top left, as a vector (x, y, 0).",
+            &[],
+            &[pin("position", "Position", Vec3)],
+        ),
+        node(
+            "dot",
+            "Dot Product",
+            "Math",
+            "How much two directions agree: 1 the same, 0 at right angles, −1 opposite (for unit vectors).",
+            &[pin("a", "A", Vec3), pin("b", "B", Vec3)],
+            &[pin("result", "Result", Float)],
+        ),
+        node("normalize", "Normalize", "Math", "The same direction with length 1.", &[pin("vector", "Vector", Vec3)], &[pin("vector", "Vector", Vec3)]),
+        node(
+            "step",
+            "Step",
+            "Math",
+            "0 below the edge, 1 from the edge up: a hard band.",
+            &[number("edge", "Edge", Float, 0.5), number("value", "Value", Any, 0.0)],
+            MATH_OUT,
+        ),
+        node(
+            "smoothstep",
+            "Smooth Step",
+            "Math",
+            "0 below Low, 1 above High, a smooth curve between: a soft band.",
+            &[number("low", "Low", Float, 0.0), number("high", "High", Float, 1.0), number("value", "Value", Any, 0.5)],
+            MATH_OUT,
+        ),
+        node(
+            "posterize",
+            "Posterize",
+            "Math",
+            "Cuts values from 0 to 1 into a number of flat bands (2 or more).",
+            &[number("value", "Value", Any, 0.0), number("steps", "Bands", Float, 3.0)],
+            MATH_OUT,
+        ),
+        node(
+            "remap",
+            "Remap",
+            "Math",
+            "Moves a value from one range to another: From Low becomes To Low and From High To High.",
+            &[
+                number("value", "Value", Any, 0.5),
+                number("fromLow", "From Low", Float, 0.0),
+                number("fromHigh", "From High", Float, 1.0),
+                number("toLow", "To Low", Float, 0.0),
+                number("toHigh", "To High", Float, 1.0),
+            ],
+            MATH_OUT,
+        ),
         NodeDef {
             kind: "number",
             label: "Number",
@@ -180,7 +268,7 @@ pub const CATALOG: Catalog = Catalog {
 pub const MAX_TEXTURES: usize = 4;
 
 /// A material graph turned into shader code.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CompiledMaterial {
     /// The image files its Image nodes read, by texture slot, as written in the graph.
     pub textures: Vec<String>,
@@ -192,6 +280,8 @@ pub struct CompiledMaterial {
     pub transparent: bool,
     /// Uses time, so views that show it keep redrawing.
     pub animated: bool,
+    /// An outline around the shape: its colour (linear RGB) and width in world units.
+    pub outline: Option<([f32; 3], f32)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -210,6 +300,8 @@ struct Compiler<'g> {
     sampled: std::collections::HashSet<u32>,
     done: HashMap<(u32, &'static str), Code>,
     animated: bool,
+    /// Reads Main Light or Other Lights, so the shader works them out first.
+    uses_lights: bool,
 }
 
 /// Compiles a material graph. Problems name the node they are on.
@@ -217,14 +309,25 @@ pub fn compile(graph: &Graph) -> Result<CompiledMaterial, Vec<Problem>> {
     if let Err(e) = graph.check(&CATALOG) {
         return Err(vec![Problem::graph(e.to_string())]);
     }
-    let Some(output) = graph.nodes.iter().find(|n| n.kind == "output") else {
-        return Err(vec![Problem::graph("add a Material Output node")]);
+    let outputs: Vec<&bayleaf_graph::Node> = graph.nodes.iter().filter(|n| n.kind == "output" || n.kind == "customLighting").collect();
+    let output = match outputs.as_slice() {
+        [one] => *one,
+        [] => return Err(vec![Problem::graph("add a Material Output node (or a Custom Lighting Output)")]),
+        _ => return Err(vec![Problem::graph("a material has one output: remove the Material Output or the Custom Lighting Output")]),
     };
-    let mut compiler = Compiler { graph, lines: Vec::new(), textures: Vec::new(), sampled: Default::default(), done: HashMap::new(), animated: false };
+    let custom = output.kind == "customLighting";
+    let mut compiler =
+        Compiler { graph, lines: Vec::new(), textures: Vec::new(), sampled: Default::default(), done: HashMap::new(), animated: false, uses_lights: false };
     let mut problems = Vec::new();
     let mut fields = Vec::new();
-    for (pin, want) in [("baseColor", Ty::V), ("metallic", Ty::F), ("roughness", Ty::F), ("emissive", Ty::V), ("opacity", Ty::F)] {
-        match compiler.input(output.id, pin).and_then(|value| convert(value, want).map_err(|m| problem(output.id, &m))) {
+    // Custom lighting: its colour goes out as emission, which the shader shows as it is.
+    let pins: &[(&str, Ty)] = if custom {
+        &[("color", Ty::V), ("alpha", Ty::F)]
+    } else {
+        &[("baseColor", Ty::V), ("metallic", Ty::F), ("roughness", Ty::F), ("emissive", Ty::V), ("opacity", Ty::F)]
+    };
+    for (pin, want) in pins {
+        match compiler.input(output.id, pin).and_then(|value| convert(value, *want).map_err(|m| problem(output.id, &m))) {
             Ok(code) => fields.push(code),
             Err(p) => problems.push(p),
         }
@@ -232,20 +335,33 @@ pub fn compile(graph: &Graph) -> Result<CompiledMaterial, Vec<Problem>> {
     if !problems.is_empty() {
         return Err(problems);
     }
+    if custom {
+        let (color, alpha) = (fields[0].clone(), fields[1].clone());
+        fields = vec!["vec3<f32>(0.0)".to_owned(), "0.0".to_owned(), "1.0".to_owned(), color, alpha];
+    }
     // Material graphs keep the surface's own normal.
     fields.push("s.normal".to_owned());
-    let transparent =
-        graph.link_into(output.id, "opacity").is_some() || graph.value(output.id, "opacity").and_then(bayleaf_graph::as_f32).is_some_and(|v| v < 1.0);
+    let opacity = if custom { "alpha" } else { "opacity" };
+    let transparent = graph.link_into(output.id, opacity).is_some() || graph.value(output.id, opacity).and_then(bayleaf_graph::as_f32).is_some_and(|v| v < 1.0);
+    let width = graph.value(output.id, "outlineWidth").and_then(bayleaf_graph::as_f32).filter(|w| w.is_finite() && *w > 0.0);
+    let outline = width.map(|w| (graph.value(output.id, "outlineColor").and_then(bayleaf_graph::as_triple).unwrap_or([0.0; 3]), w.min(MAX_OUTLINE)));
     let mut surface = String::from("fn surface(s: SurfaceIn) -> Surface {\n");
     for line in &compiler.lines {
         let _ = writeln!(surface, "    {line}");
     }
     let _ = writeln!(surface, "    return Surface({});\n}}", fields.join(", "));
+    let (outline_color, outline_width) = outline.unwrap_or(([0.0; 3], 0.0));
+    let _ = writeln!(surface, "const USES_LIGHTS: bool = {};", compiler.uses_lights);
+    let _ = writeln!(surface, "const CUSTOM_LIGHTING: bool = {custom};");
+    let _ = writeln!(surface, "const OUTLINE: vec4<f32> = vec4<f32>({}, {});", vec_lit(outline_color), lit(outline_width));
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     surface.hash(&mut hasher);
     transparent.hash(&mut hasher);
-    Ok(CompiledMaterial { surface, key: hasher.finish() | 1, transparent, animated: compiler.animated, textures: compiler.textures })
+    Ok(CompiledMaterial { surface, key: hasher.finish() | 1, transparent, animated: compiler.animated, textures: compiler.textures, outline })
 }
+
+/// Widest outline, in world units.
+const MAX_OUTLINE: f32 = 1.0;
 
 fn problem(node: u32, message: &str) -> Problem {
     Problem::on(node, message)
@@ -415,6 +531,57 @@ impl Compiler<'_> {
                 let scale = self.input_as(node, "scale", Ty::F)?;
                 (format!("bl_noise({p} * {scale})"), Ty::F)
             }
+            "mainLight" => {
+                self.uses_lights = true;
+                match pin {
+                    "direction" => ("s.light_dir".to_owned(), Ty::V),
+                    "color" => ("s.light_color".to_owned(), Ty::V),
+                    _ => ("s.light_shadow".to_owned(), Ty::F),
+                }
+            }
+            "otherLights" => {
+                self.uses_lights = true;
+                ("s.other_light".to_owned(), Ty::V)
+            }
+            "viewDirection" => ("s.view".to_owned(), Ty::V),
+            "screenPosition" => ("vec3<f32>(s.screen, 0.0)".to_owned(), Ty::V),
+            "dot" => {
+                let (a, b) = (self.input_as(node, "a", Ty::V)?, self.input_as(node, "b", Ty::V)?);
+                (format!("dot({a}, {b})"), Ty::F)
+            }
+            "normalize" => {
+                let v = self.input_as(node, "vector", Ty::V)?;
+                (format!("normalize({v} + vec3<f32>(0.0, 1e-9, 0.0))"), Ty::V)
+            }
+            "step" => {
+                let (v, ty) = self.input(node, "value")?;
+                let edge = self.input_as(node, "edge", Ty::F)?;
+                (format!("step({}, {v})", widen(&edge, ty)), ty)
+            }
+            "smoothstep" => {
+                let (v, ty) = self.input(node, "value")?;
+                let (low, high) = (self.input_as(node, "low", Ty::F)?, self.input_as(node, "high", Ty::F)?);
+                (format!("smoothstep({}, {}, {v})", widen(&low, ty), widen(&high, ty)), ty)
+            }
+            "posterize" => {
+                let (v, ty) = self.input(node, "value")?;
+                let steps = self.input_as(node, "steps", Ty::F)?;
+                let bands = format!("max(floor({steps}), 2.0)");
+                let (zero, one) = (widen("0.0", ty), widen("1.0", ty));
+                (format!("clamp(floor({v} * {bands}) / ({bands} - 1.0), {zero}, {one})"), ty)
+            }
+            "remap" => {
+                let (v, ty) = self.input(node, "value")?;
+                let [from_low, from_high, to_low, to_high] = [
+                    self.input_as(node, "fromLow", Ty::F)?,
+                    self.input_as(node, "fromHigh", Ty::F)?,
+                    self.input_as(node, "toLow", Ty::F)?,
+                    self.input_as(node, "toHigh", Ty::F)?,
+                ];
+                // A zero-wide range divides by a tiny number instead of zero.
+                let span = format!("select({from_high} - {from_low}, 1e-6, abs({from_high} - {from_low}) < 1e-6)");
+                (format!("({to_low} + ({v} - {from_low}) / {span} * ({to_high} - {to_low}))"), ty)
+            }
             other => return Err(problem(node, &format!("{other} nodes do not belong in a material"))),
         };
         let variable = name(pin_def.name);
@@ -517,4 +684,9 @@ impl MaterialLibrary {
 /// One spelling per file, so a live graph matches the path a mesh uses for it.
 fn normalize(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.components().collect())
+}
+
+/// A number as the type `ty` wants: itself, or three of it.
+fn widen(code: &str, ty: Ty) -> String {
+    if ty == Ty::V { format!("vec3<f32>({code})") } else { code.to_owned() }
 }

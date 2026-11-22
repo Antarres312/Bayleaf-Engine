@@ -1,0 +1,40 @@
+{
+  "format": "bayleaf.graph",
+  "version": 6,
+  "domain": "material",
+  "nodes": [
+    { "id": 1, "kind": "customLighting", "position": [1680.0, 80.0], "values": { "outlineWidth": 0.04, "outlineColor": [0.04, 0.03, 0.06] } },
+    { "id": 2, "kind": "mainLight", "position": [0.0, 0.0] },
+    { "id": 3, "kind": "normal", "position": [0.0, 200.0] },
+    { "id": 4, "kind": "dot", "position": [240.0, 80.0] },
+    { "id": 5, "kind": "remap", "position": [480.0, 80.0], "values": { "fromLow": -1.0, "fromHigh": 1.0, "toLow": 0.0, "toHigh": 1.0 } },
+    { "id": 7, "kind": "posterize", "position": [720.0, 80.0], "values": { "steps": 3.0 } },
+    { "id": 8, "kind": "remap", "position": [960.0, 80.0], "values": { "fromLow": 0.0, "fromHigh": 1.0, "toLow": 0.35, "toHigh": 1.0 } },
+    { "id": 15, "kind": "remap", "position": [960.0, -120.0], "values": { "fromLow": 0.0, "fromHigh": 1.0, "toLow": 0.6, "toHigh": 1.0 } },
+    { "id": 6, "kind": "multiply", "position": [1200.0, 0.0] },
+    { "id": 9, "kind": "objectColor", "position": [960.0, 300.0] },
+    { "id": 10, "kind": "multiply", "position": [1440.0, 80.0] },
+    { "id": 11, "kind": "otherLights", "position": [960.0, 440.0] },
+    { "id": 12, "kind": "multiply", "position": [1200.0, 400.0], "values": { "b": 0.5 } },
+    { "id": 13, "kind": "multiply", "position": [1440.0, 400.0] },
+    { "id": 14, "kind": "add", "position": [1560.0, 240.0] }
+  ],
+  "links": [
+    { "from": { "node": 3, "pin": "normal" }, "to": { "node": 4, "pin": "a" } },
+    { "from": { "node": 2, "pin": "direction" }, "to": { "node": 4, "pin": "b" } },
+    { "from": { "node": 4, "pin": "result" }, "to": { "node": 5, "pin": "value" } },
+    { "from": { "node": 5, "pin": "result" }, "to": { "node": 7, "pin": "value" } },
+    { "from": { "node": 7, "pin": "result" }, "to": { "node": 8, "pin": "value" } },
+    { "from": { "node": 2, "pin": "shadow" }, "to": { "node": 15, "pin": "value" } },
+    { "from": { "node": 8, "pin": "result" }, "to": { "node": 6, "pin": "a" } },
+    { "from": { "node": 15, "pin": "result" }, "to": { "node": 6, "pin": "b" } },
+    { "from": { "node": 9, "pin": "color" }, "to": { "node": 10, "pin": "a" } },
+    { "from": { "node": 6, "pin": "result" }, "to": { "node": 10, "pin": "b" } },
+    { "from": { "node": 11, "pin": "color" }, "to": { "node": 12, "pin": "a" } },
+    { "from": { "node": 12, "pin": "result" }, "to": { "node": 13, "pin": "a" } },
+    { "from": { "node": 9, "pin": "color" }, "to": { "node": 13, "pin": "b" } },
+    { "from": { "node": 10, "pin": "result" }, "to": { "node": 14, "pin": "a" } },
+    { "from": { "node": 13, "pin": "result" }, "to": { "node": 14, "pin": "b" } },
+    { "from": { "node": 14, "pin": "result" }, "to": { "node": 1, "pin": "color" } }
+  ]
+}

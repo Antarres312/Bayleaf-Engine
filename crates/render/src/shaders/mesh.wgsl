@@ -163,7 +163,49 @@ struct SurfaceIn {
     params: vec4<f32>,
     time: f32,
     uv: vec2<f32>,
+    // The main light (the first: suns come first): towards it, its colour and strength, and how
+    // much of it reaches the point past shadows (1 lit). Filled only when the surface uses lights.
+    light_dir: vec3<f32>,
+    light_color: vec3<f32>,
+    light_shadow: f32,
+    // The other lights' diffuse light on the point, summed.
+    other_light: vec3<f32>,
+    // Where the pixel is on the screen, 0 to 1 from the top left.
+    screen: vec2<f32>,
 };
+
+// How one light reaches a point: the direction towards it, and its strength there from distance,
+// cone and shadow (0 to 1, times the light's radiance).
+struct LightReach {
+    dir: vec3<f32>,
+    falloff: f32,
+};
+
+fn light_reach(index: u32, world_pos: vec3<f32>, geometric: vec3<f32>) -> LightReach {
+    let light = globals.lights[index];
+    var l = normalize(-light.direction.xyz);
+    var falloff = 1.0;
+    if (light.direction.w > 0.5) {
+        // Point and spot lights: inverse-square falloff, windowed to reach 0 at the range
+        // (the window from Karis 2013).
+        let to_light = light.position.xyz - world_pos;
+        let d = length(to_light);
+        l = to_light / max(d, 1e-4);
+        let ratio = d / max(light.position.w, 1e-4);
+        let window = clamp(1.0 - ratio * ratio * ratio * ratio, 0.0, 1.0);
+        falloff = window * window / (d * d + 1.0);
+        if (light.direction.w > 1.5) {
+            let along = dot(-l, normalize(light.direction.xyz));
+            falloff = falloff * smoothstep(light.radiance.w, max(light.extra.x, light.radiance.w + 1e-4), along);
+        }
+    }
+    for (var slot = 0u; slot < u32(globals.shadow_count.x); slot = slot + 1u) {
+        if (f32(index) == globals.shadow_lights[slot].x) {
+            falloff = falloff * shadow_factor(slot, world_pos, geometric);
+        }
+    }
+    return LightReach(l, falloff);
+}
 
 // Pattern helpers for material graphs: the usual sine-based hash, and value noise made by blending
 // the hashes of the eight surrounding lattice points with a smoothstep fade.
@@ -225,9 +267,33 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
         n = -n;
     }
     let v = normalize(globals.camera_pos.xyz - in.world_pos);
+    let count = min(u32(globals.ambient.w), MAX_LIGHTS);
+    // The lights a stylised material reads, worked out only when it reads them.
+    var light_dir = vec3<f32>(0.0, 1.0, 0.0);
+    var light_color = vec3<f32>(0.0);
+    var light_shadow = 1.0;
+    var other_light = vec3<f32>(0.0);
+    if (USES_LIGHTS) {
+        if (count > 0u) {
+            let main = light_reach(0u, in.world_pos, n);
+            light_dir = main.dir;
+            light_color = globals.lights[0].radiance.rgb;
+            light_shadow = main.falloff;
+        }
+        for (var index = 1u; index < count; index = index + 1u) {
+            let reach = light_reach(index, in.world_pos, n);
+            other_light = other_light + globals.lights[index].radiance.rgb * max(dot(n, reach.dir), 0.0) * reach.falloff;
+        }
+    }
+    let clip = globals.view_proj * vec4<f32>(in.world_pos, 1.0);
+    let screen = vec2<f32>(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
     // The surface is worked out before any branch that returns, so its images can pick their
     // smaller copies from how fast the texture coordinates change across the screen.
-    let s = surface(SurfaceIn(in.world_pos, n, v, in.color, in.params, globals.camera_pos.w, in.uv));
+    let s = surface(SurfaceIn(in.world_pos, n, v, in.color, in.params, globals.camera_pos.w, in.uv, light_dir, light_color, light_shadow, other_light, screen));
+    if (CUSTOM_LIGHTING) {
+        // The material's own lighting: its colour as it is, fogged.
+        return vec4<f32>(fogged(max(s.emissive, vec3<f32>(0.0)), in.world_pos), clamp(s.alpha, 0.0, 1.0));
+    }
     if (in.params.w > 0.5) {
         // Sprites: their colour times their image, without light.
         return vec4<f32>(fogged(s.base, in.world_pos), s.alpha);
@@ -260,30 +326,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     let grazing = max(vec3<f32>(1.0 - roughness), f0) - f0;
     let ambient_f = f0 + grazing * pow(clamp(1.0 - n_dot_v, 0.0, 1.0), 5.0);
     var color = ambient * (vec3<f32>(1.0) - ambient_f) * (1.0 - metallic) * base + env * ambient_f;
-    let count = min(u32(globals.ambient.w), MAX_LIGHTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let light = globals.lights[index];
-        var l = normalize(-light.direction.xyz);
-        var falloff = 1.0;
-        if (light.direction.w > 0.5) {
-            // Point and spot lights: inverse-square falloff, windowed to reach 0 at the range
-            // (the window from Karis 2013).
-            let to_light = light.position.xyz - in.world_pos;
-            let d = length(to_light);
-            l = to_light / max(d, 1e-4);
-            let ratio = d / max(light.position.w, 1e-4);
-            let window = clamp(1.0 - ratio * ratio * ratio * ratio, 0.0, 1.0);
-            falloff = window * window / (d * d + 1.0);
-            if (light.direction.w > 1.5) {
-                let along = dot(-l, normalize(light.direction.xyz));
-                falloff = falloff * smoothstep(light.radiance.w, max(light.extra.x, light.radiance.w + 1e-4), along);
-            }
-        }
-        for (var slot = 0u; slot < u32(globals.shadow_count.x); slot = slot + 1u) {
-            if (f32(index) == globals.shadow_lights[slot].x) {
-                falloff = falloff * shadow_factor(slot, in.world_pos, geometric);
-            }
-        }
+        let reach = light_reach(index, in.world_pos, geometric);
+        let l = reach.dir;
+        let falloff = reach.falloff;
         let h = normalize(v + l);
         let n_dot_l = max(dot(n, l), 0.0);
         let n_dot_h = max(dot(n, h), 0.0);
@@ -296,4 +343,28 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
 
     color = fogged(color + max(s.emissive, vec3<f32>(0.0)), in.world_pos);
     return vec4<f32>(color, alpha);
+}
+
+// Outlines (a material's outline option): the back faces, grown along their normals by the
+// outline's width, in its colour; the shape drawn over them leaves a rim around it.
+@vertex
+fn vs_outline(v: VertexIn, i: InstanceIn) -> VertexOut {
+    let model = mat4x4<f32>(i.model_0, i.model_1, i.model_2, i.model_3);
+    let normal_matrix = mat3x3<f32>(i.normal_0.xyz, i.normal_1.xyz, i.normal_2.xyz);
+    var world = model * vec4<f32>(v.position, 1.0);
+    let normal = normalize(normal_matrix * v.normal);
+    world = vec4<f32>(world.xyz + normal * OUTLINE.w, 1.0);
+    var out: VertexOut;
+    out.clip = globals.view_proj * world;
+    out.world_pos = world.xyz;
+    out.normal = normal;
+    out.color = i.color;
+    out.params = i.params;
+    out.uv = v.uv;
+    return out;
+}
+
+@fragment
+fn fs_outline(in: VertexOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(fogged(OUTLINE.rgb, in.world_pos), 1.0);
 }

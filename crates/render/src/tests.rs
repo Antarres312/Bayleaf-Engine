@@ -136,8 +136,10 @@ fn link(graph: &mut Graph, from: u32, from_pin: &str, to: u32, to_pin: &str) {
 fn every_node_material() -> Graph {
     let mut g = Graph::new(&CATALOG);
     let out = g.nodes[0].id;
+    // The outline option too, so its pipeline is built and checked.
+    g.set_value(&CATALOG, out, "outlineWidth", json!(0.02)).unwrap();
     let mut previous: Option<u32> = None;
-    for def in CATALOG.nodes.iter().filter(|d| d.kind != "output") {
+    for def in CATALOG.nodes.iter().filter(|d| d.kind != "output" && d.kind != "customLighting") {
         let id = g.add_node(&CATALOG, def.kind, [0.0, 0.0]).unwrap();
         if def.kind == "texture" {
             g.set_value(&CATALOG, id, "image", json!("any.png")).unwrap();
@@ -181,7 +183,8 @@ fn every_node_material() -> Graph {
 fn a_material_using_every_node_compiles() {
     let graph = every_node_material();
     let compiled = compile(&graph).unwrap_or_else(|p| panic!("{p:?}"));
-    for def in CATALOG.nodes.iter().filter(|d| d.kind != "output") {
+    // Custom Lighting Output is the other output: a material has one, so it has its own test.
+    for def in CATALOG.nodes.iter().filter(|d| d.kind != "output" && d.kind != "customLighting") {
         assert!(graph.nodes.iter().any(|n| n.kind == def.kind), "{} is not in the test graph", def.kind);
     }
     assert!(compiled.animated, "the graph uses Time");
@@ -818,4 +821,75 @@ fn a_lighting_asset_gives_the_sky_and_a_sun_where_the_scene_has_none() {
     object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3}), [0.0; 3], [0.0; 3]);
     let frame = extract_with(&scene, camera, OPTIONS, &mut OneLighting(Arc::new(lighting)));
     assert_eq!(frame.lights.len(), 1, "the scene's own Directional Light, not the asset's sun as well");
+}
+
+/// A sphere lit by a sun from the front-left, with `material`, seen head on: the picture's middle row.
+fn sphere_row(gpu: &HeadlessGpu, material: Arc<crate::CompiledMaterial>) -> Vec<[u8; 4]> {
+    let mut scene = Scene::new();
+    let id = mesh(&mut scene, "sphere", [0.0, 0.0, 0.0]);
+    scene
+        .set_component(id, "mesh", json!({"shape": "sphere", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.5, "material": "m.bmaterial"}))
+        .unwrap();
+    object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 2}), [0.0; 3], [0.0, -60.0, 0.0]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 50.0, 1.0);
+    let frame = extract_with(&scene, camera, OPTIONS, &mut Materials(None, material));
+    let image = gpu.render(&frame, 96, 96).unwrap();
+    (0..96).map(|x| image.pixel(x, 48).unwrap()).collect()
+}
+
+#[test]
+fn custom_lighting_bands_the_light_and_an_outline_rims_the_shape() {
+    let Some(gpu) = gpu() else { return };
+    // The engine's lighting: a smooth shading across the sphere.
+    let plain = Arc::new(compile(&Graph::new(&CATALOG)).unwrap());
+    let smooth = sphere_row(&gpu, plain);
+
+    // Custom lighting: the main light's angle cut into three bands, times its colour and shadow.
+    let mut g = Graph::empty(&CATALOG);
+    let out = g.add_node(&CATALOG, "customLighting", [0.0, 0.0]).unwrap();
+    let light = g.add_node(&CATALOG, "mainLight", [0.0, 0.0]).unwrap();
+    let normal = g.add_node(&CATALOG, "normal", [0.0, 0.0]).unwrap();
+    let dot = g.add_node(&CATALOG, "dot", [0.0, 0.0]).unwrap();
+    link(&mut g, normal, "normal", dot, "a");
+    link(&mut g, light, "direction", dot, "b");
+    let bands = g.add_node(&CATALOG, "posterize", [0.0, 0.0]).unwrap();
+    link(&mut g, dot, "result", bands, "value");
+    let lit = g.add_node(&CATALOG, "multiply", [0.0, 0.0]).unwrap();
+    link(&mut g, bands, "result", lit, "a");
+    link(&mut g, light, "shadow", lit, "b");
+    link(&mut g, lit, "result", out, "color");
+    let toon = sphere_row(&gpu, Arc::new(compile(&g).unwrap_or_else(|p| panic!("{p:?}"))));
+    let shades = |row: &[[u8; 4]]| row.iter().map(|p| p[0]).collect::<std::collections::BTreeSet<u8>>().len();
+    assert!(shades(&toon) * 3 < shades(&smooth), "flat bands: {} shades against {}", shades(&toon), shades(&smooth));
+
+    // An outline: a red rim just outside the sphere's edge, where the background was.
+    g.set_value(&CATALOG, out, "outlineWidth", json!(0.08)).unwrap();
+    g.set_value(&CATALOG, out, "outlineColor", json!([1.0, 0.0, 0.0])).unwrap();
+    let compiled = compile(&g).unwrap();
+    assert!(compiled.outline.is_some());
+    let rimmed = sphere_row(&gpu, Arc::new(compiled));
+    // Background pixels are the ones like the row's first (beside the sphere).
+    let background = toon[0];
+    let red = |p: [u8; 4]| p[0] > 150 && p[1] < 60 && p[2] < 60;
+    let rim = (0..toon.len()).filter(|i| toon[*i] == background && red(rimmed[*i])).count();
+    assert!(rim >= 2, "a red rim where the background was beside the sphere: {rim} pixels");
+    assert!(!toon.iter().any(|p| red(*p)), "no rim without the outline");
+    assert_eq!(rimmed[48], toon[48], "the shape itself stays as it was in front of its outline");
+}
+
+#[test]
+fn the_example_materials_compile() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo/materials");
+    let mut seen = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "bmaterial") {
+            continue;
+        }
+        let graph = Graph::from_json(&std::fs::read_to_string(&path).unwrap(), &CATALOG).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let compiled = compile(&graph).unwrap_or_else(|p| panic!("{}: {p:?}", path.display()));
+        seen.push((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled));
+    }
+    let toon = seen.iter().find(|(name, _)| name == "toon").map(|(_, m)| m).expect("the toon example ships");
+    assert!(toon.outline.is_some() && toon.surface.contains("CUSTOM_LIGHTING: bool = true"), "it shows the stylised nodes together");
 }

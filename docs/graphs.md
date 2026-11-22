@@ -74,6 +74,17 @@ The **Image** node reads a PNG or JPEG file (relative to the project folder) by 
 coordinates; **Texture Coordinates** gives them as a vector, to scale or move them. A material may
 use up to 4 images.
 
+For a stylised look (cel shading, say), **Main Light** gives the main light at the point (the
+direction towards it, its colour, and how much of it the shadows let through), **Other Lights** the
+light the others give, added up, and **View Direction** and **Screen Position** where the point is
+seen from. **Dot Product**, **Normalize**, **Step**, **Smooth Step**, **Posterize** (flat bands),
+**Remap**, **Power**, **Clamp 0 to 1**, **Blend**, **Split Vector** and **Make Vector** shape them, and
+an **Image** read at a computed coordinate makes a ramp. A **Custom Lighting Output** in place of the
+Material Output shows its colour as it is: the graph does the lighting. Either output has an outline
+option (Outline Width in world units, up to 1, and Outline Color): the shape's back faces, grown along
+their normals, draw a rim around it; smooth shapes outline cleanly, and hard corners (a cube's) can
+show gaps. `examples/demo/materials/toon.bmaterial` puts them together.
+
 While a material is open in the graph editor, the scene view shows its unsaved changes, and a
 preview in the canvas corner shows it on a sphere (Hide puts it away; Show Preview in the toolbar
 brings it back). A material

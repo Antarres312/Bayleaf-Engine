@@ -182,6 +182,8 @@ pub struct Renderer {
     /// Opaque and transparent pipelines by material key; 0 is the built-in surface, `None` a
     /// material whose shader the GPU refused (drawn with the built-in surface instead).
     pipelines: HashMap<u64, Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>>,
+    /// Outline pipelines of the materials that have an outline, by material key.
+    outlines: HashMap<u64, wgpu::RenderPipeline>,
     /// Why the last refused material shader was refused.
     material_error: Option<String>,
     grid: wgpu::RenderPipeline,
@@ -372,6 +374,7 @@ impl Renderer {
             globals_group,
             layout,
             pipelines,
+            outlines: HashMap::new(),
             material_error: None,
             grid,
             sky,
@@ -419,8 +422,14 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(mesh_source(&material.surface).into()),
         });
         let pipelines = (mesh_pipeline(device, &self.layout, &shader, false), mesh_pipeline(device, &self.layout, &shader, true));
+        let outline = material.outline.is_some().then(|| outline_mesh_pipeline(device, &self.layout, &shader));
         let entry = match pollster::block_on(scope.pop()) {
-            None => Some(pipelines),
+            None => {
+                if let Some(outline) = outline {
+                    self.outlines.insert(material.key, outline);
+                }
+                Some(pipelines)
+            }
             Some(error) => {
                 self.material_error = Some(error_chain(&error));
                 None
@@ -601,6 +610,22 @@ impl Renderer {
                 let key = (material_key(first), mesh_key(first), texture_key(first), first.part);
                 let run = opaque[start..].iter().take_while(|i| (material_key(i), mesh_key(i), texture_key(i), i.part) == key).count();
                 if let (Some(pipeline), Some(mesh), Some(group)) = (self.pipeline(key.0, false), self.gpu_mesh(first), self.texture_groups.get(&key.2)) {
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(2, group, &[]);
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(indices(first, mesh), 0, start as u32..(start + run) as u32);
+                }
+                start += run;
+            }
+
+            // Outlines of the opaque shapes whose material has one: their back faces, grown.
+            let mut start = 0usize;
+            while start < opaque.len() {
+                let first = opaque[start];
+                let key = (material_key(first), mesh_key(first), texture_key(first), first.part);
+                let run = opaque[start..].iter().take_while(|i| (material_key(i), mesh_key(i), texture_key(i), i.part) == key).count();
+                if let (Some(pipeline), Some(mesh), Some(group)) = (self.outlines.get(&key.0), self.gpu_mesh(first), self.texture_groups.get(&key.2)) {
                     pass.set_pipeline(pipeline);
                     pass.set_bind_group(2, group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
@@ -1051,12 +1076,33 @@ const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array!
 ];
 
 fn mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, transparent: bool) -> wgpu::RenderPipeline {
+    mesh_pipeline_with(device, layout, shader, transparent, false)
+}
+
+/// A material's outline: its back faces only (front faces culled), grown by `vs_outline`.
+fn outline_mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule) -> wgpu::RenderPipeline {
+    mesh_pipeline_with(device, layout, shader, false, true)
+}
+
+fn mesh_pipeline_with(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    transparent: bool,
+    outline: bool,
+) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(if transparent { "bayleaf transparent" } else { "bayleaf opaque" }),
+        label: Some(if outline {
+            "bayleaf material outline"
+        } else if transparent {
+            "bayleaf transparent"
+        } else {
+            "bayleaf opaque"
+        }),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some("vs_main"),
+            entry_point: Some(if outline { "vs_outline" } else { "vs_main" }),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             buffers: &[
                 Some(wgpu::VertexBufferLayout {
@@ -1071,8 +1117,9 @@ fn mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &
                 }),
             ],
         },
-        // No culling: quads and planes are visible from both sides; the shader flips back-face normals.
-        primitive: wgpu::PrimitiveState { cull_mode: None, ..wgpu::PrimitiveState::default() },
+        // No culling: quads and planes are visible from both sides; the shader flips back-face
+        // normals. An outline draws only the back faces.
+        primitive: wgpu::PrimitiveState { cull_mode: outline.then_some(wgpu::Face::Front), ..wgpu::PrimitiveState::default() },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(!transparent),
@@ -1083,7 +1130,7 @@ fn mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &
         multisample: wgpu::MultisampleState { count: SAMPLES, ..wgpu::MultisampleState::default() },
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some("fs_main"),
+            entry_point: Some(if outline { "fs_outline" } else { "fs_main" }),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format: COLOR_FORMAT,
@@ -1141,7 +1188,10 @@ pub(crate) const DEFAULT_SURFACE: &str = "fn surface(s: SurfaceIn) -> Surface {
     let mapped = bl_srgb(textureSample(t2, material_sampler, s.uv).rgb) * 2.0 - vec3<f32>(1.0);
     let normal = bl_normal_map(s.normal, s.position, s.uv, mapped);
     return Surface(s.color.rgb * image.rgb, s.params.x * metal_rough.b, s.params.y * metal_rough.g, vec3<f32>(0.0), s.color.a * image.a, normal);
-}";
+}
+const USES_LIGHTS: bool = false;
+const CUSTOM_LIGHTING: bool = false;
+const OUTLINE: vec4<f32> = vec4<f32>(0.0);";
 
 /// `shader` with the shared per-frame values in front.
 fn with_common(shader: &str) -> String {
