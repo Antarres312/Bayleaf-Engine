@@ -49,7 +49,8 @@ impl GameInterfaces {
             }
         }
         let loaded = bayleaf_engine::interface::load(base, layout).map(Arc::new);
-        let styles: Vec<PathBuf> = loaded.as_ref().map(|l| l.layout.styles.iter().map(|s| base.join(s)).collect()).unwrap_or_default();
+        // Its style and part files: a change to any of them reads it again.
+        let styles: Vec<PathBuf> = loaded.as_ref().map(|l| l.files.iter().map(|s| base.join(s)).collect()).unwrap_or_default();
         let stamps = std::iter::once(&path).chain(&styles).map(|p| modified(p)).collect();
         self.files.insert(path, Cached { stamps, styles, loaded: loaded.clone() });
         loaded
@@ -128,7 +129,7 @@ pub fn show(ui: &mut egui::Ui, area: egui::Rect, session: &mut Session, cache: &
                 continue;
             }
         };
-        let root = bayleaf_engine::interface::shown(&loaded.layout.root, state, game.as_ref());
+        let root = bayleaf_engine::interface::shown(&loaded.root, state, game.as_ref());
         cache.load_images(ui.ctx(), &base, &root);
         let placed = {
             let measure = Measure { painter: &painter, images: &cache.images, base: &base };
@@ -171,17 +172,24 @@ pub(crate) fn loaded(cache: &mut GameInterfaces, base: &Path, layout: &str) -> R
     cache.load(base, layout)
 }
 
-/// Every element of `root` by its address, with its place in the tree.
-fn places(root: &bayleaf_interface::Element) -> HashMap<*const bayleaf_interface::Element, Vec<usize>> {
+/// Every element of `shown` (the layout with its parts in place) by its address, with its place
+/// in `file`'s tree (as the file holds it): everything a part put in place is the part's.
+fn places(file: &bayleaf_interface::Element, shown: &bayleaf_interface::Element) -> HashMap<*const bayleaf_interface::Element, Vec<usize>> {
     let mut out = HashMap::new();
-    let mut pending = vec![(root, Vec::new())];
-    while let Some((element, at)) = pending.pop() {
-        for (i, child) in element.children.iter().enumerate() {
+    let mut pending = vec![(file, shown, Vec::new())];
+    while let Some((file, shown, at)) = pending.pop() {
+        if file.kind == bayleaf_interface::Kind::Part {
+            for inner in shown.walk() {
+                out.insert(std::ptr::from_ref(inner), at.clone());
+            }
+            continue;
+        }
+        for (i, (f, s)) in file.children.iter().zip(&shown.children).enumerate() {
             let mut child_at = at.clone();
             child_at.push(i);
-            pending.push((child, child_at));
+            pending.push((f, s, child_at));
         }
-        out.insert(std::ptr::from_ref(element), at);
+        out.insert(std::ptr::from_ref(shown), at);
     }
     out
 }
@@ -207,7 +215,7 @@ pub(crate) fn preview(
     painter.rect_filled(area, 2.0, egui::Color32::from_rgb(28, 32, 40));
     // Its edge, so the screen's size shows against the panel.
     ui.painter().rect_stroke(area, 2.0, egui::Stroke::new(1.0, crate::theme::tokens(ui).text_muted), egui::StrokeKind::Outside);
-    let root = loaded.layout.root.clone();
+    let root = loaded.root.clone();
     cache.load_images(ui.ctx(), base, &root);
     let placed = {
         let measure = Measure { painter: &painter, images: &cache.images, base };
@@ -218,7 +226,7 @@ pub(crate) fn preview(
     for (index, item) in placed.iter().enumerate() {
         draw(ui, &drawing, index, item, cache, &mut inputs);
     }
-    let at = places(&root);
+    let at = places(&loaded.layout.root, &root);
     let elements = placed.iter().filter_map(|p| Some((to_screen(p.rect, area), at.get(&std::ptr::from_ref(p.element))?.clone()))).collect();
     Ok(Previewed { area, elements })
 }
@@ -291,7 +299,8 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
     let range = (element.max - element.min).max(f64::EPSILON);
     match element.kind {
         Kind::Text | Kind::Button => {
-            let galley = painter.layout(element.text.clone(), font, fade(style.color), inner.width().max(1.0));
+            // A little room over the measured width, so rounding never wraps a line that fits.
+            let galley = painter.layout(element.text.clone(), font, fade(style.color), inner.width().max(1.0) + 1.0);
             let at = text_at(&galley, inner, element.kind == Kind::Button);
             painter.galley(at, galley, fade(style.color));
             if let Some(r) = response.as_ref().filter(|_| control)
@@ -317,7 +326,7 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
                 painter.rect_stroke(mark, 4.0, egui::Stroke::new(2.0, fade(style.color)), egui::StrokeKind::Inside);
             }
             let text = egui::Rect::from_min_max(egui::pos2(mark.right() + style.gap, inner.top()), inner.max);
-            let galley = painter.layout(element.text.clone(), font, fade(style.color), text.width().max(1.0));
+            let galley = painter.layout(element.text.clone(), font, fade(style.color), text.width().max(1.0) + 1.0);
             painter.galley(text_at(&galley, text, true), galley, fade(style.color));
             if let Some(r) = response.as_ref().filter(|_| control)
                 && r.clicked()
@@ -384,7 +393,7 @@ fn draw(ui: &mut egui::Ui, drawing: &Drawing<'_>, index: usize, item: &Placed<'_
                 painter.galley(text_at(&galley, inner, true), galley, fade(style.color));
             }
         }
-        Kind::Panel | Kind::Row | Kind::Column | Kind::List => {}
+        Kind::Panel | Kind::Row | Kind::Column | Kind::List | Kind::Part => {}
     }
 
     let Some(response) = response else { return };

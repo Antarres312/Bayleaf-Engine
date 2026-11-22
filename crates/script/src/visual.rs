@@ -103,6 +103,8 @@ pub(crate) const FUNCTION_SETTINGS: [SettingDef; 3] = [
 /// The node kinds that name a function in their `function` setting.
 pub const FUNCTION_KINDS: [&str; 3] = ["functionStart", "functionReturn", "callFunction"];
 const OBJECT_NAME: SettingDef = SettingDef { name: "object", label: "Object Name", kind: SettingKind::Text("") };
+/// The interface element a node works on, by its name.
+const ELEMENT: SettingDef = SettingDef { name: "element", label: "Element", kind: SettingKind::Text("Start") };
 /// What a search looks for: a component (Point Light, Character), a tag, or a script (by its name).
 const KIND: SettingDef = SettingDef { name: "kind", label: "Component, Tag or Script", kind: SettingKind::Text("Point Light") };
 
@@ -699,6 +701,80 @@ pub const CATALOG: Catalog = Catalog {
             unique: false,
         },
         NodeDef {
+            kind: "interfacePressed",
+            label: "On Interface Pressed",
+            category: "Interface",
+            description: "Runs when the player presses the button named in Element, in this object's Interface.",
+            inputs: &[],
+            outputs: &[THEN],
+            settings: &[ELEMENT],
+            unique: false,
+        },
+        NodeDef {
+            kind: "interfaceChanged",
+            label: "On Interface Changed",
+            category: "Interface",
+            description: "Runs when the player changes the toggle, slider or text field named in Element, in this object's Interface. Value is its new value (a text field's length).",
+            inputs: &[],
+            outputs: &[THEN, pin("value", "Value", Float)],
+            settings: &[ELEMENT],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setInterfaceText",
+            label: "Set Interface Text",
+            category: "Interface",
+            description: "Sets the text of the element named in Element, in the Interface of the linked object, else the first object named in Object Name, else this object. It shows after this step.",
+            inputs: &[RUN, TARGET, text("text", "Text", "")],
+            outputs: &[THEN],
+            settings: &[ELEMENT, OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setInterfaceValue",
+            label: "Set Interface Value",
+            category: "Interface",
+            description: "Sets an element's value: a toggle's state (0 or 1), a slider's number, a progress bar's fill (0 to 1). Which interface: as Set Interface Text.",
+            inputs: &[RUN, TARGET, number("value", "Value", Float, 0.0)],
+            outputs: &[THEN],
+            settings: &[ELEMENT, OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "showInterface",
+            label: "Show Interface",
+            category: "Interface",
+            description: "Shows or hides the element named in Element, or the whole interface when Element is empty. Which interface: as Set Interface Text.",
+            inputs: &[RUN, TARGET, PinDef::with("visible", "Visible", Bool, PinDefault::Bool(true))],
+            outputs: &[THEN],
+            settings: &[SettingDef { name: "element", label: "Element", kind: SettingKind::Text("") }, OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "addInterfaceElement",
+            label: "Add Interface Element",
+            category: "Interface",
+            description: "Builds the interface while the game plays: adds an element named Name into the element named in Into (the root when empty). What is a kind (button, text, progress...) or a layout file (.bui) used as a part, whose elements are then named Name/element.",
+            inputs: &[RUN, TARGET, text("name", "Name", "Item")],
+            outputs: &[THEN],
+            settings: &[
+                SettingDef { name: "into", label: "Into", kind: SettingKind::Text("") },
+                SettingDef { name: "what", label: "What", kind: SettingKind::Text("button") },
+                OBJECT_NAME,
+            ],
+            unique: false,
+        },
+        NodeDef {
+            kind: "removeInterfaceElement",
+            label: "Remove Interface Element",
+            category: "Interface",
+            description: "Removes the element named Name, with what it holds. Which interface: as Set Interface Text.",
+            inputs: &[RUN, TARGET, text("name", "Name", "Item")],
+            outputs: &[THEN],
+            settings: &[OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
             kind: "walk",
             label: "Walk",
             category: "Physics",
@@ -1101,8 +1177,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     let mut message = String::new();
     // Globals the events keep between steps.
     let mut state: Vec<String> = Vec::new();
-    let mut events: Vec<&bayleaf_graph::Node> =
-        graph.nodes.iter().filter(|n| matches!(n.kind.as_str(), "init" | "start" | "update" | "message" | "keyPressed" | "actionPressed" | "timer")).collect();
+    let mut events: Vec<&bayleaf_graph::Node> = graph.nodes.iter().filter(|n| is_event(&n.kind)).collect();
     events.sort_by_key(|n| n.id);
     for event in events {
         match c.chain(event.id, "then", 1) {
@@ -1139,8 +1214,12 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
                 );
             }
             Ok(code) => {
-                // Each On Message runs only for its own message name.
-                let name = c.setting_text(event.id, "message", "hit");
+                // Each On Message runs only for its own message name; an interface sends its own.
+                let name = match event.kind.as_str() {
+                    "interfacePressed" => format!("pressed:{}", c.setting_text(event.id, "element", "Start")),
+                    "interfaceChanged" => format!("changed:{}", c.setting_text(event.id, "element", "Start")),
+                    _ => c.setting_text(event.id, "message", "hit"),
+                };
                 let (at, len) = c.text(name.as_bytes());
                 let _ = writeln!(message, "    (if (call $message_is (i32.const {at}) (i32.const {len}))\n      (then\n{code}      ))");
             }
@@ -1235,7 +1314,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     }
     let _ = writeln!(out, "  (func (export \"bayleaf_start\")\n{fresh}{start}  )");
     let _ = writeln!(out, "  (func (export \"bayleaf_update\") (param $dt f32)\n{fresh}    (global.set $dt (local.get $dt))\n{update}  )");
-    if graph.nodes.iter().any(|n| n.kind == "message") {
+    if graph.nodes.iter().any(|n| matches!(n.kind.as_str(), "message" | "interfacePressed" | "interfaceChanged")) {
         let _ = writeln!(out, "  (func (export \"bayleaf_message\") (param $value f32)\n{fresh}    (global.set $message (local.get $value))\n{message}  )");
     }
     out.push_str(&functions);
@@ -1568,6 +1647,47 @@ impl Compiler<'_> {
                 let won = self.input(next, "won").and_then(|v| as_bool(next, v))?;
                 let _ = writeln!(code, "{indent}(drop (call $game_end {won}))");
             }
+            "setInterfaceText" | "setInterfaceValue" | "showInterface" => {
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
+                let element = self.setting_text(next, "element", if n.kind == "showInterface" { "" } else { "Start" });
+                if element.trim().is_empty() && n.kind != "showInterface" {
+                    return Err(Problem::on(next, "name the element"));
+                }
+                let (at, len) = self.text(element.as_bytes());
+                match n.kind.as_str() {
+                    "setInterfaceText" => {
+                        let text = self.input(next, "text").and_then(|v| as_text(next, v))?;
+                        let _ = writeln!(code, "{indent}(call $ui_text {handle} (i32.const {at}) (i32.const {len}) {text})");
+                    }
+                    "setInterfaceValue" => {
+                        let value = self.input(next, "value").and_then(|v| as_float(next, v))?;
+                        let _ = writeln!(code, "{indent}(drop (call $ui_set_value {handle} (i32.const {at}) (i32.const {len}) (f64.promote_f32 {value})))");
+                    }
+                    _ => {
+                        let visible = self.input(next, "visible").and_then(|v| as_bool(next, v))?;
+                        let _ = writeln!(code, "{indent}(drop (call $ui_show {handle} (i32.const {at}) (i32.const {len}) {visible}))");
+                    }
+                }
+            }
+            "addInterfaceElement" | "removeInterfaceElement" => {
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
+                let name = self.input(next, "name").and_then(|v| as_text(next, v))?;
+                if n.kind == "addInterfaceElement" {
+                    let into = self.setting_text(next, "into", "");
+                    let what = self.setting_text(next, "what", "button");
+                    if what.trim().is_empty() {
+                        return Err(Problem::on(next, "say what to add: a kind (button, text...) or a .bui file"));
+                    }
+                    let (into_at, into_len) = self.text(into.as_bytes());
+                    let (what_at, what_len) = self.text(what.as_bytes());
+                    let _ = writeln!(
+                        code,
+                        "{indent}(call $ui_add_named {handle} (i32.const {into_at}) (i32.const {into_len}) (i32.const {what_at}) (i32.const {what_len}) {name})"
+                    );
+                } else {
+                    let _ = writeln!(code, "{indent}(call $ui_remove_named {handle} {name})");
+                }
+            }
             "walk" | "jump" => {
                 let handle = self.target(next, Ok("(call $self_handle)"))?;
                 if n.kind == "walk" {
@@ -1784,7 +1904,7 @@ impl Compiler<'_> {
                 val_of(param.ty, parts)
             }
             "update" if pin == "dt" => Val::F("(global.get $dt)".to_owned()),
-            "message" if pin == "value" => Val::F("(global.get $message)".to_owned()),
+            "message" | "interfaceChanged" if pin == "value" => Val::F("(global.get $message)".to_owned()),
             "vectorVariable" => {
                 let name = self.setting_text(node, "name", "target");
                 Val::V(["x", "y", "z"].map(|axis| format!("(global.get $vec_{name}_{axis})")))
@@ -2191,6 +2311,11 @@ fn parts_of(node: u32, ty: VariableType, value: Val) -> Result<Vec<String>, Prob
     })
 }
 
+/// Node kinds that start a chain on their own.
+fn is_event(kind: &str) -> bool {
+    matches!(kind, "init" | "start" | "update" | "message" | "keyPressed" | "actionPressed" | "timer" | "interfacePressed" | "interfaceChanged")
+}
+
 fn as_float(node: u32, value: Val) -> Result<String, Problem> {
     match value {
         Val::F(f) => Ok(f),
@@ -2296,6 +2421,11 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "game_end" (func $game_end (param i32) (result i32)))
   (import "bayleaf" "action" (func $action (param i32 i32) (result f32)))
   (import "bayleaf" "input_map_set" (func $input_map_set (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "ui_set_text" (func $ui_set_text (param i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "ui_set_value" (func $ui_set_value (param i32 i32 i32 f64) (result i32)))
+  (import "bayleaf" "ui_show" (func $ui_show (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "ui_add" (func $ui_add (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "ui_remove" (func $ui_remove (param i32 i32 i32) (result i32)))
   (import "bayleaf" "character_walk" (func $character_walk (param i32 f32 f32 f32) (result i32)))
   (import "bayleaf" "character_jump" (func $character_jump (param i32 f32) (result i32)))
   (import "bayleaf" "character_grounded" (func $character_grounded (param i32) (result i32)))
@@ -2364,6 +2494,12 @@ const PRELUDE: &str = r#"(module
     (i64.or (i64.shl (i64.extend_i32_u (local.get $p)) (i64.const 32)) (i64.extend_i32_u (local.get $l))))
   (func $log_text (param $t i64) (call $log (call $tp (local.get $t)) (call $tl (local.get $t))))
   (func $find_text (param $t i64) (result i32) (call $find (call $tp (local.get $t)) (call $tl (local.get $t))))
+  (func $ui_text (param $h i32) (param $np i32) (param $nl i32) (param $t i64)
+    (drop (call $ui_set_text (local.get $h) (local.get $np) (local.get $nl) (call $tp (local.get $t)) (call $tl (local.get $t)))))
+  (func $ui_add_named (param $h i32) (param $pp i32) (param $pl i32) (param $wp i32) (param $wl i32) (param $t i64)
+    (drop (call $ui_add (local.get $h) (local.get $pp) (local.get $pl) (local.get $wp) (local.get $wl) (call $tp (local.get $t)) (call $tl (local.get $t)))))
+  (func $ui_remove_named (param $h i32) (param $t i64)
+    (drop (call $ui_remove (local.get $h) (call $tp (local.get $t)) (call $tl (local.get $t)))))
   (func $join (param $a i64) (param $b i64) (result i64) (local $p i32)
     (local.set $p (call $alloc (i32.add (call $tl (local.get $a)) (call $tl (local.get $b)))))
     (memory.copy (local.get $p) (call $tp (local.get $a)) (call $tl (local.get $a)))

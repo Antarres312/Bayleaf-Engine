@@ -79,6 +79,14 @@ pub enum InterfaceChange {
     Text(String),
     Value(f64),
     Visible(bool),
+    /// A new element named as the request's element, into the element named `parent` ("" for the
+    /// root): `what` is a kind (`button`) or a layout file (`.bui`) used as a part.
+    Add {
+        parent: String,
+        what: String,
+    },
+    /// The element goes, with what it holds.
+    Remove,
 }
 
 /// What a script asks of a Particle Emitter.

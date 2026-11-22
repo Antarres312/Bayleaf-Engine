@@ -2544,3 +2544,108 @@ fn the_interface_panel_edits_a_layout_from_its_tree_fields_and_preview() {
     assert_eq!(harness.state().interface_view.selected, vec![1], "the Start button, picked in the preview");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn save_as_part_in_the_interface_panel_puts_a_part_in_its_place() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-save-part-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().dispatch("asset.create", &json!({ "kind": "interface", "folder": "", "name": "menu" }), None);
+    harness.state_mut().open_interface(&dir.join("menu.bui"));
+    harness.run_steps(2);
+    harness.get_by_label("Button: Start").click();
+    harness.run_steps(2);
+    harness.get_by_label("Save as Part").click();
+    harness.run_steps(2);
+    assert!(dir.join("Start.bui").is_file(), "{}", harness.state().status);
+    assert!(harness.query_by_label("Part: Start").is_some(), "the tree shows the part in the button's place");
+    // Open Part edits the part's own layout.
+    harness.get_by_label("Open Part").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().interface_view.path.as_deref(), Some(dir.join("Start.bui").as_path()));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A project with a character card part, a display using it, and a visual script that adds a
+/// second card when Start is pressed. Returns the project folder.
+fn display_with_a_card(harness: &mut Harness<'static, Editor>, name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-{name}-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let editor = harness.state_mut();
+    editor.dispatch("project.new", &json!({ "path": dir }), None);
+    let card = json!({
+        "format": "bayleaf.interface", "version": 1,
+        "root": { "kind": "panel", "name": "Card",
+            "style": { "width": "200px", "padding": "12px", "gap": "6px", "background": "#2d3440e6", "radius": "8px" },
+            "children": [
+                { "kind": "text", "name": "Name", "text": "Hero", "style": { "fontSize": "22px" } },
+                { "kind": "text", "text": "Health" },
+                { "kind": "progress", "name": "Health", "value": 0.7, "style": { "width": "100%" } },
+                { "kind": "button", "name": "Use", "text": "Use Potion" }
+            ] }
+    });
+    editor.dispatch("ui.layout.set", &json!({ "path": "card.bui", "layout": card }), None);
+    let display = json!({
+        "format": "bayleaf.interface", "version": 1,
+        "root": { "kind": "column", "name": "Display",
+            "style": { "width": "100%", "height": "100%", "padding": "24px", "gap": "16px" },
+            "children": [
+                { "kind": "row", "style": { "alignItems": "start" }, "children": [
+                    { "kind": "part", "name": "Character", "layout": "card.bui" },
+                    { "kind": "panel", "style": { "grow": "1" } },
+                    { "kind": "button", "name": "Start", "text": "Add to Party" }
+                ] },
+                { "kind": "row", "name": "Party", "style": { "gap": "16px" } }
+            ] }
+    });
+    editor.dispatch("ui.layout.set", &json!({ "path": "hud.bui", "layout": display }), None);
+    // The visual script: pressing the button adds a card to the party column.
+    editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
+    let add_node = |editor: &mut Editor, kind: &str, x: f32| {
+        editor.dispatch("graph.node.add", &json!({ "kind": kind, "position": [x, 40.0] }), None).unwrap()["node"].as_u64().unwrap()
+    };
+    let pressed = add_node(editor, "interfacePressed", 40.0);
+    let add = add_node(editor, "addInterfaceElement", 320.0);
+    for (node, setting, value) in
+        [(pressed, "element", json!("Start")), (add, "into", json!("Party")), (add, "what", json!("card.bui")), (add, "name", json!("Ally"))]
+    {
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": setting, "value": value }), None);
+    }
+    editor.dispatch("graph.link.add", &json!({ "from": { "node": pressed, "pin": "then" }, "to": { "node": add, "pin": "run" } }), None);
+    editor.dispatch("graph.save", &json!({ "path": dir.join("hud.bscript") }), None);
+    let components = json!({ "interface": { "layout": "hud.bui", "visible": true, "order": 0 }, "scripts": [{ "module": "hud.bscript" }] });
+    editor.dispatch("scene.object.create", &json!({ "name": "HUD", "components": components }), None);
+    dir
+}
+
+#[test]
+fn with_a_gpu_a_visual_script_adds_a_saved_part_to_the_display() {
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
+    let dir = display_with_a_card(&mut harness, "party");
+    harness.run_steps(3);
+    let graph = picture(&mut harness);
+    keep_for_review(&graph, "interface-visual-script");
+    harness.state_mut().open_interface(&dir.join("hud.bui"));
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Part: Character").is_some(), "the display's tree shows the part");
+    let panel = picture(&mut harness);
+    keep_for_review(&panel, "interface-part-in-panel");
+
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(4);
+    let heroes = |harness: &Harness<'static, Editor>| harness.query_all_by_label("Hero").count();
+    assert_eq!(heroes(&harness), 1, "one card before");
+    let button = harness
+        .query_all(egui_kittest::kittest::By::new().predicate(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("Add to Party")))
+        .next()
+        .expect("the display's button");
+    button.click();
+    harness.run_steps(3);
+    assert_eq!(heroes(&harness), 2, "the script added a second card: {}", harness.state().status);
+    let playing = picture(&mut harness);
+    keep_for_review(&playing, "interface-part-added-while-playing");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(2);
+    std::fs::remove_dir_all(&dir).ok();
+}

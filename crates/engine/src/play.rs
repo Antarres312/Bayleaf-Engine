@@ -850,7 +850,7 @@ fn apply_requests(session: &mut Session) {
                     bayleaf_script::ParticleAction::Burst(count) => play.particles.burst(&session.scene, object, count),
                 }
             }
-            Request::Interface { object, element, change, .. } => crate::interface::apply(session, object, element, change),
+            Request::Interface { by, object, element, change } => crate::interface::apply(session, by, object, element, change),
             Request::PlaySound { by, object } => {
                 if let Err(error) = crate::sound::play_object(session, object) {
                     sound_problem(session, by, object, &error);

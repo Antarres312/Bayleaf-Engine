@@ -181,7 +181,8 @@ pub struct Style {
     pub max_height: Length,
     /// How much of the room left over it takes, against its siblings.
     pub grow: f32,
-    /// How much it gives up when there is too little room.
+    /// How much it gives up when there is too little room: text gives room (it wraps); boxes,
+    /// controls and images keep their size unless their style says otherwise.
     pub shrink: f32,
     pub align_items: Align,
     /// Its own place across its parent, instead of the parent's `alignItems`.
@@ -217,7 +218,7 @@ impl Style {
             max_width: Length::Auto,
             max_height: Length::Auto,
             grow: 0.0,
-            shrink: 1.0,
+            shrink: if kind == Kind::Text { 1.0 } else { 0.0 },
             align_items: Align::Stretch,
             align_self: None,
             justify: Justify::Start,
@@ -262,7 +263,7 @@ impl Style {
                 style.background = Color([40, 40, 40, 200]);
                 style.radius = 8.0;
             }
-            Kind::Panel | Kind::Column | Kind::Text | Kind::Image => {}
+            Kind::Panel | Kind::Column | Kind::Text | Kind::Image | Kind::Part => {}
         }
         style
     }

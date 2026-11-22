@@ -512,6 +512,21 @@ fn every_node_kind_compiles_and_runs() {
     let set_target = b.node("setObjectProperty", json!({ "name": "target" }));
     b.link(after.0, after.1, set_target, "run");
     b.link(me, "object", set_target, "value");
+    // The interface: its events, and building and changing it (the object has none, so nothing shows).
+    let pressed = b.node("interfacePressed", json!({ "element": "Start" }));
+    let set_text = b.node("setInterfaceText", json!({ "element": "Title" }));
+    b.link(pressed, "then", set_text, "run");
+    b.link(other_name, "result", set_text, "text");
+    let changed = b.node("interfaceChanged", json!({ "element": "Volume" }));
+    let set_value = b.node("setInterfaceValue", json!({ "element": "Bar" }));
+    b.link(changed, "then", set_value, "run");
+    b.link(changed, "value", set_value, "value");
+    let show = b.node("showInterface", json!({}));
+    b.link(set_target, "then", show, "run");
+    let add = b.node("addInterfaceElement", json!({ "into": "List", "what": "ui/slot.bui" }));
+    b.link(show, "then", add, "run");
+    let remove_element = b.node("removeInterfaceElement", json!({}));
+    b.link(add, "then", remove_element, "run");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }

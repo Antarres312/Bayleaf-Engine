@@ -129,10 +129,15 @@ fn a_column_centres_its_children_and_hidden_ones_take_no_room() {
 #[test]
 fn too_little_room_shrinks_children_to_fit_and_shares_follow_the_parent() {
     let mut root = element(Kind::Row, "Narrow", &[("width", "300px"), ("height", "40px")]);
-    root.children = vec![element(Kind::Panel, "A", &[("width", "200px")]), element(Kind::Panel, "B", &[("width", "200px")])];
+    root.children = vec![element(Kind::Panel, "A", &[("width", "200px"), ("shrink", "1")]), element(Kind::Panel, "B", &[("width", "200px"), ("shrink", "1")])];
     let all = layout(&root, &[], [800.0, 600.0], 1.0, &Monospace);
     let narrow = placed(&all, "Narrow").rect;
     assert!(all.iter().all(|p| inside(p.rect, narrow)), "everything fits inside the row");
+    // Without a shrink of their own, boxes keep their size and run past the row instead of
+    // cutting what they hold.
+    root.children = vec![element(Kind::Panel, "A", &[("width", "200px")]), element(Kind::Panel, "B", &[("width", "200px")])];
+    let all = layout(&root, &[], [800.0, 600.0], 1.0, &Monospace);
+    assert!(all.iter().filter(|p| p.element.kind == Kind::Panel).all(|p| (p.rect.w - 200.0).abs() < 0.01));
 
     let mut root = element(Kind::Panel, "Half", &[("width", "50%"), ("height", "50%"), ("padding", "10px")]);
     root.children = vec![element(Kind::Panel, "Quarter", &[("width", "50%"), ("height", "20px")])];
@@ -182,4 +187,46 @@ fn every_listed_property_starts_from_a_value_it_takes() {
     }
     // And the list has every property the styles read: an unknown name says so.
     assert!(Style::defaults(Kind::Panel).apply("float", "left").is_err());
+}
+
+#[test]
+fn a_part_takes_its_place_once_per_use_with_its_names_kept_apart() {
+    // A character card: a panel with a name and a health bar, its own style file.
+    let mut card_root = element(Kind::Panel, "Card", &[("width", "200px")]);
+    let mut name = element(Kind::Text, "Name", &[]);
+    name.text = "Hero".to_owned();
+    card_root.children = vec![name, element(Kind::Progress, "Health", &[])];
+    let card = Layout { styles: vec!["ui/card.bstyle".to_owned()], root: card_root, ..Layout::starter() };
+    // A display using it twice, the second one wider.
+    let mut left = element(Kind::Part, "Left", &[]);
+    left.layout = "ui/card.bui".to_owned();
+    let mut right = element(Kind::Part, "Right", &[("width", "300px")]);
+    right.layout = "ui/card.bui".to_owned();
+    let mut root = element(Kind::Row, "Display", &[]);
+    root.children = vec![left, right];
+    let display = Layout { root, ..Layout::starter() };
+    display.validate().unwrap();
+
+    let mut load = |path: &str| if path == "ui/card.bui" { Ok(card.clone()) } else { Err(format!("{path} is not there")) };
+    let expanded = expand(&display, &mut load).unwrap();
+    let names: Vec<&str> = expanded.root.walk().iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["Display", "Left", "Left/Name", "Left/Health", "Right", "Right/Name", "Right/Health"]);
+    assert!(expanded.root.walk().iter().all(|e| e.kind != Kind::Part), "no part is left in place");
+    assert_eq!(expanded.root.children[0].style["width"], "200px", "the part's own size");
+    assert_eq!(expanded.root.children[1].style["width"], "300px", "the bigger layout's style wins");
+    assert_eq!(expanded.styles, ["ui/card.bstyle"], "the part's style files come along, once");
+
+    // A part inside itself, or a file that is not there, says so.
+    let mut selfish = Element::new(Kind::Part);
+    selfish.layout = "ui/loop.bui".to_owned();
+    let looping = Layout { root: selfish.clone(), ..Layout::starter() };
+    let mut load_loop = |_: &str| Ok(looping.clone());
+    assert!(expand(&looping, &mut load_loop).unwrap_err().contains("inside itself"));
+    let mut missing = element(Kind::Part, "Gone", &[]);
+    missing.layout = "ui/gone.bui".to_owned();
+    let mut load_none = |path: &str| Err::<Layout, _>(format!("{path} is not there"));
+    assert!(expand(&Layout { root: missing, ..Layout::starter() }, &mut load_none).is_err());
+    let mut no_file = Element::new(Kind::Part);
+    no_file.name = "Empty".to_owned();
+    assert!(Layout { root: no_file, ..Layout::starter() }.validate().is_err(), "a part names its file");
 }

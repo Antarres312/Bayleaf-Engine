@@ -2468,3 +2468,55 @@ fn interface_elements_are_added_moved_changed_and_removed_one_by_one() {
     assert_eq!(root(&mut session)["children"].as_array().unwrap().len(), 1, "the row went with both buttons");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_part_saved_from_a_menu_is_added_to_the_display_by_a_visual_script() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-interface-parts-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params);
+
+    // A character menu built in one layout: a panel with a name and a health bar.
+    run(&mut session, "asset.create", json!({"kind": "interface", "folder": "", "name": "menu"})).unwrap();
+    let card = run(&mut session, "ui.element.add", json!({"path": "menu.bui", "kind": "panel"})).unwrap()["at"].clone();
+    run(&mut session, "ui.element.set", json!({"path": "menu.bui", "at": card, "element": {"name": "Card"}})).unwrap();
+    let name_at = run(&mut session, "ui.element.add", json!({"path": "menu.bui", "into": card, "kind": "text"})).unwrap()["at"].clone();
+    run(&mut session, "ui.element.set", json!({"path": "menu.bui", "at": name_at, "element": {"name": "Name", "text": "Hero"}})).unwrap();
+    // Saved as a part of its own; the menu now uses it in its place.
+    run(&mut session, "ui.element.saveAsPart", json!({"path": "menu.bui", "at": card, "to": "card.bui"})).unwrap();
+    let menu = run(&mut session, "ui.layout.get", json!({"path": "menu.bui"})).unwrap()["layout"]["root"].clone();
+    assert_eq!(menu["children"][2]["kind"], "part");
+    assert_eq!(menu["children"][2]["layout"], "card.bui");
+    assert!(run(&mut session, "ui.element.saveAsPart", json!({"path": "menu.bui", "at": card, "to": "card.bui"})).is_err(), "never over a file");
+
+    // A visual script: pressing Start adds another card, named Second, to the display.
+    run(&mut session, "graph.new", json!({"domain": "script"})).unwrap();
+    let pressed = node(&registry, &mut session, "interfacePressed");
+    let add = node(&registry, &mut session, "addInterfaceElement");
+    for (n, name, value) in [(pressed, "element", json!("Start")), (add, "what", json!("card.bui")), (add, "name", json!("Second"))] {
+        run(&mut session, "graph.node.set", json!({"node": n, "name": name, "value": value})).unwrap();
+    }
+    run(&mut session, "graph.link.add", pins(pressed, "then", add, "run")).unwrap();
+    run(&mut session, "graph.save", json!({"path": dir.join("hud.bscript")})).unwrap();
+    let id = create(
+        &registry,
+        &mut session,
+        json!({"name": "HUD", "components": {"interface": {"layout": "menu.bui", "visible": true, "order": 0}, "scripts": [{"module": "hud.bscript"}]}}),
+    );
+    let names = |session: &mut Session| -> Vec<String> {
+        let state = registry.execute(session, "play.ui.state", &json!({"id": id})).unwrap();
+        state["elements"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap().to_owned()).collect()
+    };
+
+    run(&mut session, "play.start", Value::Null).unwrap();
+    let before = names(&mut session);
+    assert!(before.contains(&"Card/Name".to_owned()), "the part's names live under the part: {before:?}");
+    run(&mut session, "play.ui.press", json!({"id": id, "element": "Start"})).unwrap();
+    let after = names(&mut session);
+    assert!(after.contains(&"Second".to_owned()) && after.contains(&"Second/Name".to_owned()), "added while playing: {after:?}");
+    assert!(session.console().iter().all(|l| l.level != crate::Level::Error), "{:?}", session.console());
+    run(&mut session, "play.stop", Value::Null).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}

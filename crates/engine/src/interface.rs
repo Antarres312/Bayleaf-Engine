@@ -27,12 +27,21 @@ pub struct ElementState {
     pub visible: Option<bool>,
 }
 
-/// One object's interface while the game plays: whether scripts showed or hid it, and its elements.
+/// One object's interface while the game plays: whether scripts showed or hid it, its elements,
+/// and the elements scripts added and removed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InterfaceState {
     pub visible: Option<bool>,
     pub elements: HashMap<String, ElementState>,
+    /// Added by scripts, in order: the name of the element each went into ("" for the root), and
+    /// the element (a part already put in place).
+    pub added: Vec<(String, Element)>,
+    /// Named elements scripts removed.
+    pub removed: Vec<String>,
 }
+
+/// Most elements scripts add to one interface while the game plays.
+pub const MAX_ADDED: usize = 1024;
 
 /// What the player did to an element.
 #[derive(Clone, Debug, PartialEq)]
@@ -45,24 +54,63 @@ pub enum Input {
     Typed(String),
 }
 
-/// A layout file and its style files, read.
+/// A layout file read, with its parts put in place and every style file it and its parts name.
 pub struct Loaded {
+    /// The layout as its file holds it (parts as parts), for editing.
     pub layout: Layout,
+    /// What it shows: every part put in its place.
+    pub root: Element,
     pub styles: Vec<StyleSheet>,
+    /// The style and part files it took, relative to the project folder.
+    pub files: Vec<String>,
 }
 
-/// Reads `layout` (relative to `base`) and the style files it names. A style file that does not
-/// read is an error, so a mistake there shows instead of a plain look.
+/// Reads `layout` (relative to `base`), its parts and the style files they name, each path through
+/// `allow` first (the session's confinement). A file that does not read is an error, so a mistake
+/// shows instead of a plain look or a missing part.
+pub fn load_with(base: &Path, layout: &str, allow: &dyn Fn(&Path) -> Result<PathBuf, String>) -> Result<Loaded, String> {
+    let file = Layout::load(&allow(&base.join(layout))?)?;
+    let mut read = |part: &str| allow(&base.join(part)).and_then(|p| Layout::load(&p));
+    let expanded = bayleaf_interface::expand(&file, &mut read)?;
+    let styles = expanded.styles.iter().map(|s| allow(&base.join(s)).and_then(|p| StyleSheet::load(&p))).collect::<Result<Vec<_>, _>>()?;
+    let files = expanded.styles.iter().chain(&expanded.parts).cloned().collect();
+    Ok(Loaded { layout: file, root: expanded.root, styles, files })
+}
+
+/// [`load_with`] with no confinement, for the editor's and the player's own views.
 pub fn load(base: &Path, layout: &str) -> Result<Loaded, String> {
-    let layout = Layout::load(&base.join(layout))?;
-    let styles = layout.styles.iter().map(|s| StyleSheet::load(&base.join(s))).collect::<Result<Vec<_>, _>>()?;
-    Ok(Loaded { layout, styles })
+    load_with(base, layout, &|p| Ok(p.to_path_buf()))
 }
 
 /// The element tree as it shows now: the file's, with what scripts and the player changed, and
 /// bound values from the game's state.
 pub fn shown(root: &Element, state: Option<&InterfaceState>, game: Option<&bayleaf_script::GameState>) -> Element {
     let mut root = root.clone();
+    if let Some(state) = state {
+        for name in &state.removed {
+            let mut pending = vec![&mut root];
+            while let Some(element) = pending.pop() {
+                element.children.retain(|c| c.name != *name);
+                pending.extend(element.children.iter_mut());
+            }
+        }
+        for (parent, added) in &state.added {
+            if parent.is_empty() {
+                if root.kind.holds_children() {
+                    root.children.push(added.clone());
+                }
+                continue;
+            }
+            let mut pending = vec![&mut root];
+            while let Some(element) = pending.pop() {
+                if element.name == *parent && element.kind.holds_children() {
+                    element.children.push(added.clone());
+                    break;
+                }
+                pending.extend(element.children.iter_mut());
+            }
+        }
+    }
     let mut pending = vec![&mut root];
     while let Some(element) = pending.pop() {
         if let Some((scope, name)) = bind_target(&element.bind)
@@ -131,9 +179,37 @@ impl Session {
 }
 
 /// A script's change to an interface, applied after the step.
-pub(crate) fn apply(session: &mut Session, object: StableId, element: String, change: bayleaf_script::InterfaceChange) {
+pub(crate) fn apply(session: &mut Session, by: StableId, object: StableId, element: String, change: bayleaf_script::InterfaceChange) {
+    // An element made by a script: a kind by its name, or a part read now and put in place.
+    let made = match &change {
+        bayleaf_script::InterfaceChange::Add { what, .. } => match new_element(session, &element, what) {
+            Ok(made) => Some(made),
+            Err(problem) => {
+                let who = session.scene.name(by).unwrap_or("Object").to_owned();
+                session.log(crate::Level::Error, format!("[{who}] cannot add {element:?} to the interface: {problem}"));
+                return;
+            }
+        },
+        _ => None,
+    };
     let Some(play) = session.play.as_mut() else { return };
     let state = play.interfaces.entry(object).or_default();
+    if let bayleaf_script::InterfaceChange::Add { parent, .. } = &change {
+        if state.added.len() < MAX_ADDED
+            && let Some(made) = made
+        {
+            state.removed.retain(|n| *n != element);
+            state.added.push((parent.clone(), made));
+        }
+        return;
+    }
+    if matches!(change, bayleaf_script::InterfaceChange::Remove) {
+        state.added.retain(|(_, e)| e.name != element);
+        if !state.removed.contains(&element) {
+            state.removed.push(element);
+        }
+        return;
+    }
     if element.is_empty() {
         if let bayleaf_script::InterfaceChange::Visible(visible) = change {
             state.visible = Some(visible);
@@ -145,7 +221,32 @@ pub(crate) fn apply(session: &mut Session, object: StableId, element: String, ch
         bayleaf_script::InterfaceChange::Text(text) => slot.text = Some(text),
         bayleaf_script::InterfaceChange::Value(value) => slot.value = Some(value),
         bayleaf_script::InterfaceChange::Visible(visible) => slot.visible = Some(visible),
+        bayleaf_script::InterfaceChange::Add { .. } | bayleaf_script::InterfaceChange::Remove => {}
     }
+}
+
+/// The element a script adds, named `name`: `what` is a kind (`button`, `text`, ...) or a layout
+/// file (`.bui`), which comes in as a part put in place.
+fn new_element(session: &Session, name: &str, what: &str) -> Result<Element, String> {
+    if name.is_empty() || name.len() > bayleaf_interface::MAX_NAME || name.contains(':') {
+        return Err(format!("name it with 1 to {} bytes and no colons", bayleaf_interface::MAX_NAME));
+    }
+    if what.to_ascii_lowercase().ends_with(&format!(".{}", bayleaf_interface::LAYOUT_EXTENSION)) {
+        // Named before it is put in place, so its inner names become `<name>/<element>`, as in a file.
+        let mut part = Element::new(Kind::Part);
+        part.layout = what.to_owned();
+        part.name = name.to_owned();
+        let host = Layout { root: part, ..Layout::starter() };
+        let base = session.script_dir();
+        let mut read = |file: &str| session.allowed(&base.join(file), Access::Read).map_err(|e| e.to_string()).and_then(|p| Layout::load(&p));
+        return Ok(bayleaf_interface::expand(&host, &mut read)?.root);
+    }
+    let kind = Kind::ALL.into_iter().find(|k| k.name() == what && *k != Kind::Part).ok_or_else(|| {
+        format!("{what:?} is not a kind of element or a .bui file; kinds: {}", Kind::ALL.iter().map(|k| k.name()).collect::<Vec<_>>().join(", "))
+    })?;
+    let mut element = Element::new(kind);
+    name.clone_into(&mut element.name);
+    Ok(element)
 }
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
@@ -182,6 +283,12 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             "Edit Interface Element",
             "{path, at, element: {kind?, name?, classes?, text?, image?, value?, min?, max?, bind?, style?}}: changes the given fields of the element at at; style replaces the element's whole style",
             element_set,
+        ),
+        spec(
+            "ui.element.saveAsPart",
+            "Save Interface Part",
+            "{path, at, to}: writes the element at at, with what it holds, as a layout file of its own (to, a new .bui) and puts a part using it in its place; inside it, its names are then <part>/<name>",
+            element_save_as_part,
         ),
         spec("ui.style.get", "Read Interface Style", "{path}: an interface style file (.bstyle) as {style: {format, version, rules}}", style_get),
         spec(
@@ -391,6 +498,49 @@ fn element_set(session: &mut Session, params: &Value) -> Result<Value, CommandEr
     Ok(json!({}))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SavePartParams {
+    path: PathBuf,
+    at: Vec<usize>,
+    /// The new layout file (`.bui`), relative to the project folder; never over another file.
+    to: String,
+}
+
+fn element_save_as_part(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: SavePartParams = parse(params)?;
+    if p.at.is_empty() {
+        return Err(CommandError::BadParams("the root is the whole layout already; save a part of it".to_owned()));
+    }
+    let to = checked(session, Path::new(&p.to), bayleaf_interface::LAYOUT_EXTENSION, Access::Write)?;
+    if to.exists() {
+        return Err(CommandError::Failed(format!("{} already exists; pick another name", to.display())));
+    }
+    let source = checked(session, &p.path, bayleaf_interface::LAYOUT_EXTENSION, Access::Read)?;
+    let host = Layout::load(&source).map_err(CommandError::Failed)?;
+    let element = host.element_at(&p.at).cloned().ok_or_else(|| CommandError::BadParams(no_element(&p.at)))?;
+    if element.kind == Kind::Part {
+        return Err(CommandError::BadParams("it is a part already".to_owned()));
+    }
+    // The part keeps the style files the layout uses, so it looks the same on its own.
+    let part = Layout { styles: host.styles.clone(), root: element.clone(), ..Layout::starter() };
+    part.validate().map_err(CommandError::BadParams)?;
+    // Names inside a part are its own: the bigger layout calls them `<part>/<name>`.
+    edit_layout(session, &p.path, |layout| {
+        let slot = layout.element_at_mut(&p.at).ok_or_else(|| no_element(&p.at))?;
+        let mut used = Element::new(Kind::Part);
+        used.name = element.name.clone();
+        used.layout = p.to.replace('\\', "/");
+        *slot = used;
+        Ok(())
+    })?;
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| CommandError::Failed(format!("cannot make {}: {e}", parent.display())))?;
+    }
+    std::fs::write(&to, part.to_text()).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", to.display())))?;
+    Ok(json!({ "path": to }))
+}
+
 fn style_get(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: PathParams = parse(params)?;
     let path = checked(session, &p.path, bayleaf_interface::STYLE_EXTENSION, Access::Read)?;
@@ -421,16 +571,11 @@ fn playing_interface(session: &Session, id: StableId) -> Result<(Element, bool, 
     if component.layout.is_empty() {
         return Err(CommandError::Failed("the Interface names no layout file".to_owned()));
     }
-    let layout_path = session.allowed(&session.script_dir().join(&component.layout), Access::Read)?;
-    let layout = Layout::load(&layout_path).map_err(CommandError::Failed)?;
-    let mut styles = Vec::new();
-    for style in &layout.styles {
-        let path = session.allowed(&session.script_dir().join(style), Access::Read)?;
-        styles.push(StyleSheet::load(&path).map_err(CommandError::Failed)?);
-    }
+    let allow = |p: &Path| session.allowed(p, Access::Read).map_err(|e| e.to_string());
+    let loaded = load_with(&session.script_dir(), &component.layout, &allow).map_err(CommandError::Failed)?;
     let state = session.interface_state(id);
     let visible = state.and_then(|s| s.visible).unwrap_or(component.visible);
-    Ok((shown(&layout.root, state, session.game_state().as_ref()), visible, styles))
+    Ok((shown(&loaded.root, state, session.game_state().as_ref()), visible, loaded.styles))
 }
 
 #[derive(Deserialize)]

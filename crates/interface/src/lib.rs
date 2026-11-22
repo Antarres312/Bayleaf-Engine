@@ -52,11 +52,26 @@ pub enum Kind {
     List,
     /// A bar filled by `value`, 0 to 1.
     Progress,
+    /// Another layout file (`layout`) put in its place: a part made once and used in bigger
+    /// interfaces, such as a character menu inside the main display.
+    Part,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 11] =
-        [Kind::Panel, Kind::Row, Kind::Column, Kind::Text, Kind::Image, Kind::Button, Kind::Toggle, Kind::Slider, Kind::TextField, Kind::List, Kind::Progress];
+    pub const ALL: [Kind; 12] = [
+        Kind::Panel,
+        Kind::Row,
+        Kind::Column,
+        Kind::Text,
+        Kind::Image,
+        Kind::Button,
+        Kind::Toggle,
+        Kind::Slider,
+        Kind::TextField,
+        Kind::List,
+        Kind::Progress,
+        Kind::Part,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -71,6 +86,7 @@ impl Kind {
             Kind::TextField => "textField",
             Kind::List => "list",
             Kind::Progress => "progress",
+            Kind::Part => "part",
         }
     }
 
@@ -102,6 +118,9 @@ pub struct Element {
     /// An image file (PNG or JPEG), relative to the project folder.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub image: String,
+    /// A part's layout file (`.bui`), relative to the project folder.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub layout: String,
     /// A toggle's state (0 or 1), a slider's number, a progress bar's fill (0 to 1).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub value: f64,
@@ -141,6 +160,7 @@ impl Element {
             classes: Vec::new(),
             text: String::new(),
             image: String::new(),
+            layout: String::new(),
             value: 0.0,
             min: 0.0,
             max: 1.0,
@@ -280,6 +300,14 @@ fn check_element(element: &Element) -> Result<(), String> {
     if element.classes.len() > 16 || element.classes.iter().any(|c| c.is_empty() || c.len() > 64 || c.contains(char::is_whitespace)) {
         return Err(format!("{what}: at most 16 classes, each 1 to 64 characters without spaces"));
     }
+    match (element.kind, element.layout.is_empty()) {
+        (Kind::Part, true) => return Err(format!("{what}: a part names its layout file (.bui)")),
+        (Kind::Part, false) if element.layout.len() > 512 || !element.layout.to_ascii_lowercase().ends_with(&format!(".{LAYOUT_EXTENSION}")) => {
+            return Err(format!("{what}: layout must be the path of a .{LAYOUT_EXTENSION} file"));
+        }
+        (Kind::Part, false) | (_, true) => {}
+        (_, false) => return Err(format!("{what}: only a part names a layout file")),
+    }
     if !element.image.is_empty() {
         let lower = element.image.to_ascii_lowercase();
         if element.image.len() > 512 || !(lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")) {
@@ -294,6 +322,83 @@ fn check_element(element: &Element) -> Result<(), String> {
     }
     for (property, value) in &element.style {
         style::check_property(property, value).map_err(|e| format!("{what}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Most parts nested inside one another.
+pub const MAX_PART_DEPTH: usize = 8;
+
+/// A layout with every part put in its place, and the files that took.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Expanded {
+    pub root: Element,
+    /// The style files the parts' layouts name, after the layout's own, each once.
+    pub styles: Vec<String>,
+    /// The parts' layout files, each once.
+    pub parts: Vec<String>,
+}
+
+/// Puts each part of `layout` in its place: the part's layout root, named as the part element
+/// (and its classes and own style added, so the bigger layout sizes and places it), with every
+/// named element inside it named `<part>/<element>`, so the same part can be used twice. `load`
+/// reads a part's layout file. A part that names itself, a missing file or a name grown too long
+/// for a message (`pressed:<name>`) is an error.
+pub fn expand(layout: &Layout, load: &mut dyn FnMut(&str) -> Result<Layout, String>) -> Result<Expanded, String> {
+    let mut out = Expanded { root: layout.root.clone(), styles: layout.styles.clone(), parts: Vec::new() };
+    let mut root = std::mem::replace(&mut out.root, Element::new(Kind::Panel));
+    expand_in(&mut root, load, &mut out, &mut Vec::new())?;
+    out.root = root;
+    if out.root.walk().len() > MAX_ELEMENTS {
+        return Err(format!("with its parts, the layout holds more than {MAX_ELEMENTS} elements"));
+    }
+    Ok(out)
+}
+
+/// Longest name of an element inside a part, so `pressed:<name>` stays a message name.
+const MAX_PART_NAME: usize = 56;
+
+fn expand_in(element: &mut Element, load: &mut dyn FnMut(&str) -> Result<Layout, String>, out: &mut Expanded, open: &mut Vec<String>) -> Result<(), String> {
+    if element.kind == Kind::Part {
+        if open.contains(&element.layout) || open.len() >= MAX_PART_DEPTH {
+            return Err(format!("the part {} is inside itself, or parts nest more than {MAX_PART_DEPTH} deep", element.layout));
+        }
+        let part = load(&element.layout).map_err(|e| format!("part {}: {e}", element.layout))?;
+        for style in &part.styles {
+            if !out.styles.contains(style) {
+                out.styles.push(style.clone());
+            }
+        }
+        if !out.parts.contains(&element.layout) {
+            out.parts.push(element.layout.clone());
+        }
+        let mut root = part.root;
+        open.push(element.layout.clone());
+        expand_in(&mut root, load, out, open)?;
+        open.pop();
+        if !element.name.is_empty() {
+            let prefix = element.name.clone();
+            for child in &mut root.children {
+                let mut pending = vec![child];
+                while let Some(inner) = pending.pop() {
+                    if !inner.name.is_empty() {
+                        inner.name = format!("{prefix}/{}", inner.name);
+                        if inner.name.len() > MAX_PART_NAME {
+                            return Err(format!("{} is too long a name inside a part (at most {MAX_PART_NAME} bytes)", inner.name));
+                        }
+                    }
+                    pending.extend(inner.children.iter_mut());
+                }
+            }
+            root.name = prefix;
+        }
+        root.classes.extend(element.classes.iter().cloned());
+        root.style.extend(element.style.iter().map(|(k, v)| (k.clone(), v.clone())));
+        *element = root;
+        return Ok(());
+    }
+    for child in &mut element.children {
+        expand_in(child, load, out, open)?;
     }
     Ok(())
 }

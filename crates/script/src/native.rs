@@ -39,6 +39,8 @@ const HOST_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("ui_set_text", "i32 i32 i32 i32 i32", "i32"),
     ("ui_set_value", "i32 i32 i32 f64", "i32"),
     ("ui_show", "i32 i32 i32 i32", "i32"),
+    ("ui_add", "i32 i32 i32 i32 i32 i32 i32", "i32"),
+    ("ui_remove", "i32 i32 i32", "i32"),
     ("sound_play", "i32", "i32"),
     ("sound_stop", "i32", "i32"),
     ("sound_play_at", "i32 i32 f32 f32 f32 f32", "i32"),

@@ -50,13 +50,18 @@ fn kind_label(kind: Kind) -> &'static str {
         Kind::TextField => "Text Field",
         Kind::List => "List",
         Kind::Progress => "Progress Bar",
+        Kind::Part => "Part",
     }
 }
 
 /// How a row of the tree reads: the kind, then the name or the text.
 fn row_label(element: &Element) -> String {
     let kind = tl(kind_label(element.kind));
-    let named = if element.name.is_empty() { element.text.lines().next().unwrap_or_default() } else { element.name.as_str() };
+    let named = match (element.kind, element.name.is_empty()) {
+        (_, false) => element.name.as_str(),
+        (Kind::Part, true) => element.layout.as_str(),
+        (_, true) => element.text.lines().next().unwrap_or_default(),
+    };
     if named.is_empty() { kind.to_owned() } else { format!("{kind}: {named}") }
 }
 
@@ -70,7 +75,15 @@ fn fields(element: &Element) -> serde_json::Map<String, Value> {
     };
     map.remove("children");
     // Fields left at their default are not written; give them back, so clearing one clears it.
-    for (key, empty) in [("name", json!("")), ("classes", json!([])), ("text", json!("")), ("image", json!("")), ("bind", json!("")), ("style", json!({}))] {
+    for (key, empty) in [
+        ("name", json!("")),
+        ("classes", json!([])),
+        ("text", json!("")),
+        ("image", json!("")),
+        ("layout", json!("")),
+        ("bind", json!("")),
+        ("style", json!({})),
+    ] {
         map.entry(key).or_insert(empty);
     }
     map.entry("value").or_insert(json!(0.0));
@@ -89,6 +102,10 @@ enum Change {
     Out,
     /// Into the sibling before it, last.
     In,
+    /// Into a layout file of its own, used here as a part.
+    SaveAsPart,
+    /// The picked part's layout, opened in the panel.
+    OpenPart(String),
     Set(Vec<usize>, serde_json::Map<String, Value>),
     Undo,
 }
@@ -233,6 +250,22 @@ fn tree_tools(ui: &mut egui::Ui, layout: &Layout, view: &InterfaceView, change: 
         if ui.add_enabled(before_holds, egui::Button::new(tl("In"))).on_hover_text(tl("Move it into the element above it, last")).clicked() {
             *change = Some(Change::In);
         }
+        match layout.element_at(at) {
+            Some(part) if part.kind == Kind::Part => {
+                if ui.button(tl("Open Part")).on_hover_text(tl("Edit the part's own layout; every interface using it changes")).clicked() {
+                    *change = Some(Change::OpenPart(part.layout.clone()));
+                }
+            }
+            Some(_)
+                if ui
+                    .button(tl("Save as Part"))
+                    .on_hover_text(tl("Keep it and what it holds as a layout of its own, used here as a part and ready for other interfaces"))
+                    .clicked() =>
+            {
+                *change = Some(Change::SaveAsPart);
+            }
+            _ => {}
+        }
     });
 }
 
@@ -304,6 +337,9 @@ fn element_fields(ui: &mut egui::Ui, t: &theme::Tokens, draft: &mut Element, is_
         }
         if draft.kind == Kind::Image {
             done |= text_row(ui, t, "Image", &mut draft.image, "A .png or .jpg in the project");
+        }
+        if draft.kind == Kind::Part {
+            done |= text_row(ui, t, "Layout", &mut draft.layout, "A .bui in the project");
         }
         if matches!(draft.kind, Kind::Toggle | Kind::Slider | Kind::Progress) {
             for (name, value) in [("Value", &mut draft.value), ("Min", &mut draft.min), ("Max", &mut draft.max)] {
@@ -417,6 +453,24 @@ fn apply(editor: &mut Editor, view: &mut InterfaceView, layout: &Layout, path: &
             editor.dispatch("ui.element.move", &json!({ "path": path, "at": at, "into": into, "index": end }), None)
         }
         Change::Set(at, set) => editor.dispatch("ui.element.set", &json!({ "path": path, "at": at, "element": set }), None).map(|_| json!({ "at": at })),
+        Change::SaveAsPart => {
+            let Some(element) = layout.element_at(&at) else { return };
+            let folder = std::path::Path::new(path).parent().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+            let stem = if element.name.is_empty() { kind_label(element.kind).to_owned() } else { element.name.clone() };
+            let base = editor.session.script_dir();
+            let file = (1..1000)
+                .map(|n| if n == 1 { format!("{stem}.bui") } else { format!("{stem} {n}.bui") })
+                .map(|name| if folder.is_empty() { name } else { format!("{folder}/{name}") })
+                .find(|candidate| !base.join(candidate).exists())
+                .unwrap_or_else(|| format!("{stem}.bui"));
+            editor.dispatch("ui.element.saveAsPart", &json!({ "path": path, "at": at, "to": file }), None).map(|_| json!({ "at": at }))
+        }
+        Change::OpenPart(part) => {
+            let full = editor.session.script_dir().join(part);
+            editor.open_interface(&full);
+            *view = std::mem::take(&mut editor.interface_view);
+            return;
+        }
     };
     // A refused change leaves the layout as it was; the status bar says why.
     if let Some(done) = result {

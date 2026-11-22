@@ -41,7 +41,22 @@ Each element has a `kind` and may have:
 
 Kinds: `panel` (a box, its children in a column unless its style says otherwise), `row`, `column`,
 `text`, `image`, `button`, `toggle`, `slider`, `textField`, `list` (a column that cuts off entries
-past its bottom) and `progress`.
+past its bottom), `progress`, and `part` (below).
+
+## Parts
+
+A layout can be used inside another as a **part**: an element `{"kind": "part", "name": "Character",
+"layout": "ui/character.bui"}` shows that layout's root in its place, so a character menu made once
+can go into the main display, twice if needed. The part takes the part element's name, and its own
+classes and style come after the part layout's root's (the bigger layout sizes and places it); the
+part's style files come along. Named elements inside it are called `<part>/<name>` (`Character/Health`),
+so two uses never clash: scripts set `Character/Health` and hear `pressed:Character/Use`. Parts nest
+up to 8 deep; one inside itself, a missing file, or a name grown past 56 bytes is an error, shown
+over the game. Changing a part's file changes every layout that uses it.
+
+In the Interface panel, **Save as Part** writes the picked element and what it holds to a layout
+file of its own beside the layout (named after it) and puts a part using it in its place; **Open
+Part** edits a picked part's layout.
 
 A layout holds at most 4096 elements, nested at most 32 deep.
 
@@ -77,7 +92,7 @@ parent's inner size along the same axis) or `auto` (what the content needs). Sha
 | `padding` | one, two (top and bottom, then left and right) or four (top, right, bottom, left) lengths in `px` |
 | `width`, `height`, `minWidth`, `minHeight`, `maxWidth`, `maxHeight` | `auto`, `px` or `%` |
 | `grow` | how much of the room left over it takes, against its siblings (0 by default) |
-| `shrink` | how much it gives up when there is too little room (1 by default; a list's entries never shrink) |
+| `shrink` | how much it gives up when there is too little room: 1 for text, which wraps; 0 for everything else, which keeps its size and runs past the box instead (a list's entries never shrink) |
 | `alignItems` | `start`, `center`, `end` or `stretch`: where children sit across the direction |
 | `alignSelf` | the same, for one element instead of its parent's `alignItems` |
 | `justify` | `start`, `center`, `end` or `spaceBetween`: where children sit along the direction when they leave room |
@@ -121,9 +136,15 @@ object that has the Interface:
 - `changed:<name>` when a toggle, slider or text field changes, with the new value (a text field's
   value is its length in characters).
 
-Scripts change elements with `ui_set_text`, `ui_set_value` and `ui_show` (`docs/script-abi.md`); in
-the Rust SDK, `Object::set_interface_text`, `set_interface_value` and `show_interface`. Stopping
-play puts every interface back as its files say.
+Scripts change elements with `ui_set_text`, `ui_set_value` and `ui_show`, and build the interface
+while the game plays with `ui_add` (a new element of a kind, or a part from a layout file, into a
+named element) and `ui_remove` (`docs/script-abi.md`); in the Rust SDK, `Object::set_interface_text`,
+`set_interface_value`, `show_interface`, `add_interface_element` and `remove_interface_element`.
+Visual scripts have the same in the Interface category: **On Interface Pressed** and **On Interface
+Changed** (Value is the new value), **Set Interface Text**, **Set Interface Value**, **Show
+Interface**, **Add Interface Element** (What is a kind or a `.bui` file; the new element is named by
+the Name input, so a list of slots can be built in a loop) and **Remove Interface Element**.
+Stopping play puts every interface back as its files say.
 
 ## Commands
 
@@ -133,7 +154,8 @@ place in the tree, child indices from the root (`[]` is the root, `[1, 0]` the f
 second): `ui.element.add` (`{path, into?, kind, index?}`), `ui.element.remove` (`{path, at}`),
 `ui.element.move` (`{path, at, into, index}`) and `ui.element.set` (`{path, at, element}`, the fields
 to change; `style` replaces the whole style) change one element, and write nothing when the result
-would not read. While playing, `play.ui.state`
+would not read. `ui.element.saveAsPart` (`{path, at, to}`) writes an element to a layout file of its
+own and puts a part in its place. While playing, `play.ui.state`
 (`{id}`) gives an interface as it shows, `play.ui.press` (`{id, element}`) presses a button or flips a
 toggle, and `play.ui.change` (`{id, element, value | text}`) moves a slider or types into a text
 field, as the player would. `asset.create` makes a layout (`interface`) or a style file
@@ -143,5 +165,5 @@ field, as the player would. `asset.create` makes a layout (`interface`) or a sty
 
 Editing style files in the panel (they are edited as text for now), dragging elements in the tree,
 interfaces on surfaces in the world, moving the focus with a gamepad, reading an element's
-value or text from a script, visual script nodes for interfaces, scrolling lists, and right-to-left
-text.
+value or text from a script, changing a part's inner text in the bigger layout's file (scripts set
+it while playing), scrolling lists, and right-to-left text.

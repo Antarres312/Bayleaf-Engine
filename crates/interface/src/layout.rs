@@ -156,7 +156,8 @@ fn content_size(node: &Node<'_>, width: Option<f32>, measure: &dyn TextMeasure) 
             [line + style.gap + w, h.max(line)]
         }
         Kind::Image => measure.image(&e.image).unwrap_or([0.0, 0.0]),
-        Kind::Slider | Kind::Progress => [0.0, 0.0],
+        // A part left in place (one that could not be read) takes no room.
+        Kind::Slider | Kind::Progress | Kind::Part => [0.0, 0.0],
         Kind::Panel | Kind::Row | Kind::Column | Kind::List => {
             let row = style.direction == Direction::Row;
             let (mut main, mut cross) = (0.0f32, 0.0f32);

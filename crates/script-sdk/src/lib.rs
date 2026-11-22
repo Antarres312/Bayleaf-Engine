@@ -257,6 +257,18 @@ impl Object {
         abi::ui_set_value(self.0, element, value)
     }
 
+    /// Adds an element named `name` to the object's Interface, after this step, inside the element
+    /// named `parent` ("" for the root): `what` is a kind (`button`, `text`, `progress`...) or a
+    /// layout file (`ui/slot.bui`) used as a part, whose elements are then named `<name>/<element>`.
+    pub fn add_interface_element(self, parent: &str, what: &str, name: &str) -> bool {
+        abi::ui_add(self.0, parent, what, name)
+    }
+
+    /// Removes the element named `name` from the object's Interface, with what it holds.
+    pub fn remove_interface_element(self, name: &str) -> bool {
+        abi::ui_remove(self.0, name)
+    }
+
     /// Shows or hides an element of the object's Interface, or the whole interface when `element`
     /// is empty.
     pub fn show_interface(self, element: &str, visible: bool) -> bool {

@@ -1310,6 +1310,26 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         )?;
         linker.func_wrap(
             "bayleaf",
+            "ui_add",
+            |mut caller: Caller<'_, HostState>,
+             handle: i32,
+             parent_ptr: i32,
+             parent_len: i32,
+             what_ptr: i32,
+             what_len: i32,
+             name_ptr: i32,
+             name_len: i32|
+             -> Result<i32, Error> {
+                let parent = read_text(&mut caller, parent_ptr, parent_len, 64).map_err(|m| fault(&mut caller, format!("ui_add: {m}")))?;
+                let what = read_text(&mut caller, what_ptr, what_len, 512).map_err(|m| fault(&mut caller, format!("ui_add: {m}")))?;
+                interface_request(&mut caller, "ui_add", handle, (name_ptr, name_len), crate::InterfaceChange::Add { parent, what })
+            },
+        )?;
+        linker.func_wrap("bayleaf", "ui_remove", |mut caller: Caller<'_, HostState>, handle: i32, name_ptr: i32, name_len: i32| -> Result<i32, Error> {
+            interface_request(&mut caller, "ui_remove", handle, (name_ptr, name_len), crate::InterfaceChange::Remove)
+        })?;
+        linker.func_wrap(
+            "bayleaf",
             "ui_show",
             |mut caller: Caller<'_, HostState>, handle: i32, name_ptr: i32, name_len: i32, visible: i32| -> Result<i32, Error> {
                 interface_request(&mut caller, "ui_show", handle, (name_ptr, name_len), crate::InterfaceChange::Visible(visible != 0))

@@ -139,6 +139,13 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   yet as 0. **End Game** ends the game won or lost;
   only the first ending counts, and every script then gets the message `gameWon` or `gameLost`.
 - **Raycast** sends a ray and gives whether it hit another object's shape or sprite, how far, and where.
+- **Interface** nodes work on an object's Interface (`docs/interface.md`): **On Interface Pressed**
+  and **On Interface Changed** run when the player presses a button or changes a toggle, slider or
+  text field named in Element; **Set Interface Text**, **Set Interface Value** and **Show Interface**
+  change an element (Show Interface with no Element shows or hides it all); **Add Interface
+  Element** builds the interface while playing, adding an element of a kind or a part from a `.bui`
+  file, named by its Name input, into the element named in Into; **Remove Interface Element** takes
+  one away.
 - **Gamepad Stick**, **Gamepad Trigger** and **Gamepad Button Held** read the first connected gamepad
   (see `docs/script-abi.md` for the button names).
 - **Send Message** sends a message name and a number to the scripts of the first object with the

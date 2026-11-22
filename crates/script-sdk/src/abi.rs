@@ -34,6 +34,9 @@ mod raw {
         pub fn ui_set_text(handle: i32, name_ptr: *const u8, name_len: usize, text_ptr: *const u8, text_len: usize) -> i32;
         pub fn ui_set_value(handle: i32, name_ptr: *const u8, name_len: usize, value: f64) -> i32;
         pub fn ui_show(handle: i32, name_ptr: *const u8, name_len: usize, visible: i32) -> i32;
+        pub fn ui_add(handle: i32, parent_ptr: *const u8, parent_len: usize, what_ptr: *const u8, what_len: usize, name_ptr: *const u8, name_len: usize)
+        -> i32;
+        pub fn ui_remove(handle: i32, name_ptr: *const u8, name_len: usize) -> i32;
         pub fn sound_play(handle: i32) -> i32;
         pub fn sound_stop(handle: i32) -> i32;
         pub fn sound_play_at(path_ptr: *const u8, path_len: usize, x: f32, y: f32, z: f32, volume: f32) -> i32;
@@ -334,6 +337,34 @@ mod raw {
         run(|x| {
             let at = x.put(name)?;
             x.call("ui_set_value", &[I32(handle), at, len(name.len()), F64(value)])?.i32()
+        })
+        .unwrap_or(0)
+    }
+    pub unsafe fn ui_add(
+        handle: i32,
+        parent_ptr: *const u8,
+        parent_len: usize,
+        what_ptr: *const u8,
+        what_len: usize,
+        name_ptr: *const u8,
+        name_len: usize,
+    ) -> i32 {
+        // SAFETY: the safe wrappers pass live slices.
+        let (parent, what, name) = unsafe { (bytes(parent_ptr, parent_len), bytes(what_ptr, what_len), bytes(name_ptr, name_len)) };
+        run(|x| {
+            let p = x.put(parent)?;
+            let w = x.put(what)?;
+            let n = x.put(name)?;
+            x.call("ui_add", &[I32(handle), p, len(parent.len()), w, len(what.len()), n, len(name.len())])?.i32()
+        })
+        .unwrap_or(0)
+    }
+    pub unsafe fn ui_remove(handle: i32, name_ptr: *const u8, name_len: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(name_ptr, name_len) };
+        run(|x| {
+            let at = x.put(name)?;
+            x.call("ui_remove", &[I32(handle), at, len(name.len())])?.i32()
         })
         .unwrap_or(0)
     }
@@ -723,6 +754,16 @@ pub(crate) fn ui_set_text(handle: i32, element: &str, text: &str) -> bool {
 pub(crate) fn ui_set_value(handle: i32, element: &str, value: f64) -> bool {
     // SAFETY: the pointer and length describe `element`; the host only reads.
     unsafe { raw::ui_set_value(handle, element.as_ptr(), element.len(), value) != 0 }
+}
+
+pub(crate) fn ui_add(handle: i32, parent: &str, what: &str, name: &str) -> bool {
+    // SAFETY: the pointers and lengths describe the three texts; the host only reads.
+    unsafe { raw::ui_add(handle, parent.as_ptr(), parent.len(), what.as_ptr(), what.len(), name.as_ptr(), name.len()) != 0 }
+}
+
+pub(crate) fn ui_remove(handle: i32, name: &str) -> bool {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::ui_remove(handle, name.as_ptr(), name.len()) != 0 }
 }
 
 pub(crate) fn ui_show(handle: i32, element: &str, visible: bool) -> bool {
