@@ -283,6 +283,33 @@ No crate below L6 may use egui, eframe, winit or rfd.
    - **Project quality.** Project Settings > Graphics holds what applies to every scene: shadow
      resolution, how many cascades the sun's shadow has and how far they reach, and how many
      lights cast shadows at once. These values are fixed in the renderer today.
+   - **Material previews in the Project panel.** A material's tile shows the material on a sphere
+     instead of its kind's icon, drawn off screen in the background, kept until the file (or an image
+     it uses) changes, and drawn again then; a material that does not compile keeps the icon with a
+     warning mark. The same picture heads the Inspector when the file is selected.
+   - **The two faster script modes from M8.** Compiled to machine code: exported games run their
+     WebAssembly modules through an ahead-of-time compiler (wasmtime, once its licence is checked
+     against the craft-contrib list), with the same ABI, fuel and memory limits and faults as the
+     interpreter, and the same tests passing in both. Native: Rust scripts with their source in the
+     project are built into the player at export, with no sandbox; the export says plainly that such
+     a script can do anything a program can, and scripts without source stay compiled WebAssembly.
+     The Export window's check then reports these modes as available, and Project Settings keeps
+     the choice per platform.
+   - **Ctrl+S saves the graph being edited.** While the Graph panel is the one in use (a node, the
+     canvas or the script panel has the keyboard, or it was last clicked), Ctrl+S saves the open
+     graph (`graph.save`) instead of the scene; a graph never saved asks where, as Save As does.
+   - **Fix: the Scene view's grid is not drawn.** The Grid switch is on, but no grid shows (for a
+     while now). Find which change hid it and draw it again, with a GPU test that renders the view
+     and checks grid lines are there when the switch is on and gone when it is off.
+   - **Scripts shape their own Inspector.** A library in the Rust SDK lets a script (and later an
+     editor plugin) describe how its properties show: groups and foldouts, labels and hints, ranges
+     and sliders, buttons that run a function of the script, lists, read-only values, values shown
+     only when another has a value, and messages. The script declares this as data in
+     `bayleaf_describe` (no code runs in the editor), the Inspector draws it with its own widgets,
+     theme and accessibility, and visual scripts get the same options in their panel. Every control
+     it draws changes properties through the usual commands, so agents and undo see it too. Plugins
+     that draw freely (their own widgets, not only these options) need a plugin model first: what
+     they may touch, how they are sandboxed and loaded; that is decided before this part is built.
 
 ## Open questions
 
