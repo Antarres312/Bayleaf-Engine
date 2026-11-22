@@ -2029,3 +2029,45 @@ fn a_visual_script_property_takes_inspector_options_the_host_accepts() {
     assert!(matches!(refused, Err(CommandError::BadParams(m)) if m.contains("range")));
     assert_eq!(session.graph().unwrap().graph.property("speed").unwrap().inspector, kept);
 }
+
+#[test]
+fn a_prefab_opens_on_its_own_and_its_copies_follow_when_it_is_saved() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-prefab-edit-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("level.bscene")})).unwrap();
+    let first = create(&registry, &mut session, json!({"name": "Crate"}));
+    registry.execute(&mut session, "scene.prefab.create", &json!({"id": first, "path": "crate.bprefab"})).unwrap();
+    let second = registry.execute(&mut session, "scene.prefab.place", &json!({"path": "crate.bprefab"})).unwrap()["id"].as_str().unwrap().to_owned();
+    let second = bayleaf_core::StableId::parse_hex(&second).unwrap();
+    let moved = json!({"position": [5, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]});
+    registry.execute(&mut session, "scene.component.set", &json!({"id": second, "component": "transform", "value": moved})).unwrap();
+    let outer_steps = session.undo.len();
+
+    let opened = registry.execute(&mut session, "prefab.open", &json!({"path": "crate.bprefab"})).unwrap();
+    assert_eq!((opened["source"].as_str(), opened["depth"].as_u64()), (Some("crate.bprefab"), Some(1)));
+    assert_eq!(session.open_prefabs(), ["crate.bprefab"]);
+    let roots = session.scene().children(None).to_vec();
+    assert_eq!(roots.len(), 1, "only the prefab's objects");
+    assert_eq!(session.scene().get::<bayleaf_scene::components::Transform>(roots[0]).unwrap().position, [0.0; 3], "around the origin");
+    assert!(session.undo.is_empty(), "its own undo history");
+    create(&registry, &mut session, json!({"name": "Lid", "parent": roots[0]}));
+    for (command, params) in [("play.start", json!({})), ("scene.save", json!({})), ("scene.new", json!({}))] {
+        assert!(registry.execute(&mut session, command, &params).is_err(), "{command} waits until the prefab is closed");
+    }
+    assert!(registry.execute(&mut session, "prefab.close", &json!({})).is_err(), "unsaved changes are not dropped unasked");
+    registry.execute(&mut session, "prefab.save", &json!({})).unwrap();
+    registry.execute(&mut session, "prefab.close", &json!({})).unwrap();
+
+    assert!(session.open_prefabs().is_empty());
+    assert_eq!(session.undo.len(), outer_steps, "the scene's undo history waited underneath");
+    let first = bayleaf_core::StableId::parse_hex(&first).unwrap();
+    for copy in [first, second] {
+        let names: Vec<String> = session.scene().children(Some(copy)).iter().map(|c| session.scene().name(*c).unwrap_or_default().to_owned()).collect();
+        assert_eq!(names, ["Lid"], "every copy follows the saved prefab");
+    }
+    assert_eq!(session.scene().get::<bayleaf_scene::components::Transform>(second).unwrap().position[0], 5.0, "a copy keeps its own transform");
+    std::fs::remove_dir_all(&dir).ok();
+}

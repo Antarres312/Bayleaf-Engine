@@ -350,12 +350,14 @@ struct SetParams {
 }
 
 fn scene_new(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    session.no_prefab_open("a new scene")?;
     parse::<serde_json::Map<String, Value>>(params)?;
     let _ = session.replace_scene(Scene::new(), None);
     Ok(json!({}))
 }
 
 fn scene_open(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    session.no_prefab_open("opening a scene")?;
     let p: PathParams = parse(params)?;
     let path = session.allowed(&p.path, crate::confine::Access::Read)?;
     let scene = Scene::load(&path)?;
@@ -365,6 +367,7 @@ fn scene_open(session: &mut Session, params: &Value) -> Result<Value, CommandErr
 }
 
 fn scene_save(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
+    session.no_prefab_open("saving the scene")?;
     let path = session.scene_path.clone().ok_or_else(|| CommandError::Failed("the scene has no file yet; use Save Scene As".to_owned()))?;
     let path = session.allowed(&path, crate::confine::Access::Write)?;
     session.scene.save(&path)?;
@@ -373,6 +376,7 @@ fn scene_save(session: &mut Session, _: &Value) -> Result<Value, CommandError> {
 }
 
 fn scene_save_as(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    session.no_prefab_open("saving the scene")?;
     let p: PathParams = parse(params)?;
     let path = session.allowed(&p.path, crate::confine::Access::Write)?;
     session.scene.save(&path)?;

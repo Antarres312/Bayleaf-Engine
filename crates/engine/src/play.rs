@@ -305,6 +305,7 @@ fn one() -> u32 {
 
 fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: StartParams = parse(params)?;
+    session.no_prefab_open("play mode")?;
     let dir = session.script_dir();
     readable_modules(session, &session.scene)?;
     let snapshot = session.scene.to_doc();

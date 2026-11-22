@@ -364,6 +364,7 @@ struct NewParams {
 }
 
 fn project_new(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    session.no_prefab_open("opening a project")?;
     let p: NewParams = parse(params)?;
     let dir = session.allowed(&p.path, Access::Write)?;
     if dir.exists() && std::fs::read_dir(&dir).map(|mut d| d.next().is_some()).unwrap_or(true) {
@@ -417,6 +418,7 @@ struct PathParams {
 }
 
 fn project_open(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    session.no_prefab_open("opening a project")?;
     let p: PathParams = parse(params)?;
     let path = session.allowed(&p.path, Access::Read)?;
     let file = if path.is_dir() {

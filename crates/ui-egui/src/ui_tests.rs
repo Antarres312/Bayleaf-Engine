@@ -2171,3 +2171,31 @@ fn the_export_window_keeps_its_width_for_every_mode() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_prefab_opens_from_its_copy_and_back_asks_about_unsaved_changes() {
+    let (mut harness, dir) = project_harness("prefab-edit");
+    let editor = harness.state_mut();
+    let id = editor.dispatch("scene.object.create", &json!({ "name": "Crate" }), None).unwrap()["id"].as_str().map(str::to_owned).unwrap();
+    let id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    editor.dispatch("scene.prefab.create", &json!({ "id": id, "path": "crate.bprefab" }), None);
+    editor.select_only(Some(id));
+    harness.run_steps(2);
+    harness.get_by_role_and_label(egui::accesskit::Role::Button, "Open").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label_contains("Editing prefab: s › crate").is_some(), "the bar shows the way back");
+    assert_eq!(harness.state().selected, None, "the scene's selection waits underneath");
+    let root = harness.state().session.scene().children(None)[0];
+    harness.state_mut().dispatch("scene.object.create", &json!({ "name": "Lid", "parent": root }), None);
+    harness.run();
+    harness.get_by_label("Back from the prefab").click();
+    harness.run();
+    assert!(harness.query_by_label("Save the changes?").is_some(), "unsaved changes are not dropped unasked");
+    harness.get_by_label("Save and Go Back").click();
+    harness.run_steps(2);
+    let editor = harness.state();
+    assert!(editor.session.open_prefabs().is_empty());
+    assert_eq!(editor.selected, Some(id), "the scene's selection is back");
+    assert_eq!(editor.session.scene().children(Some(id)).len(), 1, "the copy follows the saved prefab");
+    std::fs::remove_dir_all(&dir).ok();
+}

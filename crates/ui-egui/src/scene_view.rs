@@ -7,6 +7,7 @@ use crate::i18n::tl;
 use bayleaf_core::math::{DVec3, Vec2, Vec3};
 use bayleaf_render::{CameraView, FrameOptions, RenderTarget, Renderer};
 
+use crate::theme;
 use crate::{Editor, gizmo};
 
 /// Camera that circles a target point. The editor's own view, not saved in the scene.
@@ -86,6 +87,8 @@ pub(crate) struct SceneView {
     pub show_colliders: bool,
     gpu: Option<GpuView>,
     framed_once: bool,
+    /// Back was pressed with the open prefab changed: the bar asks what to do with the changes.
+    pub(crate) asking_back: bool,
     /// Compiled material graphs; the one open in the graph editor shows unsaved changes live.
     pub materials: bayleaf_render::MaterialLibrary,
     /// Loaded images and models.
@@ -101,6 +104,11 @@ pub(crate) struct SceneView {
 }
 
 impl SceneView {
+    /// Frames what is shown again on the next draw (another level of an open prefab).
+    pub(crate) fn reframe(&mut self) {
+        self.framed_once = false;
+    }
+
     pub fn new() -> Self {
         Self { show_grid: true, ..Self::default() }
     }
@@ -118,6 +126,7 @@ impl SceneView {
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgpu::RenderState>) {
+    prefab_bar(editor, ui);
     let mut view = std::mem::take(&mut editor.scene_view);
     if let Some(command) = toolbar(&mut view, editor, ui) {
         editor.dispatch(command, &serde_json::Value::Null, None);
@@ -133,6 +142,60 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
         }
     }
     editor.scene_view = view;
+}
+
+/// While a prefab is open on its own: the way back (the scene, then each prefab), Save, and Back,
+/// which asks what to do with unsaved changes.
+fn prefab_bar(editor: &mut Editor, ui: &mut egui::Ui) {
+    let open = editor.session.open_prefabs();
+    let Some(current) = open.last().cloned() else {
+        editor.scene_view.asking_back = false;
+        return;
+    };
+    let t = theme::tokens(ui);
+    let scene = editor.session.scene_path().and_then(|p| p.file_stem()).map_or_else(|| tl("Untitled scene").to_owned(), |n| n.to_string_lossy().into_owned());
+    let name = |path: &str| path.rsplit('/').next().unwrap_or(path).trim_end_matches(".bprefab").to_owned();
+    let mut command: Option<(&str, serde_json::Value)> = None;
+    egui::Frame::new().fill(t.surface).corner_radius(theme::RADIUS).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            let mut trail = vec![scene];
+            trail.extend(open.iter().map(|p| name(p)));
+            let shown = trail.join(" › ");
+            let label = ui.label(egui::RichText::new(crate::i18n::tf("Editing prefab: {path}", &[("path", &shown)])).color(t.text));
+            label.on_hover_text(&current);
+            if editor.scene_view.asking_back && editor.session.is_dirty() {
+                ui.label(egui::RichText::new(tl("Save the changes?")).color(t.warning));
+                if ui.button(tl("Save and Go Back")).clicked() && editor.dispatch("prefab.save", &serde_json::Value::Null, None).is_some() {
+                    command = Some(("prefab.close", serde_json::json!({})));
+                }
+                if ui.button(tl("Discard Changes")).clicked() {
+                    command = Some(("prefab.close", serde_json::json!({ "discard": true })));
+                }
+                if ui.button(tl("Cancel")).clicked() {
+                    editor.scene_view.asking_back = false;
+                }
+            } else {
+                if ui.button(tl("Save")).on_hover_text(tl("Write the prefab to its file (Ctrl+S); its copies follow when you go back")).clicked() {
+                    command = Some(("prefab.save", serde_json::json!({})));
+                }
+                let back = ui.button(tl("Back")).on_hover_text(tl("Return to the scene or prefab underneath"));
+                ui.ctx().accesskit_node_builder(back.id, |node| node.set_label(tl("Back from the prefab")));
+                if back.clicked() {
+                    if editor.session.is_dirty() {
+                        editor.scene_view.asking_back = true;
+                    } else {
+                        command = Some(("prefab.close", serde_json::json!({})));
+                    }
+                }
+            }
+        });
+    });
+    if let Some((id, params)) = command {
+        if id == "prefab.close" {
+            editor.scene_view.asking_back = false;
+        }
+        editor.dispatch(id, &params, None);
+    }
 }
 
 /// View controls and the play controls. Returns a play command to run.

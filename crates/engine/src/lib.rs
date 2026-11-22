@@ -143,6 +143,8 @@ pub struct Session {
     /// Scripts built into the game (native mode), by the module path they stand for; play mode runs
     /// them instead of those modules.
     native_scripts: Vec<(PathBuf, bayleaf_script::NativeScript)>,
+    /// Prefabs open on their own, the innermost last, each with the scene it stands in front of.
+    prefab_edits: Vec<prefab_cmds::PrefabEdit>,
 }
 
 /// How important a console line is.
@@ -294,6 +296,20 @@ impl Session {
     }
 
     /// True when the scene has changes that are not saved.
+    /// The prefabs open on their own (`prefab.open`), outermost first, by their paths in the
+    /// project; empty while the scene itself is edited.
+    pub fn open_prefabs(&self) -> Vec<String> {
+        self.prefab_edits.iter().map(|e| e.source.clone()).collect()
+    }
+
+    /// Refuses a command that needs the scene itself while a prefab is open.
+    fn no_prefab_open(&self, what: &str) -> Result<(), CommandError> {
+        match self.prefab_edits.last() {
+            Some(edit) => Err(CommandError::Failed(format!("{what}: the prefab {} is open; save it and go back first (prefab.close)", edit.source))),
+            None => Ok(()),
+        }
+    }
+
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }

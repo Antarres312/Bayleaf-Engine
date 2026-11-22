@@ -376,7 +376,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
      and go back. The open scene stays as it was underneath, with its selection and undo history;
      edits to the prefab have their own undo, saving writes the prefab file and every instance in
      the scene updates, keeping its own overrides. Nested prefabs open one inside another, with
-     the bar showing the path back.
+     the bar showing the path back. (Done: `prefab.open`, `prefab.save`, `prefab.close`; double-click a prefab, or Open on a copy.)
    - **A basic profiler.** A Profiler panel shows, frame by frame, how long each part took: scripts
      (each script, the slowest first), physics, streaming, sound, extraction and drawing on the
      CPU, and the GPU's time where the adapter can measure it; with the frame rate, draw calls,

@@ -26,6 +26,8 @@ enum Pending {
     },
     /// A prefab command (`scene.prefab.apply` or `scene.prefab.revert`) for this object.
     Prefab(&'static str),
+    /// Edit the prefab this object is a copy of, on its own.
+    OpenPrefab(String),
     /// A script's button: send this object the message while the game plays.
     Message(String),
 }
@@ -140,6 +142,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 };
                 ui.add(egui::Label::new(egui::RichText::new(summary).small().color(t.text_muted)).wrap());
                 ui.horizontal(|ui| {
+                    if ui.button(tl("Open")).on_hover_text(tl("Edit the prefab on its own; every copy follows when you go back")).clicked() {
+                        pending = Some(Pending::OpenPrefab(source.clone()));
+                    }
                     if ui.button(tl("Apply")).on_hover_text(tl("Write this object and its children to the prefab file, and update its other copies in the scene")).clicked() {
                         pending = Some(Pending::Prefab("scene.prefab.apply"));
                     }
@@ -493,6 +498,9 @@ fn apply(editor: &mut Editor, id: bayleaf_core::StableId, pending: Option<Pendin
         }
         Some(Pending::RemoveScript(index)) => {
             editor.dispatch("scene.script.remove", &json!({ "id": id, "index": index }), None);
+        }
+        Some(Pending::OpenPrefab(source)) => {
+            editor.dispatch("prefab.open", &json!({ "path": source }), None);
         }
         Some(Pending::Message(name)) => {
             editor.dispatch("play.message", &json!({ "id": id, "name": name }), None);

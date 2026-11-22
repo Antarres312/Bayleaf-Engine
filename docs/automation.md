@@ -165,3 +165,10 @@ many lights cast shadows at once, 1 to 4, sun-like lights first). Project format
 while the game plays, as an Inspector button of a script does. A script's description may lay out its
 Inspector card (`inspector`, see `docs/script-abi.md`); `graph.property.set` takes a visual script
 property's `inspector` options.
+
+`prefab.open` (`{path}`) edits a prefab on its own: the scene (and its undo history) waits
+underneath, and the open scene's commands then act on the prefab's objects, its root at the origin.
+Prefabs open inside one another; `session.open_prefabs` lists them. `prefab.save` writes the
+innermost one to its file, and `prefab.close` (`{discard?}`) goes back a level, refusing unsaved
+changes unless `discard`; the copies underneath then follow the file, keeping their own changes.
+While a prefab is open, play mode, saving the scene and opening another scene or project wait.

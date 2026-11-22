@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use bayleaf_core::StableId;
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::Prefab;
+use bayleaf_scene::components::{Prefab, Transform};
 use bayleaf_scene::doc::ObjectDoc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -56,7 +56,128 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             "{id}: replaces this copy's objects with the prefab file's, keeping its name and transform",
             prefab_revert,
         ),
+        CommandSpec {
+            id: "prefab.open",
+            label: "Open Prefab",
+            menu: "",
+            shortcut: "",
+            params: "{path}: edits the prefab on its own: the scene and its undo history wait underneath, and prefab.close goes back; returns {source, depth}",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: |s| if s.is_playing() { Err("stop play mode first".to_owned()) } else { Ok(()) },
+            run: prefab_open,
+        },
+        CommandSpec {
+            id: "prefab.save",
+            label: "Save Prefab",
+            menu: "",
+            shortcut: "",
+            params: "none: writes the open prefab to its file; returns {path}",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: |s| if s.prefab_edits.is_empty() { Err("no prefab is open".to_owned()) } else { Ok(()) },
+            run: prefab_save,
+        },
+        CommandSpec {
+            id: "prefab.close",
+            label: "Back from Prefab",
+            menu: "",
+            shortcut: "",
+            params: "{discard?}: goes back to the scene (or the prefab) underneath, whose copies update from the file; refuses unsaved changes unless discard",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: |s| if s.prefab_edits.is_empty() { Err("no prefab is open".to_owned()) } else { Ok(()) },
+            run: prefab_close,
+        },
     ]
+}
+
+/// A prefab open on its own (`prefab.open`), and the scene it stands in front of.
+pub(crate) struct PrefabEdit {
+    /// The prefab's path as links name it.
+    pub(crate) source: String,
+    scene: Scene,
+    dirty: bool,
+    undo: Vec<crate::HistoryStep>,
+    redo: Vec<crate::HistoryStep>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpenParams {
+    path: PathBuf,
+}
+
+fn prefab_open(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: OpenParams = parse(params)?;
+    let source = link_path(session, &session.script_dir().join(&p.path));
+    if session.prefab_edits.iter().any(|e| e.source == source) {
+        return Err(CommandError::Failed(format!("{source} is already open")));
+    }
+    if session.prefab_edits.len() >= MAX_NESTING {
+        return Err(CommandError::Failed(format!("prefabs open inside one another at most {MAX_NESTING} deep")));
+    }
+    let objects = read_prefab(session, &source)?;
+    let mut scene = Scene::new();
+    let root = *scene.import(&objects, None, None)?.first().ok_or_else(|| CommandError::Failed("the prefab is empty".to_owned()))?;
+    // Around the origin: copies keep their own transform anyway.
+    if let Some(mut transform) = scene.get::<Transform>(root).cloned() {
+        transform.position = [0.0; 3];
+        scene.set(root, transform)?;
+    }
+    let edit = PrefabEdit {
+        source: source.clone(),
+        scene: std::mem::replace(&mut session.scene, scene),
+        dirty: std::mem::take(&mut session.dirty),
+        undo: std::mem::take(&mut session.undo),
+        redo: std::mem::take(&mut session.redo),
+    };
+    session.prefab_edits.push(edit);
+    // Copies of other prefabs inside it come from their own files.
+    let mut problems = Vec::new();
+    for nested in nested_copies(&session.scene, root) {
+        if let Err(e) = refresh(session, nested, true, &mut vec![source.clone()]) {
+            problems.push(e.to_string());
+        }
+    }
+    Ok(json!({ "source": source, "depth": session.prefab_edits.len(), "problems": problems }))
+}
+
+fn prefab_save(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let _: serde_json::Map<String, Value> = parse(params)?;
+    let source = session.prefab_edits.last().map(|e| e.source.clone()).ok_or_else(|| CommandError::Failed("no prefab is open".to_owned()))?;
+    let roots = session.scene.children(None).to_vec();
+    let [root] = roots.as_slice() else {
+        return Err(CommandError::Failed(format!("a prefab has one root object, and this one has {}: put the others under one", roots.len())));
+    };
+    let path = write_prefab(session, &session.script_dir().join(&source), &session.scene, *root)?;
+    session.dirty = false;
+    Ok(json!({ "path": path }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloseParams {
+    #[serde(default)]
+    discard: bool,
+}
+
+fn prefab_close(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: CloseParams = parse(params)?;
+    if session.dirty && !p.discard {
+        return Err(CommandError::Failed("the prefab has unsaved changes: save it (prefab.save), or go back with discard".to_owned()));
+    }
+    let edit = session.prefab_edits.pop().ok_or_else(|| CommandError::Failed("no prefab is open".to_owned()))?;
+    session.scene = edit.scene;
+    session.dirty = edit.dirty;
+    session.undo = edit.undo;
+    session.redo = edit.redo;
+    // The copies underneath follow the file, keeping their own changes.
+    let problems = refresh_all(session);
+    for problem in &problems {
+        session.log(crate::Level::Error, problem.clone());
+    }
+    Ok(json!({ "depth": session.prefab_edits.len(), "problems": problems }))
 }
 
 /// `path` as stored in a link: relative to the project folder when inside it, with `/`.

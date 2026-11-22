@@ -53,6 +53,8 @@ pub struct Editor {
     selected: Option<StableId>,
     /// The other selected objects (Ctrl or Shift + click), in the order they were added.
     also_selected: Vec<StableId>,
+    /// The selection of each level underneath an open prefab, the scene's first.
+    prefab_selections: Vec<(Option<StableId>, Vec<StableId>)>,
     /// Bumped when an edit gesture (a drag, a text field) ends, so the next edit gets its own undo step.
     gesture: u64,
     title: String,
@@ -119,6 +121,7 @@ impl Default for Editor {
             selected: None,
             also_selected: Vec::new(),
             gesture: 0,
+            prefab_selections: Vec::new(),
             title: String::new(),
             scene_view: scene_view::SceneView::new(),
             game_view: game_view::GameView::default(),
@@ -194,6 +197,7 @@ impl Editor {
                 ui.label(egui::RichText::new(&self.status).color(t.text_muted));
             });
         });
+        self.follow_prefab_levels();
         self.graph_view.panel_rect = None;
         egui::CentralPanel::default().frame(egui::Frame::new().fill(t.backdrop)).show(ui, |ui| dock::show(self, ui, gpu));
         // The material pictures the panels asked for, drawn off screen for the next frame.
@@ -211,6 +215,8 @@ impl Editor {
         self.show_form(ui.ctx());
         export_window::show(self, ui.ctx());
         self.guard_close(ui.ctx());
+        // Before objects that left with a level are pruned from the selection, it waits for that level.
+        self.follow_prefab_levels();
         if self.selected.is_some_and(|id| !self.session.scene().contains(id)) {
             self.selected = self.also_selected.pop();
         }
@@ -883,6 +889,13 @@ impl Editor {
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         // Ctrl+S saves the graph while it is in use, also while typing in its panel; otherwise the scene.
         let graph_in_use = self.session.graph().is_some() && (self.graph_view.focused || self.graph_view.active);
+        // With a prefab open on its own, Ctrl+S saves the prefab (unless the graph is in use).
+        if !graph_in_use
+            && !self.session.open_prefabs().is_empty()
+            && ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S)))
+        {
+            self.dispatch("prefab.save", &Value::Null, None);
+        }
         if graph_in_use && ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S))) {
             graph_view::save_open(self);
         }
@@ -1040,8 +1053,28 @@ impl Editor {
         }
     }
 
+    /// When a prefab opens (by a click or a command), the selection waits for its level and the
+    /// view frames the prefab; going back restores the selection of the level underneath.
+    fn follow_prefab_levels(&mut self) {
+        let depth = self.session.open_prefabs().len();
+        while self.prefab_selections.len() < depth {
+            self.prefab_selections.push((self.selected, std::mem::take(&mut self.also_selected)));
+            self.selected = None;
+            self.scene_view.reframe();
+        }
+        while self.prefab_selections.len() > depth {
+            if let Some((selected, also)) = self.prefab_selections.pop() {
+                self.selected = selected.filter(|id| self.session.scene().contains(*id));
+                self.also_selected = also.into_iter().filter(|id| self.session.scene().contains(*id)).collect();
+            }
+            self.scene_view.reframe();
+        }
+    }
+
     fn update_title(&mut self, ctx: &egui::Context) {
-        let file = self.session.scene_path().and_then(|p| p.file_name()).map_or_else(|| "Untitled scene".to_owned(), |n| n.to_string_lossy().into_owned());
+        let scene = self.session.scene_path().and_then(|p| p.file_name()).map_or_else(|| "Untitled scene".to_owned(), |n| n.to_string_lossy().into_owned());
+        // An open prefab is what is being edited.
+        let file = self.session.open_prefabs().last().map_or(scene, |p| p.rsplit('/').next().unwrap_or(p).to_owned());
         let dirty = if self.session.is_dirty() { " (modified)" } else { "" };
         let title = format!("{file}{dirty} - Bayleaf Engine");
         if title != self.title {

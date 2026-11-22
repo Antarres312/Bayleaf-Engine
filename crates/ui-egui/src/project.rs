@@ -328,6 +328,8 @@ pub(crate) struct Naming {
 enum Action {
     OpenScene(PathBuf),
     PlacePrefab(PathBuf),
+    /// Edits a prefab on its own (`prefab.open`).
+    OpenPrefab(PathBuf),
     OpenGraph(PathBuf),
     AddScript(String),
     /// Start naming a new asset of this kind, in this folder or else the open one.
@@ -435,6 +437,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     match outcome.action {
         Some(Action::OpenScene(path)) => editor.open_scene(&path),
         Some(Action::PlacePrefab(path)) => editor.place_prefab(&path),
+        Some(Action::OpenPrefab(path)) => {
+            editor.dispatch("prefab.open", &json!({ "path": path }), None);
+        }
         Some(Action::OpenGraph(path)) => editor.open_graph(&path),
         Some(Action::StartNew(kind, folder)) => {
             // New files go into the project only, never into the engine's folder.
@@ -1222,7 +1227,7 @@ fn default_action(entry: &Entry) -> Option<Action> {
         Kind::Folder | Kind::InputMap | Kind::Lighting => None,
         Kind::Scene | Kind::Project => Some(Action::OpenScene(path)),
         Kind::Material | Kind::VisualScript => Some(Action::OpenGraph(path)),
-        Kind::Prefab => Some(Action::PlacePrefab(path)),
+        Kind::Prefab => Some(Action::OpenPrefab(path)),
         // A Rust script: its source, in the code editor.
         Kind::ScriptSource | Kind::Script => source_file(entry).map(Action::OpenExternal),
         Kind::Model | Kind::Image | Kind::Sound | Kind::Other => Some(Action::OpenExternal(path)),
