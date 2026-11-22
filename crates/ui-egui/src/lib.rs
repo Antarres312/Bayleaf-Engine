@@ -28,6 +28,7 @@ mod scene_view;
 mod script_info;
 mod script_panel;
 mod theme;
+mod thumbnails;
 mod value_editor;
 
 pub use dock::{Layout, Panel};
@@ -57,6 +58,8 @@ pub struct Editor {
     title: String,
     scene_view: scene_view::SceneView,
     game_view: game_view::GameView,
+    /// Material pictures for the Project panel and the Inspector.
+    thumbnails: thumbnails::Thumbnails,
     /// Play mode as last frame saw it: starting raises the Game view, stopping the scene view.
     was_playing: bool,
     /// Projects opened lately, newest first, for File > Open Recent.
@@ -119,6 +122,7 @@ impl Default for Editor {
             title: String::new(),
             scene_view: scene_view::SceneView::new(),
             game_view: game_view::GameView::default(),
+            thumbnails: thumbnails::Thumbnails::default(),
             was_playing: false,
             recent_projects: Vec::new(),
             last_project: None,
@@ -192,6 +196,9 @@ impl Editor {
         });
         self.graph_view.panel_rect = None;
         egui::CentralPanel::default().frame(egui::Frame::new().fill(t.backdrop)).show(ui, |ui| dock::show(self, ui, gpu));
+        // The material pictures the panels asked for, drawn off screen for the next frame.
+        let base = self.session.script_dir();
+        self.thumbnails.update(ui.ctx(), gpu, &base, &mut self.scene_view.assets);
         // A press outside the graph panel (or while it is not shown) hands the keys back from the graph.
         if let Some(pressed) = ui.input(|i| if i.pointer.any_pressed() { i.pointer.press_origin() } else { None }) {
             self.graph_view.active = self.graph_view.panel_rect.is_some_and(|panel| panel.contains(pressed));

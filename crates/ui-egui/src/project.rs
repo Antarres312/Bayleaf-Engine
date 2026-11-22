@@ -16,6 +16,7 @@ use bayleaf_engine::asset_cmds::AssetKind;
 use serde_json::json;
 
 use crate::theme::{self, LIST_ROW, Tokens};
+use crate::thumbnails::{Thumb, Thumbnails};
 use crate::{Editor, inspector};
 
 /// Files listed at most; bigger folders are cut off with a notice.
@@ -399,7 +400,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     // A name being typed is drawn in its own tile; it is held apart while the files are drawn.
     let mut naming = view.naming.take();
     let files_area = egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 6, ..egui::Margin::ZERO })).show(ui, |ui| {
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| files(ui, &view, &mut naming, selected_object, &mut outcome));
+        let thumbnails = &mut editor.thumbnails;
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| files(ui, &view, &mut naming, selected_object, thumbnails, &mut outcome));
     });
     view.naming = naming;
     if outcome.deselect {
@@ -865,11 +867,11 @@ fn folder_row(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
 
 /// The open folder's entries, or every file matching the search.
 /// Right-clicking the space between them opens the folder's menu.
-fn files(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Naming>, selected_object: bool, outcome: &mut Outcome) {
+fn files(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Naming>, selected_object: bool, thumbnails: &mut Thumbnails, outcome: &mut Outcome) {
     // Sensed before the files, so a file under the pointer takes the click instead.
     let background = ui.interact(ui.max_rect(), egui::Id::unique("project files background"), egui::Sense::click());
     background.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Group, true, "Folder contents"));
-    file_entries(ui, view, naming, selected_object, outcome);
+    file_entries(ui, view, naming, selected_object, thumbnails, outcome);
     // After the folder tiles, which take a drop onto them first.
     if !view.current.as_os_str().is_empty() {
         object_drop(ui, &background, &view.current, outcome);
@@ -882,7 +884,7 @@ fn files(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Naming>, sel
     }
 }
 
-fn file_entries(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Naming>, selected_object: bool, outcome: &mut Outcome) {
+fn file_entries(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Naming>, selected_object: bool, thumbnails: &mut Thumbnails, outcome: &mut Outcome) {
     if view.current.as_os_str().is_empty() {
         inspector::empty_state(ui, "No project folder", "Open or save a scene to see its folder here. The engine's own files are under Engine, on the left.");
         return;
@@ -935,7 +937,8 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Namin
                         naming_tile(ui, entry.kind, view.icon(), naming, outcome);
                         continue;
                     }
-                    let response = tile(ui, entry, view.selected.as_deref() == Some(entry.path.as_path()), view.icon(), view.hide_extensions);
+                    let picture = picture(ui, thumbnails, entry);
+                    let response = tile(ui, entry, &picture, view.selected.as_deref() == Some(entry.path.as_path()), view.icon(), view.hide_extensions);
                     interact(ui, &response, view, entry, selected_object, outcome);
                 }
             });
@@ -953,7 +956,8 @@ fn file_entries(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Namin
                     rows.push(naming_row(ui, entry.kind, naming, outcome));
                     continue;
                 }
-                let response = list_row(ui, entry, view.selected.as_deref() == Some(entry.path.as_path()), view.hide_extensions);
+                let picture = picture(ui, thumbnails, entry);
+                let response = list_row(ui, entry, &picture, view.selected.as_deref() == Some(entry.path.as_path()), view.hide_extensions);
                 rows.push(response.rect);
                 interact(ui, &response, view, entry, selected_object, outcome);
             }
@@ -988,14 +992,45 @@ fn naming_row(ui: &mut egui::Ui, kind: Kind, naming: &mut Option<Naming>, outcom
     .rect
 }
 
-/// One file or folder in the icon view: drawn icon, name below.
-fn tile(ui: &mut egui::Ui, entry: &Entry, selected: bool, icon_size: f32, hide: bool) -> egui::Response {
+/// A material's picture, asked for only while its place in the list is on screen.
+fn picture(ui: &egui::Ui, thumbnails: &mut Thumbnails, entry: &Entry) -> Thumb {
+    let visible = ui.is_rect_visible(egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width().max(1.0), 160.0)));
+    if entry.kind == Kind::Material && visible { thumbnails.get(&entry.path) } else { Thumb::Waiting }
+}
+
+/// What a file is called to a screen reader: its name, its kind, and a material that does not compile.
+fn spoken(entry: &Entry, name: &str, picture: &Thumb) -> String {
+    let kind = tl(entry.kind.label());
+    match picture {
+        Thumb::Failed(_) => crate::i18n::tf("{name}, {kind}, does not compile", &[("name", name), ("kind", kind)]),
+        _ => format!("{name}, {kind}"),
+    }
+}
+
+/// The picture where there is one, else the kind's icon; with a warning mark when it does not compile.
+fn paint_picture(painter: &egui::Painter, rect: egui::Rect, kind: Kind, picture: &Thumb, t: &Tokens) {
+    match picture {
+        Thumb::Ready(texture) => {
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            painter.add(egui::epaint::RectShape::filled(rect, theme::RADIUS, egui::Color32::WHITE).with_texture(*texture, uv));
+        }
+        Thumb::Failed(_) => {
+            paint_icon(painter, rect, kind, t);
+            crate::thumbnails::paint_warning(painter, rect, t);
+        }
+        Thumb::Waiting | Thumb::Unavailable => paint_icon(painter, rect, kind, t),
+    }
+}
+
+/// One file or folder in the icon view: drawn icon (a material's picture), name below.
+fn tile(ui: &mut egui::Ui, entry: &Entry, picture: &Thumb, selected: bool, icon_size: f32, hide: bool) -> egui::Response {
     let name = entry.shown(hide);
     let t = theme::tokens(ui);
     // Room for the icon, a little padding, and two lines of name below.
     let tile_size = egui::vec2((icon_size + 36.0).max(72.0), icon_size + 38.0);
     let (rect, response) = ui.allocate_exact_size(tile_size, egui::Sense::click_and_drag());
-    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, format!("{name}, {}", tl(entry.kind.label()))));
+    let label = spoken(entry, name, picture);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &label));
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let fill = if selected {
@@ -1012,7 +1047,7 @@ fn tile(ui: &mut egui::Ui, entry: &Entry, selected: bool, icon_size: f32, hide: 
             painter.rect_stroke(rect, theme::RADIUS, egui::Stroke::new(1.5, t.focus), egui::StrokeKind::Inside);
         }
         let icon = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 6.0 + icon_size / 2.0), egui::vec2(icon_size, icon_size));
-        paint_icon(painter, icon, entry.kind, t);
+        paint_picture(painter, icon, entry.kind, picture, t);
         let color = if selected { t.on_accent } else { t.text };
         let mut job = egui::text::LayoutJob::simple(name.to_owned(), egui::TextStyle::Small.resolve(ui.style()), color, tile_size.x - 6.0);
         job.wrap.max_rows = 2;
@@ -1021,24 +1056,34 @@ fn tile(ui: &mut egui::Ui, entry: &Entry, selected: bool, icon_size: f32, hide: 
         let galley = ui.fonts_mut(|f| f.layout_job(job));
         painter.galley(egui::pos2(rect.center().x, icon.bottom() + 4.0), galley, color);
     }
-    response.on_hover_text(&entry.name)
+    hover(response, entry, picture)
 }
 
-/// One file or folder in the list view: small icon, name, kind.
-fn list_row(ui: &mut egui::Ui, entry: &Entry, selected: bool, hide: bool) -> egui::Response {
+/// The file's full name on hover, and why a material does not compile.
+fn hover(response: egui::Response, entry: &Entry, picture: &Thumb) -> egui::Response {
+    match picture {
+        Thumb::Failed(error) => response.on_hover_text(format!("{}\n{}", entry.name, crate::i18n::tf("Does not compile: {error}", &[("error", error)]))),
+        _ => response.on_hover_text(&entry.name),
+    }
+}
+
+/// One file or folder in the list view: small icon (a material's picture), name, kind.
+fn list_row(ui: &mut egui::Ui, entry: &Entry, picture: &Thumb, selected: bool, hide: bool) -> egui::Response {
     let name = entry.shown(hide);
     let t = theme::tokens(ui);
     let width = ui.available_width();
     let kind = entry.kind;
     // The icon is an atom of the button, so it takes its own space before the name.
-    let icon = egui::Atom::paint(egui::vec2(14.0, 14.0), move |ui, args| paint_icon(ui.painter(), args.rect, kind, t));
+    let shown = picture.clone();
+    let icon = egui::Atom::paint(egui::vec2(14.0, 14.0), move |ui, args| paint_picture(ui.painter(), args.rect, kind, &shown, t));
     let button = egui::Button::selectable(selected, (icon, name, egui::Atom::grow(), egui::RichText::new(entry.kind.label()).small().color(t.text_muted)))
         .truncate()
         .min_size(egui::vec2(width, LIST_ROW))
         .sense(egui::Sense::click_and_drag());
     let response = ui.add(button);
-    ui.ctx().accesskit_node_builder(response.id, |node| node.set_label(format!("{name}, {}", tl(entry.kind.label()))));
-    response.on_hover_text(&entry.name)
+    let label = spoken(entry, name, picture);
+    ui.ctx().accesskit_node_builder(response.id, |node| node.set_label(label));
+    hover(response, entry, picture)
 }
 
 /// Clicks, double-clicks, dragging and the context menu, shared by tiles and list rows.

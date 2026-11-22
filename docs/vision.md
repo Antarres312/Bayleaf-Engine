@@ -266,7 +266,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
    only the game's modules, the program file's own icon, and the script modes.
 10. **M9 Scene settings and lighting** (started: the grid is drawn again, Ctrl+S saves a graph in
     use, the scene heads the hierarchy, scenes name a lighting asset in their settings, scene
-    format version 17, and Project Settings > Graphics sets shadow quality, project format 7).
+    format version 17, Project Settings > Graphics sets shadow quality, project format 7, and
+    materials show as pictures in the Project panel and the Inspector).
    - **The scene as the hierarchy's root.** The hierarchy shows one top row named after the
      scene (its file name, or Untitled), holding every top object. It is not an object, so it
      cannot be moved, deleted or copied, and objects can be dropped on it to move them to the top.
@@ -289,7 +290,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
    - **Material previews in the Project panel.** A material's tile shows the material on a sphere
      instead of its kind's icon, drawn off screen in the background, kept until the file (or an image
      it uses) changes, and drawn again then; a material that does not compile keeps the icon with a
-     warning mark. The same picture heads the Inspector when the file is selected.
+     warning mark. The same picture heads the Inspector when the file is selected. (Done: pictures
+     are drawn two per frame and checked against their files every second.)
    - **The two faster script modes from M8.** Compiled to machine code: exported games run their
      WebAssembly modules through an ahead-of-time compiler (wasmtime, once its licence is checked
      against the craft-contrib list), with the same ABI, fuel and memory limits and faults as the

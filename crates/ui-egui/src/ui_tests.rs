@@ -856,6 +856,81 @@ fn keep_for_review(picture: &Picture, name: &str) {
     encoder.write_header().unwrap().write_image_data(&picture.rgba).unwrap();
 }
 
+/// A material graph whose surface is `color`, or one that does not compile (no Material Output).
+fn material_text(color: Option<[f32; 3]>) -> String {
+    let nodes = match color {
+        Some(color) => json!([{ "id": 1, "kind": "output", "position": [0.0, 0.0], "values": { "baseColor": color } }]),
+        None => json!([]),
+    };
+    json!({ "format": "bayleaf.graph", "version": 1, "domain": "material", "nodes": nodes, "links": [] }).to_string()
+}
+
+#[test]
+fn a_material_that_does_not_compile_shows_a_warning_mark_and_why_in_the_inspector() {
+    let (mut harness, dir) = project_harness("thumbs");
+    std::fs::write(dir.join("Good.bmaterial"), material_text(Some([0.9, 0.1, 0.1]))).unwrap();
+    std::fs::write(dir.join("Broken.bmaterial"), material_text(None)).unwrap();
+    harness.state_mut().project.rescan_soon();
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Broken, Material, does not compile").is_some(), "the broken material's tile says so");
+    assert!(harness.query_by_label("Good, Material").is_some(), "a material that compiles has no warning");
+
+    harness.get_by_label("Broken, Material, does not compile").click();
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Preview of Broken.bmaterial: Does not compile").is_some(), "the Inspector says why there is no picture");
+    harness.get_by_label("Good, Material").click();
+    harness.run_steps(3);
+    assert!(
+        harness.query_by_label("Preview of Good.bmaterial: Drawing previews needs a graphics adapter").is_some(),
+        "without a GPU it says so instead of showing an empty picture"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn with_a_gpu_a_material_tile_shows_the_material_and_follows_its_file() {
+    let Some(mut harness) = gpu_harness() else { return };
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-gpu-thumbs-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    harness.state_mut().dispatch("scene.saveAs", &json!({ "path": dir.join("s.bscene") }), None);
+    let file = dir.join("Paint.bmaterial");
+    std::fs::write(&file, material_text(Some([0.9, 0.05, 0.05]))).unwrap();
+    harness.state_mut().project.rescan_soon();
+    harness.run_steps(4);
+    let tile = harness.get_by_label("Paint, Material").rect();
+    // The tile's picture area, above its name.
+    let area = egui::Rect::from_min_size(tile.min, egui::vec2(tile.width(), tile.height() * 0.6)).shrink(4.0);
+    let mean = |picture: &Picture| {
+        let (mut sum, mut count) = ([0u64; 3], 0u64);
+        for y in area.top() as u32..area.bottom() as u32 {
+            for x in area.left() as u32..area.right() as u32 {
+                let at = ((y * picture.width + x) * 4) as usize;
+                for (c, s) in sum.iter_mut().enumerate() {
+                    *s += u64::from(picture.rgba[at + c]);
+                }
+                count += 1;
+            }
+        }
+        sum.map(|s| s / count.max(1))
+    };
+    let red = picture(&mut harness);
+    keep_for_review(&red, "material_tile_red");
+    let before = mean(&red);
+    assert!(before[0] > before[2] + 20, "the tile shows the red material: {before:?}");
+    assert!(colours_in(&red, area) > 20, "shaded like a sphere, not a flat icon");
+
+    // Changed on disk, the picture is drawn again.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(&file, material_text(Some([0.05, 0.1, 0.9]))).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    harness.run_steps(4);
+    let blue = picture(&mut harness);
+    let after = mean(&blue);
+    assert!(after[2] > after[0] + 20, "the tile follows the file: before {before:?}, after {after:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn with_a_gpu_the_game_tab_draws_the_game_through_the_scene_camera() {
     let Some(mut harness) = gpu_harness() else { return };
@@ -1261,7 +1336,7 @@ fn a_file_field_takes_a_dragged_file_of_its_kind_and_refuses_others() {
     std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("notes.md"), "Not a material.\n").unwrap();
-    std::fs::write(dir.join("Rock.bmaterial"), "{}").unwrap();
+    std::fs::write(dir.join("Rock.bmaterial"), material_text(Some([0.5, 0.45, 0.4]))).unwrap();
     let mut harness = harness();
     harness.state_mut().dispatch("scene.saveAs", &json!({ "path": dir.join("s.bscene") }), None);
     harness.run();

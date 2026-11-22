@@ -518,7 +518,8 @@ pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Ar
         sky,
         fog: (Vec3::ZERO, 0.0),
         show_grid: false,
-        shadows: ShadowSettings::DEFAULT,
+        // Nothing casts a shadow here, so the smallest map.
+        shadows: ShadowSettings { resolution: 256, cascades: 1, reach: 0.0, lights: 1 },
         selected: None,
         highlighted: Vec::new(),
         time,

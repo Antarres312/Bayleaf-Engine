@@ -81,6 +81,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         if file.info.kind == "Image" {
             image_preview(ui, &mut file, &name);
         }
+        if file.info.kind == "Material" {
+            material_picture(ui, &mut editor.thumbnails, &file.path, &name);
+        }
         // The open scene's own settings, under its file.
         if editor.session.scene_path() == Some(file.path.as_path()) {
             crate::scene_settings::show(editor, ui);
@@ -210,6 +213,45 @@ fn image_preview(ui: &mut egui::Ui, file: &mut Inspected, name: &str) {
             crate::i18n::tf("Preview of {name}, {width} × {height} pixels", &[("name", name), ("width", &size.x.to_string()), ("height", &size.y.to_string())]);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &label));
     });
+    ui.add_space(6.0);
+}
+
+/// The material on a sphere, as its Project panel tile shows it, or why there is no picture.
+fn material_picture(ui: &mut egui::Ui, thumbnails: &mut crate::thumbnails::Thumbnails, path: &Path, name: &str) {
+    use crate::thumbnails::Thumb;
+    let t = theme::tokens(ui);
+    let thumb = thumbnails.get(path);
+    let side = ui.available_width().min(PREVIEW_HEIGHT).min(crate::thumbnails::PIXELS as f32);
+    ui.vertical_centered(|ui| {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
+        let painter = ui.painter();
+        let label = match &thumb {
+            Thumb::Ready(texture) => {
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                painter.add(egui::epaint::RectShape::filled(rect, theme::RADIUS, egui::Color32::WHITE).with_texture(*texture, uv));
+                crate::i18n::tf("Preview of {name}: the material on a sphere", &[("name", name)])
+            }
+            other => {
+                painter.rect_filled(rect, theme::RADIUS, t.surface);
+                let text = match other {
+                    Thumb::Failed(_) => tl("Does not compile"),
+                    Thumb::Unavailable => tl("Drawing previews needs a graphics adapter"),
+                    _ => tl("Drawing the preview…"),
+                };
+                let color = if matches!(other, Thumb::Failed(_)) { t.warning } else { t.text_muted };
+                let galley = painter.layout(text.to_owned(), egui::FontId::proportional(12.0), color, side - 16.0);
+                painter.galley(rect.center() - galley.size() / 2.0, galley, color);
+                if matches!(other, Thumb::Failed(_)) {
+                    crate::thumbnails::paint_warning(painter, rect.shrink(6.0), t);
+                }
+                crate::i18n::tf("Preview of {name}: {text}", &[("name", name), ("text", text)])
+            }
+        };
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &label));
+    });
+    if let Thumb::Failed(error) = &thumb {
+        ui.add(egui::Label::new(egui::RichText::new(error).small().color(t.warning)).wrap());
+    }
     ui.add_space(6.0);
 }
 

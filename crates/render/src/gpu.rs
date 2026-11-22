@@ -152,6 +152,26 @@ impl RenderTarget {
     pub fn view(&self) -> &wgpu::TextureView {
         &self.color_view
     }
+
+    /// A copy of what was last drawn, in a texture of its own: a picture kept without the target's
+    /// multisampled and depth buffers, which the next drawing can reuse.
+    pub fn snapshot(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+        let size = wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 };
+        let copy = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("bayleaf snapshot"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: COLOR_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("bayleaf snapshot") });
+        encoder.copy_texture_to_texture(self.color.as_image_copy(), copy.as_image_copy(), size);
+        queue.submit([encoder.finish()]);
+        copy.create_view(&wgpu::TextureViewDescriptor::default())
+    }
 }
 
 /// Draws [`Frame`]s into [`RenderTarget`]s.
@@ -382,6 +402,11 @@ impl Renderer {
         self.material_error.as_deref()
     }
 
+    /// Whether the GPU refused `material`'s shader, so its objects show the built-in surface.
+    pub fn refused(&self, material: &CompiledMaterial) -> bool {
+        matches!(self.pipelines.get(&material.key), Some(None))
+    }
+
     /// Builds the pipelines of a material the first time it is drawn. A shader the GPU refuses
     /// is remembered as refused, so it is tried once, and its objects use the built-in surface.
     fn prepare(&mut self, device: &wgpu::Device, material: &CompiledMaterial) {
@@ -463,16 +488,17 @@ impl Renderer {
 
     /// Records and submits the commands that draw `frame` into `target`.
     pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, target: &RenderTarget, frame: &Frame) {
-        // The shadow map as large, and with as many layers, as the frame's settings ask for.
+        // The shadow map as large as the settings ask, with a layer for each face the frame's
+        // shadow-casting lights use (a sun one per cascade, a point light six).
         let settings = frame.shadows.clamped();
-        let layers = settings.lights as usize * SHADOW_FACES;
+        let shadows = shadow_views(frame, &settings);
+        let layers = shadows.iter().map(|v| v.faces.len()).sum::<usize>().clamp(1, MAX_SHADOW_LAYERS);
         if self.shadow_size != settings.resolution || self.shadow_layers.len() != layers {
             let (group, views) = shadow_map(device, &self.shadow_layout, &self.shadow_sampler, settings.resolution, layers as u32);
             self.shadow_group = group;
             self.shadow_layers = views;
             self.shadow_size = settings.resolution;
         }
-        let shadows = shadow_views(frame, &settings);
         let globals = globals_for(frame, &shadows, settings.resolution);
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         for material in frame.items.iter().filter_map(|i| i.material.as_deref()) {
