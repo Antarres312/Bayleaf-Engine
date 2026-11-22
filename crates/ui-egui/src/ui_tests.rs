@@ -2285,3 +2285,117 @@ fn the_profiler_panel_records_the_game_and_shows_a_frame_by_part() {
     assert!(harness.query_by_label("Newest").is_some(), "an earlier frame chosen, the newest is a click away");
     harness.state_mut().dispatch("play.stop", &json!({}), None);
 }
+
+/// A file the system drops on the window.
+#[derive(Debug)]
+struct SystemFile(std::path::PathBuf);
+
+impl egui::DroppedFile for SystemFile {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
+/// Drops `files` on the window, with the pointer at `at` (or, like Windows, with no position).
+fn drop_files(harness: &mut Harness<'static, Editor>, files: &[std::path::PathBuf], at: Option<egui::Pos2>) {
+    if let Some(at) = at {
+        harness.input_mut().events.push(egui::Event::PointerMoved(at));
+    } else {
+        harness.input_mut().events.push(egui::Event::PointerGone);
+    }
+    for file in files {
+        harness.input_mut().dropped_files.push(std::sync::Arc::new(SystemFile(file.clone())));
+    }
+    // Without a position, the drop waits a moment for one.
+    let steps = if at.is_some() { 2 } else { 60 };
+    for _ in 0..steps {
+        harness.step();
+    }
+}
+
+#[test]
+fn files_dropped_from_the_system_come_into_the_folder_or_the_scene_they_land_on() {
+    let mut harness = harness();
+    let base = std::env::temp_dir().join(format!("bayleaf-ui-drop-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let (dir, outside) = (base.join("Game"), base.join("outside"));
+    std::fs::create_dir_all(&outside).unwrap();
+    let logo = outside.join("logo.png");
+    std::fs::write(&logo, include_bytes!("../../../assets/brand/bayleaf-logo.png")).unwrap();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().project.current = dir.join("materials");
+    harness.run_steps(2);
+
+    // No pointer position with the drop: into the Project panel's open folder, and shown there.
+    drop_files(&mut harness, std::slice::from_ref(&logo), None);
+    assert!(dir.join("materials/logo.png").is_file(), "{}", harness.state().status);
+    assert_eq!(harness.state().project.selected.as_deref(), Some(dir.join("materials/logo.png").as_path()));
+
+    // Onto a folder's tile: into that folder.
+    harness.state_mut().project.current = dir.clone();
+    harness.run_steps(2);
+    let tile = harness.get_by_label("assets, Folder").rect().center();
+    drop_files(&mut harness, std::slice::from_ref(&logo), Some(tile));
+    assert!(dir.join("assets/logo.png").is_file(), "{}", harness.state().status);
+
+    // Onto the hierarchy: a model becomes an object at the top, selected.
+    let cube_row = harness.get_by_label("Cube").rect().center();
+    let before = harness.state().session.scene().children(None).len();
+    let model = outside.join("tri.glb");
+    std::fs::write(&model, triangle_glb()).unwrap();
+    drop_files(&mut harness, std::slice::from_ref(&model), Some(cube_row));
+    let editor = harness.state();
+    assert_eq!(editor.session.scene().children(None).len(), before + 1, "{}", editor.status);
+    let placed = editor.selected.unwrap();
+    assert!(editor.session.scene().component(placed, "mesh").unwrap()["model"].as_str().unwrap().ends_with("tri.glb"));
+
+    // Its import settings show in the Inspector, and a change is saved beside it.
+    let imported = harness.state().session.script_dir().join(harness.state().session.scene().component(placed, "mesh").unwrap()["model"].as_str().unwrap());
+    harness.state_mut().select_only(None);
+    harness.state_mut().inspected_file = Some(crate::file_inspector::Inspected::new(imported.clone()));
+    harness.run_steps(2);
+    harness.get_by_label("Z Up").click();
+    harness.run_steps(2);
+    let saved = std::fs::read_to_string(bayleaf_render::assets::import::settings_path(&imported)).unwrap();
+    assert!(saved.contains("\"z\""), "{saved}");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// A one-triangle binary glTF model.
+fn triangle_glb() -> Vec<u8> {
+    let mut bin: Vec<u8> = [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]].iter().flatten().flat_map(|f| f.to_le_bytes()).collect();
+    bin.extend([0u8, 0, 1, 0, 2, 0, 0, 0]);
+    let gltf = json!({
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+        "buffers": [{"byteLength": bin.len()}],
+        "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 6}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, -1], "max": [1, 0, 0]},
+            {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+        ]
+    });
+    let mut text = gltf.to_string().into_bytes();
+    while !text.len().is_multiple_of(4) {
+        text.push(b' ');
+    }
+    let total = 12 + 8 + text.len() + 8 + bin.len();
+    let mut out = Vec::new();
+    out.extend(b"glTF");
+    out.extend(2u32.to_le_bytes());
+    out.extend((total as u32).to_le_bytes());
+    out.extend((text.len() as u32).to_le_bytes());
+    out.extend(b"JSON");
+    out.extend(&text);
+    out.extend((bin.len() as u32).to_le_bytes());
+    out.extend(b"BIN\0");
+    out.extend(&bin);
+    out
+}

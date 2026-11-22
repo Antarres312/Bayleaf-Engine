@@ -321,7 +321,7 @@ fn soft_dot() -> Arc<Image> {
             }
         }
         // An id of its own, far from the ids images read from files get.
-        Arc::new(Image { id: u64::MAX - 0x5d07, width: SIZE, height: SIZE, rgba })
+        Arc::new(Image { id: u64::MAX - 0x5d07, width: SIZE, height: SIZE, rgba, mipmaps: true })
     }))
 }
 

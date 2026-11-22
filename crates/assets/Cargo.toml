@@ -1,6 +1,6 @@
 [package]
 name = "bayleaf-assets"
-description = "L2: reading asset files: PNG and JPEG images and glTF 2.0 models."
+description = "L2: reading asset files: PNG and JPEG images and glTF 2.0 models, with the import settings beside them."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,8 +13,7 @@ gltf = { workspace = true }
 png = { workspace = true }
 zune-core = { workspace = true }
 zune-jpeg = { workspace = true }
-
-[dev-dependencies]
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

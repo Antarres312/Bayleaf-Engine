@@ -12,7 +12,7 @@ pub mod code_scripts;
 pub mod confine;
 pub mod export;
 mod graph_cmds;
-
+pub mod import;
 pub mod input_cmds;
 mod lighting_cmds;
 pub mod native_export;
@@ -498,7 +498,7 @@ impl CommandRegistry {
         commands.extend(code_scripts::commands());
         commands.extend(asset_info::commands());
         commands.extend(asset_cmds::commands());
-
+        commands.extend(import::commands());
         commands.extend(input_cmds::commands());
         Self { commands }
     }

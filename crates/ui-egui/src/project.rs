@@ -364,6 +364,8 @@ enum Action {
     AskDelete(PathBuf),
     /// Save this object (and its children) as a new prefab in this folder.
     MakePrefab(bayleaf_core::StableId, PathBuf),
+    /// Bring files from the system into this folder.
+    Import(Vec<PathBuf>, PathBuf),
 }
 
 /// What the panel's parts ask for after drawing.
@@ -477,6 +479,12 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     Err(error) => editor.project.naming = Some(Naming { error: Some(error), focused: false, text: name, ..naming }),
                 }
             }
+        }
+        Some(Action::Import(files, folder)) => {
+            // Only into the project; a drop on the engine's folders goes to the open project folder.
+            let folder = editor.project.is_in_project(&folder).then_some(folder);
+            crate::file_drop::bring_in(editor, files, folder, crate::file_drop::Place::Project);
+            editor.project.scanned = None;
         }
         Some(Action::MakePrefab(object, folder)) => {
             let name = editor.session.scene().name(object).unwrap_or("Prefab").to_owned();
@@ -849,6 +857,11 @@ fn folder_tree(ui: &mut egui::Ui, view: &ProjectView, dir: &Path, rows: &mut Vec
 /// An object dragged from the hierarchy onto a folder (a row, a tile, or the open folder's free
 /// space) becomes a prefab in it: the folder is ringed while the object is over it.
 fn object_drop(ui: &egui::Ui, response: &egui::Response, folder: &Path, outcome: &mut Outcome) {
+    // Files from the system come into the folder the same way.
+    if let Some(files) = crate::file_drop::take(ui, response.interact_rect) {
+        outcome.action = Some(Action::Import(files, folder.to_path_buf()));
+        return;
+    }
     let Some(object) = crate::hierarchy::dragged_object(ui.ctx()) else { return };
     // The visible part of the folder; egui does not count it as under the pointer while another
     // widget is being dragged.

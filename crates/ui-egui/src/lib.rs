@@ -10,7 +10,7 @@ pub mod brand;
 mod console;
 mod dock;
 mod export_window;
-
+mod file_drop;
 mod file_inspector;
 mod fonts;
 mod game_view;
@@ -176,7 +176,7 @@ impl Editor {
             fonts::install_fonts(ui.ctx());
         }
         self.handle_shortcuts(ui.ctx());
-
+        file_drop::begin(ui.ctx());
         self.poll_builds(ui.ctx());
         self.run_play_frame(ui.ctx());
         self.note_recent_project();
@@ -212,7 +212,7 @@ impl Editor {
         if let Some(pressed) = ui.input(|i| if i.pointer.any_pressed() { i.pointer.press_origin() } else { None }) {
             self.graph_view.active = self.graph_view.panel_rect.is_some_and(|panel| panel.contains(pressed));
         }
-
+        file_drop::finish(self, ui.ctx());
         self.apply_raise();
         self.update_title(ui.ctx());
         if let Some(text) = self.copy_out.take() {

@@ -197,3 +197,14 @@ The profiler records while asked: `profile.start` and `profile.stop`, `profile.c
 player drew (`extract`, `draw`, `drawCalls`, `triangles`, `meshBytes`, `imageBytes`), and the
 average. It keeps the last 3000 frames. The player's `--profile <file>` records and writes them
 when the game closes. GPU time is not measured yet.
+
+Files come into a project with `asset.import` (`{files, folder?}`): models (`.glb`, or `.gltf` with
+the files it names, which then get a folder of their own), images (`.png`, `.jpg`) and sounds. Each is
+read first, so a file that cannot be read says why and nothing is copied; a name already taken gets
+a number, and a file already in the project stays where it is. The files must be inside the read
+roots. Models and images get import settings beside them (`robot.glb.bimport`), read with
+`asset.importSettings.get` and written with `asset.importSettings.set` (`{path, settings: {model?:
+{scale, upAxis: "y" | "z"}, image?: {mipmaps}}}`); scenes using the file read it again. Then
+`scene.file.place` (`{path, parent?, index?, position?}`) puts a model or a sound in the scene as an
+object, and `scene.image.apply` (`{id, image}`) shows an image on a sprite, or on a mesh through a
+new material made beside the image. Dropping files on the editor runs the same commands.

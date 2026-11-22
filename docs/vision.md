@@ -393,7 +393,13 @@ No crate below L6 may use egui, eframe, winit or rfd.
      images, streaming or loaded for sounds), shown in the Inspector and applied again when the
      file changes. Formats: glTF/GLB first, then OBJ and FBX where a library allows it under the
      licence list; PNG, JPEG, KTX2, EXR for images; WAV, OGG, FLAC, MP3 for sound. A file that
-     cannot be read says why, and nothing half-imported stays behind.
+     cannot be read says why, and nothing half-imported stays behind. (Done: `asset.import`, drops
+     on the Project panel's folders, the Scene view and the hierarchy, `scene.file.place`,
+     `scene.image.apply`, and import settings for a model's scale and up axis and an image's
+     mipmaps, in the Inspector. Windows gives no pointer position with a drop until the pointer
+     moves, so a drop there waits a moment for one and otherwise goes into the open folder. Still to
+     do: OBJ and FBX models, KTX2 and EXR images, FLAC sounds, compression and colour space for
+     images, streamed sounds, and a model's animations.)
    - **Fix: material previews draw only the sphere.** The material pictures (Project panel tiles,
      the Inspector, the Graph panel's preview) show the sky behind the sphere. Draw them with a
      transparent background instead, so only the sphere shows over the panel; the sphere is still

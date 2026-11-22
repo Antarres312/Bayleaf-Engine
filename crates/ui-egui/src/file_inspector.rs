@@ -1,11 +1,13 @@
 //! The Inspector for a file clicked in the Project panel: what it is, what it holds (from
-//! `asset.info`), a picture of an image, the start of a text file, and the actions that fit it.
+//! `asset.info`), a picture of an image, the start of a text file, a model's or image's import
+//! settings, and the actions that fit it.
 
 use crate::i18n::tl;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use bayleaf_engine::asset_info::{self, Info};
+use bayleaf_render::assets::import::{ImportSettings, UpAxis};
 
 use crate::Editor;
 use crate::theme::{self, ROW_HEIGHT};
@@ -32,11 +34,24 @@ pub(crate) struct Inspected {
     lighting: Option<Result<bayleaf_engine::scene::lighting::Lighting, String>>,
     /// A post-processing asset as read, or why it could not be.
     post: Option<Result<bayleaf_engine::scene::post::PostProcessing, String>>,
+    /// A model's or image's import settings as read, or why they could not be.
+    import: Option<Result<ImportSettings, String>>,
 }
 
 impl Inspected {
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path, info: Info::default(), modified: None, texture: None, markdown: None, show_source: false, input: None, lighting: None, post: None }
+        Self {
+            path,
+            info: Info::default(),
+            modified: None,
+            texture: None,
+            markdown: None,
+            show_source: false,
+            input: None,
+            lighting: None,
+            post: None,
+            import: None,
+        }
     }
 
     /// Reads the file again when it changed since it was last read.
@@ -53,6 +68,7 @@ impl Inspected {
             self.lighting = is_lighting.then(|| bayleaf_engine::scene::lighting::Lighting::load(&self.path).map_err(|e| e.to_string()));
             let is_post = self.path.extension().is_some_and(|e| e == bayleaf_engine::scene::post::EXTENSION);
             self.post = is_post.then(|| bayleaf_engine::scene::post::PostProcessing::load(&self.path).map_err(|e| e.to_string()));
+            self.import = ImportSettings::defaults_for(&self.path).map(|defaults| ImportSettings::read_for(&self.path).map(|s| s.unwrap_or(defaults)));
         }
     }
 }
@@ -75,6 +91,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let mut save_input = None;
     let mut changed_lighting = None;
     let mut changed_post = None;
+    let mut changed_import = None;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(4.0);
@@ -105,6 +122,21 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             && crate::scene_settings::post_editor(ui, post)
         {
             changed_post = Some(post.clone());
+        }
+
+        // How a model or image is read; saved beside it, and every scene using it reads it again.
+        match file.import.as_mut() {
+            Some(Ok(settings)) => {
+                if import_settings(ui, settings) {
+                    changed_import = Some(settings.clone());
+                }
+                ui.add_space(theme::SECTION_GAP);
+            }
+            Some(Err(problem)) => {
+                ui.add(egui::Label::new(crate::i18n::tf("Its import settings do not read: {problem}", &[("problem", problem)])).wrap());
+                ui.add_space(theme::SECTION_GAP);
+            }
+            None => {}
         }
 
         theme::section(t).show(ui, |ui| {
@@ -193,6 +225,16 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     {
         file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
     }
+    if let Some(settings) = changed_import {
+        let mut given = serde_json::Map::new();
+        if let Some(model) = &settings.model {
+            given.insert("model".to_owned(), serde_json::json!(model));
+        }
+        if let Some(image) = &settings.image {
+            given.insert("image".to_owned(), serde_json::json!(image));
+        }
+        editor.dispatch("asset.importSettings.set", &serde_json::json!({ "path": file.path, "settings": given }), None);
+    }
     let path = file.path.clone();
     // Something on the card (Edit on the scene's lighting) may have chosen another file to show.
     if editor.inspected_file.is_none() {
@@ -205,6 +247,46 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         Some(Action::BuildScript) => editor.build_script(&path),
         None => {}
     }
+}
+
+/// A model's scale and up axis, or an image's mipmaps. True when a change is finished (a drag let
+/// go, a number typed in, a choice made), so the file is not written on every step of a drag.
+fn import_settings(ui: &mut egui::Ui, settings: &mut ImportSettings) -> bool {
+    let t = theme::tokens(ui);
+    let mut done = false;
+    theme::headed(t, "Import Settings").show(ui, |ui| {
+        if let Some(model) = settings.model.as_mut() {
+            crate::value_editor::row(ui, t, "Scale", |ui, label, width| {
+                let response = ui
+                    .add_sized(
+                        [width.min(120.0), ROW_HEIGHT - 4.0],
+                        egui::DragValue::new(&mut model.scale).speed(0.01).range(0.0001..=10_000.0).max_decimals(4),
+                    )
+                    .labelled_by(label)
+                    .on_hover_text(tl("Every position times this: 0.01 for a model made in centimetres"));
+                done |= response.drag_stopped() || response.lost_focus() || (response.changed() && !response.dragged() && !response.has_focus());
+            });
+            crate::value_editor::row(ui, t, "Up Axis", |ui, _, _| {
+                for (axis, label, hint) in [
+                    (UpAxis::Y, "Y Up", "The model was made with Y up, as the engine uses"),
+                    (UpAxis::Z, "Z Up", "The model was made with Z up: it is turned to stand up"),
+                ] {
+                    if ui.radio_value(&mut model.up_axis, axis, tl(label)).on_hover_text(tl(hint)).changed() {
+                        done = true;
+                    }
+                }
+            });
+        }
+        if let Some(image) = settings.image.as_mut()
+            && ui
+                .checkbox(&mut image.mipmaps, tl("Mipmaps"))
+                .on_hover_text(tl("Smaller copies for far away, so it does not shimmer; off keeps every pixel sharp, as pixel art wants"))
+                .changed()
+        {
+            done = true;
+        }
+    });
+    done
 }
 
 /// The image, fitted to the panel's width and the preview height, over a checkerboard so

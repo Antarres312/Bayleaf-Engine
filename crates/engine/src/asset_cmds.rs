@@ -111,6 +111,14 @@ fn asset_rename(session: &mut Session, params: &Value) -> Result<Value, CommandE
         }
         let renamed = session.allowed(&renamed, Access::Write)?;
         std::fs::rename(&path, &renamed).map_err(|e| CommandError::Failed(format!("cannot rename {}: {e}", path.display())))?;
+        // Its import settings go with it.
+        let settings = bayleaf_render::assets::import::settings_path(&path);
+        if path.is_file() || renamed.is_file() {
+            let moved = session.allowed(&bayleaf_render::assets::import::settings_path(&renamed), Access::Write)?;
+            if settings.is_file() {
+                std::fs::rename(&settings, &moved).map_err(|e| CommandError::Failed(format!("cannot rename {}: {e}", settings.display())))?;
+            }
+        }
         renamed
     };
     // The open scene and graph follow their files.
@@ -189,6 +197,7 @@ fn asset_list(session: &mut Session, params: &Value) -> Result<Value, CommandErr
                 !name.starts_with('.') && !(e.file_type().is_ok_and(|t| t.is_dir()) && NOT_LISTED.contains(&name.as_str()))
             })
             .map(|e| e.path())
+            .filter(|p| !bayleaf_render::assets::import::is_settings_file(p))
             .collect();
         here.sort();
         for path in here {
@@ -230,6 +239,11 @@ fn asset_delete(session: &mut Session, params: &Value) -> Result<Value, CommandE
         trash::delete(&path).map_err(|e| format!("{e}; with no Recycle Bin, delete with permanent: true"))
     };
     removed.map_err(|e| CommandError::Failed(format!("cannot delete {}: {e}", path.display())))?;
+    // Its import settings go with it.
+    let settings = bayleaf_render::assets::import::settings_path(&path);
+    if settings.is_file() && session.allowed(&settings, Access::Write).is_ok() {
+        let _ = if p.permanent { std::fs::remove_file(&settings).map_err(|e| e.to_string()) } else { trash::delete(&settings).map_err(|e| e.to_string()) };
+    }
     Ok(json!({ "path": path, "recycled": !p.permanent }))
 }
 

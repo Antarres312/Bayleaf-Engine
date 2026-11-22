@@ -35,6 +35,7 @@ const GAME_EXTENSIONS: &[&str] = &[
     "glb",
     "gltf",
     "bin",
+    bayleaf_render::assets::import::SETTINGS_EXTENSION,
 ];
 
 /// Folders whose files a game does not need: build output, saved values and version control.

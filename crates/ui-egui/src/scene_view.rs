@@ -132,6 +132,17 @@ impl SceneView {
     }
 }
 
+/// Where a ray through `ndc` meets the ground (height 0) in the world, or a point a few units in
+/// front of the camera when it does not (looking up, or the ground too far away).
+fn ground_point(camera: &bayleaf_render::CameraView, ndc: Vec2) -> [f64; 3] {
+    let ray = camera.ray(ndc);
+    let start = camera.origin + ray.origin.as_dvec3();
+    let direction = ray.direction.as_dvec3().normalize_or_zero();
+    let along = if direction.y.abs() > 1e-6 { -start.y / direction.y } else { -1.0 };
+    let along = if along > 0.0 && along < 500.0 { along } else { 5.0 };
+    (start + direction * along).to_array()
+}
+
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgpu::RenderState>) {
     prefab_bar(editor, ui);
     particles_bar(editor, ui);
@@ -435,6 +446,14 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         {
             editor.dispatch("scene.script.add", &serde_json::json!({ "id": id, "module": asset.relative }), None);
         }
+    }
+    // Files from the system: a model or sound lands where the pointer meets the ground, an image
+    // on the object under the pointer.
+    if let Some(files) = crate::file_drop::take(ui, response.rect) {
+        let pointer = ui.input(|i| i.pointer.latest_pos()).filter(|p| response.rect.contains(*p));
+        let at = pointer.map(|p| ground_point(&frame.camera, ndc_at(p)));
+        let target = pointer.and_then(|p| bayleaf_render::pick(&frame, ndc_at(p)));
+        crate::file_drop::bring_in(editor, files, None, crate::file_drop::Place::Scene { at, target });
     }
     if let Some(texture) = preview {
         paint_preview(ui, texture, response.rect, preview_size);

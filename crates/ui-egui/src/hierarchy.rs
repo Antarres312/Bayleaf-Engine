@@ -102,7 +102,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let mut moved: Option<Value> = None;
     let mut script_dropped: Option<(StableId, String)> = None;
     let filter = editor.hierarchy_filter.trim().to_lowercase();
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+    let area = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         theme::dense(ui);
         // Reserved first, so the stripes are painted under the rows drawn after it.
         let stripe_slot = ui.painter().add(egui::Shape::Noop);
@@ -160,6 +160,10 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         } else {
             editor.toggle_selected(id);
         }
+    }
+    // Files from the system: models and sounds become objects at the top.
+    if let Some(files) = crate::file_drop::take(ui, area.inner_rect) {
+        crate::file_drop::bring_in(editor, files, None, crate::file_drop::Place::Top);
     }
     if let Some(params) = moved {
         editor.dispatch("scene.object.reparent", &params, None);

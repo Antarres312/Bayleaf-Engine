@@ -130,7 +130,7 @@ fn jpeg_images_decode_by_their_bytes_and_oversized_ones_are_refused() {
 fn smaller_copies_halve_down_to_one_pixel_and_average_as_light() {
     // A 4 x 3 black and white checkerboard.
     let rgba = (0..12).flat_map(|i| if (i % 4 + i / 4) % 2 == 0 { [0, 0, 0, 255] } else { [255, 255, 255, 255] }).collect();
-    let levels = mip_levels(&Image { id: 1, width: 4, height: 3, rgba });
+    let levels = mip_levels(&Image { id: 1, width: 4, height: 3, rgba, mipmaps: true });
     let sizes: Vec<(u32, u32)> = levels.iter().map(|(w, h, _)| (*w, *h)).collect();
     assert_eq!(sizes, [(2, 1), (1, 1)]);
     assert!(levels.iter().all(|(w, h, p)| p.len() == (*w * *h * 4) as usize));
@@ -164,5 +164,48 @@ fn a_gltf_material_gives_its_colour_metal_roughness_and_image() {
     gltf["images"] = serde_json::json!([{ "uri": "../outside.png" }]);
     std::fs::write(dir.join("tri.gltf"), gltf.to_string()).unwrap();
     assert!(load_model(&dir.join("tri.gltf")).unwrap_err().contains("next to the model"), "images outside the model's folder");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn import_settings_beside_a_model_scale_and_turn_it_and_reload_it_when_changed() {
+    use super::AssetCache;
+    use super::import::{ImportSettings, UpAxis, settings_path};
+    let dir = temp_dir("import-settings");
+    write_triangle(&dir, "tri.bin", 2);
+    let model = dir.join("tri.gltf");
+    let mut cache = AssetCache::new();
+    let plain = cache.model(&model).unwrap();
+    assert!(plain.max[1] > 1.9, "the node lifts it along Y");
+
+    let mut settings = ImportSettings::defaults_for(&model).unwrap();
+    let m = settings.model.as_mut().unwrap();
+    m.scale = 3.0;
+    m.up_axis = UpAxis::Z;
+    std::fs::write(settings_path(&model), settings.to_text()).unwrap();
+    let turned = cache.model(&model).unwrap();
+    assert_ne!(turned.id, plain.id, "new settings make it a new model");
+    // Up along Z becomes up along Y: what the node lifted along Y now points away from the viewer.
+    assert!(turned.max[1] < 0.5 && turned.min[2] < -5.0, "scaled and turned: {:?} to {:?}", turned.min, turned.max);
+    let size = |m: &super::MeshData| (0..3).map(|i| m.max[i] - m.min[i]).fold(0.0f32, f32::max);
+    assert!(size(&turned) > size(&plain) * 2.0, "scaled up");
+
+    std::fs::write(settings_path(&model), "{ broken").unwrap();
+    let broken = cache.model(&model).unwrap_err();
+    assert!(broken.contains("import settings"), "{broken}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_image_without_mipmaps_in_its_settings_says_so() {
+    use super::import::{ImportSettings, settings_path};
+    let dir = temp_dir("import-image");
+    let path = dir.join("a.png");
+    std::fs::write(&path, png_bytes()).unwrap();
+    assert!(load_image(&path).unwrap().mipmaps, "on unless turned off");
+    let mut settings = ImportSettings::defaults_for(&path).unwrap();
+    settings.image.as_mut().unwrap().mipmaps = false;
+    std::fs::write(settings_path(&path), settings.to_text()).unwrap();
+    assert!(!load_image(&path).unwrap().mipmaps);
     std::fs::remove_dir_all(&dir).ok();
 }

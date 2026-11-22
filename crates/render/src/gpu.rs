@@ -516,11 +516,13 @@ impl Renderer {
     /// Puts the frame's images and models on the GPU the first time they are drawn, and makes
     /// the image groups its items need.
     fn upload_assets(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) {
-        self.textures.entry(0).or_insert_with(|| upload_image(device, queue, &bayleaf_assets::Image { id: 0, width: 1, height: 1, rgba: vec![255; 4] }));
-        // A normal straight out of the surface, stored as sRGB so the shader's re-encoding gives (0.5, 0.5, 1).
         self.textures
-            .entry(FLAT_NORMAL)
-            .or_insert_with(|| upload_image(device, queue, &bayleaf_assets::Image { id: FLAT_NORMAL, width: 1, height: 1, rgba: vec![128, 128, 255, 255] }));
+            .entry(0)
+            .or_insert_with(|| upload_image(device, queue, &bayleaf_assets::Image { id: 0, width: 1, height: 1, rgba: vec![255; 4], mipmaps: true }));
+        // A normal straight out of the surface, stored as sRGB so the shader's re-encoding gives (0.5, 0.5, 1).
+        self.textures.entry(FLAT_NORMAL).or_insert_with(|| {
+            upload_image(device, queue, &bayleaf_assets::Image { id: FLAT_NORMAL, width: 1, height: 1, rgba: vec![128, 128, 255, 255], mipmaps: true })
+        });
         let mut keys = vec![[0u64; 4]];
         for item in &frame.items {
             for image in item.textures.iter().flatten() {
@@ -1381,9 +1383,10 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-/// An image on the GPU, with its smaller copies so it does not shimmer far away. Images hold sRGB colours.
+/// An image on the GPU, with its smaller copies so it does not shimmer far away (unless its import
+/// settings turn them off). Images hold sRGB colours.
 fn upload_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &bayleaf_assets::Image) -> (wgpu::Texture, wgpu::TextureView) {
-    let levels = bayleaf_assets::mip_levels(image);
+    let levels = if image.mipmaps { bayleaf_assets::mip_levels(image) } else { Vec::new() };
     let mut data = image.rgba.clone();
     for (_, _, pixels) in &levels {
         data.extend_from_slice(pixels);

@@ -52,5 +52,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Audio Source, Clip, Volume, Looping, Play on Start, Spatial, Range, Sound (file kind), Play Sound, Stop Sound, Play Sound At, Sound File | not yet | Not checked yet | Generic audio terms; same |
 | Streamed Area, Load Distance, Keep Margin, Streamed World, Split into Streamed Areas, Cell Size | not yet | Not checked yet | Our own words for world streaming; same |
 | Language, Automatic, Pseudo | not yet | Not checked yet | Generic terms; same |
+| Import Settings, Scale, Up Axis, Y Up, Z Up, Mipmaps, Import Files, Place File, Apply Image, Brought in | not yet | Not checked yet | Generic terms; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

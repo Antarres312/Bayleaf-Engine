@@ -2185,3 +2185,133 @@ fn the_profiler_records_each_step_by_part_while_asked() {
     registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A one-triangle glTF model naming `tri.bin` and an image in `tex/`, both beside it.
+fn write_gltf_with_files(dir: &std::path::Path) {
+    let mut bin: Vec<u8> = [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]].iter().flatten().flat_map(|f| f.to_le_bytes()).collect();
+    bin.extend([0u8, 0, 1, 0, 2, 0, 0, 0]);
+    std::fs::write(dir.join("tri.bin"), &bin).unwrap();
+    std::fs::create_dir_all(dir.join("tex")).unwrap();
+    std::fs::write(dir.join("tex/logo.png"), include_bytes!("../../../assets/brand/bayleaf-logo.png")).unwrap();
+    let gltf = json!({
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+        "buffers": [{"uri": "tri.bin", "byteLength": bin.len()}],
+        "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 6}],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, -1], "max": [1, 0, 0]},
+            {"bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR"}
+        ],
+        "images": [{"uri": "tex/logo.png"}]
+    });
+    std::fs::write(dir.join("tri.gltf"), gltf.to_string()).unwrap();
+}
+
+/// A short silent WAV file.
+fn wav_bytes() -> Vec<u8> {
+    let samples = 800u32;
+    let mut b = Vec::new();
+    b.extend(b"RIFF");
+    b.extend((36 + samples * 2).to_le_bytes());
+    b.extend(b"WAVEfmt ");
+    b.extend(16u32.to_le_bytes());
+    b.extend(1u16.to_le_bytes());
+    b.extend(1u16.to_le_bytes());
+    b.extend(8000u32.to_le_bytes());
+    b.extend(16000u32.to_le_bytes());
+    b.extend(2u16.to_le_bytes());
+    b.extend(16u16.to_le_bytes());
+    b.extend(b"data");
+    b.extend((samples * 2).to_le_bytes());
+    b.extend(vec![0u8; samples as usize * 2]);
+    b
+}
+
+/// Every file under `dir`, relative to it, sorted.
+fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(folder) = pending.pop() {
+        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                found.push(path.strip_prefix(dir).unwrap().to_path_buf());
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn files_brought_in_are_checked_copied_with_their_settings_and_placed() {
+    use bayleaf_core::StableId;
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let base = std::env::temp_dir().join(format!("bayleaf-import-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let (project, outside) = (base.join("Game"), base.join("outside"));
+    registry.execute(&mut session, "project.new", &json!({"path": project})).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("logo.png"), include_bytes!("../../../assets/brand/bayleaf-logo.png")).unwrap();
+    std::fs::write(outside.join("broken.png"), b"not an image").unwrap();
+    std::fs::write(outside.join("crate.obj"), b"v 0 0 0").unwrap();
+    std::fs::write(outside.join("tone.wav"), wav_bytes()).unwrap();
+    write_gltf_with_files(&outside);
+    let before = files_under(&project.join("assets"));
+
+    // One unreadable file stops the whole import, and nothing is left behind.
+    let broken = registry.execute(&mut session, "asset.import", &json!({"files": [outside.join("logo.png"), outside.join("broken.png")], "folder": "assets"}));
+    assert!(broken.unwrap_err().to_string().contains("broken.png"));
+    let obj = registry.execute(&mut session, "asset.import", &json!({"files": [outside.join("crate.obj")], "folder": "assets"})).unwrap_err().to_string();
+    assert!(obj.contains("glTF"), "says what to bring instead: {obj}");
+    assert_eq!(files_under(&project.join("assets")), before);
+
+    let files = [outside.join("logo.png"), outside.join("tri.gltf"), outside.join("tone.wav")];
+    let done = registry.execute(&mut session, "asset.import", &json!({"files": files, "folder": "assets"})).unwrap();
+    let paths: Vec<&str> = done["imported"].as_array().unwrap().iter().map(|i| i["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["assets/logo.png", "assets/tri/tri.gltf", "assets/tone.wav"]);
+    for file in ["assets/logo.png.bimport", "assets/tri/tri.bin", "assets/tri/tex/logo.png", "assets/tri/tri.gltf.bimport"] {
+        assert!(project.join(file).is_file(), "{file} came in");
+    }
+    assert!(!project.join("assets/tone.wav.bimport").exists(), "sounds have no settings yet");
+    let again = registry.execute(&mut session, "asset.import", &json!({"files": [outside.join("logo.png")], "folder": "assets"})).unwrap();
+    assert_ne!(again["imported"][0]["path"], "assets/logo.png", "a name already taken is not written over");
+    let listed = registry.execute(&mut session, "asset.list", &json!({"path": "assets", "recursive": true})).unwrap();
+    assert!(!listed.to_string().contains(".bimport"), "settings belong to their file: {listed}");
+
+    // Settings: only the file's own kind, checked, saved beside it.
+    let model = "assets/tri/tri.gltf";
+    registry.execute(&mut session, "asset.importSettings.set", &json!({"path": model, "settings": {"model": {"scale": 2.0}}})).unwrap();
+    let got = registry.execute(&mut session, "asset.importSettings.get", &json!({"path": model})).unwrap();
+    assert_eq!((got["settings"]["model"]["scale"].as_f64(), got["saved"].as_bool()), (Some(2.0), Some(true)));
+    assert!(registry.execute(&mut session, "asset.importSettings.set", &json!({"path": model, "settings": {"image": {"mipmaps": false}}})).is_err());
+    assert!(registry.execute(&mut session, "asset.importSettings.set", &json!({"path": model, "settings": {"model": {"scale": -1.0}}})).is_err());
+
+    // Placing a model and a sound, and an image as an object's look; each one undo step.
+    let placed = registry.execute(&mut session, "scene.file.place", &json!({"path": model, "position": [1.0, 0.0, 2.0]})).unwrap();
+    let id = StableId::parse_hex(placed["id"].as_str().unwrap()).unwrap();
+    assert_eq!(session.scene().component(id, "mesh").unwrap()["model"], model);
+    assert_eq!(session.scene().component(id, "transform").unwrap()["position"], json!([1.0, 0.0, 2.0]));
+    let sound = registry.execute(&mut session, "scene.file.place", &json!({"path": "assets/tone.wav"})).unwrap();
+    let sound = StableId::parse_hex(sound["id"].as_str().unwrap()).unwrap();
+    assert_eq!(session.scene().component(sound, "audioSource").unwrap()["clip"], "assets/tone.wav");
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert!(session.scene().component(sound, "audioSource").is_err(), "undone");
+    let cube = session.scene().children(None).iter().copied().find(|id| session.scene().name(*id) == Some("Cube")).unwrap();
+    let applied = registry.execute(&mut session, "scene.image.apply", &json!({"id": cube, "image": "assets/logo.png"})).unwrap();
+    let material = applied["material"].as_str().unwrap().to_owned();
+    assert_eq!(session.scene().component(cube, "mesh").unwrap()["material"], material.as_str());
+    let opened = registry.execute(&mut session, "graph.open", &json!({"path": project.join(&material)})).unwrap();
+    assert!(opened["problems"].as_array().unwrap().is_empty(), "{opened}");
+
+    // Confined: a file outside the read roots is refused.
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&project), std::slice::from_ref(&project)).unwrap()));
+    assert!(registry.execute(&mut session, "asset.import", &json!({"files": [outside.join("logo.png")], "folder": "assets"})).is_err());
+    std::fs::remove_dir_all(&base).ok();
+}

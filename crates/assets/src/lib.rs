@@ -2,7 +2,8 @@
 //!
 //! Loaders turn files into plain data the renderer uploads. Each result carries an id that
 //! changes when the file changes, so caches know when to load again. Limits keep a broken or
-//! hostile file from using all memory. A stable asset database with sidecar metadata comes later.
+//! hostile file from using all memory. Import settings beside a file ([`import`]) say how to read
+//! it, and are part of what makes its id change.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -11,6 +12,8 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
+
+pub mod import;
 
 /// Largest image side, in pixels.
 pub const MAX_IMAGE_SIDE: u32 = 8192;
@@ -27,6 +30,8 @@ pub struct Image {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// Drawn with smaller copies for far away (its import settings can turn them off).
+    pub mipmaps: bool,
 }
 
 /// A model's triangles, every mesh of its default scene merged, with node transforms applied.
@@ -70,10 +75,16 @@ pub struct ModelMaterial {
     pub normal: Option<Arc<Image>>,
 }
 
+/// When the import settings beside `path` last changed, if it has them.
+fn settings_modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(import::settings_path(path)).and_then(|m| m.modified()).ok()
+}
+
 fn file_id(path: &Path, modified: Option<SystemTime>) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut hasher);
     modified.hash(&mut hasher);
+    settings_modified(path).hash(&mut hasher);
     // 0 is kept for "no asset".
     hasher.finish() | 1
 }
@@ -90,11 +101,14 @@ fn read_limited(path: &Path) -> Result<(Vec<u8>, Option<SystemTime>), String> {
 /// File extensions of the images this crate reads.
 pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
 
-/// Reads a PNG or JPEG file. The kind comes from the file's first bytes, not its name.
+/// Reads a PNG or JPEG file. The kind comes from the file's first bytes, not its name. Its
+/// import settings apply.
 pub fn load_image(path: &Path) -> Result<Image, String> {
+    let settings = import::ImportSettings::read_for(path)?;
     let (bytes, modified) = read_limited(path)?;
     let mut image = decode_image(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     image.id = file_id(path, modified);
+    image.mipmaps = settings.and_then(|s| s.image).unwrap_or_default().mipmaps;
     Ok(image)
 }
 
@@ -165,7 +179,7 @@ pub fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
     if rgba.len() != width * height * 4 {
         return Err("broken JPEG image: wrong number of pixels".to_owned());
     }
-    Ok(Image { id: 0, width: width as u32, height: height as u32, rgba })
+    Ok(Image { id: 0, width: width as u32, height: height as u32, rgba, mipmaps: true })
 }
 
 /// Decodes PNG bytes into RGBA. The id is left at 0.
@@ -189,11 +203,39 @@ pub fn decode_png(bytes: &[u8]) -> Result<Image, String> {
         png::ColorType::Grayscale => pixels.iter().flat_map(|g| [*g, *g, *g, 255]).collect(),
         png::ColorType::Indexed => return Err("unexpected palette image after expansion".to_owned()),
     };
-    Ok(Image { id: 0, width: frame.width, height: frame.height, rgba })
+    Ok(Image { id: 0, width: frame.width, height: frame.height, rgba, mipmaps: true })
+}
+
+/// The files a glTF 2.0 model names beside it (buffers and images), relative to its folder, each
+/// once, in the order the model names them. A `.glb` with everything inside names none.
+pub fn model_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    let (bytes, _) = read_limited(path)?;
+    let gltf = gltf::Gltf::from_slice(&bytes).map_err(|e| format!("{}: not a glTF 2.0 model: {e}", path.display()))?;
+    let mut uris: Vec<&str> = Vec::new();
+    for buffer in gltf.buffers() {
+        if let gltf::buffer::Source::Uri(uri) = buffer.source() {
+            uris.push(uri);
+        }
+    }
+    for image in gltf.images() {
+        if let gltf::image::Source::Uri { uri, .. } = image.source() {
+            uris.push(uri);
+        }
+    }
+    let mut files: Vec<PathBuf> = Vec::new();
+    for uri in uris.into_iter().filter(|u| !u.starts_with("data:")) {
+        let file = buffer_path(Path::new(""), uri).ok_or_else(|| format!("{}: {uri} must be a file next to the model", path.display()))?;
+        if !files.contains(&file) {
+            files.push(file);
+        }
+    }
+    Ok(files)
 }
 
 /// Reads a glTF 2.0 model: a `.glb` file, or a `.gltf` file with its buffers in files beside it.
+/// Its import settings apply: the scale, and turning a Z-up model to Y up.
 pub fn load_model(path: &Path) -> Result<MeshData, String> {
+    let settings = import::ImportSettings::read_for(path)?.and_then(|s| s.model).unwrap_or_default();
     let (bytes, modified) = read_limited(path)?;
     let gltf = gltf::Gltf::from_slice(&bytes).map_err(|e| format!("{}: not a glTF 2.0 model: {e}", path.display()))?;
     let folder = path.parent().unwrap_or(Path::new("."));
@@ -228,8 +270,14 @@ pub fn load_model(path: &Path) -> Result<MeshData, String> {
     let scene = gltf.default_scene().or_else(|| gltf.scenes().next()).ok_or_else(|| format!("{}: the model has no scene", path.display()))?;
     // Runs of indices and the glTF material each uses.
     let mut runs: Vec<(u32, u32, Option<usize>)> = Vec::new();
+    let up = match settings.up_axis {
+        import::UpAxis::Y => glam::Mat4::IDENTITY,
+        // Z up, Y forward becomes Y up, Z toward the viewer.
+        import::UpAxis::Z => glam::Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2),
+    };
+    let root = glam::Mat4::from_scale(glam::Vec3::splat(settings.scale)) * up;
     for node in scene.nodes() {
-        add_node(&node, glam::Mat4::IDENTITY, &buffers, &mut mesh, &mut runs, 0).map_err(|e| format!("{}: {e}", path.display()))?;
+        add_node(&node, root, &buffers, &mut mesh, &mut runs, 0).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     let mut materials: HashMap<usize, ModelMaterial> = HashMap::new();
     for (first, count, index) in runs {
@@ -387,8 +435,8 @@ fn flat_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
     normals
 }
 
-/// A loaded file and the change time it was read at.
-type Cached<T> = HashMap<PathBuf, (Option<SystemTime>, Result<T, String>)>;
+/// Each file's result, by when the file and its import settings last changed.
+type Cached<T> = HashMap<PathBuf, ((Option<SystemTime>, Option<SystemTime>), Result<T, String>)>;
 
 /// Loaded images and models, read again when their file changes.
 #[derive(Default)]
@@ -411,15 +459,12 @@ impl AssetCache {
     }
 }
 
-fn cached<T: Clone>(
-    map: &mut HashMap<PathBuf, (Option<SystemTime>, Result<T, String>)>,
-    path: &Path,
-    load: impl Fn(&Path) -> Result<T, String>,
-) -> Result<T, String> {
-    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+fn cached<T: Clone>(map: &mut Cached<T>, path: &Path, load: impl Fn(&Path) -> Result<T, String>) -> Result<T, String> {
+    // The file and its import settings: either changing loads it again.
+    let modified = (std::fs::metadata(path).and_then(|m| m.modified()).ok(), settings_modified(path));
     if let Some((seen, result)) = map.get(path)
         && *seen == modified
-        && modified.is_some()
+        && modified.0.is_some()
     {
         return result.clone();
     }
