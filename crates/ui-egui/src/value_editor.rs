@@ -358,36 +358,82 @@ fn edit_named_numbers(ui: &mut egui::Ui, map: &mut serde_json::Map<String, Value
 /// works only when the value is not its default. `objects` are the scene's object names, for an
 /// object property (which also takes an object dragged from the hierarchy). Returns the edit outcome
 /// and whether reset was clicked.
+/// One script property's row: what it is, and how the script's layout shows it (if it says).
+pub(crate) struct PropertyRow<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) ty: PropertyType,
+    /// The value differs from the script's default (a reset button shows).
+    pub(crate) changed: bool,
+    pub(crate) objects: &'a [(bayleaf_core::StableId, String)],
+    pub(crate) layout: Option<&'a bayleaf_engine::scene::inspector::PropertyLayout>,
+}
+
 pub(crate) fn named_property(
     ui: &mut egui::Ui,
-    name: &str,
-    ty: PropertyType,
+    property: &PropertyRow<'_>,
     value: &mut PropertyValue,
-    changed: bool,
-    objects: &[(bayleaf_core::StableId, String)],
     salt: impl std::hash::Hash + std::fmt::Debug,
 ) -> (Outcome, bool) {
     let t = theme::tokens(ui);
     let mut reset = false;
-    let title = title_case(name);
-    let outcome = ui
-        .push_id(salt, |ui| {
-            row(ui, t, &title, |ui, label, _| {
-                // The reset button sits at the right edge and the field takes what is left, so the
-                // row never grows past the panel. It is always laid out, so the field keeps its place
-                // (and a drag on it keeps going) when the value first leaves its default.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if reset_button(ui, changed, &title).clicked() {
-                        reset = true;
-                    }
-                    let field_width = (ui.available_width() - 1.0).max(40.0);
-                    property_field(ui, ty, value, objects, label, field_width)
-                })
-                .inner
+    let layout = property.layout;
+    let title = layout.and_then(|l| l.label.clone()).unwrap_or_else(|| title_case(property.name));
+    let read_only = layout.is_some_and(|l| l.read_only);
+    let hint = layout.map_or("", |l| l.hint.as_str());
+    let shown = ui.push_id(salt, |ui| {
+        row(ui, t, &title, |ui, label, _| {
+            if !hint.is_empty() {
+                ui.ctx().accesskit_node_builder(label, |node| node.set_description(hint.to_owned()));
+            }
+            // The reset button sits at the right edge and the field takes what is left, so the
+            // row never grows past the panel. It is always laid out, so the field keeps its place
+            // (and a drag on it keeps going) when the value first leaves its default.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if reset_button(ui, property.changed && !read_only, &title).clicked() {
+                    reset = true;
+                }
+                let field_width = (ui.available_width() - 1.0).max(40.0);
+                // A read-only value shows, greyed, and takes no edits.
+                ui.add_enabled_ui(!read_only, |ui| property_field(ui, property.ty, value, property.objects, label, field_width, layout)).inner
             })
+            .inner
         })
-        .inner;
+    });
+    let outcome = shown.inner;
+    if !hint.is_empty() {
+        shown.response.on_hover_text(hint);
+    }
     (outcome, reset)
+}
+
+/// A list of choices: a whole number by its place in `choices`, or a text from them.
+fn choice_field(ui: &mut egui::Ui, value: &mut PropertyValue, choices: &[String], label: egui::Id, width: f32) -> Outcome {
+    let shown = match &*value {
+        PropertyValue::Number(n) => choices.get(*n as usize).cloned().unwrap_or_else(|| format!("{n}")),
+        PropertyValue::Text(text) => text.clone(),
+        _ => String::new(),
+    };
+    let mut picked = None;
+    let combo = craft_ui::ComboBox::from_id_salt("choices").selected_text(shown).width(width).truncate().show_ui(ui, |ui| {
+        for (i, choice) in choices.iter().enumerate() {
+            let current = match &*value {
+                PropertyValue::Number(n) => *n as usize == i,
+                PropertyValue::Text(text) => text == choice,
+                _ => false,
+            };
+            if ui.selectable_label(current, choice).clicked() && !current {
+                picked = Some(i);
+            }
+        }
+    });
+    combo.response.labelled_by(label);
+    let Some(i) = picked else { return Outcome::default() };
+    match value {
+        PropertyValue::Number(n) => *n = i as f64,
+        PropertyValue::Text(text) => *text = choices[i].clone(),
+        _ => return Outcome::default(),
+    }
+    Outcome { changed: true, ended: true }
 }
 
 /// The field for one script property value of type `ty`.
@@ -398,15 +444,37 @@ fn property_field(
     objects: &[(bayleaf_core::StableId, String)],
     label: egui::Id,
     width: f32,
+    layout: Option<&bayleaf_engine::scene::inspector::PropertyLayout>,
 ) -> Outcome {
+    let range = layout.and_then(|l| l.range);
+    let choices = layout.map_or(&[][..], |l| l.choices.as_slice());
+    if !choices.is_empty() && matches!((ty, &*value), (PropertyType::WholeNumber, PropertyValue::Number(_)) | (PropertyType::Text, PropertyValue::Text(_))) {
+        return choice_field(ui, value, choices, label, width);
+    }
     match (ty, &mut *value) {
         (PropertyType::Number, PropertyValue::Number(n)) => {
-            let response = ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(n).speed(0.02).max_decimals(3)).labelled_by(label);
+            let response = match range {
+                Some((low, high)) if layout.is_some_and(|l| l.slider) => {
+                    ui.spacing_mut().slider_width = (width - 64.0).max(40.0);
+                    ui.add(egui::Slider::new(n, low..=high).max_decimals(3))
+                }
+                Some((low, high)) => ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(n).speed(0.02).max_decimals(3).range(low..=high)),
+                None => ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(n).speed(0.02).max_decimals(3)),
+            }
+            .labelled_by(label);
             Outcome::from_response(&response)
         }
         (PropertyType::WholeNumber, PropertyValue::Number(n)) => {
             let mut whole = *n as i32;
-            let response = ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(&mut whole).speed(0.1)).labelled_by(label);
+            let (low, high) = range.map_or((i32::MIN, i32::MAX), |(low, high)| (low.ceil() as i32, high.floor() as i32));
+            let response = match range {
+                Some(_) if layout.is_some_and(|l| l.slider) => {
+                    ui.spacing_mut().slider_width = (width - 64.0).max(40.0);
+                    ui.add(egui::Slider::new(&mut whole, low..=high))
+                }
+                _ => ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(&mut whole).speed(0.1).range(low..=high)),
+            }
+            .labelled_by(label);
             *n = f64::from(whole);
             Outcome::from_response(&response)
         }

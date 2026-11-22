@@ -18,6 +18,28 @@ so module-level state belongs to that one script slot. Any language that compile
 | `bayleaf_message` | `(value: f32) -> ()` | no | for each message sent to this object or to every object, after the step; `message_name` or `message_is` tell which |
 | `bayleaf_describe` | `() -> i64` | no | when the editor or play mode loads the module; returns `(ptr << 32) \| len` of UTF-8 JSON `{"properties": [["speed", 90.0], ["label", "Hi", "text"], ...], "menu": "Light/Flicker"}`: the properties the editor shows, each a name (1 to 64 bytes, no `:`), a default and a type (`number` when left out; `whole`, `bool`, `vector`, `color`, `text` or `object`; the default is a number, a whole number, `true`/`false`, three numbers (a colour from 0 to 1), text, or `""` for an object), and optionally where Add Component lists the script (1 to 4 names of up to 64 characters separated by `/`; without it, under Scripts), at most 64 KiB |
 
+### How properties show in the Inspector
+
+The description may also say how the Inspector lays the properties out, as `"inspector": [items]`.
+The editor draws it with its own widgets; no script code runs in the editor. Each item is an
+object with exactly one of these keys:
+
+| Item | Options |
+|---|---|
+| `{"property": "speed"}` | `label`, `hint` (said on hover and to screen readers), `range: [low, high]` (numbers), `slider: true` (needs a range), `readOnly: true`, `choices: ["Walk", "Run"]` (a whole number by place, 0 first, or a text) |
+| `{"group": "Movement", "items": [...]}` | `closed: true` starts it folded; groups nest 4 deep |
+| `{"button": "Jump now", "message": "jump"}` | `hint`; while the game plays it sends the object's scripts the message (value 0), as `play.message` does |
+| `{"note": "Keep it low"}` | `warning: true` marks it as a warning |
+
+Any item may take `showIf: ["mode", 1]`: shown only while that property has that value. A property is
+placed at most once; those the layout does not place follow it, one row each. Each name is a declared
+property, labels and names have 1 to 64 characters, hints and notes up to 512, a layout up to 256
+items. A layout that breaks these rules stops the module loading, with the reason. In Rust,
+`Script::INSPECTOR` lists `Layout` items (`Layout::property("speed").slider(0.0, 20.0)`,
+`Layout::foldout`, `Layout::button`, `Layout::warning`, `.when("mode", Is::Whole(1))`); visual
+scripts set each property's options in their panel. Properties with list values are not part of
+this: there is no list property type yet.
+
 ## Imports (module `bayleaf`, the host provides)
 
 | Name | Signature | Meaning |

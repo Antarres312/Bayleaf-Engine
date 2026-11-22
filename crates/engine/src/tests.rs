@@ -1969,6 +1969,22 @@ fn a_native_export_writes_a_workspace_that_builds_the_player_with_the_rust_scrip
     std::fs::remove_dir_all(&base).ok();
 }
 
+#[test]
+fn play_message_sends_while_playing_and_refuses_what_does_not_fit() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let id = registry.execute(&mut session, "scene.object.create", &json!({"name": "Target"})).unwrap()["id"].clone();
+    assert!(registry.execute(&mut session, "play.message", &json!({"name": "jump", "id": id})).is_err(), "only while the game plays");
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.message", &json!({"name": "jump", "id": id})).unwrap();
+    registry.execute(&mut session, "play.message", &json!({"name": "everyone", "value": 2.5})).unwrap();
+    let long = "x".repeat(bayleaf_script::MAX_MESSAGE_NAME + 1);
+    for bad in [json!({"name": ""}), json!({"name": long}), json!({"name": "jump", "id": bayleaf_core::StableId::from_u128(42)})] {
+        assert!(matches!(registry.execute(&mut session, "play.message", &bad), Err(CommandError::BadParams(_))), "{bad}");
+    }
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+}
+
 /// Cargo loads the generated workspace: every member is there and every manifest reads.
 fn assert_cargo_reads(folder: &std::path::Path) {
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
@@ -1996,4 +2012,20 @@ fn a_native_export_of_a_game_without_rust_scripts_builds_a_workspace_cargo_reads
     let build: crate::native_export::NativeBuild = serde_json::from_value(result["build"].clone()).unwrap();
     assert_cargo_reads(&build.folder);
     std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn a_visual_script_property_takes_inspector_options_the_host_accepts() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
+    registry.execute(&mut session, "graph.property.add", &json!({"name": "speed", "type": "number"})).unwrap();
+    let options = json!({"label": "Top speed", "range": [0, 10], "slider": true, "group": "Motion"});
+    registry.execute(&mut session, "graph.property.set", &json!({"name": "speed", "inspector": options})).unwrap();
+    let kept = session.graph().unwrap().graph.property("speed").unwrap().inspector.clone();
+    assert_eq!((kept.label.as_str(), kept.slider), ("Top speed", true));
+    // A slider with no range is refused, and the options stay as they were.
+    let refused = registry.execute(&mut session, "graph.property.set", &json!({"name": "speed", "inspector": {"slider": true}}));
+    assert!(matches!(refused, Err(CommandError::BadParams(m)) if m.contains("range")));
+    assert_eq!(session.graph().unwrap().graph.property("speed").unwrap().inspector, kept);
 }

@@ -131,7 +131,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "graph.property.set",
             "Change Property",
-            "{name, rename?, default?}: a new default, or a new name that its Property and Set Property nodes follow",
+            "{name, rename?, default?, inspector?}: a new default, a new name that its Property and Set Property nodes follow, or how the Inspector shows it ({label?, hint?, group?, range?, slider?, readOnly?, choices?, showIf?}; {} for a plain row)",
             Mutates::Graph,
             property_set,
         ),
@@ -240,13 +240,24 @@ struct PropertySetParams {
     rename: Option<String>,
     #[serde(default)]
     default: Option<Value>,
+    #[serde(default)]
+    inspector: Option<bayleaf_graph::PropertyOptions>,
 }
 
 fn property_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: PropertySetParams = parse(params)?;
     let graph = open_script(session)?;
     let ty = graph.property(&p.name).map(|v| v.ty).ok_or_else(|| CommandError::BadParams(format!("there is no property {}", p.name)))?;
+    // Options are checked as the script host checks them, before anything changes.
+    if let Some(options) = &p.inspector {
+        let mut trial = graph.clone();
+        trial.set_property_options(&p.name, options.clone()).map_err(failed)?;
+        bayleaf_script::visual::check_inspector(&trial).map_err(CommandError::BadParams)?;
+    }
     graph.set_property(&p.name, p.rename.as_deref(), p.default, &bayleaf_script::visual::property_kinds(ty)).map_err(failed)?;
+    if let Some(options) = p.inspector {
+        graph.set_property_options(&p.name, options).map_err(failed)?;
+    }
     Ok(json!({}))
 }
 

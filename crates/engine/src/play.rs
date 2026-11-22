@@ -220,7 +220,54 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             enabled: crate::always,
             run: status,
         },
+        CommandSpec {
+            id: "play.message",
+            label: "Send Message",
+            menu: "",
+            shortcut: "",
+            params: "{name, value?, id?}: sends the scripts of object id (or of every object) the message now, as a script's send does",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: |s| if s.is_playing() { Ok(()) } else { Err("messages go to scripts while the game plays".to_owned()) },
+            run: message,
+        },
     ]
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MessageParams {
+    name: String,
+    #[serde(default)]
+    value: f32,
+    #[serde(default)]
+    id: Option<bayleaf_core::StableId>,
+}
+
+/// Delivers a message to an object's scripts (an Inspector button) or to every script.
+fn message(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: MessageParams = parse(params)?;
+    let fine = !p.name.is_empty() && p.name.len() <= bayleaf_script::MAX_MESSAGE_NAME && !p.name.chars().any(char::is_control);
+    if !fine {
+        return Err(CommandError::BadParams(format!("name needs 1 to {} bytes and no control characters", bayleaf_script::MAX_MESSAGE_NAME)));
+    }
+    if !p.value.is_finite() {
+        return Err(CommandError::BadParams("value must be a finite number".to_owned()));
+    }
+    if let Some(id) = p.id
+        && !session.scene.contains(id)
+    {
+        return Err(CommandError::BadParams(format!("there is no object {id}")));
+    }
+    let input = std::sync::Arc::clone(&session.input);
+    let Some(play) = session.play.as_mut() else { return Err(CommandError::Failed("play mode is not running".to_owned())) };
+    match p.id {
+        Some(id) => play.host.send(&mut session.scene, id, &p.name, p.value, play.time, &input),
+        None => play.host.broadcast(&mut session.scene, &p.name, p.value, play.time, &input),
+    }
+    apply_requests(session);
+    drain(session);
+    Ok(json!({ "sent": p.name }))
 }
 
 pub(crate) fn playing(session: &Session) -> Result<(), String> {

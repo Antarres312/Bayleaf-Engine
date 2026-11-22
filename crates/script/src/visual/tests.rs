@@ -1515,3 +1515,22 @@ fn property_defaults_kept_on_nodes_in_older_scripts_move_into_declared_propertie
     assert!(graph.nodes.iter().all(|n| !n.values.contains_key("default")), "the nodes keep only the name");
     assert_eq!(graph.value(3, "name"), Some(&json!("label")), "a node without a name keeps the name it had");
 }
+
+#[test]
+fn a_visual_scripts_inspector_options_reach_its_description() {
+    use bayleaf_graph::PropertyOptions;
+    use bayleaf_scene::inspector::InspectorItem;
+    let mut b = spinner();
+    let options = PropertyOptions { label: "Turn rate".into(), group: "Motion".into(), range: Some([0.0, 360.0]), slider: true, ..PropertyOptions::default() };
+    b.0.set_property_options("speed", options).unwrap();
+    super::check_inspector(&b.0).unwrap();
+    let described = ScriptHost::new().describe_all("spin.bscript", &b.bytes()).unwrap();
+    let [InspectorItem::Group { title, items, .. }] = described.inspector.as_slice() else { panic!("one group: {:?}", described.inspector) };
+    assert_eq!(title, "Motion");
+    let [InspectorItem::Property(speed)] = items.as_slice() else { panic!("{items:?}") };
+    assert_eq!((speed.label.as_deref(), speed.range, speed.slider), (Some("Turn rate"), Some((0.0, 360.0)), true));
+
+    // Options the host would refuse are found before the script is saved.
+    b.0.set_property_options("speed", PropertyOptions { choices: vec!["a".into()], ..PropertyOptions::default() }).unwrap();
+    assert!(super::check_inspector(&b.0).unwrap_err().contains("choices"));
+}

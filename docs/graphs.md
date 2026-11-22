@@ -256,7 +256,10 @@ A visual script has a panel left of its canvas. **Variables** lists the script's
 one (its nodes follow), set where it **Starts at**, place a node that reads it (**Get**) or sets it
 (**Set**), remove it, or **Add Variable** of a type. **Properties** lists the script's properties: rename
 one (its nodes follow), set its **Default**, place a node that reads it (**Get**) or sets it while
-the game plays (**Set**), remove it, or **Add Property** of a type; **Functions** lists the
+the game plays (**Set**), remove it, or **Add Property** of a type, and under **How the Inspector
+shows it** give it a label, a hint, a group, read-only, a range or slider (numbers), choices (whole
+numbers and text) and a property it shows only for (graph version 6, `properties[].inspector`;
+`graph.property.set` takes them as `inspector` and refuses what a script's layout may not say); **Functions** lists the
 functions with their inputs and outputs (**Add Function** declares one and places its Function and
 Return nodes; **Add Input** and **Add Output** of a type; **Call** places a Call Function node), and
 **Script** has the **Menu path** field,

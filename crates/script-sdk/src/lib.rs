@@ -28,6 +28,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod abi;
+mod inspector;
+pub use inspector::{Is, Layout};
 pub mod native;
 
 /// ABI version this SDK implements; the host checks it at load.
@@ -491,6 +493,9 @@ pub trait Script: Default + Send + 'static {
     /// Where Add Component lists the script: folders, then its name (`"Light/Flicker"`). Empty
     /// for the Scripts folder, under the module's name.
     const MENU: &'static str = "";
+    /// How the properties show in the Inspector: groups, labels, sliders, buttons and more (see
+    /// [`Layout`]). Empty for one row each, in the order of [`Script::PROPERTIES`].
+    const INSPECTOR: &'static [Layout] = &[];
 
     /// Runs once when the script's object is ready: every script loaded with it (all of a scene
     /// when play starts) runs `init` before any runs `start`.
@@ -533,7 +538,8 @@ macro_rules! script {
         #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_describe() -> u64 {
             static DESCRIPTION: ::std::sync::OnceLock<String> = ::std::sync::OnceLock::new();
-            let text = DESCRIPTION.get_or_init(|| $crate::describe(<$ty as $crate::Script>::PROPERTIES, <$ty as $crate::Script>::MENU));
+            let text = DESCRIPTION
+                .get_or_init(|| $crate::describe(<$ty as $crate::Script>::PROPERTIES, <$ty as $crate::Script>::MENU, <$ty as $crate::Script>::INSPECTOR));
             $crate::pack(text)
         }
 
@@ -573,7 +579,7 @@ macro_rules! script {
 
 /// The `bayleaf_describe` text for `properties` (used by [`script!`]).
 #[doc(hidden)]
-pub fn describe(properties: &[Property], menu: &str) -> String {
+pub fn describe(properties: &[Property], menu: &str, inspector: &[Layout]) -> String {
     let number = |v: f32| if v.is_finite() { v } else { 0.0 };
     let three = |v: [f32; 3]| format!("[{:?}, {:?}, {:?}]", number(v[0]), number(v[1]), number(v[2]));
     let entries: Vec<String> = properties
@@ -592,7 +598,9 @@ pub fn describe(properties: &[Property], menu: &str) -> String {
         })
         .collect();
     let menu = if menu.is_empty() { String::new() } else { format!(", \"menu\": \"{}\"", escape(menu)) };
-    format!("{{\"properties\": [{}]{menu}}}", entries.join(", "))
+    let inspector =
+        if inspector.is_empty() { String::new() } else { format!(", \"inspector\": [{}]", inspector.iter().map(Layout::json).collect::<Vec<_>>().join(", ")) };
+    format!("{{\"properties\": [{}]{menu}{inspector}}}", entries.join(", "))
 }
 
 /// Text inside a JSON string: quotes and backslashes escaped, control characters left out.
@@ -618,9 +626,9 @@ mod tests {
 
     #[test]
     fn descriptions_are_json_the_host_can_read() {
-        let text = super::describe(&[Property::Number("speed", 90.0), Property::Text("odd \"name\"", "a\\b"), Property::Object("target")], "");
+        let text = super::describe(&[Property::Number("speed", 90.0), Property::Text("odd \"name\"", "a\\b"), Property::Object("target")], "", &[]);
         assert_eq!(text, r#"{"properties": [["speed", 90.0, "number"], ["odd \"name\"", "a\\b", "text"], ["target", "", "object"]]}"#);
-        let text = super::describe(&[], "Light/\"Flicker\"");
+        let text = super::describe(&[], "Light/\"Flicker\"", &[]);
         assert_eq!(text, r#"{"properties": [], "menu": "Light/\"Flicker\""}"#);
     }
 

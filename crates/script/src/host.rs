@@ -70,7 +70,11 @@ fn describe_instance(store: &mut Store<HostState>, instance: &rt::Instance, name
         Some(text) => Some(menu_path(text).map_err(invalid)?),
         None => None,
     };
-    Ok(Description { properties: out, menu })
+    let inspector = match value.get("inspector") {
+        Some(layout) => bayleaf_scene::inspector::parse(layout, &out).map_err(|e| invalid(format!("inspector: {e}")))?,
+        None => Vec::new(),
+    };
+    Ok(Description { properties: out, menu, inspector })
 }
 
 struct Instance {
@@ -563,6 +567,12 @@ impl ScriptHost {
     /// Changes the shared state from outside the scripts (commands, game rules).
     pub fn with_state<T>(&self, change: impl FnOnce(&mut GameState) -> T) -> T {
         change(&mut lock(&self.state))
+    }
+
+    /// Sends the scripts of `to` a message now (a button of the Inspector, `play.message`).
+    pub fn send(&mut self, scene: &mut Scene, to: StableId, name: &str, value: f32, time: f64, input: &Arc<Input>) {
+        self.messages.push(Message { to: Some(to), name: name.to_owned(), value });
+        self.deliver(scene, time, input);
     }
 
     /// Sends a message to every script now, as `notify` does for one object.

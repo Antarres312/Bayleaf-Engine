@@ -16,10 +16,11 @@ use serde_json::Value;
 /// `format` field of graph files.
 pub const FORMAT: &str = "bayleaf.graph";
 /// Current graph file version. Version 2 added declared `variables`; version 3 moved a visual script's
-/// Menu Path node into `menu`; version 4 added `functions`; version 5 added declared `properties`.
+/// Menu Path node into `menu`; version 4 added `functions`; version 5 added declared `properties`;
+/// version 6 added how each property shows in the Inspector (`properties[].inspector`).
 /// Older files still read: a Menu Path node becomes `menu`, and a catalog's `upgrade` moves what its
 /// own nodes kept (a visual script's Property nodes' defaults become `properties`).
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 /// The node kind versions before 3 kept a visual script's menu path in, as its `path` value.
 const OLD_MENU_NODE: &str = "menuPath";
 /// Longest `menu`, in characters.
@@ -375,6 +376,41 @@ pub struct Property {
     #[serde(rename = "type")]
     pub ty: VariableType,
     pub default: Value,
+    /// How the Inspector shows it; empty for a plain row.
+    #[serde(default, skip_serializing_if = "PropertyOptions::is_empty")]
+    pub inspector: PropertyOptions,
+}
+
+/// How a visual script's property shows in the Inspector, as a Rust script's layout says it (see
+/// `docs/script-abi.md`): its label and hint, a group it goes in, a range and slider, read-only, a
+/// list of choices, and a condition on another property.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PropertyOptions {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub hint: String,
+    /// The group it shows in, by title; properties of the same group show together.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub slider: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<String>,
+    /// Shown only while the property named first has the value second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_if: Option<(String, Value)>,
+}
+
+impl PropertyOptions {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Most properties a graph declares.
@@ -678,7 +714,7 @@ impl Graph {
         if !ty.fits(&default) {
             return Err(GraphError::Refused(format!("a {} property cannot default to {default}", ty.label())));
         }
-        self.properties.push(Property { name: name.to_owned(), ty, default });
+        self.properties.push(Property { name: name.to_owned(), ty, default, inspector: PropertyOptions::default() });
         Ok(())
     }
 
@@ -705,6 +741,13 @@ impl Graph {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Sets how a property shows in the Inspector (checked by whoever knows the rules: the script host).
+    pub fn set_property_options(&mut self, name: &str, options: PropertyOptions) -> Result<(), GraphError> {
+        let property = self.properties.iter_mut().find(|p| p.name == name).ok_or_else(|| GraphError::Refused(format!("there is no property {name}")))?;
+        property.inspector = options;
         Ok(())
     }
 

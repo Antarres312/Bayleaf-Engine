@@ -431,3 +431,64 @@ fn a_native_script_that_breaks_the_rules_or_panics_stops_alone_with_a_reason() {
         assert!(host.take_faults().is_empty(), "a stopped script does not run again");
     }
 }
+
+#[test]
+fn a_layout_the_sdk_writes_is_one_the_host_reads() {
+    use bayleaf_scene::inspector::InspectorItem;
+    use bayleaf_script_sdk::{Is, Layout, Property};
+    const LAYOUT: &[Layout] = &[
+        Layout::foldout(
+            "Movement",
+            &[Layout::property("speed").label("Top speed").slider(0.0, 20.0).hint("Units a second"), Layout::property("boost").when("mode", Is::Whole(1))],
+        ),
+        Layout::property("mode").choices(&["Walk", "Run"]),
+        Layout::button("Jump now", "jump"),
+        Layout::warning("Careful \"here\""),
+    ];
+    let text = bayleaf_script_sdk::describe(&[Property::Number("speed", 3.0), Property::Number("boost", 1.0), Property::Whole("mode", 0)], "", LAYOUT);
+    let bytes = text.as_bytes();
+    let wat = format!(
+        r#"(module (memory (export "memory") 1) (data (i32.const 0) "{}")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_describe") (result i64) i64.const {}))"#,
+        bytes.iter().map(|b| format!("\\{b:02x}")).collect::<String>(),
+        bytes.len()
+    );
+    let described = super::test_host().describe_all("layout.wasm", &wat::parse_str(wat).unwrap()).unwrap();
+    assert_eq!(described.inspector.len(), 4, "{:?}", described.inspector);
+    let InspectorItem::Group { closed: true, items, .. } = &described.inspector[0] else { panic!("a foldout first: {:?}", described.inspector) };
+    let InspectorItem::Property(speed) = &items[0] else { panic!("{items:?}") };
+    assert_eq!((speed.label.as_deref(), speed.range, speed.slider), (Some("Top speed"), Some((0.0, 20.0)), true));
+    assert!(matches!(&described.inspector[2], InspectorItem::Button { message, .. } if message == "jump"));
+    assert!(matches!(&described.inspector[3], InspectorItem::Note { warning: true, text, .. } if text == "Careful \"here\""));
+}
+
+#[test]
+fn a_layout_that_does_not_fit_the_properties_stops_the_module_loading() {
+    let text = r#"{"properties": [["speed", 1.0]], "inspector": [{"property": "speed", "choices": ["a"]}]}"#;
+    let wat = format!(
+        r#"(module (memory (export "memory") 1) (data (i32.const 0) "{}")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_describe") (result i64) i64.const {}))"#,
+        text.replace('"', "\\\""),
+        text.len()
+    );
+    let error = super::test_host().describe_all("bad.wasm", &wat::parse_str(wat).unwrap()).unwrap_err();
+    assert!(error.to_string().contains("inspector") && error.to_string().contains("choices"), "{error}");
+}
+
+#[test]
+fn a_message_sent_to_one_object_reaches_only_its_scripts() {
+    let name = r#"(import "bayleaf" "message_name" (func $name (param i32 i32) (result i32)))"#;
+    let listens = r#"(func (export "bayleaf_message") (param f32) (call $log (i32.const 400) (call $name (i32.const 400) (i32.const 32))))"#;
+    let text = format!(r#"(module {IMPORTS} {name} (memory (export "memory") 1) (func (export "bayleaf_abi") (result i32) i32.const 1) {listens})"#);
+    let bytes = wat::parse_str(text).unwrap();
+    let (mut scene, first, script) = setup(&[]);
+    let second = scene.create_object(None, "Second").unwrap();
+    let mut host = super::test_host();
+    load(&mut host, &mut scene, first, &script, &bytes).unwrap();
+    load(&mut host, &mut scene, second, &script, &bytes).unwrap();
+    host.send(&mut scene, second, "jump", 0.0, 0.0, &Arc::new(Input::default()));
+    let logs = host.take_logs();
+    assert_eq!(logs.iter().map(|l| (l.object, l.text.as_str())).collect::<Vec<_>>(), [(second, "jump")]);
+}

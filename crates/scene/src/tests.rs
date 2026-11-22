@@ -1,4 +1,4 @@
-﻿use serde_json::json;
+use serde_json::json;
 
 use crate::doc::{self, SceneDoc};
 use crate::{Scene, SceneError};
@@ -205,4 +205,49 @@ fn exported_subtrees_import_as_copies_with_new_ids_in_place() {
     let mut bad = copied;
     bad[0].components.insert("transform".into(), serde_json::json!({"position": "up"}));
     assert!(scene.import(&bad, None, None).is_err());
+}
+
+#[test]
+fn an_inspector_layout_is_checked_against_the_declared_properties() {
+    use crate::components::{DeclaredProperty, PropertyType, PropertyValue};
+    use crate::inspector::{InspectorItem, parse};
+    let declared = [
+        DeclaredProperty { name: "speed".into(), ty: PropertyType::Number, default: PropertyValue::Number(1.0) },
+        DeclaredProperty { name: "mode".into(), ty: PropertyType::WholeNumber, default: PropertyValue::Number(0.0) },
+        DeclaredProperty { name: "label".into(), ty: PropertyType::Text, default: PropertyValue::Text(String::new()) },
+    ];
+    let layout = serde_json::json!([
+        {"group": "Movement", "closed": true, "items": [
+            {"property": "speed", "label": "Top speed", "hint": "Units a second", "range": [0, 20], "slider": true, "showIf": ["mode", 1]},
+            {"button": "Jump", "message": "jump"}
+        ]},
+        {"property": "mode", "choices": ["Walk", "Run"]},
+        {"note": "Careful", "warning": true}
+    ]);
+    let items = parse(&layout, &declared).unwrap();
+    let InspectorItem::Group { closed: true, items: inner, .. } = &items[0] else { panic!("a closed group first: {items:?}") };
+    let InspectorItem::Property(speed) = &inner[0] else { panic!("{inner:?}") };
+    assert_eq!((speed.range, speed.slider), (Some((0.0, 20.0)), true));
+    assert!(speed.show_if.as_ref().unwrap().holds(&PropertyValue::Number(1.0)));
+    assert!(!speed.show_if.as_ref().unwrap().holds(&PropertyValue::Number(0.0)));
+
+    for (bad, why) in [
+        (serde_json::json!([{"property": "nope"}]), "does not declare"),
+        (serde_json::json!([{"property": "speed"}, {"property": "speed"}]), "twice"),
+        (serde_json::json!([{"property": "label", "range": [0, 1]}]), "a range is for numbers"),
+        (serde_json::json!([{"property": "speed", "range": [5, 1]}]), "lower first"),
+        (serde_json::json!([{"property": "speed", "slider": true}]), "needs a range"),
+        (serde_json::json!([{"property": "speed", "choices": ["a"]}]), "choices are for"),
+        (serde_json::json!([{"button": "Go"}]), "needs the message"),
+        (serde_json::json!([{"note": "x", "group": "y"}]), "exactly one"),
+        (serde_json::json!([{"note": "x", "slider": true}]), "does not go with"),
+        (serde_json::json!([{"property": "speed", "showIf": ["mode", "fast"]}]), "is not a"),
+        (
+            serde_json::json!([{"group": "a", "items": [{"group": "b", "items": [{"group": "c", "items": [{"group": "d", "items": [{"group": "e"}]}]}]}]}]),
+            "nest",
+        ),
+    ] {
+        let error = parse(&bad, &declared).expect_err(why);
+        assert!(error.contains(why), "{bad}: {error}");
+    }
 }

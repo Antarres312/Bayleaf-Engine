@@ -3,7 +3,8 @@
 //! script declares. Its width comes from the dock; nothing inside sets it.
 
 use crate::i18n::tl;
-use bayleaf_engine::scene::components::{DeclaredProperty, PropertyType, PropertyValue, SceneComponent, ScriptRef, Scripts};
+use bayleaf_engine::scene::components::{DeclaredProperty, PropertyValue, SceneComponent, ScriptRef, Scripts};
+use bayleaf_engine::scene::inspector::{InspectorItem, PropertyLayout};
 use serde_json::{Value, json};
 
 use crate::theme::{self, ROW_HEIGHT};
@@ -25,6 +26,8 @@ enum Pending {
     },
     /// A prefab command (`scene.prefab.apply` or `scene.prefab.revert`) for this object.
     Prefab(&'static str),
+    /// A script's button: send this object the message while the game plays.
+    Message(String),
 }
 
 /// One script card's data, gathered before drawing.
@@ -32,6 +35,8 @@ struct ScriptCard {
     script: ScriptRef,
     /// Declared properties with their defaults, or why they could not be read.
     declared: Result<Vec<DeclaredProperty>, String>,
+    /// How the script lays its properties out (empty: one row each).
+    layout: Vec<InspectorItem>,
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
@@ -70,8 +75,14 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         let scene = editor.session.scene();
         scene.world_matrices().into_iter().map(|(o, _)| (o, scene.name(o).unwrap_or_default().to_owned())).filter(|(_, n)| !n.is_empty()).collect()
     };
-    let cards: Vec<ScriptCard> =
-        scripts.into_iter().map(|script| ScriptCard { declared: editor.script_info.properties(&script_dir.join(&script.module)), script }).collect();
+    let cards: Vec<ScriptCard> = scripts
+        .into_iter()
+        .map(|script| {
+            let path = script_dir.join(&script.module);
+            ScriptCard { declared: editor.script_info.properties(&path), layout: editor.script_info.layout(&path), script }
+        })
+        .collect();
+    let playing = editor.session.is_playing();
     // Every script of the project, with the menu path it gives itself (read once per file change).
     let script_menus: Vec<(String, Option<String>)> =
         editor.project.script_files().into_iter().map(|module| (module.clone(), editor.script_info.menu(&script_dir.join(&module)))).collect();
@@ -183,7 +194,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tf("Warning: {message}", &[("message", &message.to_string())])).color(t.warning)).wrap());
                 }
                 Ok(declared) => {
-                    let outcome = script_properties(ui, index, &card_data.script, declared, &objects, &mut pending);
+                    let card = Card { index, script: &card_data.script, declared, layout: &card_data.layout, objects: &objects, playing };
+                    let outcome = script_properties(ui, &card, &mut pending);
                     gesture_ended |= outcome.ended;
                 }
             });
@@ -340,45 +352,123 @@ fn card(
     removed
 }
 
-/// The declared properties of one script, plus any saved values it no longer declares.
-fn script_properties(
-    ui: &mut egui::Ui,
+/// What one script card draws from.
+struct Card<'a> {
     index: usize,
-    script: &ScriptRef,
-    declared: &[DeclaredProperty],
-    objects: &[(bayleaf_core::StableId, String)],
-    pending: &mut Option<Pending>,
-) -> value_editor::Outcome {
+    script: &'a ScriptRef,
+    declared: &'a [DeclaredProperty],
+    layout: &'a [InspectorItem],
+    objects: &'a [(bayleaf_core::StableId, String)],
+    /// Buttons send their messages only while the game plays.
+    playing: bool,
+}
+
+/// A property's value as the card shows it: the one set on the object when it fits, else the default.
+fn current_value(card: &Card<'_>, name: &str) -> Option<PropertyValue> {
+    let declared = card.declared.iter().find(|p| p.name == name);
+    match declared {
+        Some(p) => Some(card.script.properties.get(name).filter(|v| v.fits(p.ty)).unwrap_or(&p.default).clone()),
+        None => card.script.properties.get(name).cloned(),
+    }
+}
+
+/// One property's row, as its layout (if any) says.
+fn property_row(ui: &mut egui::Ui, card: &Card<'_>, name: &str, layout: Option<&PropertyLayout>, pending: &mut Option<Pending>) -> value_editor::Outcome {
+    let declared = card.declared.iter().find(|p| p.name == name);
+    let set = card.script.properties.get(name);
+    let (ty, mut value, changed) = match declared {
+        Some(p) => {
+            let set = set.filter(|v| v.fits(p.ty));
+            (p.ty, set.unwrap_or(&p.default).clone(), set.is_some_and(|v| *v != p.default))
+        }
+        // A value the script no longer declares: shown by its shape.
+        None => match set {
+            Some(v) => (v.shape_type(), v.clone(), true),
+            None => return value_editor::Outcome::default(),
+        },
+    };
+    let row = value_editor::PropertyRow { name, ty, changed, objects: card.objects, layout };
+    let (outcome, reset) = value_editor::named_property(ui, &row, &mut value, ("script property", card.index, name));
+    if outcome.changed {
+        *pending = Some(Pending::ScriptProperty { index: card.index, name: name.to_owned(), value: Some(value) });
+    }
+    if reset {
+        *pending = Some(Pending::ScriptProperty { index: card.index, name: name.to_owned(), value: None });
+    }
+    outcome
+}
+
+/// Draws a script's layout items: properties with their options, groups, buttons and notes, each
+/// only while its condition holds.
+fn layout_items(ui: &mut egui::Ui, card: &Card<'_>, items: &[InspectorItem], pending: &mut Option<Pending>, outcome: &mut value_editor::Outcome) {
+    let t = theme::tokens(ui);
+    for (i, item) in items.iter().enumerate() {
+        if let Some(condition) = item.show_if()
+            && !current_value(card, &condition.property).is_some_and(|v| condition.holds(&v))
+        {
+            continue;
+        }
+        match item {
+            InspectorItem::Property(layout) => {
+                let row = property_row(ui, card, &layout.name, Some(layout), pending);
+                outcome.ended |= row.ended;
+            }
+            InspectorItem::Group { title, closed, items, .. } => {
+                let id = ui.make_persistent_id(("script group", card.index, i, title.as_str()));
+                egui::CollapsingHeader::new(egui::RichText::new(title).strong()).id_salt(id).default_open(!closed).show(ui, |ui| {
+                    layout_items(ui, card, items, pending, outcome);
+                });
+            }
+            InspectorItem::Button { label, message, hint, .. } => {
+                let button = ui.add_enabled(card.playing, egui::Button::new(label.as_str()).min_size(egui::vec2(0.0, ROW_HEIGHT)));
+                let button = if hint.is_empty() { button } else { button.on_hover_text(hint.as_str()) };
+                if button.on_disabled_hover_text(tl("Sends its message while the game plays")).clicked() {
+                    *pending = Some(Pending::Message(message.clone()));
+                }
+            }
+            InspectorItem::Note { text, warning, .. } => {
+                // A warning says so in words, not only in colour.
+                let (shown, color) =
+                    if *warning { (crate::i18n::tf("Warning: {message}", &[("message", text)]), t.warning) } else { (text.clone(), t.text_muted) };
+                ui.add(egui::Label::new(egui::RichText::new(shown).color(color)).wrap());
+            }
+        }
+    }
+}
+
+/// The names of the properties a layout places, groups' included.
+fn placed(items: &[InspectorItem], out: &mut Vec<String>) {
+    for item in items {
+        match item {
+            InspectorItem::Property(layout) => out.push(layout.name.clone()),
+            InspectorItem::Group { items, .. } => placed(items, out),
+            _ => {}
+        }
+    }
+}
+
+/// One script's properties: as its layout places them, then the rest one row each, then any saved
+/// values it no longer declares.
+fn script_properties(ui: &mut egui::Ui, card: &Card<'_>, pending: &mut Option<Pending>) -> value_editor::Outcome {
     let t = theme::tokens(ui);
     let mut outcome = value_editor::Outcome::default();
-    if declared.is_empty() && script.properties.is_empty() {
+    let (declared, script) = (card.declared, card.script);
+    if declared.is_empty() && script.properties.is_empty() && card.layout.is_empty() {
         ui.label(egui::RichText::new(tl("This script declares no properties.")).color(t.text_muted));
         return outcome;
     }
-    // Each row: name, value, and whether it differs from the script's default (a value the script
-    // no longer declares has no default, so it can always be reset away).
-    let mut rows: Vec<(String, PropertyType, PropertyValue, bool)> = declared
+    layout_items(ui, card, card.layout, pending, &mut outcome);
+    let mut shown = Vec::new();
+    placed(card.layout, &mut shown);
+    let rest: Vec<String> = declared
         .iter()
-        .map(|p| {
-            let set = script.properties.get(&p.name).filter(|v| v.fits(p.ty));
-            (p.name.clone(), p.ty, set.unwrap_or(&p.default).clone(), set.is_some_and(|v| *v != p.default))
-        })
+        .map(|p| p.name.clone())
+        .chain(script.properties.keys().filter(|n| !declared.iter().any(|p| p.name == **n)).cloned())
+        .filter(|n| !shown.contains(n))
         .collect();
-    for (name, value) in &script.properties {
-        if !declared.iter().any(|p| p.name == *name) {
-            // A value the script no longer declares: shown by its shape.
-            rows.push((name.clone(), value.shape_type(), value.clone(), true));
-        }
-    }
-    for (name, ty, mut value, changed) in rows {
-        let (row_outcome, reset) = value_editor::named_property(ui, &name, ty, &mut value, changed, objects, ("script property", index, name.as_str()));
-        outcome.ended |= row_outcome.ended;
-        if row_outcome.changed {
-            *pending = Some(Pending::ScriptProperty { index, name: name.clone(), value: Some(value) });
-        }
-        if reset {
-            *pending = Some(Pending::ScriptProperty { index, name, value: None });
-        }
+    for name in rest {
+        let row = property_row(ui, card, &name, None, pending);
+        outcome.ended |= row.ended;
     }
     outcome
 }
@@ -403,6 +493,9 @@ fn apply(editor: &mut Editor, id: bayleaf_core::StableId, pending: Option<Pendin
         }
         Some(Pending::RemoveScript(index)) => {
             editor.dispatch("scene.script.remove", &json!({ "id": id, "index": index }), None);
+        }
+        Some(Pending::Message(name)) => {
+            editor.dispatch("play.message", &json!({ "id": id, "name": name }), None);
         }
         Some(Pending::ScriptProperty { index, name, value }) => {
             let key = format!("script property:{id}:{index}:{name}:{}", editor.gesture);

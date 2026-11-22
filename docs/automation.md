@@ -160,3 +160,8 @@ shadow map: 512, 1024, 2048 or 4096), `shadowCascades` (how many maps a sun's sh
 into by distance from the camera in a large scene, 1 to 4), `shadowDistance` (how far a sun's
 shadow reaches from the camera, in world units; 0 for the whole scene) and `shadowLights` (how
 many lights cast shadows at once, 1 to 4, sun-like lights first). Project format version 7.
+
+`play.message` (`{name, value?, id?}`) sends the scripts of object `id`, or of every object, a message
+while the game plays, as an Inspector button of a script does. A script's description may lay out its
+Inspector card (`inspector`, see `docs/script-abi.md`); `graph.property.set` takes a visual script
+property's `inspector` options.

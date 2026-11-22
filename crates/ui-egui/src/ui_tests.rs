@@ -2077,3 +2077,75 @@ fn the_scene_s_settings_name_a_lighting_asset_the_inspector_edits() {
     assert!(named.ends_with(".blight") && project.join(&named).is_file(), "a new asset the scene names: {named}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A script module whose `bayleaf_describe` returns `description`.
+fn described_module(description: &str) -> Vec<u8> {
+    let bytes: String = description.bytes().map(|b| format!("\\{b:02x}")).collect();
+    wat::parse_str(format!(
+        r#"(module (memory (export "memory") 1) (data (i32.const 0) "{bytes}")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_describe") (result i64) i64.const {}))"#,
+        description.len()
+    ))
+    .unwrap()
+}
+
+#[test]
+fn a_script_lays_out_its_own_inspector_card() {
+    let (mut harness, dir) = project_harness("layout");
+    let description = r#"{"properties": [["speed", 3.0], ["mode", 0, "whole"], ["boost", 1.0], ["score", 0, "whole"]],
+        "inspector": [
+            {"group": "Movement", "closed": true, "items": [{"property": "speed", "label": "Top speed", "hint": "Units a second", "range": [0, 20], "slider": true}]},
+            {"property": "mode", "choices": ["Walk", "Run"]},
+            {"property": "boost", "showIf": ["mode", 1]},
+            {"property": "score", "readOnly": true},
+            {"button": "Jump now", "message": "jump"},
+            {"note": "Keep speed low on small maps.", "warning": true}
+        ]}"#;
+    std::fs::write(dir.join("layout.wasm"), described_module(description)).unwrap();
+    let editor = harness.state_mut();
+    let id = editor.dispatch("scene.object.create", &json!({ "name": "Runner" }), None).unwrap()["id"].as_str().map(str::to_owned).unwrap();
+    let id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    editor.dispatch("scene.script.add", &json!({ "id": id, "module": "layout.wasm" }), None);
+    editor.select_only(Some(id));
+    harness.run_steps(2);
+
+    assert!(harness.query_by_label_contains("Movement").is_some() && harness.query_by_label("Top speed").is_none(), "a foldout starts closed");
+    harness.query_all_by_label_contains("Movement").next().unwrap().click();
+    harness.run_steps(2);
+    assert!(harness.query_all_by_label_contains("Top speed").next().is_some(), "opened, it shows the property under its own label");
+    assert!(harness.query_by_label_contains("Warning: Keep speed low").is_some(), "a warning is named as one");
+    assert!(harness.query_all_by_label_contains("Boost").next().is_none(), "shown only while Mode is Run");
+    let jump = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Jump now");
+    assert!(egui_kittest::kittest::NodeT::accesskit_node(&jump).is_disabled(), "a button sends its message only while the game plays");
+
+    // Choosing Run from Mode's list sets the whole number and shows Boost.
+    harness.get_by_label("Mode").click();
+    harness.run();
+    harness.get_by_label("Run").click();
+    harness.run_steps(2);
+    let mode = harness.state().session.scene().get::<bayleaf_engine::scene::components::Scripts>(id).unwrap().0[0].properties.get("mode").cloned();
+    assert_eq!(mode, Some(bayleaf_engine::scene::components::PropertyValue::Number(1.0)), "the choice went through scene.script.setProperty");
+    assert!(harness.query_all_by_label_contains("Boost").next().is_some(), "Boost shows now");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_script_panel_sets_how_a_property_shows_in_the_inspector() {
+    let mut harness = graph_harness("script");
+    harness.state_mut().dispatch("graph.property.add", &json!({ "name": "speed", "type": "number" }), None);
+    harness.run();
+    harness.get_by_label("How the Inspector shows it").click();
+    harness.run_steps(2);
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Label").click();
+    harness.run();
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Label").type_text("Top speed");
+    harness.run_steps(2);
+    assert_eq!(graph(&harness).property("speed").unwrap().inspector.label, "Top speed", "through graph.property.set");
+    harness.get_by_label("Range").click();
+    harness.run_steps(2);
+    assert!(graph(&harness).property("speed").unwrap().inspector.range.is_some(), "a range turned on");
+    harness.get_by_label("Slider").click();
+    harness.run_steps(2);
+    assert!(graph(&harness).property("speed").unwrap().inspector.slider);
+}

@@ -222,6 +222,10 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
                             editor.dispatch("graph.property.set", &json!({ "name": property.name, "default": value }), Some(&key));
                         }
                     });
+                    if let Some(options) = inspector_options(ui, t, graph, property) {
+                        let key = format!("property inspector {} {}", property.name, editor.gesture);
+                        editor.dispatch("graph.property.set", &json!({ "name": property.name, "inspector": options }), Some(&key));
+                    }
                     ui.horizontal(|ui| {
                         let [get, set] = property_kinds(property.ty);
                         let read = ui.small_button(tl("Get")).on_hover_text(tl("Place a node that reads it"));
@@ -416,6 +420,145 @@ fn script(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, pan
         }
         if !field.has_focus() && !field.changed() {
             panel.menu = None;
+        }
+    });
+}
+
+/// A text field that keeps what is typed while it has the keyboard, so a value the command tidies
+/// (choices without empty lines) does not undo a keystroke. Returns the text when it changed.
+fn kept_text(ui: &mut egui::Ui, current: &str, label: egui::Id, multiline: bool, salt: &str) -> Option<String> {
+    let id = ui.make_persistent_id(("kept text", salt));
+    let mut text = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.to_owned());
+    let edit = if multiline { egui::TextEdit::multiline(&mut text).desired_rows(2) } else { egui::TextEdit::singleline(&mut text) };
+    let response = ui.add(edit.id(id).desired_width(ui.available_width())).labelled_by(label);
+    if response.has_focus() {
+        ui.data_mut(|d| d.insert_temp(id, text.clone()));
+    } else {
+        ui.data_mut(|d| d.remove::<String>(id));
+    }
+    response.changed().then_some(text)
+}
+
+/// How a property shows in the Inspector: label, hint, group, read-only, range and slider (numbers),
+/// choices (whole numbers and text) and a condition on another property. Returns new options.
+fn inspector_options(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    graph: &Graph,
+    property: &bayleaf_engine::graph::Property,
+) -> Option<bayleaf_engine::graph::PropertyOptions> {
+    use crate::value_editor::row;
+    let mut options = property.inspector.clone();
+    let before = options.clone();
+    let salt = |what: &str| format!("{} {what}", property.name);
+    egui::CollapsingHeader::new(tl("How the Inspector shows it")).id_salt(("inspector options", &property.name)).default_open(false).show(ui, |ui| {
+        row(ui, t, "Label", |ui, label, _| {
+            if let Some(text) = kept_text(ui, &options.label, label, false, &salt("label")) {
+                options.label = text;
+            }
+        });
+        row(ui, t, "Hint", |ui, label, _| {
+            if let Some(text) = kept_text(ui, &options.hint, label, false, &salt("hint")) {
+                options.hint = text;
+            }
+        });
+        row(ui, t, "Group", |ui, label, _| {
+            if let Some(text) = kept_text(ui, &options.group, label, false, &salt("group")) {
+                options.group = text.trim().to_owned();
+            }
+        });
+        row(ui, t, "Read Only", |ui, label, _| {
+            ui.checkbox(&mut options.read_only, "").labelled_by(label);
+        });
+        if matches!(property.ty, VariableType::Number | VariableType::WholeNumber) {
+            row(ui, t, "Range", |ui, label, _| {
+                let mut on = options.range.is_some();
+                if ui.checkbox(&mut on, "").labelled_by(label).changed() {
+                    options.range = on.then_some([0.0, 10.0]);
+                    options.slider &= on;
+                }
+                if let Some(range) = options.range.as_mut() {
+                    ui.add(egui::DragValue::new(&mut range[0]).speed(0.1).prefix(tl("from "))).labelled_by(label);
+                    ui.add(egui::DragValue::new(&mut range[1]).speed(0.1).prefix(tl("to "))).labelled_by(label);
+                }
+            });
+            if options.range.is_some() {
+                row(ui, t, "Slider", |ui, label, _| {
+                    ui.checkbox(&mut options.slider, "").labelled_by(label);
+                });
+            }
+        }
+        if matches!(property.ty, VariableType::WholeNumber | VariableType::Text) {
+            row(ui, t, "Choices", |ui, label, _| {
+                if let Some(text) = kept_text(ui, &options.choices.join("\n"), label, true, &salt("choices")) {
+                    options.choices = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect();
+                }
+            });
+            ui.label(
+                egui::RichText::new(tl("One per line: a whole number is chosen by its place (0 first), a text by its words.")).small().color(t.text_muted),
+            );
+        }
+        show_when(ui, t, graph, property, &mut options);
+    });
+    (options != before).then_some(options)
+}
+
+/// Shown only while another property (a number, whole number, true/false or text) has a value.
+fn show_when(ui: &mut egui::Ui, t: &Tokens, graph: &Graph, property: &bayleaf_engine::graph::Property, options: &mut bayleaf_engine::graph::PropertyOptions) {
+    let others: Vec<&bayleaf_engine::graph::Property> = graph
+        .properties
+        .iter()
+        .filter(|p| p.name != property.name && matches!(p.ty, VariableType::Number | VariableType::WholeNumber | VariableType::TrueFalse | VariableType::Text))
+        .collect();
+    if others.is_empty() {
+        return;
+    }
+    crate::value_editor::row(ui, t, "Show When", |ui, label, width| {
+        let current = options.show_if.as_ref().map(|(name, _)| name.clone());
+        let shown = current.clone().unwrap_or_else(|| tl("Always").to_owned());
+        craft_ui::ComboBox::from_id_salt(("show when", &property.name))
+            .width((width * 0.5).max(60.0))
+            .truncate()
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(current.is_none(), tl("Always")).clicked() {
+                    options.show_if = None;
+                }
+                for other in &others {
+                    if ui.selectable_label(current.as_deref() == Some(other.name.as_str()), other.name.as_str()).clicked() {
+                        options.show_if = Some((other.name.clone(), other.ty.zero()));
+                    }
+                }
+            })
+            .response
+            .labelled_by(label);
+        let Some((name, value)) = options.show_if.as_mut() else { return };
+        let Some(other) = others.iter().find(|p| p.name == *name) else { return };
+        ui.label(egui::RichText::new(tl("is")).color(t.text_muted));
+        match other.ty {
+            VariableType::TrueFalse => {
+                let mut on = value.as_bool().unwrap_or(false);
+                if ui.checkbox(&mut on, "").labelled_by(label).changed() {
+                    *value = Value::from(on);
+                }
+            }
+            VariableType::Text => {
+                let mut text = value.as_str().unwrap_or_default().to_owned();
+                if ui.add(egui::TextEdit::singleline(&mut text).desired_width(ui.available_width())).labelled_by(label).changed() {
+                    *value = Value::from(text);
+                }
+            }
+            _ => {
+                let mut number = value.as_f64().unwrap_or(0.0);
+                let whole = other.ty == VariableType::WholeNumber;
+                if ui
+                    .add(egui::DragValue::new(&mut number).speed(if whole { 0.1 } else { 0.05 }).max_decimals(if whole { 0 } else { 3 }))
+                    .labelled_by(label)
+                    .changed()
+                {
+                    *value = if whole { Value::from(number.round() as i64) } else { Value::from(number) };
+                }
+            }
         }
     });
 }

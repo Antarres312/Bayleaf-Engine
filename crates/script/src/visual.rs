@@ -8,7 +8,7 @@
 use std::fmt::Write as _;
 
 use bayleaf_graph::{Catalog, Graph, NodeDef, PinDef, PinDefault, PinType, Problem, SettingDef, SettingKind, VariableType};
-use bayleaf_scene::components::PropertyType;
+use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue};
 
 use PinType::{Any, Bool, Float, Flow, Vec3};
 
@@ -1166,6 +1166,9 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
             Ok(path) => description["menu"] = serde_json::json!(path),
             Err(problem) => return Err(vec![Problem::graph(format!("menu path: {problem}"))]),
         }
+    }
+    if let Some(layout) = inspector_layout(graph) {
+        description["inspector"] = layout;
     }
     let description = description.to_string();
     let (describe_at, describe_len) = c.text(description.as_bytes());
@@ -2677,3 +2680,74 @@ const PRELUDE: &str = r#"(module
 
 #[cfg(test)]
 mod tests;
+
+/// How the graph's properties show in the Inspector, as `bayleaf_describe`'s `inspector` lists it:
+/// each property with options in order, those of a group together in it (where the group first
+/// appears). `None` when no property has options (one plain row each).
+pub fn inspector_layout(graph: &Graph) -> Option<serde_json::Value> {
+    if graph.properties.iter().all(|p| p.inspector.is_empty()) {
+        return None;
+    }
+    let item = |p: &bayleaf_graph::Property| {
+        let o = &p.inspector;
+        let mut item = serde_json::json!({ "property": p.name });
+        if !o.label.is_empty() {
+            item["label"] = serde_json::json!(o.label);
+        }
+        if !o.hint.is_empty() {
+            item["hint"] = serde_json::json!(o.hint);
+        }
+        if let Some(range) = o.range {
+            item["range"] = serde_json::json!(range);
+        }
+        if o.slider {
+            item["slider"] = serde_json::json!(true);
+        }
+        if o.read_only {
+            item["readOnly"] = serde_json::json!(true);
+        }
+        if !o.choices.is_empty() {
+            item["choices"] = serde_json::json!(o.choices);
+        }
+        if let Some((name, value)) = &o.show_if {
+            item["showIf"] = serde_json::json!([name, value]);
+        }
+        item
+    };
+    let mut layout: Vec<serde_json::Value> = Vec::new();
+    // Where each group sits in `layout`.
+    let mut groups: Vec<(String, usize)> = Vec::new();
+    for p in graph.properties.iter().filter(|p| !p.inspector.is_empty()) {
+        if p.inspector.group.is_empty() {
+            layout.push(item(p));
+            continue;
+        }
+        let at = match groups.iter().find(|(g, _)| *g == p.inspector.group) {
+            Some((_, at)) => *at,
+            None => {
+                layout.push(serde_json::json!({ "group": p.inspector.group, "items": [] }));
+                groups.push((p.inspector.group.clone(), layout.len() - 1));
+                layout.len() - 1
+            }
+        };
+        if let Some(items) = layout[at]["items"].as_array_mut() {
+            items.push(item(p));
+        }
+    }
+    Some(serde_json::Value::Array(layout))
+}
+
+/// Checks the graph's Inspector options as the script host will when it loads the compiled script:
+/// properties named are declared, options fit their types, and so on.
+pub fn check_inspector(graph: &Graph) -> Result<(), String> {
+    let Some(layout) = inspector_layout(graph) else { return Ok(()) };
+    let declared: Vec<DeclaredProperty> = graph
+        .properties
+        .iter()
+        .map(|p| {
+            let default = serde_json::from_value(described_default(p.ty, &p.default)).unwrap_or(PropertyValue::Number(0.0));
+            DeclaredProperty { name: p.name.clone(), ty: scene_property_type(p.ty), default }
+        })
+        .collect();
+    bayleaf_scene::inspector::parse(&layout, &declared).map(|_| ())
+}

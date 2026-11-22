@@ -8,6 +8,7 @@
 
 pub mod components;
 pub mod doc;
+pub mod inspector;
 pub mod lighting;
 pub mod registry;
 

@@ -538,6 +538,8 @@ pub struct Description {
     pub properties: Vec<DeclaredProperty>,
     /// Where Add Component lists it: folders, then its name (`Light/Flicker`).
     pub menu: Option<String>,
+    /// How its properties show in the Inspector; empty for one row each, in declaration order.
+    pub inspector: Vec<bayleaf_scene::inspector::InspectorItem>,
 }
 
 /// Most folders in a menu path, and longest part.

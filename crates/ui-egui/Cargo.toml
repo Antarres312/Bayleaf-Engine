@@ -25,6 +25,8 @@ egui-wgpu = { workspace = true }
 egui_dock = { workspace = true }
 ron = { workspace = true }
 png = { workspace = true }
+# Assembles small script modules for Inspector tests.
+wat = { workspace = true }
 serde = { workspace = true }
 rfd = { workspace = true }
 serde_json = { workspace = true }

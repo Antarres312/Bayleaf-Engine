@@ -704,6 +704,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+ "wat",
 ]
 
 [[package]]

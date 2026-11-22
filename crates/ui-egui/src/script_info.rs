@@ -40,6 +40,12 @@ impl ScriptInfo {
         self.description(path).map(|d| d.properties)
     }
 
+    /// How the module lays out its properties in the Inspector (empty when it says nothing or
+    /// cannot be read).
+    pub(crate) fn layout(&mut self, path: &Path) -> Vec<bayleaf_engine::scene::inspector::InspectorItem> {
+        self.description(path).map(|d| d.inspector).unwrap_or_default()
+    }
+
     /// Where Add Component lists the module, if it says.
     pub(crate) fn menu(&mut self, path: &Path) -> Option<String> {
         self.description(path).ok().and_then(|d| d.menu)

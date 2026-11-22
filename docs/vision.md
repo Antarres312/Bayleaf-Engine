@@ -320,6 +320,10 @@ No crate below L6 may use egui, eframe, winit or rfd.
      it draws changes properties through the usual commands, so agents and undo see it too. Plugins
      that draw freely (their own widgets, not only these options) need a plugin model first: what
      they may touch, how they are sandboxed and loaded; that is decided before this part is built.
+     (Done, the data part: `inspector` in `bayleaf_describe`, `Layout` in the SDK, the options in the
+     visual script panel, buttons through `play.message`. "Lists" are lists of choices; properties
+     holding lists of values need a list property type first. Buttons and notes are for Rust scripts;
+     visual scripts set options per property. The plugin model is still to decide.)
 
 11. **M10 Game interface, effects and getting content in** (not started).
    - **Game interface.** Games build their menus and HUD from a document of their own: a layout

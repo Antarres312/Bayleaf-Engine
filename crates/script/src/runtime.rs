@@ -180,6 +180,11 @@ impl ScriptHost {
         each!(&mut self.0, host => host.broadcast(scene, name, value, time, input))
     }
 
+    /// Sends the scripts of `to` a message now.
+    pub fn send(&mut self, scene: &mut Scene, to: StableId, name: &str, value: f32, time: f64, input: &Arc<Input>) {
+        each!(&mut self.0, host => host.send(scene, to, name, value, time, input))
+    }
+
     pub fn with_input<T>(&self, change: impl FnOnce(&mut actions::InputSet) -> T) -> T {
         each!(&self.0, host => host.with_input(change))
     }
