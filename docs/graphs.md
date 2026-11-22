@@ -82,6 +82,13 @@ The **Image** node reads a PNG or JPEG file (relative to the project folder) by 
 coordinates; **Texture Coordinates** gives them as a vector, to scale or move them. A material may
 use up to 4 images.
 
+Patterns are made from a position (the surface's place in the world unless one is linked) or texture
+coordinates: **Checker**, **Noise**, **Fractal Noise** (noise in layers: Smooth, Ridged or Billowy, with
+Detail, Roughness and Lacunarity), **Voronoi** (cells round scattered points: Distance, Edge and a
+Cell Value, with Randomness), **Waves** (Bands or Rings, with Distortion), **Gradient** (Linear,
+Quadratic, or Spherical and Radial round the middle of texture coordinates) and **Random** (white
+noise, as a number and a colour). **Edge Glow** is bright where the surface turns away from the eye.
+
 For a stylised look (cel shading, say), **Main Light** gives the main light at the point (the
 direction towards it, its colour, and how much of it the shadows let through), **Other Lights** the
 light the others give, added up, and **View Direction** and **Screen Position** where the point is

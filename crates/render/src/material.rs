@@ -279,6 +279,66 @@ pub const CATALOG: Catalog = Catalog {
             &[PinDef::with("position", "Position", Vec3, PinDefault::Implicit("position")), number("scale", "Scale", Float, 1.0)],
             &[pin("value", "Value", Float)],
         ),
+        NodeDef {
+            kind: "fractalNoise",
+            label: "Fractal Noise",
+            category: "Patterns",
+            description: "Noise in layers, each finer and fainter than the one before: Smooth for clouds and terrain, Ridged for sharp crests, Billowy for puffy shapes. Detail is how many layers (1 to 8), Roughness how strong each finer one is, Lacunarity how much finer.",
+            inputs: &[
+                PinDef::with("position", "Position", Vec3, PinDefault::Implicit("position")),
+                number("scale", "Scale", Float, 1.0),
+                number("detail", "Detail", Float, 4.0),
+                number("roughness", "Roughness", Float, 0.5),
+                number("lacunarity", "Lacunarity", Float, 2.0),
+            ],
+            outputs: &[pin("value", "Value", Float)],
+            settings: &[SettingDef { name: "kind", label: "Kind", kind: SettingKind::Choice(&["Smooth", "Ridged", "Billowy"]) }],
+            unique: false,
+        },
+        node(
+            "voronoi",
+            "Voronoi",
+            "Patterns",
+            "Cells round scattered points: Distance to the nearest point (0 at it), Edge (0 on a border between cells), and a random value 0 to 1 for each cell. Randomness 0 lines the points up in a grid.",
+            &[
+                PinDef::with("position", "Position", Vec3, PinDefault::Implicit("position")),
+                number("scale", "Scale", Float, 1.0),
+                number("randomness", "Randomness", Float, 1.0),
+            ],
+            &[pin("distance", "Distance", Float), pin("edge", "Edge", Float), pin("cell", "Cell Value", Float)],
+        ),
+        NodeDef {
+            kind: "waves",
+            label: "Waves",
+            category: "Patterns",
+            description: "Soft stripes from 0 to 1: Bands along X, or Rings round the centre. Distortion bends them with noise.",
+            inputs: &[
+                PinDef::with("position", "Position", Vec3, PinDefault::Implicit("position")),
+                number("scale", "Scale", Float, 1.0),
+                number("distortion", "Distortion", Float, 0.0),
+            ],
+            outputs: &[pin("value", "Value", Float)],
+            settings: &[SettingDef { name: "kind", label: "Kind", kind: SettingKind::Choice(&["Bands", "Rings"]) }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "gradient",
+            label: "Gradient",
+            category: "Patterns",
+            description: "0 to 1 across the coordinates: Linear along X, Quadratic (eased), Spherical (1 at the middle, 0 half a unit away) or Radial (round the middle); the middle is X and Y 0.5, the centre of texture coordinates.",
+            inputs: &[PinDef::with("uv", "Coordinates", Vec3, PinDefault::Implicit("uv"))],
+            outputs: &[pin("value", "Value", Float)],
+            settings: &[SettingDef { name: "kind", label: "Kind", kind: SettingKind::Choice(&["Linear", "Quadratic", "Spherical", "Radial"]) }],
+            unique: false,
+        },
+        node(
+            "random",
+            "Random",
+            "Patterns",
+            "A different random value 0 to 1 for every point (white noise), and a random colour; Scale sets how fine.",
+            &[PinDef::with("position", "Position", Vec3, PinDefault::Implicit("position")), number("scale", "Scale", Float, 100.0)],
+            &[pin("value", "Value", Float), pin("color", "Color", Color)],
+        ),
     ],
 };
 
@@ -448,6 +508,58 @@ impl Compiler<'_> {
     }
 
     /// The variable holding one output of a node, computing the node first if needed.
+    /// A setting's choice as its position in the list (0 for the first, or when unset).
+    fn choice(&self, node: u32, name: &str, choices: &[&str]) -> usize {
+        let chosen = self.graph.value(node, name).and_then(|v| v.as_str()).unwrap_or_default();
+        choices.iter().position(|c| *c == chosen).unwrap_or(0)
+    }
+
+    /// Fractal Noise, Voronoi, Waves, Gradient and Random.
+    fn pattern(&mut self, node: u32, kind: &str, pin: &str) -> Result<Code, Problem> {
+        Ok(match kind {
+            "fractalNoise" => {
+                let p = self.input_as(node, "position", Ty::V)?;
+                let scale = self.input_as(node, "scale", Ty::F)?;
+                let detail = self.input_as(node, "detail", Ty::F)?;
+                let roughness = self.input_as(node, "roughness", Ty::F)?;
+                let lacunarity = self.input_as(node, "lacunarity", Ty::F)?;
+                let style = self.choice(node, "kind", &["Smooth", "Ridged", "Billowy"]);
+                (format!("bl_fractal({p} * {scale}, {detail}, {roughness}, {lacunarity}, {style})"), Ty::F)
+            }
+            "voronoi" => {
+                let cells = format!("n{node}_cells");
+                if self.sampled.insert(node) {
+                    let p = self.input_as(node, "position", Ty::V)?;
+                    let scale = self.input_as(node, "scale", Ty::F)?;
+                    let randomness = self.input_as(node, "randomness", Ty::F)?;
+                    self.lines.push(format!("let {cells} = bl_voronoi({p} * {scale}, {randomness});"));
+                }
+                match pin {
+                    "distance" => (format!("{cells}.x"), Ty::F),
+                    "edge" => (format!("({cells}.y - {cells}.x)"), Ty::F),
+                    _ => (format!("{cells}.z"), Ty::F),
+                }
+            }
+            "waves" => {
+                let p = self.input_as(node, "position", Ty::V)?;
+                let scale = self.input_as(node, "scale", Ty::F)?;
+                let distortion = self.input_as(node, "distortion", Ty::F)?;
+                let rings = self.choice(node, "kind", &["Bands", "Rings"]);
+                (format!("bl_waves({p} * {scale}, {distortion}, {rings})"), Ty::F)
+            }
+            "gradient" => {
+                let uv = self.input_as(node, "uv", Ty::V)?;
+                let style = self.choice(node, "kind", &["Linear", "Quadratic", "Spherical", "Radial"]);
+                (format!("bl_gradient({uv}, {style})"), Ty::F)
+            }
+            _ => {
+                let p = self.input_as(node, "position", Ty::V)?;
+                let scale = self.input_as(node, "scale", Ty::F)?;
+                if pin == "color" { (format!("bl_hash3(floor({p} * {scale}))"), Ty::V) } else { (format!("bl_hash(floor({p} * {scale}))"), Ty::F) }
+            }
+        })
+    }
+
     fn output(&mut self, node: u32, pin: &str) -> Result<Code, Problem> {
         let graph = self.graph;
         let (n, def) = graph.node_def(&CATALOG, node).map_err(|e| problem(node, &e.to_string()))?;
@@ -550,6 +662,7 @@ impl Compiler<'_> {
                 let (v, ty) = self.input(node, "value")?;
                 (format!("sin({v})"), ty)
             }
+            "fractalNoise" | "voronoi" | "waves" | "gradient" | "random" => self.pattern(node, &n.kind, pin)?,
             "checker" => {
                 let p = self.input_as(node, "position", Ty::V)?;
                 let scale = self.input_as(node, "scale", Ty::F)?;

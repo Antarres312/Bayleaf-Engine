@@ -246,6 +246,95 @@ fn bl_normal_map(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, mapped: vec3<f32>) -
     return normalize(-t * scale * mapped.x + b * scale * mapped.y + n * mapped.z);
 }
 
+fn bl_hash3(p: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(bl_hash(p), bl_hash(p + vec3<f32>(17.13, 3.71, 29.3)), bl_hash(p + vec3<f32>(41.7, 59.3, 7.9)));
+}
+
+// Noise in layers (octaves), each `lacunarity` times finer and `roughness` times fainter, added
+// and brought back to 0 to 1. style 0 smooth, 1 ridged (sharp crests), 2 billowy.
+fn bl_fractal(p: vec3<f32>, detail: f32, roughness: f32, lacunarity: f32, style: i32) -> f32 {
+    let layers = i32(clamp(round(detail), 1.0, 8.0));
+    var q = p;
+    var strength = 1.0;
+    var sum = 0.0;
+    var total = 0.0;
+    for (var i = 0; i < 8; i = i + 1) {
+        if (i >= layers) {
+            break;
+        }
+        var v = bl_noise(q);
+        if (style == 1) {
+            v = 1.0 - abs(v * 2.0 - 1.0);
+            v = v * v;
+        } else if (style == 2) {
+            v = abs(v * 2.0 - 1.0);
+        }
+        sum = sum + v * strength;
+        total = total + strength;
+        strength = strength * clamp(roughness, 0.0, 1.0);
+        // Each layer shifted too, so their grids do not line up.
+        q = q * max(lacunarity, 1.0) + vec3<f32>(1.7, 9.2, 3.1);
+    }
+    return sum / max(total, 1e-6);
+}
+
+// Cells round one point in each unit cube, placed at random by `randomness` (0: the cube's centre).
+// x: the distance to the nearest point, y: to the second nearest, z: a random value of the
+// nearest point's cell.
+fn bl_voronoi(p: vec3<f32>, randomness: f32) -> vec3<f32> {
+    let cell = floor(p);
+    let at = p - cell;
+    let spread = clamp(randomness, 0.0, 1.0);
+    var nearest = 8.0;
+    var second = 8.0;
+    var value = 0.0;
+    for (var z = -1; z <= 1; z = z + 1) {
+        for (var y = -1; y <= 1; y = y + 1) {
+            for (var x = -1; x <= 1; x = x + 1) {
+                let offset = vec3<f32>(f32(x), f32(y), f32(z));
+                let point = offset + mix(vec3<f32>(0.5), bl_hash3(cell + offset), spread);
+                let d = distance(at, point);
+                if (d < nearest) {
+                    second = nearest;
+                    nearest = d;
+                    value = bl_hash(cell + offset + vec3<f32>(3.3, 7.7, 1.1));
+                } else if (d < second) {
+                    second = d;
+                }
+            }
+        }
+    }
+    return vec3<f32>(nearest, second, value);
+}
+
+// Soft stripes 0 to 1: bands along x (rings 0) or rings round the centre (rings 1), bent by
+// noise as far as `distortion`.
+fn bl_waves(p: vec3<f32>, distortion: f32, rings: i32) -> f32 {
+    var along = p.x;
+    if (rings == 1) {
+        along = length(p);
+    }
+    along = along + distortion * (bl_fractal(p, 3.0, 0.5, 2.0, 0) * 2.0 - 1.0);
+    return sin(along * 6.2831853) * 0.5 + 0.5;
+}
+
+// 0 to 1 across `p`: linear along x (0), quadratic (1); spherical (2) and radial (3) round the
+// middle of texture coordinates, x and y 0.5.
+fn bl_gradient(p: vec3<f32>, style: i32) -> f32 {
+    let centred = p - vec3<f32>(0.5, 0.5, 0.0);
+    if (style == 1) {
+        let t = clamp(p.x, 0.0, 1.0);
+        return t * t;
+    }
+    if (style == 2) {
+        return clamp(1.0 - length(centred) * 2.0, 0.0, 1.0);
+    }
+    if (style == 3) {
+        return atan2(centred.y, centred.x) / 6.2831853 + 0.5;
+    }
+    return clamp(p.x, 0.0, 1.0);
+}
+
 fn bl_checker(p: vec3<f32>) -> f32 {
     // A small offset keeps faces that lie exactly on a cell border from flickering.
     let c = floor(p + vec3<f32>(1e-3));
