@@ -216,14 +216,21 @@ graph with every node kind and runs it.
 
 ## Commands
 
+Several graphs can be open at once; the editor shows each in a tab of its own. The commands below
+work on the graph **in use**: the one opened or activated last (or whose tab was last worked in).
+Undo goes back through the steps of every open graph and the scene in the order they were made, and
+a graph's step makes that graph the one in use again. Closing a graph takes its steps with it.
+
 | Command | Params | Undo |
 |---|---|---|
 | `graph.catalog` | `{domain}` | no |
-| `graph.new` | `{domain}` | no |
-| `graph.open` | `{path}` | no |
+| `graph.new` | `{domain}`: a new graph, then in use | no |
+| `graph.open` | `{path}`: opens it, or brings it forward when it is open | no |
 | `graph.save` | `{path?}` | no |
-| `graph.close` | none | no |
-| `graph.get` | none: the graph, its file, whether it changed, and its problems | no |
+| `graph.close` | `{id?}`: the graph in use, or the open graph `id`; the one opened before it is then in use | no |
+| `graph.list` | none: `{graphs: [{id, domain, path, dirty, inUse}]}` | no |
+| `graph.activate` | `{id}` or `{path}`: that open graph is then in use | no |
+| `graph.get` | none: the graph in use (`id`), its file, whether it changed, and its problems | no |
 | `graph.node.add` | `{kind, position: [x, y]}`, returns `{node}` | yes |
 | `graph.node.remove` | `{node}` | yes |
 | `graph.node.move` | `{node, position}` | yes |

@@ -309,7 +309,10 @@ fn graph(harness: &Harness<'static, Editor>) -> bayleaf_engine::graph::Graph {
 #[test]
 fn the_graph_panel_starts_empty_and_makes_a_new_material() {
     let mut harness = harness();
-    harness.state_mut().show_panel(crate::Panel::Graph);
+    {
+        let open = harness.state().session.graph().map_or(0, |g| g.id);
+        harness.state_mut().show_panel(crate::Panel::Graph(open));
+    }
     harness.run();
     harness.get_by_label("New Material").click();
     harness.run();
@@ -1100,7 +1103,10 @@ fn a_markdown_file_shows_formatted_in_the_inspector_and_as_written_with_source()
 #[test]
 fn the_mouse_wheel_zooms_the_graph_around_the_pointer() {
     let mut harness = graph_harness("material");
-    harness.state_mut().show_panel(crate::Panel::Graph);
+    {
+        let open = harness.state().session.graph().map_or(0, |g| g.id);
+        harness.state_mut().show_panel(crate::Panel::Graph(open));
+    }
     harness.run_steps(2);
     let canvas = harness.get_by_label("Graph canvas").rect();
     let before = harness.state().graph_view.scene_rect;
@@ -1268,7 +1274,10 @@ fn f2_renames_a_file_in_its_own_tile_and_a_click_on_empty_space_clears_the_selec
 #[test]
 fn hovering_a_pin_its_label_or_its_value_shows_the_type_it_carries() {
     let mut harness = graph_harness("script");
-    harness.state_mut().show_panel(crate::Panel::Graph);
+    {
+        let open = harness.state().session.graph().map_or(0, |g| g.id);
+        harness.state_mut().show_panel(crate::Panel::Graph(open));
+    }
     // Beside On Start and On Update, not on them, and in view.
     let add = harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "add", "position": [320, 120] }), None).unwrap()["node"].as_u64().unwrap();
     harness.run_steps(2);
@@ -2778,5 +2787,78 @@ fn with_a_gpu_a_click_on_the_interface_does_not_reach_the_game() {
     assert!(value(&harness, "clicks") > 0.0, "below the bar the game gets the click");
     harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
     harness.run_steps(2);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn each_graph_opens_in_a_tab_of_its_own_and_its_tab_says_when_it_has_changes() {
+    let mut harness = harness();
+    let tab = |harness: &Harness<'static, Editor>, name: &str| {
+        let name = name.to_owned();
+        harness
+            .query_all(
+                egui_kittest::kittest::By::new().predicate(move |n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some(name.as_str())),
+            )
+            .count()
+    };
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-graph-tabs-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().open_graph(&dir.join("materials/ground.bmaterial"));
+    harness.run_steps(3);
+    harness.state_mut().open_graph(&dir.join("scripts/spin.bscript"));
+    harness.run_steps(3);
+    assert_eq!((tab(&harness, "ground.bmaterial"), tab(&harness, "spin.bscript")), (1, 1), "a tab for each");
+    assert_eq!(tab(&harness, "Graph"), 0, "the start tab goes once a graph is open");
+    assert_eq!(harness.state().session.graphs().len(), 2);
+
+    // Opening one that is open brings its tab forward; its tab then is the graph in use.
+    harness.state_mut().open_graph(&dir.join("materials/ground.bmaterial"));
+    harness.run_steps(3);
+    assert_eq!(harness.state().session.graphs().len(), 2, "not opened twice");
+    let ground = harness.state().session.graph().unwrap().id;
+    assert!(harness.state().session.graph().unwrap().path.as_ref().unwrap().ends_with("ground.bmaterial"));
+    // A change shows in its tab's name.
+    harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "color", "position": [0, 0] }), None);
+    harness.run_steps(3);
+    assert_eq!(tab(&harness, "ground.bmaterial •"), 1, "the tab says it has unsaved changes");
+    // The other tab, clicked, is the graph in use.
+    harness
+        .query_all(egui_kittest::kittest::By::new().predicate(|n| n.role() == egui::accesskit::Role::Tab && n.label().as_deref() == Some("spin.bscript")))
+        .next()
+        .unwrap()
+        .click();
+    harness.run_steps(3);
+    assert!(harness.state().session.graph().unwrap().path.as_ref().unwrap().ends_with("spin.bscript"));
+    // Closed by a command, its tab goes; the other stays.
+    harness.state_mut().dispatch("graph.close", &json!({ "id": ground }), None);
+    harness.run_steps(3);
+    assert_eq!((tab(&harness, "ground.bmaterial •"), tab(&harness, "spin.bscript")), (0, 1));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn with_a_gpu_two_graphs_show_side_by_side_in_tabs_of_their_own() {
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-graphs-side-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().open_graph(&dir.join("materials/ground.bmaterial"));
+    harness.run_steps(3);
+    harness.state_mut().open_graph(&dir.join("scripts/spin.bscript"));
+    harness.run_steps(3);
+    // The script's tab moved beside the material's, as a drag of the tab would put it.
+    let spin = harness.state().session.graph().unwrap().id;
+    let editor = harness.state_mut();
+    if let Some(at) = editor.dock.find_tab(&crate::Panel::Graph(spin)) {
+        editor.dock.remove_tab(at);
+    }
+    let scene = editor.dock.find_tab(&crate::Panel::Scene).unwrap().node_path().node;
+    editor.dock.main_surface_mut().split_right(scene, 0.5, vec![crate::Panel::Graph(spin)]);
+    harness.run_steps(4);
+    let canvases = harness.query_all_by_label("Graph canvas").count();
+    assert_eq!(canvases, 2, "both graphs are drawn at once");
+    let shown = picture(&mut harness);
+    keep_for_review(&shown, "graph-tabs-side-by-side");
     std::fs::remove_dir_all(&dir).ok();
 }

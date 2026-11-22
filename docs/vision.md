@@ -447,8 +447,10 @@ No crate below L6 may use egui, eframe, winit or rfd.
      instead of sharing one Graph panel, so several graphs are open at once and side by side: the
      tab shows the graph's name and whether it has unsaved changes, and closing a tab with changes
      asks first. Double-clicking a graph that is open brings its tab forward. The `graph.*`
-     commands name the graph they work on (its path, or the open graph last used when left out),
-     and `graph.list` gives the open graphs. Each graph keeps its own undo steps.
+     commands work on the graph in use (the one last opened, activated or worked in), `graph.activate`
+     picks another and `graph.list` gives the open graphs. Undo goes back through every graph's
+     steps where they were made. (Done; a graph's tab can be dragged beside another, and the tab
+     bar of a narrow panel scrolls.)
 
 ## Open questions
 

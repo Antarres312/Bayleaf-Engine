@@ -53,7 +53,7 @@ The server also offers resources, which a client can read and subscribe to:
 |---|---|---|
 | `bayleaf://scene` | JSON | the open scene: every object and component (`scene.document`) |
 | `bayleaf://scene/render` | PNG | the scene from its first camera, or framing every object, 640 × 360 |
-| `bayleaf://graph` | JSON | the graph open in the graph editor, its file and its problems |
+| `bayleaf://graph` | JSON | the graph in use (of those open, each in a tab), its file and its problems |
 | `bayleaf://play` | JSON | play mode: running or not, time, script errors |
 
 After `resources/subscribe`, the server sends `notifications/resources/updated` when the resource

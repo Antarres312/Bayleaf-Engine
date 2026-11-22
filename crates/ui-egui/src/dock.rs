@@ -15,8 +15,9 @@ pub enum Panel {
     Inspector,
     Console,
     Project,
-    /// The graph editor, a tab beside the scene view.
-    Graph,
+    /// A graph, in a tab of its own beside the scene view, by its id among the open graphs; 0 is
+    /// the tab to start one from, while none is open.
+    Graph(u64),
     /// Settings for the whole project, a tab beside the scene view.
     ProjectSettings,
     /// The game as players see it, a tab beside the scene view.
@@ -32,7 +33,7 @@ impl Panel {
         Panel::Hierarchy,
         Panel::Scene,
         Panel::Game,
-        Panel::Graph,
+        Panel::Graph(0),
         Panel::Interface,
         Panel::Inspector,
         Panel::Project,
@@ -48,7 +49,7 @@ impl Panel {
             Panel::Inspector => tl("Inspector"),
             Panel::Console => tl("Console"),
             Panel::Project => tl("Project"),
-            Panel::Graph => tl("Graph"),
+            Panel::Graph(_) => tl("Graph"),
             Panel::ProjectSettings => tl("Project Settings"),
             Panel::Game => tl("Game"),
             Panel::Profiler => tl("Profiler"),
@@ -85,7 +86,7 @@ impl Layout {
     }
 
     pub fn build(self) -> DockState<Panel> {
-        let mut state = DockState::new(vec![Panel::Scene, Panel::Game, Panel::Graph, Panel::Interface, Panel::ProjectSettings]);
+        let mut state = DockState::new(vec![Panel::Scene, Panel::Game, Panel::Graph(0), Panel::Interface, Panel::ProjectSettings]);
         let surface = state.main_surface_mut();
         match self {
             Layout::Standard => {
@@ -131,6 +132,8 @@ pub(crate) fn from_text(text: &str) -> Option<DockState<Panel>> {
         return None;
     }
     let mut dock = saved.dock;
+    // Graphs open in an earlier run are not open now.
+    dock.retain_tabs(|tab| !matches!(tab, Panel::Graph(id) if *id != 0));
     if dock.find_tab(&Panel::Scene).is_none() {
         dock.push_to_first_leaf(Panel::Scene);
     }
@@ -153,7 +156,7 @@ pub(crate) fn set_open(dock: &mut DockState<Panel>, panel: Panel, open: bool) {
                 let node = scene.node_path().node;
                 match panel {
                     // The graph editor shares the scene view's area, as another tab.
-                    Panel::Graph | Panel::ProjectSettings | Panel::Game | Panel::Interface => {
+                    Panel::Graph(_) | Panel::ProjectSettings | Panel::Game | Panel::Interface => {
                         surface[node].append_tab(panel);
                     }
                     Panel::Hierarchy => {
@@ -190,7 +193,25 @@ impl TabViewer for Panels<'_> {
     }
 
     fn title(&mut self, tab: &mut Panel) -> egui::WidgetText {
+        // A graph's tab shows its file's name, and a dot while it has unsaved changes.
+        if let Panel::Graph(id) = *tab
+            && let Some(doc) = self.editor.session.graph_by_id(id)
+        {
+            return crate::graph_view::tab_title(doc).into();
+        }
         tab.title().into()
+    }
+
+    /// Closing a graph's tab closes the graph, asking first when it has unsaved changes.
+    fn on_close(&mut self, tab: &mut Panel) -> egui_dock::widgets::tab_viewer::OnCloseResponse {
+        use egui_dock::widgets::tab_viewer::OnCloseResponse;
+        let Panel::Graph(id) = *tab else { return OnCloseResponse::Close };
+        let Some(doc) = self.editor.session.graph_by_id(id) else { return OnCloseResponse::Close };
+        if doc.dirty && !crate::confirm_discard_graph() {
+            return OnCloseResponse::Ignore;
+        }
+        self.editor.dispatch("graph.close", &serde_json::json!({ "id": id }), None);
+        OnCloseResponse::Close
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Panel) {
@@ -200,7 +221,7 @@ impl TabViewer for Panels<'_> {
             Panel::Inspector => inspector::show(self.editor, ui),
             Panel::Console => console::show(self.editor, ui),
             Panel::Project => project::show(self.editor, ui),
-            Panel::Graph => graph_view::show(self.editor, ui, self.gpu),
+            Panel::Graph(id) => graph_view::show_tab(self.editor, ui, self.gpu, *id),
             Panel::ProjectSettings => project_settings::show(self.editor, ui),
             Panel::Game => game_view::show(self.editor, ui, self.gpu),
             Panel::Profiler => profiler_view::show(self.editor, ui),

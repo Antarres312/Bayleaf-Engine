@@ -368,14 +368,8 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         );
     }
 
-    if let Some(doc) = editor.session.graph()
-        && doc.graph.domain == bayleaf_render::material::CATALOG.domain
-        && let Some(path) = &doc.path
-    {
-        view.materials.set_live(Some((path, &doc.graph)));
-    } else {
-        view.materials.set_live(None);
-    }
+    // Every open material graph shows as it is, before it is saved.
+    view.materials.set_lives(editor.session.live_materials());
     let started = *view.started.get_or_insert_with(std::time::Instant::now);
     let time = if editor.session.is_playing() { editor.session.play_time() as f32 } else { started.elapsed().as_secs_f32() };
     let base = editor.session.script_dir();

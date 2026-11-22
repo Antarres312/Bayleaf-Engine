@@ -248,6 +248,43 @@ fn pin_color(t: &Tokens, ty: PinType) -> Color32 {
     }
 }
 
+/// A graph's tab name: its file's name (or what it is, before it has a file), with a dot while it
+/// has unsaved changes.
+pub(crate) fn tab_title(doc: &bayleaf_engine::GraphDoc) -> String {
+    let name = doc.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| {
+        if doc.graph.domain == bayleaf_engine::render::material::CATALOG.domain { tl("New Material").to_owned() } else { tl("New Visual Script").to_owned() }
+    });
+    if doc.dirty { format!("{name} •") } else { name }
+}
+
+/// One graph's tab: the graph `id` becomes the one in use while its tab draws, with its own view
+/// (what is in view, what is selected). Tab 0 starts a graph.
+pub(crate) fn show_tab(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgpu::RenderState>, id: u64) {
+    if id == 0 || editor.session.graph_by_id(id).is_none() {
+        empty_state(editor, ui);
+        return;
+    }
+    editor.graphs_drawn.push(id);
+    use_graph(editor, id);
+    show(editor, ui, gpu);
+}
+
+/// Makes the open graph `id` the one the commands work on, with its view in `editor.graph_view`.
+pub(crate) fn use_graph(editor: &mut Editor, id: u64) {
+    let in_use = editor.session.graph().map(|g| g.id);
+    if in_use == Some(id) {
+        return;
+    }
+    if editor.registry.execute(&mut editor.session, "graph.activate", &json!({ "id": id })).is_err() {
+        return;
+    }
+    let view = editor.graph_views.remove(&id).unwrap_or_default();
+    let previous = std::mem::replace(&mut editor.graph_view, view);
+    if let Some(previous_id) = in_use {
+        editor.graph_views.insert(previous_id, previous);
+    }
+}
+
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgpu::RenderState>) {
     let Some(doc) = editor.session.graph().cloned() else {
         empty_state(editor, ui);
@@ -280,15 +317,15 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
     toolbar(editor, ui, &doc, catalog, &mut view);
     let t = theme::tokens(ui);
     let strip_height = if problems.is_empty() { theme::ROW_HEIGHT } else { (problems.len().min(4) as f32) * theme::ROW_HEIGHT + 8.0 };
-    egui::Panel::bottom("graph problems").exact_size(strip_height).frame(egui::Frame::new().fill(t.panel).inner_margin(egui::Margin::symmetric(8, 2))).show(
-        ui,
-        |ui| {
+    egui::Panel::bottom(ui.make_persistent_id("graph problems"))
+        .exact_size(strip_height)
+        .frame(egui::Frame::new().fill(t.panel).inner_margin(egui::Margin::symmetric(8, 2)))
+        .show(ui, |ui| {
             problem_strip(ui, &doc.graph, catalog, &problems, &mut view);
-        },
-    );
+        });
     // A visual script's variables, properties and menu path, beside its graph.
     if catalog.domain == bayleaf_engine::script::visual::CATALOG.domain {
-        egui::Panel::left("script panel")
+        egui::Panel::left(ui.make_persistent_id("script panel"))
             .resizable(true)
             .default_size(230.0)
             .min_size(160.0)
@@ -418,8 +455,18 @@ fn empty_state(editor: &mut Editor, ui: &mut egui::Ui) {
 
 fn toolbar(editor: &mut Editor, ui: &mut egui::Ui, doc: &bayleaf_engine::GraphDoc, catalog: &Catalog, view: &mut GraphView) {
     let t = theme::tokens(ui);
+    // Below this width the buttons go on a row of their own, so a narrow tab (graphs side by side)
+    // never pushes them over the name or out of view.
+    let narrow = ui.available_width() < 640.0;
     egui::Frame::new().inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
-        ui.horizontal(|ui| {
+        let row = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
+            if narrow {
+                ui.horizontal_wrapped(|ui| add(ui));
+            } else {
+                ui.horizontal(|ui| add(ui));
+            }
+        };
+        row(ui, &mut |ui: &mut egui::Ui| {
             let name = doc.path.as_ref().and_then(|p| p.file_name()).map_or_else(
                 || crate::i18n::tf("Untitled {kind}", &[("kind", &tl(catalog.label).to_lowercase().to_string())]),
                 |n| n.to_string_lossy().into_owned(),
@@ -429,7 +476,12 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui, doc: &bayleaf_engine::GraphDo
             if doc.dirty {
                 theme::tag(ui, tl("Modified"), t.surface_active, t.text);
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if narrow {
+                ui.end_row();
+            }
+            let layout =
+                if narrow { egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true) } else { egui::Layout::right_to_left(egui::Align::Center) };
+            ui.with_layout(layout, |ui| {
                 if ui.button(tl("Close")).clicked() && (!doc.dirty || crate::confirm_discard_graph()) {
                     editor.dispatch("graph.close", &Value::Null, None);
                 }

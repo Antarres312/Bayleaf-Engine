@@ -606,10 +606,9 @@ impl Compiler<'_> {
 #[derive(Default)]
 pub struct MaterialLibrary {
     entries: HashMap<PathBuf, Entry>,
-    /// A graph being edited, used instead of its file so changes show before they are saved.
-    live: Option<(PathBuf, Result<Arc<CompiledMaterial>, String>)>,
-    /// The graph `live` was compiled from, so an unchanged graph is not compiled again.
-    live_graph: Option<Graph>,
+    /// Graphs being edited, used instead of their files so changes show before they are saved:
+    /// by file, the graph and what it compiled to (an unchanged graph is not compiled again).
+    live: HashMap<PathBuf, (Graph, Result<Arc<CompiledMaterial>, String>)>,
     /// Lighting files, read once and again when the file changes.
     lightings: HashMap<PathBuf, LightingEntry>,
     /// Post-processing files, read once and again when the file changes.
@@ -664,25 +663,26 @@ impl MaterialLibrary {
 
     /// Uses `graph` for `path` instead of the file, or stops with `None`.
     pub fn set_live(&mut self, live: Option<(&Path, &Graph)>) {
-        let Some((path, graph)) = live else {
-            self.live = None;
-            self.live_graph = None;
-            return;
-        };
-        let key = normalize(path);
-        if self.live_graph.as_ref() == Some(graph) && self.live.as_ref().is_some_and(|(p, _)| *p == key) {
-            return;
+        self.set_lives(live.into_iter().collect());
+    }
+
+    /// Uses each graph for its file instead of the file; files not named here are read again.
+    pub fn set_lives(&mut self, lives: Vec<(&Path, &Graph)>) {
+        let keys: Vec<PathBuf> = lives.iter().map(|(p, _)| normalize(p)).collect();
+        self.live.retain(|k, _| keys.contains(k));
+        for (key, (_, graph)) in keys.into_iter().zip(lives) {
+            if self.live.get(&key).is_some_and(|(seen, _)| seen == graph) {
+                continue;
+            }
+            let compiled = compile(graph).map(Arc::new).map_err(|p| summary(&p));
+            self.live.insert(key, (graph.clone(), compiled));
         }
-        self.live = Some((key, compile(graph).map(Arc::new).map_err(|p| summary(&p))));
-        self.live_graph = Some(graph.clone());
     }
 
     /// The compiled material at `path`, reading and compiling the file if it is new or changed.
     pub fn get(&mut self, path: &Path) -> Result<Arc<CompiledMaterial>, String> {
         let key = normalize(path);
-        if let Some((live, result)) = &self.live
-            && *live == key
-        {
+        if let Some((_, result)) = self.live.get(&key) {
             return result.clone();
         }
         let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();

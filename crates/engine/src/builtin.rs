@@ -77,10 +77,12 @@ fn restore(session: &mut Session, snapshot: Snapshot) -> Result<Snapshot, Comman
             session.dirty = true;
             Ok(current)
         }
-        Snapshot::Graph(_) => {
+        Snapshot::Graph(id, _) => {
             let graph = snapshot.to_graph()?;
+            // The step's own graph, wherever its tab is: it becomes the one in use.
+            session.activate_graph(id).map_err(|_| CommandError::Failed("the graph of this step is closed".to_owned()))?;
             let open = session.graph.as_mut().ok_or_else(|| CommandError::Failed("the graph of this step is closed".to_owned()))?;
-            let current = Snapshot::graph(&open.graph);
+            let current = Snapshot::graph(id, &open.graph);
             open.graph = graph;
             open.dirty = true;
             Ok(current)

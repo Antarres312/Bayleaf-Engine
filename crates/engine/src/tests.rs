@@ -387,11 +387,15 @@ fn graph_edits_share_the_undo_history_and_saving_clears_dirty() {
     assert!(!session.graph().unwrap().dirty);
     let saved = session.graph().unwrap().graph.clone();
 
-    // Opening a graph drops the old graph's undo steps but keeps the scene's.
+    // Opening a graph that is open brings it forward, with its undo steps.
     registry.execute(&mut session, "graph.open", &json!({"path": dir.join("red.bmaterial")})).unwrap();
     assert_eq!(session.graph().unwrap().graph, saved);
-    assert_eq!(session.history(), ["scene.object.create"]);
+    assert_eq!(session.graphs().len(), 1, "not opened twice");
+    assert_eq!(session.history().len(), 3);
     assert!(registry.execute(&mut session, "graph.get", &Value::Null).unwrap()["problems"].as_array().unwrap().is_empty());
+    // Closing a graph takes its undo steps with it, and keeps the scene's.
+    registry.execute(&mut session, "graph.close", &Value::Null).unwrap();
+    assert_eq!(session.history(), ["scene.object.create"]);
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -2560,4 +2564,37 @@ fn any_element_with_on_click_sends_its_message_to_the_scripts() {
     assert!(run(&mut session, "play.ui.press", json!({"id": id, "element": "Title"})).is_err(), "text without On Click is not pressed");
     run(&mut session, "play.stop", Value::Null).unwrap();
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn several_graphs_stay_open_and_undo_goes_back_in_the_graph_each_step_was_made_in() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params).unwrap();
+    let material = run(&mut session, "graph.new", json!({"domain": "material"}))["id"].as_u64().unwrap();
+    node(&registry, &mut session, "color");
+    let script = run(&mut session, "graph.new", json!({"domain": "script"}))["id"].as_u64().unwrap();
+    node(&registry, &mut session, "log");
+    let list = run(&mut session, "graph.list", Value::Null);
+    let open: Vec<(u64, bool)> = list["graphs"].as_array().unwrap().iter().map(|g| (g["id"].as_u64().unwrap(), g["inUse"].as_bool().unwrap())).collect();
+    assert_eq!(open, [(material, false), (script, true)], "both stay open; the newest is in use");
+
+    // Undo takes back the script's node, then the material's, each in its own graph.
+    let nodes = |session: &Session, id: u64| session.graph_by_id(id).unwrap().graph.nodes.len();
+    let (material_nodes, script_nodes) = (nodes(&session, material), nodes(&session, script));
+    run(&mut session, "edit.undo", Value::Null);
+    assert_eq!((nodes(&session, material), nodes(&session, script)), (material_nodes, script_nodes - 1));
+    run(&mut session, "edit.undo", Value::Null);
+    assert_eq!((nodes(&session, material), nodes(&session, script)), (material_nodes - 1, script_nodes - 1));
+    assert_eq!(session.graph().unwrap().id, material, "the material's step made it the graph in use");
+
+    // Commands work on the graph in use; activate picks another.
+    run(&mut session, "graph.activate", json!({"id": script}));
+    node(&registry, &mut session, "log");
+    assert_eq!(nodes(&session, script), script_nodes);
+    assert!(registry.execute(&mut session, "graph.activate", &json!({"id": 999})).is_err());
+    // Closing one leaves the other in use.
+    run(&mut session, "graph.close", json!({"id": script}));
+    assert_eq!(session.graphs().len(), 1);
+    assert_eq!(session.graph().unwrap().id, material);
 }

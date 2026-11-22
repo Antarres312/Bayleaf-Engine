@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::confine::Access;
-use crate::{CommandError, CommandSpec, Mutates, Prompt, Session, Snapshot, always, parse};
+use crate::{CommandError, CommandSpec, Mutates, Prompt, Session, always, parse};
 
 /// Why graph edits are disabled with no graph open.
 pub(crate) const NO_GRAPH: &str = "open or create a graph first";
@@ -17,6 +17,8 @@ pub(crate) const NO_GRAPH: &str = "open or create a graph first";
 /// The graph open in the graph editor.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GraphDoc {
+    /// Which open graph it is, for as long as it is open.
+    pub id: u64,
     pub graph: Graph,
     /// File the graph was opened from or last saved to.
     pub path: Option<PathBuf>,
@@ -60,7 +62,7 @@ fn has_graph(session: &Session) -> Result<(), String> {
 
 fn spec(id: &'static str, label: &'static str, params: &'static str, mutates: Mutates, run: crate::RunFn) -> CommandSpec {
     let enabled: crate::EnabledFn =
-        if id.starts_with("graph.node.") || id.starts_with("graph.link.") || id.starts_with("graph.comment.") || matches!(id, "graph.save" | "graph.close") {
+        if id.starts_with("graph.node.") || id.starts_with("graph.link.") || id.starts_with("graph.comment.") || matches!(id, "graph.save") {
             has_graph
         } else {
             always
@@ -74,8 +76,22 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec("graph.new", "New Graph", "{domain: \"material\" | \"script\"}", Mutates::No, graph_new),
         spec("graph.open", "Open Graph", "{path} (.bmaterial or .bscript)", Mutates::No, graph_open),
         spec("graph.save", "Save Graph", "{path?} (needed for a graph that has no file yet)", Mutates::No, graph_save),
-        spec("graph.close", "Close Graph", "none", Mutates::No, graph_close),
-        spec("graph.get", "Show Graph", "none; returns the open graph, its file and what stops it from compiling", Mutates::No, graph_get),
+        spec(
+            "graph.close",
+            "Close Graph",
+            "{id?}: closes the graph in use (or the open graph id) with its undo steps; the one opened before it is then in use",
+            Mutates::No,
+            graph_close,
+        ),
+        spec("graph.get", "Show Graph", "none; returns the graph in use: {id, domain, path, dirty, graph, problems}", Mutates::No, graph_get),
+        spec(
+            "graph.list",
+            "Open Graphs",
+            "none; the open graphs, each in a tab of its own: {graphs: [{id, domain, path, dirty, inUse}]}",
+            Mutates::No,
+            graph_list,
+        ),
+        spec("graph.activate", "Use Graph", "{id} or {path}: makes that open graph the one the graph.* commands work on", Mutates::No, graph_activate),
         spec("graph.node.add", "Add Node", "{kind, position: [x, y]}", Mutates::Graph, node_add),
         spec("graph.node.remove", "Remove Node", "{node}", Mutates::Graph, node_remove),
         spec("graph.node.move", "Move Node", "{node, position: [x, y]}", Mutates::Graph, node_move),
@@ -384,16 +400,16 @@ fn graph_catalog(_: &mut Session, params: &Value) -> Result<Value, CommandError>
     Ok(domain(params)?.to_json())
 }
 
-/// Replaces the open graph; its undo steps go with it.
-fn replace(session: &mut Session, doc: Option<GraphDoc>) {
-    session.graph = doc;
-    session.forget(|s| matches!(s, Snapshot::Graph(_)));
-}
-
 fn graph_new(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let catalog = domain(params)?;
-    replace(session, Some(GraphDoc { graph: Graph::new(catalog), path: None, dirty: false }));
+    session.add_graph(GraphDoc { id: 0, graph: Graph::new(catalog), path: None, dirty: false });
     graph_get(session, &Value::Null)
+}
+
+/// One spelling per file, to tell whether a graph is open already.
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let canonical = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    canonical(a) == canonical(b)
 }
 
 #[derive(Deserialize)]
@@ -406,9 +422,14 @@ fn graph_open(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     let p: PathParams = parse(params)?;
     let catalog = catalog_for_path(&p.path).ok_or_else(|| CommandError::BadParams("graph files end in .bmaterial or .bscript".to_owned()))?;
     let path = session.allowed(&p.path, Access::Read)?;
+    // A graph open already is brought forward, with its changes.
+    if let Some(id) = session.graphs().iter().find(|g| g.path.as_deref().is_some_and(|open| same_file(open, &path))).map(|g| g.id) {
+        session.activate_graph(id)?;
+        return graph_get(session, &Value::Null);
+    }
     let text = std::fs::read_to_string(&path).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", path.display())))?;
     let graph = Graph::from_json(&text, catalog).map_err(|e| CommandError::Failed(format!("{}: {e}", path.display())))?;
-    replace(session, Some(GraphDoc { graph, path: Some(path), dirty: false }));
+    session.add_graph(GraphDoc { id: 0, graph, path: Some(path), dirty: false });
     graph_get(session, &Value::Null)
 }
 
@@ -436,10 +457,59 @@ fn graph_save(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     Ok(json!({ "path": path }))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CloseParams {
+    #[serde(default)]
+    id: Option<u64>,
+}
+
 fn graph_close(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: CloseParams = parse(params)?;
+    if let Some(id) = p.id {
+        session.activate_graph(id)?;
+    }
+    if session.graph.is_none() {
+        return Err(CommandError::Failed(NO_GRAPH.to_owned()));
+    }
+    session.close_graph();
+    Ok(json!({ "inUse": session.graph.as_ref().map(|g| g.id) }))
+}
+
+fn graph_list(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let _: Empty = parse(params)?;
-    replace(session, None);
-    Ok(json!({}))
+    let in_use = session.graph.as_ref().map(|g| g.id);
+    let graphs: Vec<Value> = session
+        .graphs()
+        .iter()
+        .map(|g| json!({ "id": g.id, "domain": g.graph.domain, "path": g.path, "dirty": g.dirty, "inUse": Some(g.id) == in_use }))
+        .collect();
+    Ok(json!({ "graphs": graphs }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActivateParams {
+    #[serde(default)]
+    id: Option<u64>,
+    #[serde(default)]
+    path: Option<PathBuf>,
+}
+
+fn graph_activate(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: ActivateParams = parse(params)?;
+    let id = match (p.id, p.path) {
+        (Some(id), None) => id,
+        (None, Some(path)) => session
+            .graphs()
+            .iter()
+            .find(|g| g.path.as_deref().is_some_and(|open| same_file(open, &path)))
+            .map(|g| g.id)
+            .ok_or_else(|| CommandError::BadParams(format!("{} is not open", path.display())))?,
+        _ => return Err(CommandError::BadParams("give the graph's id or its path".to_owned())),
+    };
+    session.activate_graph(id)?;
+    Ok(json!({ "id": id }))
 }
 
 #[derive(Deserialize)]
@@ -450,6 +520,7 @@ fn graph_get(session: &mut Session, params: &Value) -> Result<Value, CommandErro
     let _: Empty = parse(params)?;
     let doc = session.graph.as_ref().ok_or_else(|| CommandError::Failed(NO_GRAPH.to_owned()))?;
     Ok(json!({
+        "id": doc.id,
         "domain": doc.graph.domain,
         "path": doc.path,
         "dirty": doc.dirty,

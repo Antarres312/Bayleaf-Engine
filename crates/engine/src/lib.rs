@@ -72,7 +72,8 @@ impl From<bayleaf_scene::SceneError> for CommandError {
 /// memory than its text, and big scenes make many steps.
 enum Snapshot {
     Scene(Vec<u8>),
-    Graph(Vec<u8>),
+    /// A graph, by its id among the open graphs.
+    Graph(u64, Vec<u8>),
 }
 
 /// Undo and redo together keep at most this many bytes of snapshots; the oldest steps go first.
@@ -86,13 +87,13 @@ impl Snapshot {
         Self::Scene(serde_json::to_vec(&scene.to_doc()).unwrap_or_default())
     }
 
-    fn graph(graph: &bayleaf_graph::Graph) -> Self {
-        Self::Graph(serde_json::to_vec(graph).unwrap_or_default())
+    fn graph(id: u64, graph: &bayleaf_graph::Graph) -> Self {
+        Self::Graph(id, serde_json::to_vec(graph).unwrap_or_default())
     }
 
     fn len(&self) -> usize {
         match self {
-            Self::Scene(bytes) | Self::Graph(bytes) => bytes.len(),
+            Self::Scene(bytes) | Self::Graph(_, bytes) => bytes.len(),
         }
     }
 
@@ -103,7 +104,7 @@ impl Snapshot {
     }
 
     fn to_graph(&self) -> Result<bayleaf_graph::Graph, CommandError> {
-        let Self::Graph(bytes) = self else { return Err(CommandError::Failed("this undo step is not a graph".to_owned())) };
+        let Self::Graph(_, bytes) = self else { return Err(CommandError::Failed("this undo step is not a graph".to_owned())) };
         serde_json::from_slice(bytes).map_err(|e| CommandError::Failed(format!("the undo step cannot be read: {e}")))
     }
 }
@@ -138,8 +139,12 @@ pub struct Session {
     console: Vec<ConsoleLine>,
     /// Set while an automation request runs: the folders it may read and write.
     confinement: Option<confine::Confinement>,
-    /// The graph open in the graph editor.
+    /// The graph the `graph.*` commands work on: the open graph last used.
     graph: Option<GraphDoc>,
+    /// The other open graphs, each in a tab of its own.
+    other_graphs: Vec<GraphDoc>,
+    /// The id the next graph opened gets.
+    next_graph_id: u64,
     /// The project folder the open scene belongs to, if any.
     project_dir: Option<PathBuf>,
     /// Sounds are heard in play mode (the editor and the player); otherwise they play silently.
@@ -392,21 +397,71 @@ impl Session {
         self.undo.iter().chain(&self.redo).map(|s| s.before.len()).sum()
     }
 
-    /// The graph open in the graph editor.
+    /// The graph the `graph.*` commands work on: the open graph last used.
     pub fn graph(&self) -> Option<&GraphDoc> {
         self.graph.as_ref()
     }
 
-    /// A material library that shows the open material graph as it is, before it is saved.
+    /// Every open graph, by id (the order they were opened in).
+    pub fn graphs(&self) -> Vec<&GraphDoc> {
+        let mut all: Vec<&GraphDoc> = self.graph.iter().chain(&self.other_graphs).collect();
+        all.sort_by_key(|g| g.id);
+        all
+    }
+
+    /// The open graph with `id`.
+    pub fn graph_by_id(&self, id: u64) -> Option<&GraphDoc> {
+        self.graph.iter().chain(&self.other_graphs).find(|g| g.id == id)
+    }
+
+    /// Makes the open graph `id` the one the `graph.*` commands work on.
+    pub(crate) fn activate_graph(&mut self, id: u64) -> Result<(), CommandError> {
+        if self.graph.as_ref().is_some_and(|g| g.id == id) {
+            return Ok(());
+        }
+        let at = self.other_graphs.iter().position(|g| g.id == id).ok_or_else(|| CommandError::BadParams(format!("no open graph has id {id}")))?;
+        let chosen = self.other_graphs.remove(at);
+        if let Some(previous) = self.graph.replace(chosen) {
+            self.other_graphs.push(previous);
+        }
+        Ok(())
+    }
+
+    /// Opens `doc` as a new graph, the one the commands work on; returns its id.
+    pub(crate) fn add_graph(&mut self, mut doc: GraphDoc) -> u64 {
+        self.next_graph_id += 1;
+        doc.id = self.next_graph_id;
+        if let Some(previous) = self.graph.replace(doc) {
+            self.other_graphs.push(previous);
+        }
+        self.next_graph_id
+    }
+
+    /// Closes the graph the commands work on, with its undo steps; the one opened last before it
+    /// takes its place.
+    pub(crate) fn close_graph(&mut self) {
+        let Some(closed) = self.graph.take() else { return };
+        self.forget(|s| matches!(s, Snapshot::Graph(id, _) if *id == closed.id));
+        if let Some(last) = self.other_graphs.iter().enumerate().max_by_key(|(_, g)| g.id).map(|(i, _)| i) {
+            self.graph = Some(self.other_graphs.remove(last));
+        }
+    }
+
+    /// A material library that shows the open material graphs as they are, before they are saved.
     pub fn material_library(&self) -> bayleaf_render::MaterialLibrary {
         let mut library = bayleaf_render::MaterialLibrary::new();
-        if let Some(doc) = &self.graph
-            && doc.graph.domain == bayleaf_render::material::CATALOG.domain
-            && let Some(path) = &doc.path
-        {
-            library.set_live(Some((path, &doc.graph)));
-        }
+        library.set_lives(self.live_materials());
         library
+    }
+
+    /// The open material graphs that have a file, to draw instead of it while they are edited.
+    pub fn live_materials(&self) -> Vec<(&Path, &bayleaf_graph::Graph)> {
+        self.graph
+            .iter()
+            .chain(&self.other_graphs)
+            .filter(|d| d.graph.domain == bayleaf_render::material::CATALOG.domain)
+            .filter_map(|d| d.path.as_deref().map(|p| (p, &d.graph)))
+            .collect()
     }
 }
 
@@ -552,7 +607,10 @@ impl CommandRegistry {
         let before = match spec.mutates {
             Mutates::No => return (spec.run)(session, params),
             Mutates::Scene => Snapshot::scene(&session.scene),
-            Mutates::Graph => Snapshot::graph(&session.graph.as_ref().ok_or_else(|| CommandError::Failed(graph_cmds::NO_GRAPH.to_owned()))?.graph),
+            Mutates::Graph => {
+                let doc = session.graph.as_ref().ok_or_else(|| CommandError::Failed(graph_cmds::NO_GRAPH.to_owned()))?;
+                Snapshot::graph(doc.id, &doc.graph)
+            }
         };
         match (spec.run)(session, params) {
             // Play-mode changes to the scene are thrown away on stop, so they are not undo steps and do not dirty the file.

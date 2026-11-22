@@ -93,6 +93,13 @@ pub struct Editor {
     project: project::ProjectView,
     script_info: script_info::ScriptInfo,
     graph_view: graph_view::GraphView,
+    /// The views of the open graphs other than the one in use, by graph id.
+    graph_views: std::collections::HashMap<u64, graph_view::GraphView>,
+    /// The graph last worked in (pressed in, opened): it stays the one in use between frames.
+    graph_focus: Option<u64>,
+    /// The graphs whose tabs were drawn this frame, and last frame.
+    graphs_drawn: Vec<u64>,
+    graphs_drawn_before: Vec<u64>,
     /// A panel to bring to the front after this frame's panels are drawn.
     raise_panel: Option<Panel>,
     /// The objects last copied, as clipboard text, for Paste from a menu.
@@ -154,6 +161,10 @@ impl Default for Editor {
             project: project::ProjectView::default(),
             script_info: script_info::ScriptInfo::default(),
             graph_view: graph_view::GraphView::default(),
+            graph_views: std::collections::HashMap::new(),
+            graph_focus: None,
+            graphs_drawn: Vec::new(),
+            graphs_drawn_before: Vec::new(),
             raise_panel: None,
             clipboard: None,
             copy_out: None,
@@ -215,12 +226,36 @@ impl Editor {
         });
         self.follow_prefab_levels();
         self.graph_view.panel_rect = None;
+        for view in self.graph_views.values_mut() {
+            view.panel_rect = None;
+        }
+        self.sync_graph_tabs();
         egui::CentralPanel::default().frame(egui::Frame::new().fill(t.backdrop)).show(ui, |ui| dock::show(self, ui, gpu));
         // The material pictures the panels asked for, drawn off screen for the next frame.
         let base = self.session.script_dir();
         self.thumbnails.update(ui.ctx(), gpu, &base, &mut self.scene_view.assets);
         // A press outside the graph panel (or while it is not shown) hands the keys back from the graph.
-        if let Some(pressed) = ui.input(|i| if i.pointer.any_pressed() { i.pointer.press_origin() } else { None }) {
+        // A graph whose tab just came to the front (clicked, or opened) becomes the one in use.
+        let shown = std::mem::take(&mut self.graphs_drawn);
+        if let Some(id) = shown.iter().rev().find(|id| !self.graphs_drawn_before.contains(id)) {
+            self.graph_focus = Some(*id);
+        }
+        self.graphs_drawn_before = shown;
+        // The graph pressed in becomes the one in use; drawing several graph tabs does not change it.
+        let pressed = ui.input(|i| if i.pointer.any_pressed() { i.pointer.press_origin() } else { None });
+        if let Some(pressed) = pressed {
+            let in_use = self.session.graph().map(|g| g.id);
+            let hit = in_use
+                .filter(|_| self.graph_view.panel_rect.is_some_and(|r| r.contains(pressed)))
+                .or_else(|| self.graph_views.iter().find(|(_, v)| v.panel_rect.is_some_and(|r| r.contains(pressed))).map(|(id, _)| *id));
+            if hit.is_some() {
+                self.graph_focus = hit;
+            }
+        }
+        if let Some(focus) = self.graph_focus.filter(|id| self.session.graph_by_id(*id).is_some()) {
+            graph_view::use_graph(self, focus);
+        }
+        if let Some(pressed) = pressed {
             self.graph_view.active = self.graph_view.panel_rect.is_some_and(|panel| panel.contains(pressed));
         }
         file_drop::finish(self, ui.ctx());
@@ -339,12 +374,28 @@ impl Editor {
         self.dispatch(command, &json!({ "path": path }), None);
     }
 
-    /// Opens a material graph or visual script in the graph editor, asking first if the open graph has unsaved changes.
+    /// Opens a material graph or visual script in a tab of its own, or brings its tab forward
+    /// when it is open already.
     pub fn open_graph(&mut self, path: &std::path::Path) {
-        if self.session.graph().is_some_and(|g| g.dirty) && !confirm_discard_graph() {
+        self.dispatch("graph.open", &json!({ "path": path }), None);
+    }
+
+    /// One tab per open graph: a graph opened by a command (an agent, a script) gets its tab, a
+    /// closed one loses it, and the start tab goes once a graph has a tab.
+    fn sync_graph_tabs(&mut self) {
+        if self.dock.iter_all_tabs().next().is_none() {
             return;
         }
-        self.dispatch("graph.open", &json!({ "path": path }), None);
+        let open: Vec<u64> = self.session.graphs().iter().map(|g| g.id).collect();
+        self.dock.retain_tabs(|tab| !matches!(tab, Panel::Graph(id) if *id != 0 && !open.contains(id)));
+        for id in &open {
+            if !dock::is_open(&self.dock, Panel::Graph(*id)) {
+                dock::set_open(&mut self.dock, Panel::Graph(*id), true);
+            }
+        }
+        if !open.is_empty() {
+            self.dock.retain_tabs(|tab| *tab != Panel::Graph(0));
+        }
     }
 
     /// Opens a panel if it is hidden and brings its tab to the front, once the panels are drawn
@@ -365,6 +416,8 @@ impl Editor {
         if self.dock.iter_all_tabs().next().is_none() {
             return;
         }
+        // Tabs come and go first, so the one raised stays in front.
+        self.sync_graph_tabs();
         if let Some(panel) = self.raise_panel.take() {
             dock::set_open(&mut self.dock, panel, true);
             if let Some(path) = self.dock.find_tab(&panel) {
@@ -611,7 +664,7 @@ impl Editor {
 
     /// True when the scene or the open graph has changes that are not saved.
     pub fn has_unsaved_changes(&self) -> bool {
-        self.session.is_dirty() || self.session.graph().is_some_and(|g| g.dirty)
+        self.session.is_dirty() || self.session.graphs().iter().any(|g| g.dirty)
     }
 
     /// Copies the selected objects and their children to the clipboard; `cut` then deletes them.
@@ -839,7 +892,7 @@ impl Editor {
                     self.session.scene_path().and_then(|p| p.file_name()).map_or_else(|| "Untitled scene".to_owned(), |n| n.to_string_lossy().into_owned());
                 ui.label(egui::RichText::new(crate::i18n::tf("Scene: {name}", &[("name", &name.to_string())])).color(t.text));
             }
-            if let Some(graph) = self.session.graph().filter(|g| g.dirty) {
+            for graph in self.session.graphs().into_iter().filter(|g| g.dirty) {
                 let name = graph.path.as_ref().and_then(|p| p.file_name()).map_or_else(|| "Untitled graph".to_owned(), |n| n.to_string_lossy().into_owned());
                 ui.label(egui::RichText::new(crate::i18n::tf("Graph: {name}", &[("name", &name.to_string())])).color(t.text));
             }
@@ -893,7 +946,11 @@ impl Editor {
                 return false;
             }
         }
-        if let Some(graph) = self.session.graph().filter(|g| g.dirty).cloned() {
+        // Every open graph with changes, each made the one in use to save it.
+        let dirty: Vec<u64> = self.session.graphs().iter().filter(|g| g.dirty).map(|g| g.id).collect();
+        for id in dirty {
+            graph_view::use_graph(self, id);
+            let Some(graph) = self.session.graph().cloned() else { continue };
             let saved = match (&graph.path, graph.catalog()) {
                 (Some(_), _) => self.dispatch("graph.save", &Value::Null, None),
                 (None, Some(catalog)) => match rfd::FileDialog::new().add_filter(catalog.label, &[catalog.extension]).save_file() {
@@ -1064,8 +1121,12 @@ impl Editor {
                 {
                     self.selected = Some(created);
                 }
-                if matches!(id, "graph.new" | "graph.open") {
-                    self.show_panel(Panel::Graph);
+                if matches!(id, "graph.new" | "graph.open")
+                    && let Some(open) = self.session.graph().map(|g| g.id)
+                {
+                    self.graph_focus = Some(open);
+                    self.sync_graph_tabs();
+                    self.show_panel(Panel::Graph(open));
                 }
                 Some(result)
             }
