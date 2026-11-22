@@ -179,13 +179,21 @@ While a prefab is open, play mode, saving the scene and opening another scene or
 
 A post-processing asset (`.bpost`) says what a camera does to the drawn picture: `toneMapping`
 (`enabled`, `exposure`), `bloom` (`enabled`, `strength`, `threshold`), `color` (`enabled`, `contrast`,
-`saturation`), `vignette` (`enabled`, `strength`, `smoothness`), `depthFog` (`enabled`, `color`,
+`saturation`, `lookup`, `lookupStrength`), `vignette` (`enabled`, `strength`, `smoothness`), `depthFog` (`enabled`, `color`,
 `start`, `end`), `occlusion` (`enabled`, `strength`, `radius`) and `antialiasing`. `post.get`
 (`{path}`) reads one and `post.set` (`{path, post}`) writes it, inside the write roots; `asset.create`
 with kind `postProcessing` makes one. `scene.settings.set` takes `postProcessing` (the scene's asset),
 a Camera component's `postProcessing` field names its own (used by the Game view, the player and
 `scene.render` through that camera), and `settings.graphics.effects` in the project settings turns
 effects off for every scene (project format 8; scene format 18).
+
+`color.lookup` names a colour lookup image (post-processing version 2): N squares of N by N pixels
+side by side (N² wide, N high, N from 2 to 64), one square per step of blue, red across each square
+and green down it, all as sRGB. It maps each colour, after contrast and saturation, to the colour
+found there, blended by `lookupStrength` (0 to 1). `post.set` refuses an image of another size and
+warns of one not there yet. `post.lookup.neutral` (`{path, steps?}`, a `.png`, steps 16 unless given)
+writes one that changes no colour, to recolour in an image editor; it returns `{path, relative}` and
+does not write over a file.
 
 A Particle Emitter component (`particleEmitter`, scene format 19) starts particles while the game
 plays: its cycle (`playing`, `looping`, `duration`, `rate`, `burst`, `maxParticles`), where they start

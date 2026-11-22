@@ -14,7 +14,8 @@ pub const EXTENSION: &str = "bpost";
 /// `format` of post-processing files.
 pub const FORMAT: &str = "bayleaf.post";
 /// Current post-processing file version.
-pub const VERSION: u32 = 1;
+/// Version 2 adds the colour lookup image (`color.lookup`, `color.lookupStrength`).
+pub const VERSION: u32 = 2;
 
 /// Every effect, each on or off with its settings.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -77,11 +78,32 @@ pub struct ColorAdjustment {
     pub contrast: f32,
     /// 0 (grey) to 2; 1 as drawn.
     pub saturation: f32,
+    /// A lookup image (a project path; empty for none) that maps each colour to another: N squares of
+    /// N by N pixels side by side (so N² wide and N high, N from 2 to 64), one square for each step
+    /// of blue, red across each square and green down it, all as sRGB. Applied after contrast and
+    /// saturation.
+    #[serde(default)]
+    pub lookup: String,
+    /// How much of the lookup applies, 0 to 1.
+    #[serde(default = "full")]
+    pub lookup_strength: f32,
+}
+
+fn full() -> f32 {
+    1.0
+}
+
+/// Most steps per side of a lookup image.
+pub const MAX_LOOKUP_STEPS: u32 = 64;
+
+/// Whether an image of this size is a lookup image: N squares of N by N side by side.
+pub fn is_lookup_size(width: u32, height: u32) -> bool {
+    (2..=MAX_LOOKUP_STEPS).contains(&height) && width == height * height
 }
 
 impl Default for ColorAdjustment {
     fn default() -> Self {
-        Self { enabled: false, contrast: 1.0, saturation: 1.0 }
+        Self { enabled: false, contrast: 1.0, saturation: 1.0, lookup: String::new(), lookup_strength: 1.0 }
     }
 }
 
@@ -156,6 +178,10 @@ impl PostProcessing {
         within("bloom.threshold", self.bloom.threshold, 0.0, 16.0)?;
         within("color.contrast", self.color.contrast, 0.0, 2.0)?;
         within("color.saturation", self.color.saturation, 0.0, 2.0)?;
+        within("color.lookupStrength", self.color.lookup_strength, 0.0, 1.0)?;
+        if self.color.lookup.len() > 1024 {
+            return Err("color.lookup is longer than 1024 bytes".to_owned());
+        }
         within("vignette.strength", self.vignette.strength, 0.0, 1.0)?;
         within("vignette.smoothness", self.vignette.smoothness, 0.0, 1.0)?;
         for c in self.depth_fog.color {

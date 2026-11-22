@@ -351,7 +351,8 @@ impl EffectsAllowed {
         EffectsAllowed { tone_mapping: true, bloom: true, color: true, vignette: true, depth_fog: true, occlusion: true, antialiasing: true };
 }
 
-/// What a post-processing asset asks for, as far as `allowed` lets it.
+/// What a post-processing asset asks for, as far as `allowed` lets it; its lookup image is for the
+/// caller to load (see [`lookup_image`]).
 pub fn post_settings(post: &bayleaf_scene::post::PostProcessing, allowed: &EffectsAllowed) -> crate::PostSettings {
     let mut s = crate::PostSettings::default();
     if post.tone_mapping.enabled && allowed.tone_mapping {
@@ -365,6 +366,7 @@ pub fn post_settings(post: &bayleaf_scene::post::PostProcessing, allowed: &Effec
     if post.color.enabled && allowed.color {
         s.contrast = post.color.contrast;
         s.saturation = post.color.saturation;
+        s.lookup_strength = post.color.lookup_strength;
     }
     if post.vignette.enabled && allowed.vignette {
         s.vignette = post.vignette.strength;
@@ -388,7 +390,22 @@ fn frame_post(scene: &Scene, options: &FrameOptions, assets: &mut dyn AssetSourc
     }
     let camera = options.effects.camera.and_then(|id| scene.get::<Camera>(id)).map(|c| c.post_processing.clone()).filter(|p| !p.is_empty());
     let path = camera.or_else(|| Some(scene.settings().post_processing.clone()).filter(|p| !p.is_empty()));
-    path.and_then(|p| assets.post(&p)).map_or_else(crate::PostSettings::default, |post| post_settings(&post, &options.effects.allowed))
+    path.and_then(|p| assets.post(&p)).map_or_else(crate::PostSettings::default, |post| {
+        let mut settings = post_settings(&post, &options.effects.allowed);
+        if post.color.enabled && options.effects.allowed.color {
+            settings.lookup = lookup_image(&post, assets);
+        }
+        settings
+    })
+}
+
+/// The colour lookup image a post-processing asset names, when it loads and is one (N squares of
+/// N by N side by side).
+pub fn lookup_image(post: &bayleaf_scene::post::PostProcessing, assets: &mut dyn AssetSource) -> Option<Arc<Image>> {
+    if post.color.lookup.is_empty() {
+        return None;
+    }
+    assets.image(&post.color.lookup).filter(|i| bayleaf_scene::post::is_lookup_size(i.width, i.height))
 }
 
 /// How shadows are drawn: the same for every scene of a project.

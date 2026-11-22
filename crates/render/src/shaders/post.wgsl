@@ -16,6 +16,8 @@ struct Post {
     c: vec4<f32>,
     // x: 1 with antialiasing, yz: one pixel in uv, w: 1 with bloom
     d: vec4<f32>,
+    // x: colour lookup strength, y: its steps per side (0 without one)
+    e: vec4<f32>,
 };
 
 @group(1) @binding(0) var scene_color: texture_2d<f32>;
@@ -23,6 +25,8 @@ struct Post {
 @group(1) @binding(2) var scene_depth: texture_depth_multisampled_2d;
 @group(1) @binding(3) var post_sampler: sampler;
 @group(1) @binding(4) var<uniform> post: Post;
+// N squares of N by N side by side: blue picks the square, red runs across it and green down it.
+@group(1) @binding(5) var lookup: texture_2d<f32>;
 
 struct FullOut {
     @builtin(position) clip: vec4<f32>,
@@ -46,6 +50,32 @@ fn luma(c: vec3<f32>) -> f32 {
     return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
 }
 
+fn to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let low = c * 12.92;
+    let high = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+    return select(high, low, c <= vec3<f32>(0.0031308));
+}
+
+fn from_srgb(c: vec3<f32>) -> vec3<f32> {
+    let low = c / 12.92;
+    let high = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(high, low, c <= vec3<f32>(0.04045));
+}
+
+// A colour (linear, 0 to 1) through the lookup image: the two squares either side of its blue,
+// each sampled between pixels, then blended.
+fn looked_up(c: vec3<f32>) -> vec3<f32> {
+    let steps = post.e.y;
+    let s = clamp(to_srgb(c), vec3<f32>(0.0), vec3<f32>(1.0)) * (steps - 1.0);
+    let square = floor(s.b);
+    let next = min(square + 1.0, steps - 1.0);
+    let v = (s.g + 0.5) / steps;
+    let width = steps * steps;
+    let first = textureSampleLevel(lookup, post_sampler, vec2<f32>((square * steps + s.r + 0.5) / width, v), 0.0).rgb;
+    let second = textureSampleLevel(lookup, post_sampler, vec2<f32>((next * steps + s.r + 0.5) / width, v), 0.0).rgb;
+    return from_srgb(mix(first, second, s.b - square));
+}
+
 // Exposure, bloom, tone mapping and the colour adjustments: what a pixel of high-range colour shows as.
 fn graded(hdr: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     var c = hdr;
@@ -59,7 +89,10 @@ fn graded(hdr: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
         c = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     c = (c - vec3<f32>(0.5)) * post.b.x + vec3<f32>(0.5);
-    c = mix(vec3<f32>(luma(c)), c, post.b.y);
+    c = clamp(mix(vec3<f32>(luma(c)), c, post.b.y), vec3<f32>(0.0), vec3<f32>(1.0));
+    if (post.e.y > 1.5) {
+        c = mix(c, looked_up(c), post.e.x);
+    }
     return clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 

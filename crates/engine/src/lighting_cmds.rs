@@ -40,18 +40,70 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "post.get",
             "Read Post-processing",
-            "{path}: a post-processing asset (.bpost); returns {post: {toneMapping, bloom, color, vignette, depthFog, occlusion, antialiasing}}",
+            "{path}: a post-processing asset (.bpost); returns {post: {toneMapping, bloom, color (with lookup, lookupStrength), vignette, depthFog, occlusion, antialiasing}}",
             Mutates::No,
             post_get,
         ),
         spec(
             "post.set",
             "Change Post-processing",
-            "{path, post}: writes a post-processing asset (all of it, as post.get returns it); every scene and camera that names it changes",
+            "{path, post}: writes a post-processing asset (all of it, as post.get returns it); every scene and camera that names it changes. A colour lookup image (color.lookup) of the wrong size is refused; one not there yet is a warning",
             Mutates::No,
             post_set,
         ),
+        spec(
+            "post.lookup.neutral",
+            "Make Neutral Lookup",
+            "{path, steps?}: writes a colour lookup image (.png) that changes no colour, steps (2 to 64, default 16) squares of steps by steps side by side, to recolour in an image editor and name in color.lookup; returns {path, relative} (relative to the project). Refuses a file that is already there",
+            Mutates::No,
+            lookup_neutral,
+        ),
     ]
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NeutralParams {
+    path: PathBuf,
+    #[serde(default = "default_steps")]
+    steps: u32,
+}
+
+fn default_steps() -> u32 {
+    16
+}
+
+/// The pixels of a lookup image that maps every colour to itself.
+fn neutral_lookup(steps: u32) -> Vec<u8> {
+    let level = |v: u32| ((v * 255 + (steps - 1) / 2) / (steps - 1)) as u8;
+    let mut pixels = Vec::with_capacity((steps * steps * steps * 4) as usize);
+    for green in 0..steps {
+        for blue in 0..steps {
+            for red in 0..steps {
+                pixels.extend_from_slice(&[level(red), level(green), level(blue), 255]);
+            }
+        }
+    }
+    pixels
+}
+
+fn lookup_neutral(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: NeutralParams = parse(params)?;
+    let max = bayleaf_scene::post::MAX_LOOKUP_STEPS;
+    if !(2..=max).contains(&p.steps) {
+        return Err(CommandError::BadParams(format!("steps must be between 2 and {max}")));
+    }
+    if !p.path.to_string_lossy().to_ascii_lowercase().ends_with(".png") {
+        return Err(CommandError::BadParams("give a .png file".to_owned()));
+    }
+    let path = session.allowed(&session.script_dir().join(&p.path), Access::Write)?;
+    if path.exists() {
+        return Err(CommandError::BadParams(format!("{} is already there", path.display())));
+    }
+    let image = bayleaf_render::Image { width: p.steps * p.steps, height: p.steps, pixels: neutral_lookup(p.steps) };
+    image.write_png(&path).map_err(|e| CommandError::Failed(e.to_string()))?;
+    let relative = path.strip_prefix(session.script_dir()).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+    Ok(json!({ "path": path, "relative": relative }))
 }
 
 /// A post-processing asset's path, relative to the project folder or absolute, checked for `access`.
@@ -80,8 +132,31 @@ fn post_set(session: &mut Session, params: &Value) -> Result<Value, CommandError
     let p: PostSetParams = parse(params)?;
     p.post.validate().map_err(CommandError::BadParams)?;
     let path = post_path(session, &p.path, Access::Write)?;
+    let warnings = lookup_check(session, &p.post)?;
     p.post.save(&path)?;
-    Ok(json!({ "path": path }))
+    Ok(json!({ "path": path, "warnings": warnings }))
+}
+
+/// Refuses a colour lookup image of the wrong size; one that is not there yet is a warning.
+fn lookup_check(session: &Session, post: &bayleaf_scene::post::PostProcessing) -> Result<Vec<String>, CommandError> {
+    let name = &post.color.lookup;
+    if name.is_empty() {
+        return Ok(Vec::new());
+    }
+    let image_path = session.allowed(&session.script_dir().join(name), Access::Read)?;
+    if !image_path.is_file() {
+        return Ok(vec![format!("color.lookup {name} is not there yet; colours change once it is")]);
+    }
+    let image = bayleaf_render::assets::load_image(&image_path).map_err(|e| CommandError::BadParams(format!("color.lookup {name}: {e}")))?;
+    if !bayleaf_scene::post::is_lookup_size(image.width, image.height) {
+        return Err(CommandError::BadParams(format!(
+            "color.lookup {name} is {} by {}; a lookup image is N squares of N by N side by side (N times N wide, N high, N from 2 to {})",
+            image.width,
+            image.height,
+            bayleaf_scene::post::MAX_LOOKUP_STEPS
+        )));
+    }
+    Ok(Vec::new())
 }
 
 fn settings_get(session: &mut Session, params: &Value) -> Result<Value, CommandError> {

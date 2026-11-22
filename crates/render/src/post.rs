@@ -3,10 +3,12 @@
 //! exposure, tone mapping, colour adjustments, vignette, depth fog, ambient occlusion and
 //! antialiasing. With [`PostSettings::default`] the picture is the scene's colour, clamped.
 
+use std::sync::Arc;
+
 use crate::gpu::{COLOR_FORMAT, HDR_FORMAT, RenderTarget};
 
 /// What post-processing a frame gets. The default changes nothing.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PostSettings {
     /// Brightness before tone mapping; 1 as drawn.
     pub exposure: f32,
@@ -20,6 +22,11 @@ pub struct PostSettings {
     pub contrast: f32,
     /// 1 as drawn; 0 grey.
     pub saturation: f32,
+    /// A colour lookup image (see `bayleaf_scene::post::ColorAdjustment::lookup`), after contrast
+    /// and saturation; one of another size is not used.
+    pub lookup: Option<Arc<bayleaf_assets::Image>>,
+    /// How much of the lookup applies, 0 to 1.
+    pub lookup_strength: f32,
     /// How dark the corners go, 0 to 1; 0 for none.
     pub vignette: f32,
     /// How gradually the vignette sets in, 0 to 1.
@@ -44,6 +51,8 @@ impl Default for PostSettings {
             bloom_threshold: 1.0,
             contrast: 1.0,
             saturation: 1.0,
+            lookup: None,
+            lookup_strength: 1.0,
             vignette: 0.0,
             vignette_smoothness: 0.5,
             fog: None,
@@ -65,6 +74,12 @@ struct PostRaw {
     fog: [f32; 4],
     c: [f32; 4],
     d: [f32; 4],
+    e: [f32; 4],
+}
+
+/// The steps per side of a lookup image, when it is one.
+fn lookup_steps(image: &bayleaf_assets::Image) -> Option<u32> {
+    bayleaf_scene::post::is_lookup_size(image.width, image.height).then_some(image.height)
 }
 
 impl PostRaw {
@@ -85,6 +100,10 @@ impl PostRaw {
             fog: [fog_color[0], fog_color[1], fog_color[2], on],
             c: [finite(start, 0.0), finite(end, 1.0), finite(s.occlusion, 0.0).clamp(0.0, 1.0), finite(s.occlusion_radius, 0.5).max(0.01)],
             d: [f32::from(u8::from(s.antialiasing)), 1.0 / width.max(1) as f32, 1.0 / height.max(1) as f32, f32::from(u8::from(s.bloom > 0.0))],
+            e: match s.lookup.as_deref().and_then(lookup_steps) {
+                Some(steps) => [finite(s.lookup_strength, 1.0).clamp(0.0, 1.0), steps as f32, 0.0, 0.0],
+                None => [0.0; 4],
+            },
         }
     }
 }
@@ -98,6 +117,49 @@ pub(crate) struct Post {
     bright: wgpu::RenderPipeline,
     down: wgpu::RenderPipeline,
     up: wgpu::RenderPipeline,
+    /// The lookup image on the GPU and the id of the image it is (a 1-pixel stand-in while there is none).
+    lookup: (u64, wgpu::Texture, wgpu::TextureView),
+}
+
+/// Id of the stand-in lookup texture.
+const NO_LOOKUP: u64 = u64::MAX;
+
+/// A 1-pixel texture bound while there is no lookup image (the shader does not read it then).
+fn stand_in_lookup(device: &wgpu::Device) -> (u64, wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("bayleaf no colour lookup"),
+        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (NO_LOOKUP, texture, view)
+}
+
+/// A lookup image as a texture whose samples are its stored numbers (sRGB values, blended as they are).
+fn upload_lookup(device: &wgpu::Device, queue: &wgpu::Queue, image: &bayleaf_assets::Image) -> (u64, wgpu::Texture, wgpu::TextureView) {
+    use wgpu::util::DeviceExt as _;
+    let texture = device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some("bayleaf colour lookup"),
+            size: wgpu::Extent3d { width: image.width.max(1), height: image.height.max(1), depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &image.rgba,
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (image.id, texture, view)
 }
 
 fn texture_entry(binding: u32, sample_type: wgpu::TextureSampleType, multisampled: bool) -> wgpu::BindGroupLayoutEntry {
@@ -130,6 +192,7 @@ impl Post {
                     ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
                     count: None,
                 },
+                texture_entry(5, float, false),
             ],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -186,6 +249,7 @@ impl Post {
             layout,
             sampler,
             params,
+            lookup: stand_in_lookup(device),
         }
     }
 
@@ -199,6 +263,7 @@ impl Post {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(depth) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                 wgpu::BindGroupEntry { binding: 4, resource: self.params.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&self.lookup.2) },
             ],
         })
     }
@@ -233,7 +298,7 @@ impl Post {
 
     /// Makes the target's displayed picture from its high-range colour, as `settings` say.
     pub(crate) fn run(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -243,6 +308,11 @@ impl Post {
     ) {
         let (width, height) = target.size();
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&PostRaw::of(settings, width, height)));
+        if let Some(image) = settings.lookup.as_deref().filter(|i| lookup_steps(i).is_some())
+            && image.id != self.lookup.0
+        {
+            self.lookup = upload_lookup(device, queue, image);
+        }
         let bloom = target.bloom_views();
         if settings.bloom > 0.0 {
             // Bright parts into the first half-size picture, down the chain, then back up, adding.

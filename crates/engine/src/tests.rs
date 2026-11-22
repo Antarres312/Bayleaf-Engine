@@ -2113,6 +2113,43 @@ fn a_scenes_post_processing_asset_changes_its_render_as_far_as_the_project_allow
     let grey = centre(&mut session, "grey.png").unwrap();
     assert!(grey[0].abs_diff(grey[1]) < 8, "the scene's post-processing takes the colour out: {grey:?}");
 
+    // A colour lookup image that swaps red and blue: 8 squares of 8 by 8.
+    let steps = 8u32;
+    let mut pixels = Vec::new();
+    for g in 0..steps {
+        for b in 0..steps {
+            for r in 0..steps {
+                let level = |v: u32| (v * 255 / (steps - 1)) as u8;
+                pixels.extend_from_slice(&[level(b), level(g), level(r), 255]);
+            }
+        }
+    }
+    bayleaf_render::Image { width: steps * steps, height: steps, pixels }.write_png(&project.join("swap.png")).unwrap();
+    let mut swapped = post.clone();
+    swapped["color"] = json!({"enabled": true, "contrast": 1.0, "saturation": 1.0, "lookup": "swap.png", "lookupStrength": 1.0});
+    let set = registry.execute(&mut session, "post.set", &json!({"path": path, "post": swapped})).unwrap();
+    assert!(set["warnings"].as_array().unwrap().is_empty(), "{set}");
+    let blue = centre(&mut session, "swapped.png").unwrap();
+    assert!(blue[2] > blue[0] + 40, "the lookup turns the red cube blue: {blue:?}");
+    // An image of another size is refused, and one not there yet is only a warning.
+    bayleaf_render::Image { width: 10, height: 10, pixels: vec![255; 400] }.write_png(&project.join("square.png")).unwrap();
+    let mut wrong = swapped.clone();
+    wrong["color"]["lookup"] = json!("square.png");
+    let refused = registry.execute(&mut session, "post.set", &json!({"path": path, "post": wrong})).unwrap_err();
+    assert!(refused.to_string().contains("10 by 10"), "{refused}");
+    wrong["color"]["lookup"] = json!("later.png");
+    let later = registry.execute(&mut session, "post.set", &json!({"path": path, "post": wrong})).unwrap();
+    assert!(!later["warnings"].as_array().unwrap().is_empty(), "{later}");
+    // A neutral lookup changes nothing, and is not written over an image already there.
+    let neutral = registry.execute(&mut session, "post.lookup.neutral", &json!({"path": "neutral.png", "steps": 8})).unwrap();
+    let mut kept = post.clone();
+    kept["color"] = json!({"enabled": true, "contrast": 1.0, "saturation": 1.0, "lookup": neutral["relative"], "lookupStrength": 1.0});
+    registry.execute(&mut session, "post.set", &json!({"path": path, "post": kept})).unwrap();
+    let same = centre(&mut session, "neutral-render.png").unwrap();
+    assert!((0..3).all(|c| same[c].abs_diff(plain[c]) < 8), "a neutral lookup keeps the colour: {same:?} against {plain:?}");
+    assert!(registry.execute(&mut session, "post.lookup.neutral", &json!({"path": "swap.png"})).is_err(), "not over an image");
+    registry.execute(&mut session, "post.set", &json!({"path": path, "post": post})).unwrap();
+
     // A project that does not allow colour adjustment shows the colour again.
     let mut settings = registry.execute(&mut session, "project.settings", &Value::Null).unwrap()["settings"].clone();
     settings["graphics"]["effects"] = json!({"color": false});
@@ -2123,6 +2160,7 @@ fn a_scenes_post_processing_asset_changes_its_render_as_far_as_the_project_allow
     // Agents read and write post-processing assets only inside their folders.
     session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&project), std::slice::from_ref(&project)).unwrap()));
     assert!(registry.execute(&mut session, "post.get", &json!({"path": base.join("elsewhere.bpost")})).is_err());
+    assert!(registry.execute(&mut session, "post.lookup.neutral", &json!({"path": base.join("elsewhere.png")})).is_err(), "a lookup outside is refused");
     std::fs::remove_dir_all(&base).ok();
 }
 

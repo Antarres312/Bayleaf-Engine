@@ -2241,6 +2241,20 @@ fn the_scene_s_settings_make_a_post_processing_asset_the_inspector_edits() {
     harness.run();
     let after = bayleaf_engine::scene::post::PostProcessing::load(&project.join(&named)).unwrap();
     assert!(!after.tone_mapping.enabled, "unticking Tone Mapping writes the file through post.set");
+
+    // A neutral lookup image is written beside the asset and named in it, and the next one gets a
+    // name of its own.
+    for _ in 0..2 {
+        harness.get_by_label("Make Neutral Lookup").click();
+        harness.run_steps(2);
+    }
+    let looked = bayleaf_engine::scene::post::PostProcessing::load(&project.join(&named)).unwrap();
+    assert!(looked.color.enabled && project.join(&looked.color.lookup).is_file(), "{:?}", looked.color);
+    let lookups = std::fs::read_dir(project.join(&named).parent().unwrap())
+        .unwrap()
+        .filter(|e| e.as_ref().is_ok_and(|e| e.file_name().to_string_lossy().contains(" lookup")))
+        .count();
+    assert_eq!(lookups, 2, "the first lookup is not written over");
     std::fs::remove_dir_all(&dir).ok();
 }
 

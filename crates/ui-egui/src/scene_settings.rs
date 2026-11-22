@@ -204,7 +204,8 @@ fn new_post(editor: &mut Editor) {
 
 /// Fields for every effect of a post-processing asset, each in its own section with its switch.
 /// Returns true when one changed.
-pub(crate) fn post_editor(ui: &mut egui::Ui, post: &mut bayleaf_engine::scene::post::PostProcessing) -> bool {
+/// Edits a post-processing asset; `make_lookup` is set when the neutral lookup image is asked for.
+pub(crate) fn post_editor(ui: &mut egui::Ui, post: &mut bayleaf_engine::scene::post::PostProcessing, make_lookup: &mut bool) -> bool {
     let t = theme::tokens(ui);
     let mut changed = false;
     let number = |ui: &mut egui::Ui, label: egui::Id, width: f32, value: &mut f32, range: std::ops::RangeInclusive<f32>, speed: f64| {
@@ -230,6 +231,25 @@ pub(crate) fn post_editor(ui: &mut egui::Ui, post: &mut bayleaf_engine::scene::p
         changed |= switch(ui, &mut post.color.enabled);
         changed |= row(ui, t, "Contrast", |ui, label, width| number(ui, label, width, &mut post.color.contrast, 0.0..=2.0, 0.01));
         changed |= row(ui, t, "Saturation", |ui, label, width| number(ui, label, width, &mut post.color.saturation, 0.0..=2.0, 0.01));
+        changed |= row(ui, t, "Lookup Image", |ui, label, width| {
+            let field = egui::TextEdit::singleline(&mut post.color.lookup).hint_text(tl("None")).align(egui::Align2::LEFT_CENTER);
+            let response = ui.add_sized([width, ROW_HEIGHT], field).labelled_by(label);
+            // An image dragged from the Project panel names itself.
+            if let Some(path) = crate::value_editor::file_drop(ui, &response, |path| {
+                std::path::Path::new(path)
+                    .extension()
+                    .is_some_and(|e| bayleaf_engine::render::assets::IMAGE_EXTENSIONS.contains(&e.to_string_lossy().to_ascii_lowercase().as_str()))
+            }) {
+                post.color.lookup = path;
+                return true;
+            }
+            response.lost_focus()
+        });
+        changed |= row(ui, t, "Lookup Strength", |ui, label, width| number(ui, label, width, &mut post.color.lookup_strength, 0.0..=1.0, 0.01));
+        if ui.button(tl("Make Neutral Lookup")).on_hover_text(tl("Writes a lookup image that changes no colour, beside this file, and uses it")).clicked() {
+            *make_lookup = true;
+        }
+        note(ui, "A lookup image maps each colour to another: recolour the neutral one in an image editor and the picture follows.");
     });
     ui.add_space(theme::SECTION_GAP);
     theme::headed(t, "Vignette").show(ui, |ui| {

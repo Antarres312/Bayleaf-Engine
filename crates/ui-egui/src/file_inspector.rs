@@ -96,6 +96,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let mut save_input = None;
     let mut changed_lighting = None;
     let mut changed_post = None;
+    let mut make_lookup = false;
     let mut changed_style = None;
     let mut changed_import = None;
 
@@ -127,10 +128,13 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             changed_lighting = Some(lighting.clone());
         }
         // A post-processing asset is edited here; every scene and camera that names it changes.
-        if let Some(Ok(post)) = file.post.as_mut()
-            && crate::scene_settings::post_editor(ui, post)
-        {
-            changed_post = Some(post.clone());
+        if let Some(Ok(post)) = file.post.as_mut() {
+            if crate::scene_settings::post_editor(ui, post, &mut make_lookup) {
+                changed_post = Some(post.clone());
+            }
+            if make_lookup {
+                changed_post = Some(post.clone());
+            }
         }
 
         // An interface style file is edited here; every layout using it changes.
@@ -241,6 +245,22 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         && editor.dispatch("ui.style.set", &serde_json::json!({ "path": file.path, "style": style }), None).is_some()
     {
         file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
+    }
+    if make_lookup && let Some(mut post) = changed_post.take() {
+        // A free name beside the asset: "<name> lookup.png", then "<name> lookup 2.png" and on.
+        let stem = file.path.file_stem().map_or_else(|| "post".to_owned(), |s| s.to_string_lossy().into_owned());
+        let folder = file.path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+        let free = (1..1000).map(|i| folder.join(if i == 1 { format!("{stem} lookup.png") } else { format!("{stem} lookup {i}.png") })).find(|p| !p.exists());
+        if let Some(target) = free
+            && let Some(made) = editor.dispatch("post.lookup.neutral", &serde_json::json!({ "path": target }), None)
+        {
+            post.color.lookup = made["relative"].as_str().unwrap_or_default().to_owned();
+            post.color.enabled = true;
+            if let Some(Ok(shown)) = file.post.as_mut() {
+                *shown = post.clone();
+            }
+            changed_post = Some(post);
+        }
     }
     if let Some(post) = changed_post
         && editor.dispatch("post.set", &serde_json::json!({ "path": file.path, "post": post }), None).is_some()
