@@ -279,6 +279,8 @@ pub struct Frame {
     pub fog: (Vec3, f32),
     pub show_grid: bool,
     pub selected: Option<StableId>,
+    /// How shadows are drawn.
+    pub shadows: ShadowSettings,
     /// More selected objects, highlighted like `selected`.
     pub highlighted: Vec<StableId>,
     /// Seconds, for animated materials.
@@ -292,6 +294,41 @@ pub struct FrameOptions {
     pub selected: Option<StableId>,
     /// Seconds, for animated materials.
     pub time: f32,
+    /// How shadows are drawn (Project Settings > Graphics).
+    pub shadows: ShadowSettings,
+}
+
+/// How shadows are drawn: the same for every scene of a project.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadowSettings {
+    /// Texels per side of each shadow map: 512, 1024, 2048 or 4096.
+    pub resolution: u32,
+    /// How many maps a sun's shadow is split into by distance from the camera in a large scene, 1 to 4.
+    pub cascades: u32,
+    /// How far from the camera a sun's cascades reach, in world units; 0 for the whole scene.
+    pub reach: f32,
+    /// How many lights cast shadows at once, 1 to 4 (sun-like lights first, then the nearest).
+    pub lights: u32,
+}
+
+impl ShadowSettings {
+    pub const DEFAULT: ShadowSettings = ShadowSettings { resolution: 2048, cascades: 3, reach: 0.0, lights: 1 };
+
+    /// The same settings within the ranges the renderer takes.
+    pub fn clamped(self) -> ShadowSettings {
+        ShadowSettings {
+            resolution: self.resolution.clamp(256, 4096).next_power_of_two().min(4096),
+            cascades: self.cascades.clamp(1, 4),
+            reach: if self.reach.is_finite() { self.reach.max(0.0) } else { 0.0 },
+            lights: self.lights.clamp(1, 4),
+        }
+    }
+}
+
+impl Default for ShadowSettings {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// Light used when the scene has none, so a new scene is not black.
@@ -431,6 +468,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
         sky,
         fog,
         show_grid: options.show_grid,
+        shadows: options.shadows,
         selected: options.selected,
         highlighted: Vec::new(),
         time: options.time,
@@ -480,6 +518,7 @@ pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Ar
         sky,
         fog: (Vec3::ZERO, 0.0),
         show_grid: false,
+        shadows: ShadowSettings::DEFAULT,
         selected: None,
         highlighted: Vec::new(),
         time,
@@ -522,7 +561,7 @@ pub fn object_bounds(scene: &Scene, id: StableId) -> Option<(DVec3, f32)> {
 fn world_bounds(scene: &Scene, only: Option<StableId>) -> Option<(DVec3, f32)> {
     let origin = scene.world_matrices().first().map_or(DVec3::ZERO, |(_, m)| m.w_axis.truncate());
     let camera = CameraView { origin, ..CameraView::look_at(Vec3::ONE, Vec3::ZERO, 60.0, 1.0) };
-    let frame = extract(scene, camera, FrameOptions { show_grid: false, selected: None, time: 0.0 });
+    let frame = extract(scene, camera, FrameOptions { show_grid: false, selected: None, time: 0.0, shadows: ShadowSettings::DEFAULT });
     let (center, radius) = item_bounds(frame.items.iter().filter(|i| only.is_none_or(|id| i.object == id)))?;
     Some((origin + center.as_dvec3(), radius))
 }

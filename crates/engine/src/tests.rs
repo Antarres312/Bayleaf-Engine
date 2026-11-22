@@ -871,6 +871,11 @@ fn project_settings_are_kept_in_the_project_file_and_checked() {
     registry.execute(&mut session, "project.settings.set", &set).unwrap();
     let bad = json!({"settings": {"physics": {"enabled": true, "gravity": [0, -1e9, 0]}}});
     assert!(registry.execute(&mut session, "project.settings.set", &bad).is_err(), "gravity has a limit");
+    for graphics in [json!({"shadowResolution": 3000}), json!({"shadowCascades": 0}), json!({"shadowLights": 9}), json!({"shadowDistance": -1})] {
+        assert!(registry.execute(&mut session, "project.settings.set", &json!({"settings": {"graphics": graphics}})).is_err(), "{graphics} is refused");
+    }
+    let graphics = json!({"settings": {"physics": {"enabled": false, "gravity": [0, -3.7, 0]}, "editor": {"hideExtensions": false}, "graphics": {"shadowResolution": 4096, "shadowLights": 3}}});
+    registry.execute(&mut session, "project.settings.set", &graphics).unwrap();
 
     // A fresh session that opens the project reads them back from the file.
     let mut other = Session::default();
@@ -879,6 +884,8 @@ fn project_settings_are_kept_in_the_project_file_and_checked() {
     assert_eq!(read["settings"]["physics"]["enabled"], false);
     assert!((read["settings"]["physics"]["gravity"][1].as_f64().unwrap() + 3.7).abs() < 1e-5);
     assert_eq!(read["settings"]["editor"]["hideExtensions"], false);
+    let shadows = crate::project_cmds::settings_of(&other).graphics.shadows();
+    assert_eq!((shadows.resolution, shadows.lights), (4096, 3), "the views draw shadows as the project says");
     std::fs::remove_dir_all(&dir).ok();
 }
 

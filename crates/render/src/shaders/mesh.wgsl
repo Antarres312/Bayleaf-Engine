@@ -70,18 +70,26 @@ fn geometry_schlick_ggx(n_dot_x: f32, k: f32) -> f32 {
     return n_dot_x / (n_dot_x * (1.0 - k) + k);
 }
 
-// How much of the shadow-casting light reaches a point: 1 lit, 0 in shadow. Nine taps of the
+// How much of shadow-casting light `slot` reaches a point: 1 lit, 0 in shadow. Nine taps of the
 // shadow map (percentage-closer filtering) soften the edge.
-fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
+fn shadow_factor(slot: u32, world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
+    let info = globals.shadow_lights[slot];
+    let mode = globals.shadow_modes[slot].y;
+    let first = i32(info.w);
     var face = 0;
-    var bias = globals.shadow.y;
-    var offset_along_normal = globals.shadow.w;
-    if (globals.shadow_extra.y > 1.5) {
-        // Sun cascades: the slice of view depth the point lies in. Each cascade's texel size, and
-        // so its bias, comes from its matrix.
+    var bias = info.y;
+    var offset_along_normal = info.z;
+    if (mode > 1.5) {
+        // Sun cascades: the slice of view depth the point lies in; past the last one, no shadow.
+        // Each cascade's texel size, and so its bias, comes from its matrix.
         let depth = (globals.view_proj * vec4<f32>(world_pos, 1.0)).w;
-        face = select(select(0, 1, depth >= globals.shadow_extra.z), 2, depth >= globals.shadow_extra.w);
-        let m = globals.shadow_faces[face];
+        let splits = globals.shadow_splits[slot];
+        let count = i32(globals.shadow_modes[slot].x);
+        face = select(0, 1, depth >= splits.x) + select(0, 1, depth >= splits.y) + select(0, 1, depth >= splits.z) + select(0, 1, depth >= splits.w);
+        if (face >= count) {
+            return 1.0;
+        }
+        let m = globals.shadow_faces[first + face];
         let texel = 2.0 / max(length(m[0].xyz), 1e-6) / f32(textureDimensions(shadow_map).x);
         // How much depth one world unit along the light makes: the length of the matrix's depth row.
         bias = texel * length(vec3<f32>(m[0].z, m[1].z, m[2].z)) * 1.5;
@@ -90,8 +98,8 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     // Pushing the point out along the normal keeps surfaces from shadowing themselves.
     let pushed = world_pos + n * offset_along_normal;
     // Around a point light, the face the point lies in: the main direction from the light.
-    if (globals.shadow_extra.y > 0.5 && globals.shadow_extra.y < 1.5) {
-        let d = pushed - globals.lights[u32(globals.shadow.x)].position.xyz;
+    if (mode > 0.5 && mode < 1.5) {
+        let d = pushed - globals.lights[u32(info.x)].position.xyz;
         let a = abs(d);
         if (a.x >= a.y && a.x >= a.z) {
             face = select(1, 0, d.x > 0.0);
@@ -101,7 +109,8 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
             face = select(5, 4, d.z > 0.0);
         }
     }
-    let p = globals.shadow_faces[face] * vec4<f32>(pushed, 1.0);
+    let layer = first + face;
+    let p = globals.shadow_faces[layer] * vec4<f32>(pushed, 1.0);
     // Behind a spot light: outside its shadow map.
     if (p.w <= 0.0) {
         return 1.0;
@@ -114,8 +123,8 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     var lit = 0.0;
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
-            let offset = vec2<f32>(f32(x), f32(y)) * globals.shadow.z;
-            lit = lit + textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, face, ndc.z - bias);
+            let offset = vec2<f32>(f32(x), f32(y)) * globals.shadow_count.y;
+            lit = lit + textureSampleCompareLevel(shadow_map, shadow_sampler, uv + offset, layer, ndc.z - bias);
         }
     }
     return lit / 9.0;
@@ -270,8 +279,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
                 falloff = falloff * smoothstep(light.radiance.w, max(light.extra.x, light.radiance.w + 1e-4), along);
             }
         }
-        if (f32(index) == globals.shadow.x) {
-            falloff = falloff * shadow_factor(in.world_pos, geometric);
+        for (var slot = 0u; slot < u32(globals.shadow_count.x); slot = slot + 1u) {
+            if (f32(index) == globals.shadow_lights[slot].x) {
+                falloff = falloff * shadow_factor(slot, in.world_pos, geometric);
+            }
         }
         let h = normalize(v + l);
         let n_dot_l = max(dot(n, l), 0.0);

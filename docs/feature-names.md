@@ -31,6 +31,7 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Functions, Function, Return, Call Function, Add Function, Inputs, Outputs, Add Input, Add Output, Call | not yet | Not checked yet | Generic programming terms; same |
 | Platform, Scripts, Interpreted, Compiled to machine code, Native, Check, Check Again, Export, Folder | not yet | Not checked yet | Generic terms in the Export Game window; same |
 | Lighting (asset kind), Scene Settings, Sky Color, Horizon Color, Ground Color, Ambient, Show Sky, Fog Distance, Sun, The engine's | not yet | Not checked yet | Generic terms; same |
+| Graphics (Project Settings category), Shadows, Resolution, Shadow Lights, Sun Shadows, Cascades, Distance | not yet | Not checked yet | Generic terms; same |
 | Export Game, Game, Icon | not yet | Not checked yet | Generic terms; same |
 | Object (pin type), This Object, Find Object Named, Find Object With, Count Objects With, For Each Object With, Destroy Object, Object Name, Component, Tag or Script, Found, Each, Index, Find (category) | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Preferences, Hide file extensions, Project Panel (settings section) | not yet | Not checked yet | Generic editor terms; same |

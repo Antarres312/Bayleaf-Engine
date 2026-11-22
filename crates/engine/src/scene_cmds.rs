@@ -434,7 +434,8 @@ fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandE
     let allow = |path: &std::path::Path| session.allowed(path, crate::confine::Access::Read).map_err(|e| e.to_string());
     let mut assets =
         bayleaf_render::FileAssets { base: session.script_dir(), materials: &mut materials, cache: &mut cache, allow: &allow, warnings: Vec::new() };
-    let options = bayleaf_render::FrameOptions { show_grid: p.grid, selected: None, time: 0.0 };
+    let shadows = crate::project_cmds::settings_of(session).graphics.shadows();
+    let options = bayleaf_render::FrameOptions { show_grid: p.grid, selected: None, time: 0.0, shadows };
     let frame = bayleaf_render::extract_with(scene, camera, options, &mut assets);
     let warnings = assets.warnings;
     let gpu = bayleaf_render::HeadlessGpu::new().map_err(|e| CommandError::Failed(e.to_string()))?;

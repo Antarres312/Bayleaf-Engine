@@ -22,9 +22,8 @@ struct Globals {
     ambient: vec4<f32>,
     // World to the shadow map of the light that casts shadows.
     light_view_proj: mat4x4<f32>,
-    // x: index of the light that casts shadows, or -1; y: depth bias; z: one shadow-map texel in uv;
-    // w: how far to push points out along their normal before the test, in world units
-    shadow: vec4<f32>,
+    // x: lights casting shadows, y: one shadow-map texel in uv
+    shadow_count: vec4<f32>,
     // rgb: ambient light from below
     ambient_ground: vec4<f32>,
     // Clip space back to the world, for the sky's view directions.
@@ -35,11 +34,16 @@ struct Globals {
     sky_ground: vec4<f32>,
     // rgb: fog colour, w: fog density per world unit (0: no fog)
     fog: vec4<f32>,
-    // World to each face of the shadow map (one for a sun or spot light; +X, -X, +Y, -Y, +Z, -Z
-    // around a point light).
-    shadow_faces: array<mat4x4<f32>, 6>,
-    // x: faces in use
-    shadow_extra: vec4<f32>,
+    // Per light casting shadows: x: its index in `lights`, y: depth bias, z: how far to push points
+    // out along their normal, w: its first layer.
+    shadow_lights: array<vec4<f32>, 4>,
+    // Per light casting shadows: x: its layers, y: 0 one face, 1 six around a point light (+X, -X,
+    // +Y, -Y, +Z, -Z), 2 sun cascades by view depth.
+    shadow_modes: array<vec4<f32>, 4>,
+    // Per light casting shadows: the view depths where its later cascades start, then the last's end.
+    shadow_splits: array<vec4<f32>, 4>,
+    // World to each layer of the shadow map.
+    shadow_faces: array<mat4x4<f32>, 24>,
     // The ground grid from the eye: x, z: the world's position modulo 10 under the eye, y: the ground's
     // height (world y = 0).
     grid: vec4<f32>,

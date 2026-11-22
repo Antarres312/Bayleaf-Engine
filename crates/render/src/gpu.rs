@@ -34,16 +34,24 @@ struct Globals {
     camera_pos: [f32; 4],
     ambient: [f32; 4],
     light_view_proj: [[f32; 4]; 4],
-    shadow: [f32; 4],
+    // x: lights casting shadows, y: one shadow-map texel in uv.
+    shadow_count: [f32; 4],
     ambient_ground: [f32; 4],
     inv_view_proj: [[f32; 4]; 4],
     sky_zenith: [f32; 4],
     sky_horizon: [f32; 4],
     sky_ground: [f32; 4],
     fog: [f32; 4],
-    shadow_faces: [[[f32; 4]; 4]; SHADOW_FACES],
-    // x: faces in use (1, or 6 for a point light)
-    shadow_extra: [f32; 4],
+    // Per light casting shadows: x: its index in `lights`, y: depth bias, z: how far to push tested
+    // points along their normal, w: its first layer of the shadow map.
+    shadow_lights: [[f32; 4]; MAX_SHADOW_LIGHTS],
+    // Per light casting shadows: x: its layers, y: 0 one face, 1 six faces around a point light,
+    // 2 sun cascades by view depth.
+    shadow_modes: [[f32; 4]; MAX_SHADOW_LIGHTS],
+    // Per light casting shadows: the view depths where its second, third and fourth cascades start.
+    shadow_splits: [[f32; 4]; MAX_SHADOW_LIGHTS],
+    // World to each layer of the shadow map.
+    shadow_faces: [[[f32; 4]; 4]; MAX_SHADOW_LAYERS],
     // The ground grid in view coordinates: x, z: the world's position modulo 10 under the eye (the
     // grid's pattern), y: the height of the ground (world y = 0) from the eye.
     grid: [f32; 4],
@@ -52,11 +60,12 @@ struct Globals {
     lights: [LightRaw; MAX_LIGHTS],
 }
 
-/// Size of the shadow map, in texels per side.
-const SHADOW_SIZE: u32 = 2048;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-/// Layers of the shadow map: the six faces around a point light.
+/// Faces of a point light's shadow: six around it.
 const SHADOW_FACES: usize = 6;
+/// Most lights that cast shadows at once, and most shadow-map layers they use together.
+const MAX_SHADOW_LIGHTS: usize = 4;
+const MAX_SHADOW_LAYERS: usize = MAX_SHADOW_LIGHTS * SHADOW_FACES;
 /// Bytes between face matrices in the face buffer (the uniform offset alignment).
 const FACE_STRIDE: u64 = 256;
 
@@ -160,8 +169,11 @@ pub struct Renderer {
     meshes: Vec<(Shape, GpuMesh)>,
     instances: wgpu::Buffer,
     instance_capacity: usize,
-    /// The shadow map's layers, to draw into.
+    /// The shadow map's layers, to draw into, and its size per side.
     shadow_layers: Vec<wgpu::TextureView>,
+    shadow_size: u32,
+    shadow_layout: wgpu::BindGroupLayout,
+    shadow_sampler: wgpu::Sampler,
     shadow_faces: wgpu::Buffer,
     shadow_face_group: wgpu::BindGroup,
     shadow_group: wgpu::BindGroup,
@@ -202,34 +214,10 @@ impl Renderer {
             layout: &globals_layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
         });
-        // The shadow map: written by the shadow pass, read with a comparison sampler by the shapes.
-        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("bayleaf shadow map"),
-            size: wgpu::Extent3d { width: SHADOW_SIZE, height: SHADOW_SIZE, depth_or_array_layers: SHADOW_FACES as u32 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: SHADOW_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        // One layer per face: a sun or spot light uses the first, a point light all six.
-        let shadow_view =
-            shadow_texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
-        let shadow_layers: Vec<wgpu::TextureView> = (0..SHADOW_FACES as u32)
-            .map(|layer| {
-                shadow_texture.create_view(&wgpu::TextureViewDescriptor {
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_array_layer: layer,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                })
-            })
-            .collect();
-        // Each face's matrix, at its own offset, for the shadow pass.
+        // Each layer's matrix, at its own offset, for the shadow pass.
         let shadow_faces = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bayleaf shadow faces"),
-            size: FACE_STRIDE * SHADOW_FACES as u64,
+            size: FACE_STRIDE * MAX_SHADOW_LAYERS as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -278,14 +266,8 @@ impl Renderer {
                 },
             ],
         });
-        let shadow_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bayleaf shadow group"),
-            layout: &shadow_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&shadow_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&shadow_sampler) },
-            ],
-        });
+        // A small map for now; the first frame makes it the size the frame's settings ask for.
+        let (shadow_group, shadow_layers) = shadow_map(device, &shadow_layout, &shadow_sampler, 1, 1);
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bayleaf texture layout"),
             entries: &[
@@ -377,6 +359,9 @@ impl Renderer {
             instances,
             instance_capacity,
             shadow_layers,
+            shadow_size: 1,
+            shadow_layout,
+            shadow_sampler,
             shadow_faces,
             shadow_face_group,
             shadow_group,
@@ -478,8 +463,17 @@ impl Renderer {
 
     /// Records and submits the commands that draw `frame` into `target`.
     pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, target: &RenderTarget, frame: &Frame) {
-        let shadow = shadow_view(frame);
-        let globals = globals_for(frame, shadow.as_ref());
+        // The shadow map as large, and with as many layers, as the frame's settings ask for.
+        let settings = frame.shadows.clamped();
+        let layers = settings.lights as usize * SHADOW_FACES;
+        if self.shadow_size != settings.resolution || self.shadow_layers.len() != layers {
+            let (group, views) = shadow_map(device, &self.shadow_layout, &self.shadow_sampler, settings.resolution, layers as u32);
+            self.shadow_group = group;
+            self.shadow_layers = views;
+            self.shadow_size = settings.resolution;
+        }
+        let shadows = shadow_views(frame, &settings);
+        let globals = globals_for(frame, &shadows, settings.resolution);
         queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         for material in frame.items.iter().filter_map(|i| i.material.as_deref()) {
             self.prepare(device, material);
@@ -504,12 +498,13 @@ impl Renderer {
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("bayleaf frame") });
-        if let Some(view) = &shadow {
-            for (face, matrix) in view.faces.iter().enumerate() {
-                queue.write_buffer(&self.shadow_faces, face as u64 * FACE_STRIDE, bytemuck::bytes_of(&matrix.to_cols_array_2d()));
-            }
-            // The opaque shapes, as seen from the light, into each face of the shadow map.
-            for face in 0..view.faces.len() {
+        let faces: Vec<Mat4> = shadows.iter().flat_map(|v| v.faces.iter().copied()).collect();
+        for (layer, matrix) in faces.iter().enumerate() {
+            queue.write_buffer(&self.shadow_faces, layer as u64 * FACE_STRIDE, bytemuck::bytes_of(&matrix.to_cols_array_2d()));
+        }
+        // The opaque shapes, as seen from each light that casts shadows, into its layers.
+        {
+            for face in 0..faces.len() {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("bayleaf shadow pass"),
                     color_attachments: &[],
@@ -765,7 +760,49 @@ fn indices(item: &DrawItem, mesh: &GpuMesh) -> std::ops::Range<u32> {
     }
 }
 
-fn globals_for(frame: &Frame, shadow: Option<&ShadowView>) -> Globals {
+/// A shadow map of `layers` layers, `size` texels a side, as the shapes read it (with the comparison
+/// sampler), and a view of each layer to draw into.
+fn shadow_map(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    size: u32,
+    layers: u32,
+) -> (wgpu::BindGroup, Vec<wgpu::TextureView>) {
+    let layers = layers.max(1);
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("bayleaf shadow map"),
+        size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: layers },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: SHADOW_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let whole = texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
+    let views = (0..layers)
+        .map(|layer| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: layer,
+                array_layer_count: Some(1),
+                ..Default::default()
+            })
+        })
+        .collect();
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bayleaf shadow group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&whole) },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+        ],
+    });
+    (group, views)
+}
+
+fn globals_for(frame: &Frame, shadows: &[ShadowView], shadow_size: u32) -> Globals {
     let mut lights = [LightRaw { direction: [0.0; 4], position: [0.0; 4], radiance: [0.0; 4], extra: [0.0; 4] }; MAX_LIGHTS];
     for (slot, light) in lights.iter_mut().zip(&frame.lights) {
         let kind = match light.kind {
@@ -782,16 +819,27 @@ fn globals_for(frame: &Frame, shadow: Option<&ShadowView>) -> Globals {
     }
     let count = frame.lights.len().min(MAX_LIGHTS) as f32;
     let sky = frame.sky.unwrap_or(crate::extract::Sky { zenith: Vec3::ZERO, horizon: Vec3::ZERO, ground: Vec3::ZERO });
-    let (index, light_view_proj, bias, normal_offset) = match shadow {
-        Some(view) => (view.index as f32, view.faces[0], view.bias, view.normal_offset),
-        None => (-1.0, Mat4::IDENTITY, 0.0, 0.0),
-    };
+    let light_view_proj = shadows.first().map_or(Mat4::IDENTITY, |v| v.faces[0]);
+    let mut shadow_lights = [[-1.0, 0.0, 0.0, 0.0]; MAX_SHADOW_LIGHTS];
+    let mut shadow_modes = [[0.0; 4]; MAX_SHADOW_LIGHTS];
+    let mut shadow_splits = [[0.0; 4]; MAX_SHADOW_LIGHTS];
+    let mut shadow_faces = [Mat4::IDENTITY.to_cols_array_2d(); MAX_SHADOW_LAYERS];
+    let mut first = 0usize;
+    for (slot, view) in shadows.iter().take(MAX_SHADOW_LIGHTS).enumerate() {
+        shadow_lights[slot] = [view.index as f32, view.bias, view.normal_offset, first as f32];
+        shadow_modes[slot] = [view.faces.len() as f32, view.mode, 0.0, 0.0];
+        shadow_splits[slot] = view.splits;
+        for (layer, face) in shadow_faces.iter_mut().skip(first).zip(&view.faces) {
+            *layer = face.to_cols_array_2d();
+        }
+        first += view.faces.len();
+    }
     Globals {
         view_proj: frame.camera.view_proj().to_cols_array_2d(),
         camera_pos: frame.camera.position.extend(frame.time).to_array(),
         ambient: frame.ambient.extend(count).to_array(),
         light_view_proj: light_view_proj.to_cols_array_2d(),
-        shadow: [index, bias, 1.0 / SHADOW_SIZE as f32, normal_offset],
+        shadow_count: [shadows.len().min(MAX_SHADOW_LIGHTS) as f32, 1.0 / shadow_size.max(1) as f32, 0.0, 0.0],
         ambient_ground: frame.ambient_ground.extend(0.0).to_array(),
         inv_view_proj: frame.camera.view_proj().inverse().to_cols_array_2d(),
         sky_zenith: sky.zenith.extend(0.0).to_array(),
@@ -799,8 +847,10 @@ fn globals_for(frame: &Frame, shadow: Option<&ShadowView>) -> Globals {
         sky_horizon: sky.horizon.extend(if frame.sky.is_some() { 1.0 } else { 0.0 }).to_array(),
         sky_ground: sky.ground.extend(0.0).to_array(),
         fog: frame.fog.0.extend(frame.fog.1).to_array(),
-        shadow_faces: std::array::from_fn(|i| shadow.as_ref().and_then(|v| v.faces.get(i)).copied().unwrap_or(Mat4::IDENTITY).to_cols_array_2d()),
-        shadow_extra: shadow.map_or([0.0; 4], |v| [v.faces.len() as f32, v.mode, v.splits[0], v.splits[1]]),
+        shadow_lights,
+        shadow_modes,
+        shadow_splits,
+        shadow_faces,
         grid: {
             let origin = frame.camera.origin;
             [origin.x.rem_euclid(10.0) as f32, (-origin.y) as f32, origin.z.rem_euclid(10.0) as f32, 0.0]
@@ -819,73 +869,96 @@ struct ShadowView {
     faces: Vec<Mat4>,
     /// 0: one face; 1: six faces around a point light; 2: sun cascades, picked by view depth.
     mode: f32,
-    /// View depths where the second and third cascades start.
-    splits: [f32; 2],
+    /// View depths where the second, third and fourth cascades start (beyond the last cascade's
+    /// end nothing is shadowed).
+    splits: [f32; 4],
     /// In shadow-map depth units.
     bias: f32,
     /// Along the normal, in world units.
     normal_offset: f32,
 }
 
-/// The first light that casts shadows (sun-like lights come first, then the nearest): a
-/// directional light is seen orthographically so the map covers every drawn shape, a spot light
-/// through its cone, a point light through six faces around it. One light casts shadows at a time.
-fn shadow_view(frame: &Frame) -> Option<ShadowView> {
-    let index = frame.lights.iter().position(|l| l.shadows)?;
-    let light = &frame.lights[index];
-    match light.kind {
-        LightKind::Directional => {
-            let (center, radius) = crate::extract::item_bounds(frame.items.iter().filter(|i| !i.unlit))?;
-            let radius = radius.max(0.5);
-            let dir = light.direction.normalize_or(Vec3::NEG_Y);
-            let eye = center - dir * radius * 2.0;
-            let view = Mat4::look_at_rh(eye, center, up_for(dir));
-            let matrix = Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.01, radius * 4.0) * view;
-            // One texel of world size: the box width 2r maps to 2 in x.
-            let texel = 2.0 / matrix.x_axis.truncate().length().max(1e-6) / SHADOW_SIZE as f32;
-            // Depth per world unit along the light: the length of the matrix's depth row.
-            let bias = texel * Vec3::new(matrix.x_axis.z, matrix.y_axis.z, matrix.z_axis.z).length() * 1.5;
-            if radius > CASCADE_MIN_RADIUS && frame.camera.proj.w_axis.w == 0.0 {
-                return Some(cascades(frame, index, dir, center, radius));
+/// The lights that cast shadows, as many as `settings` allow (sun-like lights come first, then the
+/// nearest), with their faces: a directional light is seen orthographically so the map covers every
+/// drawn shape (or in cascades by view depth), a spot light through its cone, a point light through
+/// six faces around it.
+fn shadow_views(frame: &Frame, settings: &crate::extract::ShadowSettings) -> Vec<ShadowView> {
+    let size = settings.resolution.max(1) as f32;
+    let mut views = Vec::new();
+    for (index, light) in frame.lights.iter().enumerate().filter(|(_, l)| l.shadows).take(settings.lights as usize) {
+        let view = match light.kind {
+            LightKind::Directional => {
+                let Some((center, radius)) = crate::extract::item_bounds(frame.items.iter().filter(|i| !i.unlit)) else { continue };
+                let radius = radius.max(0.5);
+                let dir = light.direction.normalize_or(Vec3::NEG_Y);
+                // Cascades follow the camera in a large scene, or when the shadow reaches less far than the scene.
+                let large = settings.cascades > 1 && radius > CASCADE_MIN_RADIUS;
+                let limited = settings.reach > 0.0 && settings.reach < frame.camera.position.distance(center) + radius;
+                if (large || limited) && frame.camera.proj.w_axis.w == 0.0 {
+                    cascades(frame, index, dir, center, radius, settings)
+                } else {
+                    let eye = center - dir * radius * 2.0;
+                    let view = Mat4::look_at_rh(eye, center, up_for(dir));
+                    let matrix = Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.01, radius * 4.0) * view;
+                    // One texel of world size: the box width 2r maps to 2 in x.
+                    let texel = 2.0 / matrix.x_axis.truncate().length().max(1e-6) / size;
+                    // Depth per world unit along the light: the length of the matrix's depth row.
+                    let bias = texel * Vec3::new(matrix.x_axis.z, matrix.y_axis.z, matrix.z_axis.z).length() * 1.5;
+                    ShadowView { index, faces: vec![matrix], mode: 0.0, splits: [0.0; 4], bias, normal_offset: texel * 1.5 }
+                }
             }
-            Some(ShadowView { index, faces: vec![matrix], mode: 0.0, splits: [0.0; 2], bias, normal_offset: texel * 1.5 })
-        }
-        LightKind::Spot => {
-            let half = light.cos_outer.clamp(-1.0, 1.0).acos().clamp(0.01, 1.55);
-            let dir = light.direction.normalize_or(Vec3::NEG_Y);
-            let (near, far) = (SPOT_SHADOW_NEAR, light.range.max(SPOT_SHADOW_NEAR * 2.0));
-            let matrix = Mat4::perspective_rh(half * 2.0, 1.0, near, far) * Mat4::look_at_rh(light.position, light.position + dir, up_for(dir));
-            // Texel size a third of the way out, where shadows usually fall.
-            let texel = 2.0 * half.tan() * far / 3.0 / SHADOW_SIZE as f32;
-            Some(ShadowView { index, faces: vec![matrix], mode: 0.0, splits: [0.0; 2], bias: SPOT_SHADOW_BIAS, normal_offset: texel * 1.5 })
-        }
-        LightKind::Point => {
-            let (near, far) = (SPOT_SHADOW_NEAR, light.range.max(SPOT_SHADOW_NEAR * 2.0));
-            // A little wider than a quarter turn, so the filter's taps near a face's edge stay on it.
-            let fov = 2.0 * POINT_FACE_SPREAD.atan();
-            let proj = Mat4::perspective_rh(fov, 1.0, near, far);
-            let faces = POINT_FACES.iter().map(|(dir, up)| proj * Mat4::look_at_rh(light.position, light.position + *dir, *up)).collect();
-            let texel = 2.0 * POINT_FACE_SPREAD * far / 3.0 / SHADOW_SIZE as f32;
-            Some(ShadowView { index, faces, mode: 1.0, splits: [0.0; 2], bias: SPOT_SHADOW_BIAS, normal_offset: texel * 1.5 })
-        }
+            LightKind::Spot => {
+                let half = light.cos_outer.clamp(-1.0, 1.0).acos().clamp(0.01, 1.55);
+                let dir = light.direction.normalize_or(Vec3::NEG_Y);
+                let (near, far) = (SPOT_SHADOW_NEAR, light.range.max(SPOT_SHADOW_NEAR * 2.0));
+                let matrix = Mat4::perspective_rh(half * 2.0, 1.0, near, far) * Mat4::look_at_rh(light.position, light.position + dir, up_for(dir));
+                // Texel size a third of the way out, where shadows usually fall.
+                let texel = 2.0 * half.tan() * far / 3.0 / size;
+                ShadowView { index, faces: vec![matrix], mode: 0.0, splits: [0.0; 4], bias: SPOT_SHADOW_BIAS, normal_offset: texel * 1.5 }
+            }
+            LightKind::Point => {
+                let (near, far) = (SPOT_SHADOW_NEAR, light.range.max(SPOT_SHADOW_NEAR * 2.0));
+                // A little wider than a quarter turn, so the filter's taps near a face's edge stay on it.
+                let fov = 2.0 * POINT_FACE_SPREAD.atan();
+                let proj = Mat4::perspective_rh(fov, 1.0, near, far);
+                let faces = POINT_FACES.iter().map(|(dir, up)| proj * Mat4::look_at_rh(light.position, light.position + *dir, *up)).collect();
+                let texel = 2.0 * POINT_FACE_SPREAD * far / 3.0 / size;
+                ShadowView { index, faces, mode: 1.0, splits: [0.0; 4], bias: SPOT_SHADOW_BIAS, normal_offset: texel * 1.5 }
+            }
+        };
+        views.push(view);
     }
+    views
 }
 
 /// Scenes with a bounding radius above this get sun shadows in cascades.
 const CASCADE_MIN_RADIUS: f32 = 40.0;
-/// Where the cascades split the view depth up to the far side of the scene.
-const CASCADE_SPLITS: [f32; 4] = [0.0, 0.06, 0.25, 1.0];
+/// Where 1, 2, 3 or 4 cascades split the view depth they cover, as fractions of it: nearer slices
+/// smaller.
+fn cascade_splits(count: u32) -> &'static [f32] {
+    match count {
+        0..=1 => &[0.0, 1.0],
+        2 => &[0.0, 0.15, 1.0],
+        3 => &[0.0, 0.06, 0.25, 1.0],
+        _ => &[0.0, 0.04, 0.12, 0.35, 1.0],
+    }
+}
 
-/// Three shadow maps for a sun: each covers a slice of what the camera sees, nearer slices smaller,
-/// so shadows close by stay sharp in a large world.
-fn cascades(frame: &Frame, index: usize, dir: Vec3, scene_center: Vec3, scene_radius: f32) -> ShadowView {
+/// Shadow maps for a sun, one per cascade: each covers a slice of what the camera sees, nearer
+/// slices smaller, so shadows close by stay sharp in a large world. They reach to the far side of
+/// the scene, or as far as the settings say.
+fn cascades(frame: &Frame, index: usize, dir: Vec3, scene_center: Vec3, scene_radius: f32, settings: &crate::extract::ShadowSettings) -> ShadowView {
     let camera = &frame.camera;
     let forward = camera.view.inverse().transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Z);
     let inverse = camera.view_proj().inverse();
     let rays: Vec<Vec3> =
         [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].iter().map(|(x, y)| inverse.project_point3(Vec3::new(*x, *y, 1.0)) - camera.position).collect();
-    let far = (camera.position.distance(scene_center) + scene_radius).max(1.0);
-    let depths = CASCADE_SPLITS.map(|s| (s * far).max(0.05));
+    let mut far = (camera.position.distance(scene_center) + scene_radius).max(1.0);
+    if settings.reach > 0.0 {
+        far = far.min(settings.reach);
+    }
+    let depths: Vec<f32> = cascade_splits(settings.cascades).iter().map(|s| (s * far).max(0.05)).collect();
+    let size = settings.resolution.max(1) as f32;
     let mut faces = Vec::new();
     for slice in depths.windows(2) {
         let corners: Vec<Vec3> = slice.iter().flat_map(|d| rays.iter().map(move |ray| camera.position + *ray * (*d / ray.dot(forward).max(1e-4)))).collect();
@@ -897,14 +970,19 @@ fn cascades(frame: &Frame, index: usize, dir: Vec3, scene_center: Vec3, scene_ra
         let mut eye = center - dir * back;
         // Moving in whole texels keeps shadow edges from crawling as the camera moves.
         let view = Mat4::look_at_rh(eye, center, up);
-        let texel = 2.0 * radius / SHADOW_SIZE as f32;
+        let texel = 2.0 * radius / size;
         let local = view.transform_point3(center);
         let snapped = Vec3::new((local.x / texel).round() * texel, (local.y / texel).round() * texel, local.z);
         eye += view.inverse().transform_vector3(snapped - local);
         let view = Mat4::look_at_rh(eye, eye + dir, up);
         faces.push(Mat4::orthographic_rh(-radius, radius, -radius, radius, 0.01, back * 2.0 + radius) * view);
     }
-    ShadowView { index, faces, mode: 2.0, splits: [depths[1], depths[2]], bias: 0.0, normal_offset: 0.0 }
+    // Where each later cascade starts, then where the last one ends.
+    let mut splits = [f32::MAX; 4];
+    for (slot, depth) in splits.iter_mut().zip(depths.iter().skip(1)) {
+        *slot = *depth;
+    }
+    ShadowView { index, faces, mode: 2.0, splits, bias: 0.0, normal_offset: 0.0 }
 }
 
 /// The directions and up vectors of a point light's faces, in the order the shader picks them:

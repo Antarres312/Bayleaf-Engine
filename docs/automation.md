@@ -147,3 +147,10 @@ error. Today only this computer's system and `interpreted` export; the check say
 light around everything, fog and a sun for scenes without a Directional Light: `lighting.get`
 (`{path}`) reads one and `lighting.set` (`{path, lighting}`) writes it, inside the write roots;
 `asset.create` with kind `lighting` makes one.
+
+`settings.graphics` in `project.settings.set` sets how every scene's shadows are drawn, in the
+editor's views, `scene.render` and the exported game: `shadowResolution` (texels per side of each
+shadow map: 512, 1024, 2048 or 4096), `shadowCascades` (how many maps a sun's shadow is split
+into by distance from the camera in a large scene, 1 to 4), `shadowDistance` (how far a sun's
+shadow reaches from the camera, in world units; 0 for the whole scene) and `shadowLights` (how
+many lights cast shadows at once, 1 to 4, sun-like lights first). Project format version 7.

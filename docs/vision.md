@@ -265,8 +265,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
    refuses while it finds an error. Still open: other systems than the one exporting, a player built with
    only the game's modules, the program file's own icon, and the script modes.
 10. **M9 Scene settings and lighting** (started: the grid is drawn again, Ctrl+S saves a graph in
-    use, the scene heads the hierarchy, and scenes name a lighting asset in their settings, scene
-    format version 17).
+    use, the scene heads the hierarchy, scenes name a lighting asset in their settings, scene
+    format version 17, and Project Settings > Graphics sets shadow quality, project format 7).
    - **The scene as the hierarchy's root.** The hierarchy shows one top row named after the
      scene (its file name, or Untitled), holding every top object. It is not an object, so it
      cannot be moved, deleted or copied, and objects can be dropped on it to move them to the top.
@@ -284,7 +284,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
      beside the scene, which the scene then names; the scene format version goes up.
    - **Project quality.** Project Settings > Graphics holds what applies to every scene: shadow
      resolution, how many cascades the sun's shadow has and how far they reach, and how many
-     lights cast shadows at once. These values are fixed in the renderer today.
+     lights cast shadows at once. (Done: the editor's views, `scene.render` and the player all
+     draw with them.)
    - **Material previews in the Project panel.** A material's tile shows the material on a sphere
      instead of its kind's icon, drawn off screen in the background, kept until the file (or an image
      it uses) changes, and drawn again then; a material that does not compile keeps the icon with a

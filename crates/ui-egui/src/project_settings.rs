@@ -1,8 +1,8 @@
 //! Project Settings: what applies to the whole project, such as physics, the project's Input
-//! Map and the editor's preferences for it. Reads the settings once per project and changes them only through `project.settings.set`.
+//! Map, how shadows are drawn and the editor's preferences for it. Reads the settings once per project and changes them only through `project.settings.set`.
 
 use crate::i18n::tl;
-use bayleaf_engine::project_cmds::{PhysicsPrecision, PhysicsSettings, ProjectSettings, settings_of};
+use bayleaf_engine::project_cmds::{MAX_SHADOW_DISTANCE, PhysicsPrecision, PhysicsSettings, ProjectSettings, SHADOW_RESOLUTIONS, settings_of};
 use serde_json::json;
 
 use crate::Editor;
@@ -23,17 +23,19 @@ enum Category {
     #[default]
     Physics,
     Input,
+    Graphics,
     Game,
     Preferences,
 }
 
 impl Category {
-    const ALL: [Category; 4] = [Category::Physics, Category::Input, Category::Game, Category::Preferences];
+    const ALL: [Category; 5] = [Category::Physics, Category::Input, Category::Graphics, Category::Game, Category::Preferences];
 
     fn label(self) -> &'static str {
         match self {
             Category::Physics => "Physics",
             Category::Input => "Input",
+            Category::Graphics => "Graphics",
             Category::Game => "Game",
             Category::Preferences => "Preferences",
         }
@@ -43,6 +45,7 @@ impl Category {
         match self {
             Category::Physics => "Physics in play mode, gravity and precision",
             Category::Input => "The project's Input Map",
+            Category::Graphics => "How sharp shadows are, how far they reach and how many lights cast them",
             Category::Game => "How the exported game shows itself",
             Category::Preferences => "How the editor shows this project",
         }
@@ -94,10 +97,11 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 match category {
                     Category::Physics => physics_section(ui, t, &mut settings),
                     Category::Input => edit = input_section(ui, t, &input_files, &mut settings),
+                    Category::Graphics => graphics_section(ui, t, &mut settings),
                     Category::Game => game_section(ui, t, &images, &mut settings),
                     Category::Preferences => preferences_section(ui, t, &mut settings),
                 }
-                if !matches!(category, Category::Preferences | Category::Game) {
+                if !matches!(category, Category::Preferences | Category::Game | Category::Graphics) {
                     ui.add_space(theme::GAP);
                     ui.label(egui::RichText::new(tl("Play mode uses these settings from its next start.")).small().color(t.text_muted));
                 }
@@ -155,6 +159,67 @@ fn physics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectS
             });
         });
     });
+}
+
+/// How shadows are drawn in the Scene and Game views, scene renders and the exported game.
+fn graphics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectSettings) {
+    let graphics = &mut settings.graphics;
+    let note = |ui: &mut egui::Ui, text: &str| {
+        ui.add(egui::Label::new(egui::RichText::new(tl(text)).small().color(t.text_muted)).wrap());
+    };
+    theme::headed(t, "Shadows").show(ui, |ui| {
+        crate::value_editor::row(ui, t, "Resolution", |ui, label, width| {
+            craft_ui::ComboBox::from_id_salt("shadow resolution")
+                .width((width - 1.0).max(16.0))
+                .selected_text(crate::i18n::tf("{size} × {size}", &[("size", &graphics.shadow_resolution.to_string())]))
+                .show_ui(ui, |ui| {
+                    for size in SHADOW_RESOLUTIONS {
+                        let text = crate::i18n::tf("{size} × {size}", &[("size", &size.to_string())]);
+                        if ui.selectable_label(graphics.shadow_resolution == size, text).clicked() {
+                            graphics.shadow_resolution = size;
+                        }
+                    }
+                })
+                .response
+                .labelled_by(label)
+                .on_hover_text(tl("Texels per side of each shadow map: larger is sharper and uses more graphics memory"));
+        });
+        crate::value_editor::row(ui, t, "Shadow Lights", |ui, label, width| {
+            ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(&mut graphics.shadow_lights).range(1..=4).speed(0.05))
+                .labelled_by(label)
+                .on_hover_text(tl("How many lights cast shadows at once, 1 to 4; sun-like lights come first, then the nearest"));
+        });
+        note(ui, "Each light that casts shadows draws the scene again from where it stands (six times for a Point Light), so more lights cost more.");
+    });
+    ui.add_space(theme::SECTION_GAP);
+    theme::headed(t, "Sun Shadows").show(ui, |ui| {
+        crate::value_editor::row(ui, t, "Cascades", |ui, label, width| {
+            ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(&mut graphics.shadow_cascades).range(1..=4).speed(0.05))
+                .labelled_by(label)
+                .on_hover_text(tl("How many maps a sun's shadow is split into by distance, 1 to 4: near shadows stay sharp in a large scene"));
+        });
+        crate::value_editor::row(ui, t, "Distance", |ui, label, width| {
+            let speed = (f64::from(graphics.shadow_distance) * 0.01).max(0.5);
+            ui.add_sized(
+                [width, ROW_HEIGHT],
+                egui::DragValue::new(&mut graphics.shadow_distance).range(0.0..=MAX_SHADOW_DISTANCE).speed(speed).max_decimals(1),
+            )
+            .labelled_by(label)
+            .on_hover_text(tl("How far from the camera a sun's shadow reaches, in world units; 0 for the whole scene"));
+        });
+        let reach = if graphics.shadow_distance > 0.0 {
+            "Past this distance from the camera, shapes cast no sun shadow; a shorter distance gives sharper shadows nearby."
+        } else {
+            "0: the shadow covers the whole scene."
+        };
+        note(ui, reach);
+        note(
+            ui,
+            "Cascades apply to scenes wider than about 80 units, and to any scene when the distance is shorter than it; otherwise a sun shadow is one map.",
+        );
+    });
+    ui.add_space(theme::GAP);
+    note(ui, "The Scene and Game views show changes at once; the exported game and scene renders use them too.");
 }
 
 /// How the editor shows this project.

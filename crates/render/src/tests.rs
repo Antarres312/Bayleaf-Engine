@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bayleaf_graph::{Graph, Link, PinRef};
 
 use crate::material::{CATALOG, compile};
-use crate::{CameraView, FrameOptions, HeadlessGpu, RenderError, extract, extract_with, pick, scene_camera};
+use crate::{CameraView, FrameOptions, HeadlessGpu, RenderError, ShadowSettings, extract, extract_with, pick, scene_camera};
 
 fn object(scene: &mut Scene, component: &str, value: serde_json::Value, position: [f32; 3], rotation: [f32; 3]) -> StableId {
     let id = scene.create_object(None, component).unwrap();
@@ -22,7 +22,7 @@ fn mesh(scene: &mut Scene, shape: &str, position: [f32; 3]) -> StableId {
     object(scene, "mesh", json!({"shape": shape, "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.5}), position, [0.0; 3])
 }
 
-const OPTIONS: FrameOptions = FrameOptions { show_grid: false, selected: None, time: 0.0 };
+const OPTIONS: FrameOptions = FrameOptions { show_grid: false, selected: None, time: 0.0, shadows: ShadowSettings::DEFAULT };
 
 #[test]
 fn pick_returns_the_nearest_object_under_the_point() {
@@ -482,6 +482,54 @@ fn a_spot_light_casts_a_shadow_when_asked() {
     assert!(brightness(beside) > brightness(under) + 60, "the floor under the cube is in shadow: under {under:?}, beside {beside:?}");
     let (under, _) = render(false);
     assert!(brightness(under) > brightness(render(true).0) + 60, "without shadows the floor under the cube is lit");
+}
+
+#[test]
+fn a_sun_shadow_ends_at_the_shadow_distance() {
+    let Some(gpu) = gpu() else { return };
+    let sun = ("directionalLight", json!({"color": [1, 1, 1], "intensity": 1.5, "shadows": true}), [0.0, 5.0, 0.0], [-90.0, 0.0, 0.0]);
+    // A cube far from the camera: about 16 units away.
+    let render = |reach: f32| {
+        let mut scene = floor_scene(std::slice::from_ref(&sun));
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.9}), [0.0, 2.0, -5.0], [0.0; 3]);
+        let camera = CameraView::look_at(Vec3::new(0.0, 6.0, 9.0), Vec3::new(0.0, 0.0, -3.0), 50.0, 1.0);
+        let options = FrameOptions { shadows: ShadowSettings { reach, ..ShadowSettings::DEFAULT }, ..OPTIONS };
+        let frame = extract(&scene, camera, options);
+        let under = camera_pixel(&frame.camera, Vec3::new(0.0, 0.0, -4.7), 64);
+        brightness(gpu.render(&frame, 64, 64).unwrap().pixel(under.0, under.1).unwrap())
+    };
+    let (whole, near) = (render(0.0), render(5.0));
+    assert!(near > whole + 80, "past the distance the floor under the cube is lit: whole scene {whole}, 5 units {near}");
+    assert!(render(40.0) + 80 < near, "within the distance the shadow stays");
+}
+
+#[test]
+fn as_many_lights_cast_shadows_as_the_settings_allow() {
+    let Some(gpu) = gpu() else { return };
+    // Two spot lights far apart, each over a cube of its own.
+    let render = |lights: u32| {
+        let spot = json!({"color": [1, 1, 1], "intensity": 60, "range": 12, "angle": 80, "softness": 0.1, "shadows": true});
+        let mut scene =
+            floor_scene(&[("spotLight", spot.clone(), [-5.0, 6.0, 0.0], [-90.0, 0.0, 0.0]), ("spotLight", spot, [5.0, 6.0, 0.0], [-90.0, 0.0, 0.0])]);
+        for x in [-5.0, 5.0] {
+            object(&mut scene, "mesh", json!({"shape": "cube", "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.9}), [x, 3.0, 0.0], [0.0; 3]);
+        }
+        let camera = CameraView::look_at(Vec3::new(0.0, 12.0, 12.0), Vec3::ZERO, 70.0, 1.0);
+        let options = FrameOptions { shadows: ShadowSettings { lights, ..ShadowSettings::DEFAULT }, ..OPTIONS };
+        let frame = extract(&scene, camera, options);
+        let image = gpu.render(&frame, 96, 96).unwrap();
+        let at = |x: f32| {
+            let (px, py) = camera_pixel(&frame.camera, Vec3::new(x, 0.0, 0.0), 96);
+            brightness(image.pixel(px, py).unwrap())
+        };
+        (at(-5.0), at(5.0))
+    };
+    let (one_left, one_right) = render(1);
+    let (two_left, two_right) = render(2);
+    // With one light casting shadows, one cube leaves the floor under it lit; with two, neither does.
+    let lit_with_one = one_left.max(one_right);
+    assert!(lit_with_one > two_left.max(two_right) + 60, "one: ({one_left}, {one_right}), two: ({two_left}, {two_right})");
+    assert!(lit_with_one > one_left.min(one_right) + 60, "with one, the other cube still casts its shadow: ({one_left}, {one_right})");
 }
 
 #[test]

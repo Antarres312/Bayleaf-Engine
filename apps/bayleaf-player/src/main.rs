@@ -42,6 +42,8 @@ struct Player {
     failure: Option<String>,
     fullscreen: bool,
     gamepads: bayleaf_ui_egui::gamepad::Gamepads,
+    /// How shadows are drawn, from the project's graphics settings.
+    shadows: render::ShadowSettings,
 }
 
 /// Opens `game` and starts play mode. Returns the window title.
@@ -109,7 +111,7 @@ impl Player {
             allow: &allow,
             warnings: Vec::new(),
         };
-        let options = FrameOptions { show_grid: false, selected: None, time: self.session.play_time() as f32 };
+        let options = FrameOptions { show_grid: false, selected: None, time: self.session.play_time() as f32, shadows: self.shadows };
         let frame = render::extract_with(scene, camera, options, &mut assets);
         view.renderer.render(&gpu.device, &gpu.queue, &view.target, &frame);
 
@@ -186,12 +188,14 @@ fn main() -> anyhow::Result<()> {
         viewport = viewport.with_icon(egui::IconData { rgba: icon.rgba, width: icon.size, height: icon.size });
     }
     let options = eframe::NativeOptions { viewport, persist_window: false, ..Default::default() };
+    let shadows = bayleaf_engine::project_cmds::settings_of(&session).graphics.shadows();
     let player = Player {
         session,
         materials: render::MaterialLibrary::default(),
         assets: render::assets::AssetCache::default(),
         gpu: None,
         gamepads: bayleaf_ui_egui::gamepad::Gamepads::default(),
+        shadows,
         failure,
         fullscreen: args.fullscreen,
     };

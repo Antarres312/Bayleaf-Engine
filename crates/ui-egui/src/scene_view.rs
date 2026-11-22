@@ -197,6 +197,7 @@ pub(crate) fn play_controls(ui: &mut egui::Ui, session: &bayleaf_engine::Session
 }
 
 fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &egui_wgpu::RenderState) {
+    let shadows = crate::project_settings::current(editor).graphics.shadows();
     let size = ui.available_size().max(egui::vec2(16.0, 16.0));
     let ppp = ui.ctx().pixels_per_point();
     let (width, height) = ((size.x * ppp).round().max(1.0) as u32, (size.y * ppp).round().max(1.0) as u32);
@@ -230,7 +231,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let base = editor.session.script_dir();
     let allow = |path: &std::path::Path| Ok(path.to_path_buf());
     let mut assets = bayleaf_render::FileAssets { base, materials: &mut view.materials, cache: &mut view.assets, allow: &allow, warnings: Vec::new() };
-    let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time };
+    let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time, shadows };
     let mut frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut assets);
     frame.highlighted = editor.also_selected.clone();
     // The object a dragged script would go to is outlined too.
@@ -257,7 +258,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
             };
             gpu_view.preview = Some((target, texture));
         }
-        let options = FrameOptions { show_grid: false, selected: None, time };
+        let options = FrameOptions { show_grid: false, selected: None, time, shadows };
         let preview_frame = bayleaf_render::extract_with(editor.session.scene(), camera, options, &mut assets);
         if let Some((target, texture)) = &gpu_view.preview {
             gpu_view.renderer.render(&gpu.device, &gpu.queue, target, &preview_frame);

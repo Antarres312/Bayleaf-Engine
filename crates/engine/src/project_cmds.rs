@@ -16,9 +16,9 @@ pub const PROJECT_FORMAT: &str = "bayleaf.project";
 pub const PROJECT_EXTENSION: &str = "bproject";
 /// Version 2 added `settings`; version 3 moved the input actions into an Input Map asset
 /// (`settings.input.map`); version 4 added the editor preferences (`settings.editor`); version 5 added the game's icon
-/// (`settings.game.icon`); version 6 the script mode per platform (`settings.game.scriptModes`).
-/// Older files still open; opening one moves its actions.
-pub(crate) const PROJECT_VERSION: u32 = 6;
+/// (`settings.game.icon`); version 6 the script mode per platform (`settings.game.scriptModes`); version 7 the
+/// shadow quality (`settings.graphics`). Older files still open; opening one moves its actions.
+pub(crate) const PROJECT_VERSION: u32 = 7;
 
 /// A project file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -45,6 +45,79 @@ pub struct ProjectSettings {
     pub editor: EditorSettings,
     #[serde(default)]
     pub game: GameSettings,
+    #[serde(default)]
+    pub graphics: GraphicsSettings,
+}
+
+/// How the editor and the game draw every scene of the project.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GraphicsSettings {
+    /// Texels per side of each shadow map: 512, 1024, 2048 or 4096.
+    #[serde(default = "default_shadow_resolution")]
+    pub shadow_resolution: u32,
+    /// How many maps a sun's shadow is split into by distance from the camera in a large scene, 1 to 4.
+    #[serde(default = "default_shadow_cascades")]
+    pub shadow_cascades: u32,
+    /// How far from the camera a sun's shadow reaches, in world units; 0 for the whole scene.
+    #[serde(default)]
+    pub shadow_distance: f32,
+    /// How many lights cast shadows at once, 1 to 4.
+    #[serde(default = "default_shadow_lights")]
+    pub shadow_lights: u32,
+}
+
+/// The shadow-map sizes on offer.
+pub const SHADOW_RESOLUTIONS: [u32; 4] = [512, 1024, 2048, 4096];
+/// Largest shadow distance, in world units.
+pub const MAX_SHADOW_DISTANCE: f32 = 100_000.0;
+
+fn default_shadow_resolution() -> u32 {
+    bayleaf_render::ShadowSettings::DEFAULT.resolution
+}
+
+fn default_shadow_cascades() -> u32 {
+    bayleaf_render::ShadowSettings::DEFAULT.cascades
+}
+
+fn default_shadow_lights() -> u32 {
+    bayleaf_render::ShadowSettings::DEFAULT.lights
+}
+
+impl Default for GraphicsSettings {
+    fn default() -> Self {
+        let shadows = bayleaf_render::ShadowSettings::DEFAULT;
+        Self { shadow_resolution: shadows.resolution, shadow_cascades: shadows.cascades, shadow_distance: shadows.reach, shadow_lights: shadows.lights }
+    }
+}
+
+impl GraphicsSettings {
+    /// The shadows the renderer draws for these settings.
+    pub fn shadows(&self) -> bayleaf_render::ShadowSettings {
+        bayleaf_render::ShadowSettings {
+            resolution: self.shadow_resolution,
+            cascades: self.shadow_cascades,
+            reach: self.shadow_distance,
+            lights: self.shadow_lights,
+        }
+        .clamped()
+    }
+
+    fn check(&self) -> Result<(), CommandError> {
+        if !SHADOW_RESOLUTIONS.contains(&self.shadow_resolution) {
+            return Err(CommandError::BadParams("graphics.shadowResolution must be 512, 1024, 2048 or 4096".to_owned()));
+        }
+        if !(1..=4).contains(&self.shadow_cascades) {
+            return Err(CommandError::BadParams("graphics.shadowCascades must be between 1 and 4".to_owned()));
+        }
+        if !(self.shadow_distance.is_finite() && (0.0..=MAX_SHADOW_DISTANCE).contains(&self.shadow_distance)) {
+            return Err(CommandError::BadParams(format!("graphics.shadowDistance must be between 0 and {MAX_SHADOW_DISTANCE}")));
+        }
+        if !(1..=4).contains(&self.shadow_lights) {
+            return Err(CommandError::BadParams("graphics.shadowLights must be between 1 and 4".to_owned()));
+        }
+        Ok(())
+    }
 }
 
 /// How the exported game shows itself.
@@ -160,7 +233,7 @@ impl ProjectSettings {
         if !(map.is_empty() || (map.len() <= 512 && map.ends_with(&format!(".{}", crate::input_cmds::INPUT_EXTENSION)))) {
             return Err(CommandError::BadParams(format!("input.map must be the path of a .{} file", crate::input_cmds::INPUT_EXTENSION)));
         }
-        Ok(())
+        self.graphics.check()
     }
 }
 

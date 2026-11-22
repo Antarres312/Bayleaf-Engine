@@ -1098,6 +1098,27 @@ fn open_recent_lists_projects_newest_first_and_opens_one_again() {
 }
 
 #[test]
+fn graphics_settings_change_the_shadow_maps_the_views_draw() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-settings-graphics-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().show_panel(crate::Panel::ProjectSettings);
+    harness.run_steps(2);
+    harness.get_by_label("Graphics").click();
+    harness.run();
+    assert!(harness.query_by_label("Shadow Lights").is_some() && harness.query_by_label("Cascades").is_some(), "Graphics shows the shadow settings");
+    harness.get_by_label("Resolution").click();
+    harness.run();
+    harness.get_by_label("4096 × 4096").click();
+    harness.run();
+    let settings = harness.state_mut().dispatch("project.settings", &json!({}), None).unwrap();
+    assert_eq!(settings["settings"]["graphics"]["shadowResolution"], 4096, "the choice went through project.settings.set into the file");
+    assert_eq!(crate::project_settings::current(harness.state_mut()).graphics.shadows().resolution, 4096, "the views draw with it at once");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn project_settings_list_their_categories_on_the_left_physics_first() {
     let mut harness = harness();
     let dir = std::env::temp_dir().join(format!("bayleaf-ui-settings-categories-{}", std::process::id()));
