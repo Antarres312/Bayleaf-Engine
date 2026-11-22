@@ -263,9 +263,8 @@ pub struct Renderer {
     texture_sampler: wgpu::Sampler,
     /// Uploaded images by id; 0 is a white pixel.
     textures: HashMap<u64, GpuImage>,
-    /// Texture bind groups by the images in their four slots (an id with [`RAW`] set reads that
-    /// image's plain numbers).
-    texture_groups: HashMap<[u64; 4], wgpu::BindGroup>,
+    /// Texture bind groups by the images in their four slots and which slots read plain numbers.
+    texture_groups: HashMap<TextureKey, wgpu::BindGroup>,
     /// Uploaded models by id.
     models: HashMap<u64, GpuMesh>,
     /// Draw calls and triangles of the last frame's scene.
@@ -537,7 +536,7 @@ impl Renderer {
     /// groups made with an earlier texture of that id are made again.
     pub fn set_texture(&mut self, id: u64, texture: wgpu::Texture, view: wgpu::TextureView) {
         self.textures.insert(id, GpuImage { texture, color: view.clone(), raw: view });
-        self.texture_groups.retain(|key, _| !key.iter().any(|k| k & !RAW == id));
+        self.texture_groups.retain(|key, _| !key.0.contains(&id));
     }
 
     /// Puts the frame's images and models on the GPU the first time they are drawn, and makes
@@ -548,7 +547,7 @@ impl Renderer {
         self.textures.entry(FLAT_NORMAL).or_insert_with(|| {
             upload_image(device, queue, &bayleaf_assets::Image { data: true, ..bayleaf_assets::Image::new(FLAT_NORMAL, 1, 1, vec![128, 128, 255, 255]) })
         });
-        let mut keys = vec![[0u64; 4]];
+        let mut keys = vec![([0u64; 4], 0u8)];
         for item in &frame.items {
             for image in item.textures.iter().flatten() {
                 self.textures.entry(image.id).or_insert_with(|| upload_image(device, queue, image));
@@ -565,8 +564,8 @@ impl Renderer {
                 continue;
             }
             let view = |slot: usize| {
-                let image = self.textures.get(&(key[slot] & !RAW)).or_else(|| self.textures.get(&0))?;
-                Some(if key[slot] & RAW == 0 { &image.color } else { &image.raw })
+                let image = self.textures.get(&key.0[slot]).or_else(|| self.textures.get(&0))?;
+                Some(if key.1 & (1 << slot) == 0 { &image.color } else { &image.raw })
             };
             let (Some(v0), Some(v1), Some(v2), Some(v3)) = (view(0), view(1), view(2), view(3)) else { continue };
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -707,7 +706,7 @@ impl Renderer {
             pass.set_vertex_buffer(1, self.instances.slice(..));
 
             // Every pipeline takes the image group; start with white images.
-            if let Some(group) = self.texture_groups.get(&[0; 4]) {
+            if let Some(group) = self.texture_groups.get(&([0; 4], 0)) {
                 pass.set_bind_group(2, group, &[]);
             }
             if frame.sky.is_some() && frame.background {
@@ -1497,25 +1496,27 @@ fn mesh_key(item: &DrawItem) -> u64 {
 }
 
 /// The images in an item's four texture slots; 0 for an empty or missing slot.
-fn texture_key(item: &DrawItem) -> [u64; 4] {
+fn texture_key(item: &DrawItem) -> TextureKey {
     // The built-in surface reads a normal map in slot 2, so an empty one there is flat, not white;
     // its slots 1 and 2 (metallic and roughness, normals) hold plain numbers whatever the image says.
     let built_in = item.material.is_none();
-    let mut key = if built_in { [0, 0, FLAT_NORMAL | RAW, 0] } else { [0; 4] };
-    for (slot, (id, image)) in key.iter_mut().zip(&item.textures).enumerate() {
+    let (mut ids, mut raw) = if built_in { ([0, 0, FLAT_NORMAL, 0], 0b0110) } else { ([0; 4], 0) };
+    for (slot, (id, image)) in ids.iter_mut().zip(&item.textures).enumerate() {
         if let Some(image) = image {
-            let raw = image.data || (built_in && (slot == 1 || slot == 2));
-            *id = if raw { image.id | RAW } else { image.id };
+            *id = image.id;
+            if image.data {
+                raw |= 1 << slot;
+            }
         }
     }
-    key
+    (ids, raw)
 }
+
+/// The images in a bind group's four slots, and a bit for each slot read as plain numbers.
+type TextureKey = ([u64; 4], u8);
 
 /// Texture id of the one-pixel flat normal map (image ids from files are odd, 0 is white).
 const FLAT_NORMAL: u64 = 2;
-
-/// Set in a texture key's id: that image read as plain numbers, not as sRGB colour.
-const RAW: u64 = 1 << 63;
 
 /// An image on the GPU: one texture, read through two views, as colour and as plain numbers.
 struct GpuImage {

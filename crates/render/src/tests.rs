@@ -1030,4 +1030,7 @@ fn a_data_image_draws_its_numbers_and_a_compressed_one_keeps_its_colour() {
     red.blocks = Some(Arc::new(bayleaf_assets::compress(&red, bayleaf_assets::import::Compression::Bc1).unwrap()));
     let drawn = with(red);
     assert!(drawn[0] > drawn[2] + 60, "the compressed red image draws red: {drawn:?}");
+    // Image ids are hashes: one with its top bit set draws its own colour too.
+    let high = with(bayleaf_assets::Image::new((1 << 63) | 17, 4, 4, [20u8, 20, 230, 255].repeat(16)));
+    assert!(high[2] > high[0] + 60, "an image with a large id draws blue: {high:?}");
 }
