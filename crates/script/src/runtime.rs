@@ -217,6 +217,11 @@ impl ScriptHost {
         each!(&mut self.0, host => host.take_faults())
     }
 
+    /// How long each script's update took since this was last asked (for the profiler).
+    pub fn take_timings(&mut self) -> Vec<(String, std::time::Duration)> {
+        each!(&mut self.0, host => host.take_timings())
+    }
+
     pub fn take_logs(&mut self) -> Vec<LogLine> {
         each!(&mut self.0, host => host.take_logs())
     }

@@ -12,11 +12,13 @@ pub mod code_scripts;
 pub mod confine;
 pub mod export;
 mod graph_cmds;
+
 pub mod input_cmds;
 mod lighting_cmds;
 pub mod native_export;
 mod play;
 pub mod prefab_cmds;
+pub mod profiler;
 pub mod project_cmds;
 pub mod saved;
 mod scene_cmds;
@@ -146,6 +148,8 @@ pub struct Session {
     native_scripts: Vec<(PathBuf, bayleaf_script::NativeScript)>,
     /// Prefabs open on their own, the innermost last, each with the scene it stands in front of.
     prefab_edits: Vec<prefab_cmds::PrefabEdit>,
+    /// Play steps' times by part, while it records.
+    profiler: profiler::Profiler,
 }
 
 /// How important a console line is.
@@ -297,6 +301,17 @@ impl Session {
     }
 
     /// True when the scene has changes that are not saved.
+    pub fn profiler(&self) -> &profiler::Profiler {
+        &self.profiler
+    }
+
+    /// What a view drew for the frame just stepped, while the game plays and the profiler records.
+    pub fn profile_drawn(&mut self, stats: profiler::DrawnStats) {
+        if self.is_playing() {
+            self.profiler.add_drawn(stats);
+        }
+    }
+
     /// The prefabs open on their own (`prefab.open`), outermost first, by their paths in the
     /// project; empty while the scene itself is edited.
     pub fn open_prefabs(&self) -> Vec<String> {
@@ -476,12 +491,14 @@ impl CommandRegistry {
         commands.extend(stream::commands());
         commands.extend(export::commands());
         commands.extend(lighting_cmds::commands());
+        commands.extend(profiler::commands());
         commands.extend(graph_cmds::commands());
         commands.extend(project_cmds::commands());
         commands.extend(prefab_cmds::commands());
         commands.extend(code_scripts::commands());
         commands.extend(asset_info::commands());
         commands.extend(asset_cmds::commands());
+
         commands.extend(input_cmds::commands());
         Self { commands }
     }

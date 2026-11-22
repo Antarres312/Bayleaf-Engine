@@ -32,6 +32,7 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Platform, Scripts, Interpreted, Compiled to machine code, Native, Check, Check Again, Export, Folder | not yet | Not checked yet | Generic terms in the Export Game window; same |
 | Lighting (asset kind), Scene Settings, Sky Color, Horizon Color, Ground Color, Ambient, Show Sky, Fog Distance, Sun, The engine's | not yet | Not checked yet | Generic terms; same |
 | Graphics (Project Settings category), Shadows, Resolution, Shadow Lights, Sun Shadows, Cascades, Distance | not yet | Not checked yet | Generic terms; same |
+| Profiler, Record, Stop, Clear, Earlier Frame, Later Frame, Newest, Gathering, Drawing, Draw Calls, Triangles, Meshes, Images, Scripts, Slowest First | not yet | Not checked yet | Generic terms; same |
 | Particle Emitter, Restart particles, Pause particles, Play particles, a soft dot | not yet | Not checked yet | Generic terms; same |
 | Post-processing, Effects, Tone Mapping, Exposure, Bloom, Strength, Threshold, Color Adjustment, Contrast, Saturation, Vignette, Smoothness, Depth Fog, Start, End, Ambient Occlusion, Radius, Antialiasing, Smooth Edges, Post-processing Effects | not yet | Not checked yet | Generic terms; same |
 | Main Light, Other Lights, View Direction, Screen Position, Dot Product, Normalize, Step, Smooth Step, Posterize, Remap, Custom Lighting Output, Outline Width, Outline Color | not yet | Not checked yet | Generic terms; same |

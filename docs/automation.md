@@ -190,3 +190,10 @@ plays: its cycle (`playing`, `looping`, `duration`, `rate`, `burst`, `maxParticl
 their life) and how they draw (`render`: `sprite`, `stretched` or `mesh` with `meshShape`; `image`,
 `flipbookColumns`/`flipbookRows`, `material`, `blend`: `alpha` or `additive`; `space`: `world` or
 `local`). `play.status` counts the particles alive; scripts start, stop and burst emitters.
+
+The profiler records while asked: `profile.start` and `profile.stop`, `profile.clear`, and
+`profile.frames` (`{last?}`) returning each play step's milliseconds by part (`scripts` with
+`byScript`, slowest first, `physics`, `streaming`, `sound`, `particles`), what the Game view or the
+player drew (`extract`, `draw`, `drawCalls`, `triangles`, `meshBytes`, `imageBytes`), and the
+average. It keeps the last 3000 frames. The player's `--profile <file>` records and writes them
+when the game closes. GPU time is not measured yet.

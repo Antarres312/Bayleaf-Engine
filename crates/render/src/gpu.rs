@@ -100,6 +100,15 @@ struct GpuMesh {
     index_count: u32,
 }
 
+/// What a frame drew and what the renderer keeps on the GPU.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderStats {
+    pub draw_calls: u32,
+    pub triangles: u64,
+    pub mesh_bytes: u64,
+    pub image_bytes: u64,
+}
+
 /// Offscreen colour, multisample and depth textures of one size.
 pub struct RenderTarget {
     width: u32,
@@ -254,6 +263,8 @@ pub struct Renderer {
     texture_groups: HashMap<[u64; 4], wgpu::BindGroup>,
     /// Uploaded models by id.
     models: HashMap<u64, GpuMesh>,
+    /// Draw calls and triangles of the last frame's scene.
+    drawn: (u32, u64),
 }
 
 impl Renderer {
@@ -443,10 +454,26 @@ impl Renderer {
             textures: HashMap::new(),
             texture_groups: HashMap::new(),
             models: HashMap::new(),
+            drawn: (0, 0),
         }
     }
 
     /// Why the GPU refused the last material shader it was given, if it refused one.
+    /// What the last frame drew and what the renderer keeps on the GPU, for the profiler.
+    pub fn stats(&self) -> RenderStats {
+        let mesh_bytes = self.meshes.iter().map(|(_, m)| m).chain(self.models.values()).map(|m| m.vertices.size() + m.indices.size()).sum();
+        let image_bytes = self
+            .textures
+            .values()
+            .map(|(texture, _)| {
+                let size = texture.size();
+                // Four bytes a pixel, and a third more for the smaller copies.
+                u64::from(size.width) * u64::from(size.height) * 4 * 4 / 3
+            })
+            .sum();
+        RenderStats { draw_calls: self.drawn.0, triangles: self.drawn.1, mesh_bytes, image_bytes }
+    }
+
     pub fn material_error(&self) -> Option<&str> {
         self.material_error.as_deref()
     }
@@ -581,6 +608,7 @@ impl Renderer {
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("bayleaf frame") });
+        let mut drawn = (0u32, 0u64);
         let faces: Vec<Mat4> = shadows.iter().flat_map(|v| v.faces.iter().copied()).collect();
         for (layer, matrix) in faces.iter().enumerate() {
             queue.write_buffer(&self.shadow_faces, layer as u64 * FACE_STRIDE, bytemuck::bytes_of(&matrix.to_cols_array_2d()));
@@ -664,6 +692,8 @@ impl Renderer {
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(indices(first, mesh), 0, start as u32..(start + run) as u32);
+                    drawn.0 += 1;
+                    drawn.1 += u64::from(indices(first, mesh).len() as u32 / 3) * run as u64;
                 }
                 start += run;
             }
@@ -680,6 +710,8 @@ impl Renderer {
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(indices(first, mesh), 0, start as u32..(start + run) as u32);
+                    drawn.0 += 1;
+                    drawn.1 += u64::from(indices(first, mesh).len() as u32 / 3) * run as u64;
                 }
                 start += run;
             }
@@ -702,6 +734,8 @@ impl Renderer {
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(indices(item, mesh), 0, index..index + 1);
+                    drawn.0 += 1;
+                    drawn.1 += u64::from(indices(item, mesh).len() as u32 / 3);
                 }
             }
         }
@@ -711,6 +745,7 @@ impl Renderer {
             .filter(|(_, i)| frame.selected == Some(i.object) || frame.highlighted.contains(&i.object))
             .map(|(index, i)| (index as u32, *i))
             .collect();
+        self.drawn = drawn;
         // The displayed picture, from the scene's colour.
         self.post.run(device, queue, &mut encoder, target, &self.globals_group, &frame.post);
         if !selected.is_empty() {

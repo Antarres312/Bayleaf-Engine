@@ -5,7 +5,7 @@ use crate::i18n::tl;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use serde::{Deserialize, Serialize};
 
-use crate::{Editor, console, game_view, graph_view, hierarchy, inspector, project, project_settings, scene_view, theme};
+use crate::{Editor, console, game_view, graph_view, hierarchy, inspector, profiler_view, project, project_settings, scene_view, theme};
 
 /// The panels of the editor window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -21,11 +21,13 @@ pub enum Panel {
     ProjectSettings,
     /// The game as players see it, a tab beside the scene view.
     Game,
+    /// Frame times by part while the game plays, below the scene view.
+    Profiler,
 }
 
 impl Panel {
-    pub const ALL: [Panel; 8] =
-        [Panel::Hierarchy, Panel::Scene, Panel::Game, Panel::Graph, Panel::Inspector, Panel::Project, Panel::Console, Panel::ProjectSettings];
+    pub const ALL: [Panel; 9] =
+        [Panel::Hierarchy, Panel::Scene, Panel::Game, Panel::Graph, Panel::Inspector, Panel::Project, Panel::Console, Panel::ProjectSettings, Panel::Profiler];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -37,6 +39,7 @@ impl Panel {
             Panel::Graph => tl("Graph"),
             Panel::ProjectSettings => tl("Project Settings"),
             Panel::Game => tl("Game"),
+            Panel::Profiler => tl("Profiler"),
         }
     }
 
@@ -73,17 +76,17 @@ impl Layout {
         let surface = state.main_surface_mut();
         match self {
             Layout::Standard => {
-                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console]);
+                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console, Panel::Profiler]);
                 let [scene, _] = surface.split_right(top, 0.76, vec![Panel::Inspector]);
                 surface.split_left(scene, 0.24, vec![Panel::Hierarchy]);
             }
             Layout::WideScene => {
-                let [top, _] = surface.split_below(NodeIndex::root(), 0.8, vec![Panel::Project, Panel::Console]);
+                let [top, _] = surface.split_below(NodeIndex::root(), 0.8, vec![Panel::Project, Panel::Console, Panel::Profiler]);
                 let [_, side] = surface.split_right(top, 0.74, vec![Panel::Hierarchy]);
                 surface.split_below(side, 0.42, vec![Panel::Inspector]);
             }
             Layout::Mirrored => {
-                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console]);
+                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console, Panel::Profiler]);
                 let [scene, _] = surface.split_left(top, 0.26, vec![Panel::Inspector]);
                 surface.split_right(scene, 0.76, vec![Panel::Hierarchy]);
             }
@@ -143,7 +146,7 @@ pub(crate) fn set_open(dock: &mut DockState<Panel>, panel: Panel, open: bool) {
                     Panel::Hierarchy => {
                         surface.split_left(node, 0.24, vec![panel]);
                     }
-                    Panel::Console | Panel::Project => {
+                    Panel::Console | Panel::Project | Panel::Profiler => {
                         surface.split_below(node, 0.76, vec![panel]);
                     }
                     _ => {
@@ -187,6 +190,7 @@ impl TabViewer for Panels<'_> {
             Panel::Graph => graph_view::show(self.editor, ui, self.gpu),
             Panel::ProjectSettings => project_settings::show(self.editor, ui),
             Panel::Game => game_view::show(self.editor, ui, self.gpu),
+            Panel::Profiler => profiler_view::show(self.editor, ui),
         }
     }
 

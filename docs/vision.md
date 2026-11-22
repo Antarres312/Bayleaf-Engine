@@ -383,7 +383,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
      CPU, and the GPU's time where the adapter can measure it; with the frame rate, draw calls,
      triangles and memory for meshes and images. It records while playing, keeps the last few
      thousand frames as a graph, and pauses on a click to look at one frame. `profile.*` commands
-     give the same numbers to agents, and the player can write them to a file.
+     give the same numbers to agents, and the player can write them to a file. (Done: the Profiler panel, `profile.*` and `bayleaf-player --profile`; GPU time is still to measure.)
    - **Bringing content in: dragging a file in just works.** Dropping files from the system onto
      the Project panel copies them into the project (into the folder under the pointer), and onto
      the Scene view or the hierarchy also places them: a model becomes an object with its meshes,

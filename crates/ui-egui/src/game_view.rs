@@ -98,11 +98,24 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
     let shared = &mut editor.scene_view;
     let mut assets = bayleaf_render::FileAssets { base, materials: &mut shared.materials, cache: &mut shared.assets, allow: &allow, warnings: Vec::new() };
     let options = FrameOptions { show_grid: false, selected: None, time: editor.session.play_time() as f32, shadows, effects };
+    let gathering = std::time::Instant::now();
     let mut frame = bayleaf_render::extract_with(scene, camera, options, &mut assets);
     if let Some(particles) = editor.session.particles() {
         frame.items.extend(particles.draw_items(scene, &frame.camera, &mut assets));
     }
+    let extract = gathering.elapsed();
+    let drawing = std::time::Instant::now();
     target.renderer.render(&gpu.device, &gpu.queue, &target.target, &frame);
+    // The game's frame, for the profiler while it records.
+    let stats = target.renderer.stats();
+    editor.session.profile_drawn(bayleaf_engine::profiler::DrawnStats {
+        extract,
+        draw: drawing.elapsed(),
+        draw_calls: stats.draw_calls,
+        triangles: stats.triangles,
+        mesh_bytes: stats.mesh_bytes,
+        image_bytes: stats.image_bytes,
+    });
 
     let image = egui::Image::new(egui::load::SizedTexture::new(target.texture, size)).sense(egui::Sense::click_and_drag());
     let response = ui.add(image);

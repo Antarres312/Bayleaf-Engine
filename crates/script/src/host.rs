@@ -106,6 +106,8 @@ pub struct ScriptHost {
     modules: HashMap<Vec<u8>, Module>,
     /// Scripts built into the game, by the module path they stand for (native mode).
     natives: Vec<(PathBuf, crate::NativeScript)>,
+    /// How long each script's update took since they were last taken, by script name.
+    timings: Vec<(String, std::time::Duration)>,
     instances: Vec<Instance>,
     faults: Vec<ScriptFault>,
     logs: Vec<LogLine>,
@@ -131,6 +133,7 @@ impl ScriptHost {
             linker,
             modules: HashMap::new(),
             natives: Vec::new(),
+            timings: Vec::new(),
             instances: Vec::new(),
             faults: Vec::new(),
             logs: Vec::new(),
@@ -430,7 +433,9 @@ impl ScriptHost {
                 state.input_maps = Arc::clone(&self.input_maps);
                 state.state = Arc::clone(&self.state);
             }
+            let started = std::time::Instant::now();
             let result = call(entry, |store| update.call(store, dt));
+            self.timings.push((entry.script_name.clone(), started.elapsed()));
             let script = entry.script_name.clone();
             logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
             match result {
@@ -567,6 +572,11 @@ impl ScriptHost {
     /// Changes the shared state from outside the scripts (commands, game rules).
     pub fn with_state<T>(&self, change: impl FnOnce(&mut GameState) -> T) -> T {
         change(&mut lock(&self.state))
+    }
+
+    /// How long each script's update took since this was last asked (for the profiler).
+    pub fn take_timings(&mut self) -> Vec<(String, std::time::Duration)> {
+        std::mem::take(&mut self.timings)
     }
 
     /// Sends the scripts of `to` a message now (a button of the Inspector, `play.message`).

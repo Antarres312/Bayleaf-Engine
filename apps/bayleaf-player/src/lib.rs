@@ -25,6 +25,9 @@ struct Args {
     /// Start in full screen.
     #[arg(long)]
     fullscreen: bool,
+    /// Record each frame's times by part and write them to this file (JSON) when the game closes.
+    #[arg(long)]
+    profile: Option<PathBuf>,
 }
 
 /// Script errors shown over the game at most.
@@ -45,6 +48,8 @@ struct Player {
     failure: Option<String>,
     fullscreen: bool,
     gamepads: bayleaf_ui_egui::gamepad::Gamepads,
+    /// Where the profile goes when the game closes, if one is recorded.
+    profile: Option<PathBuf>,
     /// How shadows are drawn, from the project's graphics settings.
     shadows: render::ShadowSettings,
     /// The post-processing effects the project lets the game use.
@@ -121,11 +126,23 @@ impl Player {
         // The game camera's own post-processing, else the scene's, as the project allows.
         let effects = render::Effects { show: true, allowed: self.effects, camera: render::camera_object(scene) };
         let options = FrameOptions { show_grid: false, selected: None, time: self.session.play_time() as f32, shadows: self.shadows, effects };
+        let gathering = std::time::Instant::now();
         let mut frame = render::extract_with(scene, camera, options, &mut assets);
         if let Some(particles) = self.session.particles() {
             frame.items.extend(particles.draw_items(scene, &frame.camera, &mut assets));
         }
+        let extract = gathering.elapsed();
+        let drawing = std::time::Instant::now();
         view.renderer.render(&gpu.device, &gpu.queue, &view.target, &frame);
+        let stats = view.renderer.stats();
+        self.session.profile_drawn(bayleaf_engine::profiler::DrawnStats {
+            extract,
+            draw: drawing.elapsed(),
+            draw_calls: stats.draw_calls,
+            triangles: stats.triangles,
+            mesh_bytes: stats.mesh_bytes,
+            image_bytes: stats.image_bytes,
+        });
 
         let image = egui::Image::new(egui::load::SizedTexture::new(view.texture, size)).sense(egui::Sense::click_and_drag());
         let response = ui.add(image);
@@ -160,6 +177,20 @@ impl eframe::App for Player {
         let gpu = frame.wgpu_render_state();
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| self.frame(ui, gpu));
     }
+
+    /// Writes the recorded profile, if one was asked for.
+    fn on_exit(&mut self) {
+        let Some(path) = &self.profile else { return };
+        let registry = CommandRegistry::with_builtins();
+        let written = registry
+            .execute(&mut self.session, "profile.frames", &json!({}))
+            .map_err(|e| e.to_string())
+            .and_then(|frames| serde_json::to_string_pretty(&frames).map_err(|e| e.to_string()))
+            .and_then(|text| std::fs::write(path, text).map_err(|e| e.to_string()));
+        if let Err(problem) = written {
+            eprintln!("could not write the profile to {}: {problem}", path.display());
+        }
+    }
 }
 
 /// The window icon the project chooses (`settings.game.icon`), if it reads as an image.
@@ -187,6 +218,9 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();
     session.set_sound(true);
+    if args.profile.is_some() {
+        let _ = registry.execute(&mut session, "profile.start", &json!({}));
+    }
     session.set_native_scripts(natives);
     // A project that does not open fails here, before a window appears; a game that cannot start
     // shows why in the window.
@@ -216,6 +250,7 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
         effects,
         failure,
         fullscreen: args.fullscreen,
+        profile: args.profile.clone(),
     };
     eframe::run_native("Bayleaf Player", options, Box::new(move |_| Ok(Box::new(player) as Box<dyn eframe::App>)))
         .map_err(|e| anyhow::anyhow!("could not open the game window: {e}"))

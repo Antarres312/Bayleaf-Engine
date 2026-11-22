@@ -20,7 +20,7 @@ pub use extract::{
     ShadowSettings, Sky, WHOLE_IMAGE, bounds, camera_object, extract, extract_with, game_camera, material_preview, object_bounds, object_camera, pick,
     post_settings, scene_camera,
 };
-pub use gpu::{COLOR_FORMAT, RenderTarget, Renderer};
+pub use gpu::{COLOR_FORMAT, RenderStats, RenderTarget, Renderer};
 pub use headless::{HeadlessGpu, Image};
 pub use material::{CompiledMaterial, MaterialLibrary};
 pub use wgpu;

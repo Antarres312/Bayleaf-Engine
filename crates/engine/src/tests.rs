@@ -2160,3 +2160,28 @@ fn particles_play_with_the_game_and_scripts_burst_them() {
     assert!(session.particles().is_none(), "stopping takes them away");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn the_profiler_records_each_step_by_part_while_asked() {
+    let (registry, mut session, _, dir) = scripted_scene("profile", &spinner_wasm());
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.02, "steps": 5})).unwrap();
+    assert!(session.profiler().frames().is_empty(), "nothing is kept unless it records");
+
+    registry.execute(&mut session, "profile.start", &json!({})).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.02, "steps": 10})).unwrap();
+    let read = registry.execute(&mut session, "profile.frames", &json!({"last": 4})).unwrap();
+    assert_eq!(read["frames"].as_array().unwrap().len(), 4, "the last frames asked for");
+    let frame = &read["frames"][0];
+    assert!(frame["step"].as_f64().unwrap() >= frame["scripts"].as_f64().unwrap(), "the step holds its parts: {frame}");
+    let scripts: Vec<&str> = frame["byScript"].as_array().unwrap().iter().filter_map(|s| s[0].as_str()).collect();
+    assert_eq!(scripts, ["Spin"], "each script by name");
+
+    registry.execute(&mut session, "profile.stop", &json!({})).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.02, "steps": 5})).unwrap();
+    assert_eq!(session.profiler().frames().len(), 10, "stopped, it keeps what it had and adds nothing");
+    registry.execute(&mut session, "profile.clear", &json!({})).unwrap();
+    assert!(session.profiler().frames().is_empty());
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -10,6 +10,7 @@ pub mod brand;
 mod console;
 mod dock;
 mod export_window;
+
 mod file_inspector;
 mod fonts;
 mod game_view;
@@ -21,6 +22,7 @@ pub mod i18n;
 mod input_editor;
 mod inspector;
 mod markdown_view;
+mod profiler_view;
 mod project;
 mod project_settings;
 mod scene_settings;
@@ -53,6 +55,7 @@ pub struct Editor {
     selected: Option<StableId>,
     /// The other selected objects (Ctrl or Shift + click), in the order they were added.
     also_selected: Vec<StableId>,
+    profiler_view: profiler_view::ProfilerView,
     /// The selection of each level underneath an open prefab, the scene's first.
     prefab_selections: Vec<(Option<StableId>, Vec<StableId>)>,
     /// Bumped when an edit gesture (a drag, a text field) ends, so the next edit gets its own undo step.
@@ -122,6 +125,7 @@ impl Default for Editor {
             also_selected: Vec::new(),
             gesture: 0,
             prefab_selections: Vec::new(),
+            profiler_view: profiler_view::ProfilerView::default(),
             title: String::new(),
             scene_view: scene_view::SceneView::new(),
             game_view: game_view::GameView::default(),
@@ -172,6 +176,7 @@ impl Editor {
             fonts::install_fonts(ui.ctx());
         }
         self.handle_shortcuts(ui.ctx());
+
         self.poll_builds(ui.ctx());
         self.run_play_frame(ui.ctx());
         self.note_recent_project();
@@ -207,6 +212,7 @@ impl Editor {
         if let Some(pressed) = ui.input(|i| if i.pointer.any_pressed() { i.pointer.press_origin() } else { None }) {
             self.graph_view.active = self.graph_view.panel_rect.is_some_and(|panel| panel.contains(pressed));
         }
+
         self.apply_raise();
         self.update_title(ui.ctx());
         if let Some(text) = self.copy_out.take() {

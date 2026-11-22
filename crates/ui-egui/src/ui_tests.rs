@@ -798,9 +798,16 @@ fn play_raises_the_game_view_which_shows_the_state_and_stop_returns_to_the_scene
     assert!(harness.query_by_label("State").is_none() && harness.query_by_label("Grid").is_some(), "stop brings the Scene tab back");
 }
 
+/// The GPU tests take turns: two D3D12 devices drawing at once from two threads crash inside the
+/// driver (an access violation, not a test failure), which Vulkan and the editor's one device do
+/// not do. A test holds its turn until it ends.
+static GPU_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The editor drawn offscreen with its real renderer, or `None` without a GPU (a failure instead
-/// with `BAYLEAF_GPU_REQUIRED=1`).
-fn gpu_harness() -> Option<Harness<'static, Editor>> {
+/// with `BAYLEAF_GPU_REQUIRED=1`), with this test's turn on the GPU.
+fn gpu_harness() -> Option<(std::sync::MutexGuard<'static, ()>, Harness<'static, Editor>)> {
+    // A test that failed during its turn still lets the others have theirs.
+    let turn = GPU_TURN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let setup = egui_kittest::wgpu::default_wgpu_setup();
     let instance = pollster::block_on(setup.new_instance());
     let config = egui_wgpu::WgpuConfiguration { wgpu_setup: setup, ..Default::default() };
@@ -818,7 +825,7 @@ fn gpu_harness() -> Option<Harness<'static, Editor>> {
         .renderer(renderer)
         .build_ui_state(move |ui, editor: &mut Editor| editor.ui(ui, Some(&state)), Editor::default());
     harness.run_steps(2);
-    Some(harness)
+    Some((turn, harness))
 }
 
 /// The editor as drawn: width, height and RGBA bytes.
@@ -889,7 +896,7 @@ fn a_material_that_does_not_compile_shows_a_warning_mark_and_why_in_the_inspecto
 
 #[test]
 fn with_a_gpu_a_material_tile_shows_the_material_and_follows_its_file() {
-    let Some(mut harness) = gpu_harness() else { return };
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
     let dir = std::env::temp_dir().join(format!("bayleaf-ui-gpu-thumbs-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     std::fs::create_dir_all(&dir).unwrap();
@@ -933,7 +940,7 @@ fn with_a_gpu_a_material_tile_shows_the_material_and_follows_its_file() {
 
 #[test]
 fn with_a_gpu_the_game_tab_draws_the_game_through_the_scene_camera() {
-    let Some(mut harness) = gpu_harness() else { return };
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
     let dir = std::env::temp_dir().join(format!("bayleaf-game-tab-{}", std::process::id()));
     std::fs::remove_dir_all(&dir).ok();
     harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
@@ -2254,4 +2261,27 @@ fn a_selected_emitter_plays_its_particles_in_the_scene_view_and_pauses() {
     harness.get_by_label("Restart particles").click();
     harness.run_steps(1);
     assert!(count(&harness) <= 1, "restart starts from nothing");
+}
+
+#[test]
+fn the_profiler_panel_records_the_game_and_shows_a_frame_by_part() {
+    let mut harness = harness();
+    harness.state_mut().show_panel(crate::Panel::Profiler);
+    harness.run();
+    assert!(harness.query_by_label_contains("Press Record").is_some(), "it says how to start");
+    harness.get_by_label("Record").click();
+    harness.run();
+    harness.state_mut().dispatch("play.start", &json!({}), None);
+    for _ in 0..4 {
+        harness.state_mut().dispatch("play.step", &json!({ "seconds": 0.02 }), None);
+        harness.step();
+    }
+    assert!(harness.query_by_label_contains("Frame times:").is_some(), "the graph says what it shows");
+    for part in ["Scripts", "Physics", "Drawing", "Draw Calls"] {
+        assert!(harness.query_all_by_label(part).next().is_some(), "{part} has its row and legend");
+    }
+    harness.get_by_label("Earlier Frame").click();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Newest").is_some(), "an earlier frame chosen, the newest is a click away");
+    harness.state_mut().dispatch("play.stop", &json!({}), None);
 }

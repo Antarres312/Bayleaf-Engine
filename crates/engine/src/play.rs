@@ -667,6 +667,25 @@ fn status(session: &mut Session, params: &Value) -> Result<Value, CommandError> 
 
 /// Advances play mode by `dt` seconds, split into steps of at most [`MAX_STEP`].
 pub(crate) fn step(session: &mut Session, dt: f32) {
+    let started = std::time::Instant::now();
+    step_parts(session, dt);
+    // Each script's time, and the whole step, for the profiler.
+    let timings = session.play.as_mut().map(|p| p.host.take_timings()).unwrap_or_default();
+    let time = session.play_time();
+    session.profiler.add_scripts(timings);
+    session.profiler.end_step(time, started.elapsed());
+}
+
+/// Times one part of the step for the profiler.
+fn timed<T>(session: &mut Session, part: crate::profiler::Part, run: impl FnOnce(&mut Session) -> T) -> T {
+    let started = std::time::Instant::now();
+    let out = run(session);
+    session.profiler.add(part, started.elapsed());
+    out
+}
+
+fn step_parts(session: &mut Session, dt: f32) {
+    use crate::profiler::Part;
     let mut remaining = dt.max(0.0);
     while remaining > 0.0 {
         let dt = remaining.min(MAX_STEP);
@@ -694,11 +713,16 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
         }
         #[cfg(all(feature = "physics", feature = "gameplay"))]
         drive_players(play, &mut session.scene, &input);
+        let scripts = std::time::Instant::now();
         play.host.update(&mut session.scene, dt, play.time, &input);
+        session.profiler.add(Part::Scripts, scripts.elapsed());
         apply_requests(session);
-        if let Some(play) = session.play.as_mut() {
-            play.particles.step(&session.scene, dt);
-        }
+        timed(session, Part::Particles, |session| {
+            if let Some(play) = session.play.as_mut() {
+                play.particles.step(&session.scene, dt);
+            }
+        });
+        let physics = std::time::Instant::now();
         #[cfg(feature = "physics")]
         if let Some(play) = session.play.as_mut()
             && let Some(physics) = play.physics.as_mut()
@@ -716,13 +740,14 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
             }
             apply_requests(session);
         }
+        session.profiler.add(Part::Physics, physics.elapsed());
         // The camera follows after physics moved the player.
         #[cfg(feature = "gameplay")]
         if let Some((camera, placed)) = bayleaf_gameplay::controller::follow_camera(&session.scene) {
             let _ = session.scene.set(camera, placed);
         }
-        crate::sound::update(session, f64::from(dt));
-        crate::stream::update(session);
+        timed(session, Part::Sound, |session| crate::sound::update(session, f64::from(dt)));
+        timed(session, Part::Streaming, crate::stream::update);
         #[cfg(feature = "gameplay")]
         apply_rules(session);
         report_outcome(session, &input);
