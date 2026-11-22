@@ -492,7 +492,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bayleaf"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bayleaf-automation",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-assets"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "glam 0.30.10",
  "gltf",
@@ -518,7 +518,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-audio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-core",
  "cpal",
@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-automation"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-engine",
  "getrandom 0.3.4",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bayleaf-automation",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
  "glam 0.30.10",
@@ -559,14 +559,14 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-ecs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "bayleaf-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-audio",
  "bayleaf-core",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-gameplay"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-core",
  "bayleaf-scene",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-graph"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-physics"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-core",
  "bayleaf-scene",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-player"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bayleaf-core",
@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-assets",
  "bayleaf-core",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-scene"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-core",
  "bayleaf-ecs",
@@ -676,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-script"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-core",
  "bayleaf-graph",
@@ -692,11 +692,11 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-script-sdk"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "bayleaf-streaming"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-core",
  "bayleaf-scene",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "bayleaf-ui-egui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bayleaf-core",
  "bayleaf-engine",
@@ -6303,7 +6303,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde_json",

@@ -24,16 +24,24 @@ changes only in a release.
 
 1. On `develop`, run the checks in `AGENTS.md` (tests, clippy, fmt, `cargo xtask layers`,
    `cargo xtask licences`).
-2. Set the new `version` in the root `Cargo.toml`, run `cargo check` so `Cargo.lock` follows, and
-   commit it on `develop` as `Release X.Y.Z`.
-3. Merge `develop` into `main` (`git switch main`, then `git merge --ff-only develop`).
-4. Tag it: `git tag -a vX.Y.Z -m "Bayleaf Engine X.Y.Z"`.
-5. Push both branches and the tag: `git push origin main develop vX.Y.Z`.
+2. On a `release/X.Y.Z` branch from `develop`, set the new `version` in the root `Cargo.toml`, run
+   `cargo check` so `Cargo.lock` follows, note the release under History below, and commit it as
+   `Release X.Y.Z`.
+3. Open a pull request of `release/X.Y.Z` into `main`. Once it is merged, merge `main` back into
+   `develop`, so `develop` has the release commit too.
+4. Tag the merged `main`: `git tag -a vX.Y.Z -m "Bayleaf Engine X.Y.Z"`, and push the tag and
+   `develop` (`git push origin develop vX.Y.Z`).
 
 A fix needed in a released version before the next release is made on `fix/<what>` from `main`,
 released as a patch version the same way, and then merged into `develop`.
 
 ## History
 
+- `v0.2.0`: visual scripts gain functions (Function, Return, Call Function), typed properties declared in
+  the script's panel with Set Property nodes, and a Negate node; script properties have types
+  (number, whole number, true/false, vector, colour, text, object) in the Inspector and the Rust SDK
+  (`Script::PROPERTIES` is now `&[Property]`); File > Export Game writes a project as a game folder;
+  the graph editor gets box selection, right-drag panning, Delete on nodes, nodes that keep up with
+  the pointer and side-by-side pins. Formats: scene 16, graph 5, project 5; older files still open.
 - `v0.1.0`: the first numbered version. Milestones M0 to M5 are done, M6 (gameplay framework) and
   M7 (physics, audio, streaming) are started, and the editor is translatable; see `docs/vision.md`.
