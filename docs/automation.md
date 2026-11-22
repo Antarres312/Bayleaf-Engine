@@ -115,3 +115,11 @@ the same `id`, `ok`, and either `result` or `error`.
 On Windows the token file's inherited access rules are removed and only your account may read it
 (with the system's `icacls`); on Linux and macOS it is readable by you only (mode 600). If that
 fails, the editor does not open the control channel.
+
+## What only the editor does
+
+Everything that changes a scene, a graph, an asset, the project or play mode is a command, so
+agents can do it too; they read the console with `console.read` and list the project's files with
+`asset.list`. What stays in the editor is its own view: selection, the scene camera, the panel
+layout (and maximised panels), recent projects, opening files with other programs, and building a
+Rust script, which `script.build` refuses for agents because it runs the crate's own build code.

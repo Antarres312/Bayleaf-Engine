@@ -1531,3 +1531,40 @@ fn scenes_load_in_play_added_or_in_place_and_added_ones_unload() {
     std::fs::remove_dir_all(&dir).ok();
     std::fs::remove_dir_all(&outside).ok();
 }
+
+#[test]
+fn agents_read_the_console_newest_last_and_can_ask_for_errors_only() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    for n in 0..5 {
+        session.log_line(crate::Level::Info, format!("note {n}"));
+    }
+    session.log_line(crate::Level::Error, "it broke".to_owned());
+    let read = registry.execute(&mut session, "console.read", &json!({"last": 2})).unwrap();
+    assert_eq!(read["lines"], json!([{"level": "info", "text": "note 4"}, {"level": "error", "text": "it broke"}]));
+    let errors = registry.execute(&mut session, "console.read", &json!({"errors": true})).unwrap();
+    assert_eq!(errors["total"], 1);
+    assert_eq!(errors["lines"][0]["text"], "it broke");
+}
+
+#[test]
+fn agents_list_a_projects_files_as_the_project_panel_does_inside_their_folders() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-asset-list-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    std::fs::create_dir_all(dir.join("target")).unwrap();
+    std::fs::write(dir.join(".hidden"), "x").unwrap();
+    let top = registry.execute(&mut session, "asset.list", &Value::Null).unwrap();
+    let paths: Vec<&str> = top["entries"].as_array().unwrap().iter().filter_map(|e| e["path"].as_str()).collect();
+    assert!(paths.contains(&"materials") && !paths.iter().any(|p| p.contains("target") || p.contains(".hidden")), "{paths:?}");
+    let all = registry.execute(&mut session, "asset.list", &json!({"recursive": true})).unwrap();
+    assert!(all["entries"].as_array().unwrap().iter().any(|e| e["kind"] == "Material" && e["path"].as_str().unwrap().starts_with("materials/")), "{all}");
+    session.set_confinement(Some(
+        crate::confine::Confinement::new(std::slice::from_ref(&dir.join("materials")), std::slice::from_ref(&dir.join("materials"))).unwrap(),
+    ));
+    assert!(registry.execute(&mut session, "asset.list", &json!({"path": "scenes"})).is_err(), "outside the readable folders");
+    assert!(registry.execute(&mut session, "asset.list", &json!({"path": "materials"})).is_ok());
+    std::fs::remove_dir_all(&dir).ok();
+}

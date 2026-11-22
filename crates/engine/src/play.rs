@@ -99,6 +99,17 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             run: input,
         },
         CommandSpec {
+            id: "console.read",
+            label: "Read Console",
+            menu: "",
+            shortcut: "",
+            params: "{last?: n (default 100), errors?: true for errors only}; returns {lines: [{level, text}], total}: the newest lines, oldest first",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: crate::always,
+            run: console_read,
+        },
+        CommandSpec {
             id: "console.clear",
             label: "Clear Console",
             menu: "",
@@ -429,6 +440,27 @@ fn scene_list_command(session: &mut Session, params: &Value) -> Result<Value, Co
     let added: Vec<Value> =
         session.play.as_ref().map(|p| p.loaded.iter().map(|(path, objects)| json!({ "path": path, "objects": objects })).collect()).unwrap_or_default();
     Ok(json!({ "added": added }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConsoleReadParams {
+    #[serde(default = "hundred")]
+    last: usize,
+    #[serde(default)]
+    errors: bool,
+}
+
+fn hundred() -> usize {
+    100
+}
+
+/// The newest console lines (script output, play messages, errors), oldest first.
+fn console_read(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: ConsoleReadParams = parse(params)?;
+    let lines: Vec<&crate::ConsoleLine> = session.console().iter().filter(|l| !p.errors || l.level == Level::Error).collect();
+    let start = lines.len().saturating_sub(p.last);
+    Ok(json!({ "lines": lines[start..], "total": lines.len() }))
 }
 
 fn stop(session: &mut Session, params: &Value) -> Result<Value, CommandError> {

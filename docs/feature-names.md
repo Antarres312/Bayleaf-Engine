@@ -34,5 +34,6 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Text Variable, Set Text Variable, Object Variable, Set Object Variable, Color Variable, Set Color Variable | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Whole Number (pin type, node and variable), To Whole Number, Rounding, Nearest, Down, Up, Toward Zero, Remainder, Whole Number Variable, Set Whole Number Variable | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Load Scene, Unload Scene, Add to This Scene, Scene File | not yet | Not checked yet | Generic terms for visual script nodes; same |
+| Read Console, List Assets (command labels) | not yet | Not checked yet | Generic terms; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

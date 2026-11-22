@@ -26,6 +26,17 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             run: asset_create,
         },
         CommandSpec {
+            id: "asset.list",
+            label: "List Assets",
+            menu: "",
+            shortcut: "",
+            params: "{path?, recursive?}: what a folder of the project holds (the project folder when left out), as the Project panel lists it: hidden and build folders left out. Returns {entries: [{path, kind}], truncated}, paths relative to the project folder",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: always,
+            run: asset_list,
+        },
+        CommandSpec {
             id: "asset.delete",
             label: "Delete Asset",
             menu: "",
@@ -121,6 +132,76 @@ struct DeleteParams {
     path: PathBuf,
     #[serde(default)]
     permanent: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListParams {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    recursive: bool,
+}
+
+/// Most entries one `asset.list` returns.
+const MAX_LISTED: usize = 5000;
+
+/// Folders never listed: build output and package caches.
+const NOT_LISTED: &[&str] = &["target", "node_modules"];
+
+/// What a file or folder is, as the Project panel names it.
+fn asset_kind(path: &Path) -> &'static str {
+    if path.is_dir() {
+        return if path.join("Cargo.toml").is_file() { "Rust Script" } else { "Folder" };
+    }
+    match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("bscene") => "Scene",
+        Some("bprefab") => "Prefab",
+        Some("bmaterial") => "Material",
+        Some("bscript") => "Visual Script",
+        Some("wasm") => "Script",
+        Some("binput") => "Input Map",
+        Some("bproject") => "Project",
+        Some("glb" | "gltf") => "Model",
+        Some("png" | "jpg" | "jpeg") => "Image",
+        _ => "File",
+    }
+}
+
+fn asset_list(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: ListParams = parse(params)?;
+    let base = session.script_dir();
+    let top = session.allowed(&base.join(&p.path), Access::Read)?;
+    if !top.is_dir() {
+        return Err(CommandError::BadParams(format!("{} is not a folder", top.display())));
+    }
+    let shown = |path: &Path| path.strip_prefix(&base).unwrap_or(path).to_string_lossy().replace('\\', "/");
+    let (mut entries, mut truncated) = (Vec::new(), false);
+    let mut pending = vec![top];
+    while let Some(dir) = pending.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else { continue };
+        let mut here: Vec<PathBuf> = read
+            .flatten()
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                !name.starts_with('.') && !(e.file_type().is_ok_and(|t| t.is_dir()) && NOT_LISTED.contains(&name.as_str()))
+            })
+            .map(|e| e.path())
+            .collect();
+        here.sort();
+        for path in here {
+            if entries.len() >= MAX_LISTED {
+                truncated = true;
+                break;
+            }
+            let kind = asset_kind(&path);
+            if p.recursive && kind == "Folder" {
+                pending.push(path.clone());
+            }
+            entries.push(json!({ "path": shown(&path), "kind": kind }));
+        }
+    }
+    Ok(json!({ "entries": entries, "truncated": truncated }))
 }
 
 fn asset_delete(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
