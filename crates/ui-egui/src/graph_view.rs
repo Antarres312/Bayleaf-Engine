@@ -1414,6 +1414,10 @@ fn setting_row(
         variable_picker(ui, lists.graph, node, ty, setting, field, requests);
         return;
     }
+    if setting.name == "function" && bayleaf_engine::script::visual::FUNCTION_KINDS.contains(&node.kind.as_str()) {
+        function_picker(ui, lists.graph, node, setting, field, requests);
+        return;
+    }
     // Get, Try Get and Set Component pick a component whose fields scripts can use; the node's
     // pins follow the choice.
     if setting.name == "component" && COMPONENT_KINDS.contains(&node.kind.as_str()) {
@@ -1664,6 +1668,42 @@ fn variable_picker(
             "{setting} of node {id}: {current}",
             &[("setting", tl(setting.label)), ("id", &node.id.to_string()), ("current", &current.to_string())],
         ),
+    );
+}
+
+/// A Function, Return or Call Function node picks one of the script's functions; its pins follow
+/// the function's inputs and outputs.
+fn function_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayleaf_engine::graph::SettingDef, field: Rect, requests: &mut Requests) {
+    let current = node.values.get("function").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let shown = if current.is_empty() { tl("Choose a function").to_owned() } else { current.clone() };
+    let response = ui.put(field, |ui: &mut egui::Ui| {
+        craft_ui::ComboBox::from_id_salt(("function", node.id))
+            .width(field.width())
+            .truncate()
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if graph.functions.is_empty() {
+                    ui.label(egui::RichText::new(tl("No functions yet: Add Function in the panel beside the graph")).small());
+                }
+                for function in &graph.functions {
+                    if ui.selectable_label(function.name == current, &function.name).clicked() && function.name != current {
+                        // The pins first, so links to pins the new function also has stay.
+                        requests
+                            .run("graph.node.set", json!({ "node": node.id, "name": "inputs", "value": bayleaf_engine::graph::param_pins(&function.inputs) }));
+                        requests.run(
+                            "graph.node.set",
+                            json!({ "node": node.id, "name": "outputs", "value": bayleaf_engine::graph::param_pins(&function.outputs) }),
+                        );
+                        requests.run("graph.node.set", json!({ "node": node.id, "name": "function", "value": function.name }));
+                    }
+                }
+            })
+            .response
+    });
+    labelled(
+        ui,
+        &response,
+        &crate::i18n::tf("{setting} of node {id}: {current}", &[("setting", tl(setting.label)), ("id", &node.id.to_string()), ("current", &current)]),
     );
 }
 

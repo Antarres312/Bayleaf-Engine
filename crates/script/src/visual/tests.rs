@@ -3,12 +3,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bayleaf_core::StableId;
-use bayleaf_graph::{Graph, Link, PinRef};
+use bayleaf_graph::{Graph, Link, PinRef, VariableType};
 use bayleaf_scene::Scene;
 use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue, ScriptRef, Transform};
 use serde_json::json;
 
-use super::{CATALOG, compile};
+use super::{CATALOG, FUNCTION_KINDS, compile};
 use crate::{Input, ScriptHost};
 
 struct Builder(Graph);
@@ -28,6 +28,11 @@ impl Builder {
 
     fn link(&mut self, from: u32, from_pin: &str, to: u32, to_pin: &str) {
         self.0.connect(&CATALOG, Link { from: PinRef::new(from, from_pin), to: PinRef::new(to, to_pin) }).unwrap();
+    }
+
+    /// Sets an input's typed value or a setting.
+    fn set_value_for_tests(&mut self, node: u32, name: &str, value: serde_json::Value) {
+        self.0.set_value(&CATALOG, node, name, value).unwrap();
     }
 
     fn bytes(&self) -> Vec<u8> {
@@ -467,6 +472,14 @@ fn every_node_kind_compiles_and_runs() {
     let other_log = b.node("log", json!({ "message": "target" }));
     b.link(other_gate, "true", other_log, "run");
     b.link(other_name, "result", other_log, "text");
+    // A function, called once.
+    declare(&mut b, "helper", &[("x", VariableType::Number)], &[("y", VariableType::Number)]);
+    let helper = function_node(&mut b, "functionStart", "helper");
+    let helper_back = function_node(&mut b, "functionReturn", "helper");
+    b.link(helper, "then", helper_back, "run");
+    b.link(helper, "x", helper_back, "y");
+    let helped = function_node(&mut b, "callFunction", "helper");
+    b.link(other_log, "then", helped, "run");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -1297,4 +1310,104 @@ fn another_script_s_whole_number_property_is_read_and_set_as_a_whole_number() {
     assert!(host.take_faults().is_empty());
     let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(lines, ["count 2", "read 2", "count 8", "read 8"]);
+}
+
+/// Declares a function on the builder's graph with typed inputs and outputs.
+fn declare(b: &mut Builder, name: &str, inputs: &[(&str, VariableType)], outputs: &[(&str, VariableType)]) {
+    let params = |list: &[(&str, VariableType)]| list.iter().map(|(n, ty)| bayleaf_graph::Param { name: (*n).to_owned(), ty: *ty }).collect::<Vec<_>>();
+    b.0.add_function(name).unwrap();
+    b.0.set_function(&CATALOG, name, None, Some(params(inputs)), Some(params(outputs)), &FUNCTION_KINDS).unwrap();
+}
+
+/// A node of a function: Function, Return or Call Function, with the function's pins.
+fn function_node(b: &mut Builder, kind: &str, function: &str) -> u32 {
+    let f = b.0.function(function).cloned().unwrap();
+    b.node(kind, json!({ "inputs": bayleaf_graph::param_pins(&f.inputs), "outputs": bayleaf_graph::param_pins(&f.outputs), "function": function }))
+}
+
+#[test]
+fn functions_take_inputs_give_back_outputs_and_may_call_themselves() {
+    let mut b = Builder::new();
+    // double(x, label) gives back y = 2x and said = label + "!".
+    declare(&mut b, "double", &[("x", VariableType::Number), ("label", VariableType::Text)], &[("y", VariableType::Number), ("said", VariableType::Text)]);
+    let begin = function_node(&mut b, "functionStart", "double");
+    let twice = b.node("multiply", json!({ "b": 2.0 }));
+    b.link(begin, "x", twice, "a");
+    let bang = b.node("joinText", json!({ "b": "!" }));
+    b.link(begin, "label", bang, "a");
+    let give = function_node(&mut b, "functionReturn", "double");
+    b.link(begin, "then", give, "run");
+    b.link(twice, "result", give, "y");
+    b.link(bang, "result", give, "said");
+    // fact(n) = n > 1 ? n * fact(n - 1) : 1.
+    declare(&mut b, "fact", &[("n", VariableType::Number)], &[("r", VariableType::Number)]);
+    let fact = function_node(&mut b, "functionStart", "fact");
+    let more = b.node("greater", json!({ "b": 1.0 }));
+    b.link(fact, "n", more, "a");
+    let gate = b.node("branch", json!({}));
+    b.link(fact, "then", gate, "run");
+    b.link(more, "result", gate, "condition");
+    let less = b.node("subtract", json!({ "b": 1.0 }));
+    b.link(fact, "n", less, "a");
+    let again = function_node(&mut b, "callFunction", "fact");
+    b.link(gate, "true", again, "run");
+    b.link(less, "result", again, "n");
+    let product = b.node("multiply", json!({}));
+    b.link(fact, "n", product, "a");
+    b.link(again, "r", product, "b");
+    let give_product = function_node(&mut b, "functionReturn", "fact");
+    b.link(again, "then", give_product, "run");
+    b.link(product, "result", give_product, "r");
+    let give_one = function_node(&mut b, "functionReturn", "fact");
+    b.link(gate, "false", give_one, "run");
+    b.set_value_for_tests(give_one, "r", json!(1.0));
+    // On Start calls both and logs what they gave back.
+    let start = b.node("start", json!({}));
+    let call = function_node(&mut b, "callFunction", "double");
+    b.set_value_for_tests(call, "x", json!(21.0));
+    b.set_value_for_tests(call, "label", json!("hi"));
+    b.link(start, "then", call, "run");
+    let said = b.node("log", json!({ "message": "double" }));
+    b.link(call, "then", said, "run");
+    b.link(call, "said", said, "text");
+    b.link(call, "y", said, "value");
+    let five = function_node(&mut b, "callFunction", "fact");
+    b.set_value_for_tests(five, "n", json!(5.0));
+    b.link(said, "then", five, "run");
+    let told = b.node("log", json!({ "message": "fact" }));
+    b.link(five, "then", told, "run");
+    b.link(five, "r", told, "value");
+
+    let (_, _, mut host) = run(&b.bytes(), &[]);
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["double hi! 42", "fact 120"]);
+}
+
+#[test]
+fn a_function_s_values_and_return_belong_to_its_own_actions() {
+    let mut b = Builder::new();
+    declare(&mut b, "f", &[("x", VariableType::Number)], &[("y", VariableType::Number)]);
+    let begin = function_node(&mut b, "functionStart", "f");
+    let start = b.node("start", json!({}));
+    let log = b.node("log", json!({}));
+    b.link(start, "then", log, "run");
+    b.link(begin, "x", log, "value");
+    let problems = compile(&b.0).unwrap_err();
+    assert!(problems.iter().any(|p| p.node == Some(begin) && p.message.contains("read only on f's own actions")), "{problems:?}");
+
+    let mut b = Builder::new();
+    declare(&mut b, "f", &[], &[("y", VariableType::Number)]);
+    let start = b.node("start", json!({}));
+    let give = function_node(&mut b, "functionReturn", "f");
+    b.link(start, "then", give, "run");
+    let problems = compile(&b.0).unwrap_err();
+    assert!(problems.iter().any(|p| p.node == Some(give)), "{problems:?}");
+
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let call = b.node("callFunction", json!({ "function": "missing" }));
+    b.link(start, "then", call, "run");
+    let problems = compile(&b.0).unwrap_err();
+    assert!(problems.iter().any(|p| p.node == Some(call) && p.message.contains("no function missing")), "{problems:?}");
 }

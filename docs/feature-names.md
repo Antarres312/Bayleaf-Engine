@@ -27,6 +27,7 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Input Map, Trigger, Held, Value, Starts with, Set Input Map, Menu Path, Rendering, Light, Physics, Gameplay, Input (Add Component folders) | not yet | Not checked yet | Generic terms; same |
 | Variables, Starts at, Get, Set, Add Variable, Properties, Add Property, Script, Set Menu Path, New Variable, Choose a variable | not yet | Not checked yet | Generic terms in the visual script panel; same |
 | Whole Number Property, True/False Property, Vector Property, Color Property, Text Property, Object Property, Default | not yet | Not checked yet | Generic terms; same |
+| Functions, Function, Return, Call Function, Add Function, Inputs, Outputs, Add Input, Add Output, Call | not yet | Not checked yet | Generic programming terms; same |
 | Object (pin type), This Object, Find Object Named, Find Object With, Count Objects With, For Each Object With, Destroy Object, Object Name, Component, Tag or Script, Found, Each, Index, Find (category) | not yet | Not checked yet | Generic terms for visual script nodes; same |
 | Preferences, Hide file extensions, Project Panel (settings section) | not yet | Not checked yet | Generic editor terms; same |
 | Maximise, Restore Layout (panel tab menu) | not yet | Not checked yet | Generic editor terms; same |

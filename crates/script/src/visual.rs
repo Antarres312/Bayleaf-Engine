@@ -58,6 +58,16 @@ pub const TEXT_VARIABLE_BYTES: u32 = 1024;
 /// The object an action works on or a value is read from, from a search or This Object; when it is not
 /// linked, the node uses the object named in Object Name (or its own default).
 const TARGET: PinDef = pin("target", "Object", PinType::Object);
+/// The function a Function, Return or Call Function node belongs to, and its pins (`name:type`),
+/// kept in step with the function by `graph.function.set`.
+pub(crate) const FUNCTION_SETTINGS: [SettingDef; 3] = [
+    SettingDef { name: "function", label: "Function", kind: SettingKind::Name("") },
+    SettingDef { name: "inputs", label: "Inputs", kind: SettingKind::Names },
+    SettingDef { name: "outputs", label: "Outputs", kind: SettingKind::Names },
+];
+
+/// The node kinds that name a function in their `function` setting.
+pub const FUNCTION_KINDS: [&str; 3] = ["functionStart", "functionReturn", "callFunction"];
 const OBJECT_NAME: SettingDef = SettingDef { name: "object", label: "Object Name", kind: SettingKind::Text("") };
 /// What a search looks for: a component (Point Light, Character), a tag, or a script (by its name).
 const KIND: SettingDef = SettingDef { name: "kind", label: "Component, Tag or Script", kind: SettingKind::Text("Point Light") };
@@ -432,6 +442,36 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[],
             outputs: &[pin("value", "Value", PinType::Object), pin("found", "Found", Bool)],
             settings: &[SettingDef { name: "name", label: "Name", kind: SettingKind::Name("target") }],
+            unique: false,
+        },
+        NodeDef {
+            kind: "functionStart",
+            label: "Function",
+            category: "Functions",
+            description: "Where a function's actions begin; its outputs are the values the function is called with.",
+            inputs: &[],
+            outputs: &[THEN],
+            settings: &FUNCTION_SETTINGS,
+            unique: false,
+        },
+        NodeDef {
+            kind: "functionReturn",
+            label: "Return",
+            category: "Functions",
+            description: "Ends the function and gives back its outputs to the Call Function that ran it.",
+            inputs: &[RUN],
+            outputs: &[],
+            settings: &FUNCTION_SETTINGS,
+            unique: false,
+        },
+        NodeDef {
+            kind: "callFunction",
+            label: "Call Function",
+            category: "Functions",
+            description: "Runs a function of this script with its inputs, then goes on; its outputs are what the function gave back.",
+            inputs: &[RUN],
+            outputs: &[THEN],
+            settings: &FUNCTION_SETTINGS,
             unique: false,
         },
         node("position", "Position", "Object", "The object's position, relative to its parent.", &[], &[pin("position", "Position", Vec3)]),
@@ -909,6 +949,9 @@ struct Compiler<'g> {
     graph: &'g Graph,
     data: Vec<(u32, Vec<u8>)>,
     next: u32,
+    /// The function whose actions are being compiled, if any: its Function node's values and
+    /// Return nodes belong there only.
+    scope: Option<String>,
     /// Declared properties: name, type and default, in the order first met.
     properties: Vec<(String, PropertyType, serde_json::Value)>,
     /// Globals actions need (the object and index of a For Each), declared once each.
@@ -960,8 +1003,15 @@ pub fn compile(graph: &Graph) -> Result<Vec<u8>, Vec<Problem>> {
 /// The WebAssembly text of a visual script.
 pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     graph.check(&CATALOG).map_err(|e| vec![Problem::graph(e.to_string())])?;
-    let mut c =
-        Compiler { graph, data: Vec::new(), next: DATA_START, properties: Vec::new(), globals: Vec::new(), text_vars: std::collections::BTreeMap::new() };
+    let mut c = Compiler {
+        graph,
+        data: Vec::new(),
+        next: DATA_START,
+        scope: None,
+        properties: Vec::new(),
+        globals: Vec::new(),
+        text_vars: std::collections::BTreeMap::new(),
+    };
     // Text variables keep their text in a buffer of their own, holding what they start as.
     let mut starts: std::collections::BTreeMap<String, String> = graph
         .nodes
@@ -1035,6 +1085,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
             return Err(vec![Problem::graph("the script is too large; reuse fewer shared chains")]);
         }
     }
+    let functions = compile_functions(&mut c, &mut problems);
     // Property nodes declare properties even when nothing reads them yet.
     for node in graph.nodes.iter().filter(|n| property_type(&n.kind).is_some()) {
         c.declare_property(node.id);
@@ -1117,6 +1168,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     if graph.nodes.iter().any(|n| n.kind == "message") {
         let _ = writeln!(out, "  (func (export \"bayleaf_message\") (param $value f32)\n{fresh}    (global.set $message (local.get $value))\n{message}  )");
     }
+    out.push_str(&functions);
     out.push_str(")\n");
     Ok(out)
 }
@@ -1257,6 +1309,15 @@ impl Compiler<'_> {
         if !self.globals.contains(&declaration) {
             self.globals.push(declaration);
         }
+    }
+
+    /// The function a Function, Return or Call Function node names.
+    fn function_of(&self, node: u32) -> Result<bayleaf_graph::Function, Problem> {
+        let name = self.setting_text(node, "function", "");
+        if name.is_empty() {
+            return Err(Problem::on(node, "choose a function"));
+        }
+        self.graph.function(&name).cloned().ok_or_else(|| Problem::on(node, format!("this script has no function {name}")))
     }
 
     /// Declares the property a Property node names, once, with its type and default.
@@ -1509,6 +1570,42 @@ impl Compiler<'_> {
                 let _ = writeln!(code, "{indent}(if {condition}\n{indent}  (then\n{yes}{indent}  )\n{indent}  (else\n{no}{indent}  ))");
                 return Ok(code);
             }
+            "callFunction" => {
+                let function = self.function_of(next)?;
+                let mut args = Vec::new();
+                for param in &function.inputs {
+                    let value = self.input(next, &param.name)?;
+                    args.extend(parts_of(next, param.ty, value)?);
+                }
+                let mut kept = Vec::new();
+                for (k, param) in function.outputs.iter().enumerate() {
+                    for (j, ty) in wasm_types(param.ty).iter().enumerate() {
+                        let global = format!("$ret_{next}_{k}_{j}");
+                        self.global(format!("(global {global} (mut {ty}) ({ty}.const 0))"));
+                        kept.push(global);
+                    }
+                }
+                let _ = writeln!(code, "{indent}(call $fn_{} {})", function.name, args.join(" "));
+                // What it gave back, last first, kept for the nodes that read its outputs.
+                for global in kept.iter().rev() {
+                    let _ = writeln!(code, "{indent}(global.set {global})");
+                }
+            }
+            "functionReturn" => {
+                let function = self.function_of(next)?;
+                if self.scope.as_deref() != Some(function.name.as_str()) {
+                    return Err(Problem::on(
+                        next,
+                        format!("a Return of {} goes only on {}'s own actions, after its Function node", function.name, function.name),
+                    ));
+                }
+                let mut values = Vec::new();
+                for param in &function.outputs {
+                    let value = self.input(next, &param.name)?;
+                    values.extend(parts_of(next, param.ty, value)?);
+                }
+                let _ = writeln!(code, "{indent}(return {})", values.join(" "));
+            }
             _ => return Err(Problem::on(next, format!("{} is not an action; link flow only into actions", def.label))),
         }
         code.push_str(&self.chain(next, "then", depth)?);
@@ -1568,6 +1665,38 @@ impl Compiler<'_> {
         let (n, def) = graph.node_def(&CATALOG, node).map_err(|e| Problem::on(node, e.to_string()))?;
         let transform = |base: u32| Val::V([0, 1, 2].map(|i| format!("(call $t (i32.const {}))", base + i)));
         Ok(match n.kind.as_str() {
+            "functionStart" => {
+                let function = self.function_of(node)?;
+                if self.scope.as_deref() != Some(function.name.as_str()) {
+                    return Err(Problem::on(node, format!("the values of {}'s Function node are read only on {}'s own actions", function.name, function.name)));
+                }
+                let (k, param) = function
+                    .inputs
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.name == pin)
+                    .ok_or_else(|| Problem::on(node, format!("{} has no input {pin}", function.name)))?;
+                val_of(param.ty, (0..wasm_types(param.ty).len()).map(|j| format!("(local.get $a{k}_{j})")).collect())
+            }
+            "callFunction" => {
+                let function = self.function_of(node)?;
+                let (k, param) = function
+                    .outputs
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.name == pin)
+                    .ok_or_else(|| Problem::on(node, format!("{} has no output {pin}", function.name)))?;
+                let parts: Vec<String> = wasm_types(param.ty)
+                    .iter()
+                    .enumerate()
+                    .map(|(j, ty)| {
+                        let global = format!("$ret_{node}_{k}_{j}");
+                        self.global(format!("(global {global} (mut {ty}) ({ty}.const 0))"));
+                        format!("(global.get {global})")
+                    })
+                    .collect();
+                val_of(param.ty, parts)
+            }
             "update" if pin == "dt" => Val::F("(global.get $dt)".to_owned()),
             "message" if pin == "value" => Val::F("(global.get $message)".to_owned()),
             "vectorVariable" => {
@@ -1863,6 +1992,85 @@ fn zip(node: u32, a: Val, b: Val, op: impl Fn(&str, &str) -> String) -> Result<V
         (Val::V(a), Val::F(b)) => Val::V(a.map(|c| op(&c, &b))),
         (Val::F(a), Val::V(b)) => Val::V(b.map(|c| op(&a, &c))),
         _ => return Err(Problem::on(node, "math needs numbers or vectors, not true/false")),
+    })
+}
+
+/// Each function as a WebAssembly function: its inputs as parameters, its outputs as results.
+fn compile_functions(c: &mut Compiler<'_>, problems: &mut Vec<Problem>) -> String {
+    let graph = c.graph;
+    let mut functions = String::new();
+    for function in &graph.functions {
+        let starts: Vec<u32> = graph
+            .nodes
+            .iter()
+            .filter(|n| n.kind == "functionStart" && n.values.get("function").and_then(serde_json::Value::as_str) == Some(function.name.as_str()))
+            .map(|n| n.id)
+            .collect();
+        if let Some(second) = starts.get(1) {
+            problems.push(Problem::on(*second, format!("{} has another Function node; a function begins in one place", function.name)));
+            continue;
+        }
+        c.scope = Some(function.name.clone());
+        let body = match starts.first() {
+            Some(start) => c.chain(*start, "then", 1),
+            None => Ok(String::new()),
+        };
+        c.scope = None;
+        match body {
+            Ok(body) => {
+                let mut signature = String::new();
+                for (k, param) in function.inputs.iter().enumerate() {
+                    for (j, ty) in wasm_types(param.ty).iter().enumerate() {
+                        let _ = write!(signature, " (param $a{k}_{j} {ty})");
+                    }
+                }
+                let results: Vec<&str> = function.outputs.iter().flat_map(|p| wasm_types(p.ty).iter().copied()).collect();
+                if !results.is_empty() {
+                    let _ = write!(signature, " (result {})", results.join(" "));
+                }
+                // Actions that end without a Return give back zeros.
+                let zeros: Vec<String> = results.iter().map(|ty| format!("({ty}.const 0)")).collect();
+                let tail = if zeros.is_empty() { String::new() } else { format!("    (return {})\n", zeros.join(" ")) };
+                let _ = write!(functions, "  (func $fn_{}{signature}\n{body}{tail}  )\n", function.name);
+            }
+            Err(p) => problems.push(p),
+        }
+    }
+    functions
+}
+
+/// The WebAssembly value types a value of `ty` is passed as, in order.
+fn wasm_types(ty: VariableType) -> &'static [&'static str] {
+    match ty {
+        VariableType::Number => &["f32"],
+        VariableType::WholeNumber | VariableType::TrueFalse | VariableType::Object => &["i32"],
+        VariableType::Text => &["i64"],
+        VariableType::Vector | VariableType::Color => &["f32", "f32", "f32"],
+    }
+}
+
+/// A value of `ty` from the expressions of its parts ([`wasm_types`]).
+fn val_of(ty: VariableType, mut parts: Vec<String>) -> Val {
+    let mut next = || if parts.is_empty() { String::new() } else { parts.remove(0) };
+    match ty {
+        VariableType::Number => Val::F(next()),
+        VariableType::WholeNumber => Val::I(next()),
+        VariableType::TrueFalse => Val::B(next()),
+        VariableType::Text => Val::T(next()),
+        VariableType::Object => Val::O(next()),
+        VariableType::Vector | VariableType::Color => Val::V([next(), next(), next()]),
+    }
+}
+
+/// The expressions of a value passed as `ty` ([`wasm_types`]).
+fn parts_of(node: u32, ty: VariableType, value: Val) -> Result<Vec<String>, Problem> {
+    Ok(match ty {
+        VariableType::Number => vec![as_float(node, value)?],
+        VariableType::WholeNumber => vec![as_int(node, value)?],
+        VariableType::TrueFalse => vec![as_bool(node, value)?],
+        VariableType::Text => vec![as_text(node, value)?],
+        VariableType::Object => vec![as_object(node, value)?],
+        VariableType::Vector | VariableType::Color => as_vec(node, value)?.to_vec(),
     })
 }
 

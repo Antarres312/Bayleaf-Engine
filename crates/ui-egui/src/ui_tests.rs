@@ -1789,3 +1789,35 @@ fn a_typed_property_is_added_in_the_panel_and_edited_with_its_own_field_in_the_i
     assert_eq!(scripts.0[0].properties.get("label").and_then(|v| v.text()), Some("Shop"), "the typed text is the object's value");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn functions_are_added_given_inputs_and_called_from_the_script_panel() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label("Add Function").click();
+    harness.run();
+    let g = graph(&harness);
+    assert_eq!(g.functions.len(), 1, "Add Function declares one");
+    let name = g.functions[0].name.clone();
+    let start = g.nodes.iter().find(|n| n.kind == "functionStart").map(|n| n.id).expect("and places its Function node");
+    assert!(g.nodes.iter().any(|n| n.kind == "functionReturn"), "and its Return node");
+
+    harness.get_by_label("Add Input").click();
+    harness.run();
+    harness.get_by_label("Whole Number").click();
+    harness.run();
+    let g = graph(&harness);
+    assert_eq!(g.function(&name).unwrap().inputs.len(), 1);
+    assert_eq!(g.value(start, "inputs"), Some(&json!(["input:whole"])), "the Function node follows");
+    harness.get_by_label("Fit All").click();
+    harness.run();
+    assert!(harness.query_by_label_contains(&format!("Output Input (Whole Number) of Function {start}")).is_some(), "as a pin");
+
+    harness.get_by_label(&format!("Call {name}")).click();
+    harness.run();
+    let call = graph(&harness).nodes.iter().find(|n| n.kind == "callFunction").map(|n| n.id).expect("Call places a Call Function node");
+    assert_eq!(graph(&harness).value(call, "inputs"), Some(&json!(["input:whole"])));
+    harness.get_by_label(&format!("Remove input from {name}")).click();
+    harness.run();
+    assert_eq!(graph(&harness).value(call, "inputs"), Some(&json!([])), "removing the input takes the pin off every node");
+    assert!(harness.query_by_label_contains("this visual script compiles").is_some(), "{}", harness.state().status);
+}

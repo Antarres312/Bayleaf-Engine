@@ -109,7 +109,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "graph.variable.add",
             "Add Variable",
-            "{name, type: \"number\" | \"vector\" | \"trueFalse\", start?}: declares a variable of a visual script, starting at start (else zero)",
+            "{name, type: \"number\" | \"wholeNumber\" | \"vector\" | \"trueFalse\" | \"text\" | \"object\" | \"color\", start?}: declares a variable of a visual script, starting at start (else zero)",
             Mutates::Graph,
             variable_add,
         ),
@@ -121,6 +121,21 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             variable_set,
         ),
         spec("graph.variable.remove", "Remove Variable", "{name}: its nodes keep working, starting from zero", Mutates::Graph, variable_remove),
+        spec(
+            "graph.function.add",
+            "Add Function",
+            "{name}: declares a function of a visual script, with no inputs or outputs yet; its Function node begins its actions, Return gives back its outputs and Call Function runs it",
+            Mutates::Graph,
+            function_add,
+        ),
+        spec(
+            "graph.function.set",
+            "Change Function",
+            "{name, rename?, inputs?, outputs?}: a new name, or new inputs or outputs ([{name, type}], type as for variables); the function's nodes follow, and links to pins that went away go",
+            Mutates::Graph,
+            function_set,
+        ),
+        spec("graph.function.remove", "Remove Function", "{name}: its nodes stay, and say they name no function", Mutates::Graph, function_remove),
         spec(
             "graph.menu.set",
             "Set Menu Path",
@@ -135,7 +150,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
 fn open_script(session: &mut Session) -> Result<&mut Graph, CommandError> {
     let (graph, catalog) = open(session)?;
     if catalog.domain != bayleaf_script::visual::CATALOG.domain {
-        return Err(CommandError::Failed("only visual scripts have variables and a menu path".to_owned()));
+        return Err(CommandError::Failed("only visual scripts have variables, functions and a menu path".to_owned()));
     }
     Ok(graph)
 }
@@ -183,6 +198,43 @@ struct VariableNameParams {
 fn variable_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: VariableNameParams = parse(params)?;
     open_script(session)?.remove_variable(&p.name).map_err(failed)?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FunctionAddParams {
+    name: String,
+}
+
+fn function_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: FunctionAddParams = parse(params)?;
+    open_script(session)?.add_function(&p.name).map_err(failed)?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FunctionSetParams {
+    name: String,
+    #[serde(default)]
+    rename: Option<String>,
+    #[serde(default)]
+    inputs: Option<Vec<bayleaf_graph::Param>>,
+    #[serde(default)]
+    outputs: Option<Vec<bayleaf_graph::Param>>,
+}
+
+fn function_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: FunctionSetParams = parse(params)?;
+    let catalog = &bayleaf_script::visual::CATALOG;
+    open_script(session)?.set_function(catalog, &p.name, p.rename.as_deref(), p.inputs, p.outputs, &bayleaf_script::visual::FUNCTION_KINDS).map_err(failed)?;
+    Ok(json!({}))
+}
+
+fn function_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: FunctionAddParams = parse(params)?;
+    open_script(session)?.remove_function(&p.name).map_err(failed)?;
     Ok(json!({}))
 }
 

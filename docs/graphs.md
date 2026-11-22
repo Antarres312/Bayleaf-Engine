@@ -182,6 +182,12 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   object's); **Play Sound At** plays a sound file once from a position, at a volume (drag a sound
   file onto its Sound File).
 - Data nodes have no side effects. They are computed where an action needs them.
+- **Functions** are actions a script runs from several places. A function has a name and typed
+  inputs and outputs (the types of variables). Its **Function** node begins its actions and gives
+  its inputs as values, which are read only on those actions; a **Return** node there ends it and
+  gives back its outputs (a function that ends without one gives back zeros). **Call Function** runs
+  it with its inputs and then goes on, with what it gave back as outputs. A function may call
+  itself. The nodes' pins follow the function when its inputs or outputs change (graph version 4).
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a
 graph with every node kind and runs it.
@@ -211,6 +217,9 @@ graph with every node kind and runs it.
 | `graph.variable.add` | `{name, type, start?}`: declares a visual script variable | yes |
 | `graph.variable.set` | `{name, rename?, start?}`; a rename renames it on its nodes too | yes |
 | `graph.variable.remove` | `{name}`; its nodes keep the name and start from zero | yes |
+| `graph.function.add` | `{name}`: declares a function with no inputs or outputs | yes |
+| `graph.function.set` | `{name, rename?, inputs?, outputs?}`, inputs and outputs `[{name, type}]`; its nodes follow, and links to pins that went away go | yes |
+| `graph.function.remove` | `{name}`; its nodes stay and say they name no function | yes |
 | `graph.menu.set` | `{path}`: a visual script's menu path; empty puts it under Scripts | yes |
 
 Graph edits share the undo history with scene edits. Opening or closing a graph drops that graph's
@@ -233,12 +242,16 @@ steps. Automation file access to graphs is confined like any other file (`docs/a
 | Move a comment and its nodes | Drag its title | Tab to its title, then the arrow keys |
 | Resize a comment | Drag its bottom-right corner | Tab to its title, then Ctrl + arrow keys |
 | Edit or delete a comment | Double-click its title; right-click it | Enter; Delete |
-| Pan and zoom | Drag the background; the mouse wheel | Ctrl + Plus, Minus; Ctrl + 0 or Fit All shows every node |
+| Pan and zoom | Hold the right (or middle) button and drag, also over a node; the mouse wheel | Ctrl + Plus, Minus; Ctrl + 0 or Fit All shows every node |
+| Select nodes in a box | Drag the left button over the background (Ctrl or Shift adds) | |
 
 A visual script has a panel left of its canvas. **Variables** lists the script's variables: rename
 one (its nodes follow), set where it **Starts at**, place a node that reads it (**Get**) or sets it
 (**Set**), remove it, or **Add Variable** of a type. **Properties** lists the Property nodes with
-their types and defaults (**Add Property** places another, of a type), and **Script** has the **Menu path** field,
+their types and defaults (**Add Property** places another, of a type), **Functions** lists the
+functions with their inputs and outputs (**Add Function** declares one and places its Function and
+Return nodes; **Add Input** and **Add Output** of a type; **Call** places a Call Function node), and
+**Script** has the **Menu path** field,
 which keeps what is typed and says why while it does not read right yet. On a variable node, Name is a list of the script's variables of that type (and names
 other nodes use without declaring them); **New Variable…** declares a new one and picks it.
 

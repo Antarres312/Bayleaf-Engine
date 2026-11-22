@@ -256,9 +256,13 @@ fn script_variant(node: &Node, fields: Vec<String>) -> Option<&'static NodeDef> 
     Some(def)
 }
 
-/// The pins of a Get Component, Try Get Component or Set Component node: its component's fields,
-/// or the properties of the script it names.
+/// The pins of a node whose pins depend on its settings: a Get Component, Try Get Component or
+/// Set Component node (its component's fields, or the properties of the script it names), or a
+/// Function, Return or Call Function node (its function's inputs and outputs).
 pub fn variant(node: &Node) -> Option<&'static NodeDef> {
+    if super::FUNCTION_KINDS.contains(&node.kind.as_str()) {
+        return function_variant(node);
+    }
     if !matches!(node.kind.as_str(), "getComponent" | "tryGetComponent" | "setComponent") {
         return None;
     }
@@ -269,4 +273,72 @@ pub fn variant(node: &Node) -> Option<&'static NodeDef> {
         "setComponent" => Some(&component.set),
         _ => None,
     }
+}
+
+/// Function node pin sets made so far, by node kind, inputs and outputs.
+type FunctionVariants = Vec<(String, Vec<String>, Vec<String>, &'static NodeDef)>;
+static FUNCTION_VARIANTS: std::sync::Mutex<FunctionVariants> = std::sync::Mutex::new(Vec::new());
+
+/// The pins a list of `name:type` entries becomes; an entry of an unknown type is left out.
+fn typed_pins(entries: &[String], with_defaults: bool) -> Vec<PinDef> {
+    let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let (name, code) = entry.split_once(':')?;
+            let (ty, default) = match code {
+                "number" => (Float, PinDefault::Float(0.0)),
+                "whole" => (PinType::Int, PinDefault::Int(0)),
+                "bool" => (Bool, PinDefault::Bool(false)),
+                "vector" => (Vec3, PinDefault::Vec3([0.0; 3])),
+                "color" => (Color, PinDefault::Color([1.0; 3])),
+                "text" => (PinType::Text, PinDefault::Text("")),
+                "object" => (PinType::Object, PinDefault::None),
+                _ => return None,
+            };
+            let default = if with_defaults { default } else { PinDefault::None };
+            Some(PinDef { name: leak(name.to_owned()), label: leak(super::title(name)), ty, default })
+        })
+        .collect()
+}
+
+/// The pins of a Function, Return or Call Function node: the function's inputs and outputs as the
+/// node keeps them (`inputs` and `outputs`, each `name:type`).
+pub(super) fn function_variant(node: &Node) -> Option<&'static NodeDef> {
+    let list = |key: &str| -> Vec<String> {
+        node.values.get(key).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|n| n.as_str().map(str::to_owned)).collect()).unwrap_or_default()
+    };
+    let (inputs, outputs) = (list("inputs"), list("outputs"));
+    let mut made = FUNCTION_VARIANTS.lock().ok()?;
+    if let Some((_, _, _, def)) = made.iter().find(|(kind, i, o, _)| *kind == node.kind && *i == inputs && *o == outputs) {
+        return Some(def);
+    }
+    if made.len() >= MAX_SCRIPT_VARIANTS {
+        return None;
+    }
+    let base = super::CATALOG.nodes.iter().find(|d| d.kind == node.kind)?;
+    let leak_pins = |pins: Vec<PinDef>| -> &'static [PinDef] { Box::leak(pins.into_boxed_slice()) };
+    let def = match node.kind.as_str() {
+        "functionStart" => {
+            let mut outs = vec![THEN];
+            outs.extend(typed_pins(&inputs, false));
+            NodeDef { outputs: leak_pins(outs), ..*base }
+        }
+        "functionReturn" => {
+            let mut ins = vec![RUN];
+            ins.extend(typed_pins(&outputs, true));
+            NodeDef { inputs: leak_pins(ins), ..*base }
+        }
+        "callFunction" => {
+            let mut ins = vec![RUN];
+            ins.extend(typed_pins(&inputs, true));
+            let mut outs = vec![THEN];
+            outs.extend(typed_pins(&outputs, false));
+            NodeDef { inputs: leak_pins(ins), outputs: leak_pins(outs), ..*base }
+        }
+        _ => return None,
+    };
+    let def: &'static NodeDef = Box::leak(Box::new(def));
+    made.push((node.kind.clone(), inputs, outputs, def));
+    Some(def)
 }

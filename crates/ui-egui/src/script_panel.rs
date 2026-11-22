@@ -1,6 +1,7 @@
 //! The visual script's own panel, left of its graph: its variables (name, type, starting value,
 //! buttons that place their nodes), its properties (the Property nodes the Inspector shows per
-//! object) and where Add Component lists it. Everything changes through `graph.*` commands, so
+//! object), its functions (inputs and outputs, and buttons that place their nodes) and where Add
+//! Component lists it. Everything changes through `graph.*` commands, so
 //! it undoes like any other graph edit.
 
 use crate::i18n::tl;
@@ -28,6 +29,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, at: [f
         variables(editor, ui, t, graph, at, panel);
         ui.add_space(theme::SECTION_GAP);
         properties(editor, ui, t, graph, at);
+        ui.add_space(theme::SECTION_GAP);
+        functions(editor, ui, t, graph, at, panel);
         ui.add_space(theme::SECTION_GAP);
         script(editor, ui, t, graph, panel);
     });
@@ -264,6 +267,130 @@ fn default_editor(ui: &mut egui::Ui, ty: bayleaf_engine::scene::components::Prop
     };
     let fallback = if ty == PropertyType::Color { json!([1.0, 1.0, 1.0]) } else { variable.zero() };
     start_editor(ui, variable, current.unwrap_or(&fallback), name)
+}
+
+/// Places a Function, Return or Call Function node of `function` at `at`, with its pins.
+fn place_function(editor: &mut Editor, kind: &str, at: [f32; 2], function: &bayleaf_engine::graph::Function) {
+    if let Some(added) = editor.dispatch("graph.node.add", &json!({ "kind": kind, "position": at }), None) {
+        let node = added["node"].clone();
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "inputs", "value": bayleaf_engine::graph::param_pins(&function.inputs) }), None);
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "outputs", "value": bayleaf_engine::graph::param_pins(&function.outputs) }), None);
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "function", "value": function.name }), None);
+    }
+}
+
+/// The script's functions: each one's name, its inputs and outputs with their types, and buttons
+/// that place a Call Function node or remove it. Add Function declares one and places its Function
+/// and Return nodes.
+fn functions(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at: [f32; 2], panel: &mut ScriptPanel) {
+    use bayleaf_engine::graph::{Function, Param};
+    theme::headed(t, "Functions").show(ui, |ui| {
+        if graph.functions.is_empty() {
+            ui.add(
+                egui::Label::new(egui::RichText::new(tl("Actions this script runs from several places, with inputs and outputs.")).small().color(t.text_muted))
+                    .wrap(),
+            );
+        }
+        for function in &graph.functions {
+            ui.push_id(("function", &function.name), |ui| {
+                egui::Frame::new().fill(t.panel).corner_radius(theme::SECTION_RADIUS).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let key = format!("function {}", function.name);
+                    if let Some(typed) = name_field(ui, panel, &key, &function.name, &crate::i18n::tf("Name of function {name}", &[("name", &function.name)])) {
+                        editor.dispatch("graph.function.set", &json!({ "name": function.name, "rename": typed }), None);
+                    }
+                    for (side, params) in [("inputs", &function.inputs), ("outputs", &function.outputs)] {
+                        ui.label(egui::RichText::new(tl(if side == "inputs" { "Inputs" } else { "Outputs" })).small().color(t.text_muted));
+                        let mut changed: Option<Vec<Param>> = None;
+                        for (index, param) in params.iter().enumerate() {
+                            ui.push_id((side, index), |ui| {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(ui.available_width(), ROW_HEIGHT),
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let remove = ui.small_button("×").on_hover_text(tl("Remove"));
+                                        ui.ctx().accesskit_node_builder(remove.id, |node| {
+                                            node.set_label(crate::i18n::tf(
+                                                "Remove {name} from {function}",
+                                                &[("name", &param.name), ("function", &function.name)],
+                                            ))
+                                        });
+                                        if remove.clicked() {
+                                            let mut kept = params.clone();
+                                            kept.remove(index);
+                                            changed = Some(kept);
+                                        }
+                                        ui.label(egui::RichText::new(tl(param.ty.label())).small().color(t.text_muted));
+                                        let key = format!("function {} {side} {index}", function.name);
+                                        let label = crate::i18n::tf("Name of {name} of {function}", &[("name", &param.name), ("function", &function.name)]);
+                                        if let Some(typed) = name_field(ui, panel, &key, &param.name, &label) {
+                                            let mut renamed = params.clone();
+                                            renamed[index].name = typed;
+                                            changed = Some(renamed);
+                                        }
+                                    },
+                                );
+                            });
+                        }
+                        let add = if side == "inputs" { tl("Add Input") } else { tl("Add Output") };
+                        ui.menu_button(add, |ui| {
+                            for ty in VariableType::ALL {
+                                if ui.button(tl(ty.label())).clicked() {
+                                    let stem = if side == "inputs" { "input" } else { "output" };
+                                    let mut more = params.clone();
+                                    more.push(Param { name: free_name(stem, |n| params.iter().any(|p| p.name == n)), ty });
+                                    changed = Some(more);
+                                    ui.close();
+                                }
+                            }
+                        });
+                        if let Some(list) = changed {
+                            editor.dispatch("graph.function.set", &json!({ "name": function.name, side: list }), None);
+                        }
+                    }
+                    ui.horizontal(|ui| {
+                        let call = ui.small_button(tl("Call")).on_hover_text(tl("Place a node that runs it"));
+                        ui.ctx().accesskit_node_builder(call.id, |node| node.set_label(crate::i18n::tf("Call {name}", &[("name", &function.name)])));
+                        if call.clicked() {
+                            place_function(editor, "callFunction", at, function);
+                        }
+                        let remove = ui.small_button(tl("Remove")).on_hover_text(tl("Its nodes stay and say they name no function"));
+                        ui.ctx()
+                            .accesskit_node_builder(remove.id, |node| node.set_label(crate::i18n::tf("Remove function {name}", &[("name", &function.name)])));
+                        if remove.clicked() {
+                            editor.dispatch("graph.function.remove", &json!({ "name": function.name }), None);
+                        }
+                    });
+                });
+            });
+            ui.add_space(theme::SECTION_GAP);
+        }
+        if ui.button(tl("Add Function")).on_hover_text(tl("Declare a function and place its Function and Return nodes")).clicked() {
+            let name = free_name("function", |n| graph.function(n).is_some());
+            if editor.dispatch("graph.function.add", &json!({ "name": name }), None).is_some() {
+                let function = Function { name, inputs: Vec::new(), outputs: Vec::new() };
+                place_function(editor, "functionStart", at, &function);
+                place_function(editor, "functionReturn", [at[0] + 240.0, at[1]], &function);
+            }
+        }
+    });
+}
+
+/// A name typed in place: what is typed stays until the field is left, then it is returned if it
+/// changed. `key` keeps the typing apart from other fields.
+fn name_field(ui: &mut egui::Ui, panel: &mut ScriptPanel, key: &str, current: &str, label: &str) -> Option<String> {
+    let text = panel.renaming.entry(key.to_owned()).or_insert_with(|| current.to_owned());
+    let field = ui.add_sized([ui.available_width().max(40.0), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(text));
+    ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(label));
+    if field.lost_focus() {
+        let typed = text.trim().to_owned();
+        panel.renaming.remove(key);
+        return (typed != current && !typed.is_empty()).then_some(typed);
+    }
+    if !field.has_focus() {
+        *text = current.to_owned();
+    }
+    None
 }
 
 /// Where Add Component lists the script: a path typed here (`graph.menu.set`). What is typed stays

@@ -16,8 +16,9 @@ use serde_json::Value;
 /// `format` field of graph files.
 pub const FORMAT: &str = "bayleaf.graph";
 /// Current graph file version. Version 2 added declared `variables`; version 3 moved a visual script's
-/// Menu Path node into `menu`. Older files still read (a Menu Path node becomes `menu`).
-pub const VERSION: u32 = 3;
+/// Menu Path node into `menu`; version 4 added `functions`. Older files still read (a Menu Path node
+/// becomes `menu`).
+pub const VERSION: u32 = 4;
 /// The node kind versions before 3 kept a visual script's menu path in, as its `path` value.
 const OLD_MENU_NODE: &str = "menuPath";
 /// Longest `menu`, in characters.
@@ -350,6 +351,9 @@ pub struct Graph {
     /// Where Add Component lists a visual script (`Light/Flicker`); empty for under Scripts.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub menu: String,
+    /// Functions a visual script declares: what each takes and gives back.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub functions: Vec<Function>,
 }
 
 /// What a variable holds.
@@ -377,6 +381,24 @@ impl VariableType {
         VariableType::Object,
         VariableType::Color,
     ];
+
+    /// The word nodes keep a pin's type as (`name:type`): `number`, `vector`, `bool`, `whole`,
+    /// `text`, `object` or `color`.
+    pub fn code(self) -> &'static str {
+        match self {
+            VariableType::Number => "number",
+            VariableType::Vector => "vector",
+            VariableType::TrueFalse => "bool",
+            VariableType::WholeNumber => "whole",
+            VariableType::Text => "text",
+            VariableType::Object => "object",
+            VariableType::Color => "color",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<VariableType> {
+        VariableType::ALL.into_iter().find(|t| t.code() == code)
+    }
 
     /// English name shown to people.
     pub fn label(self) -> &'static str {
@@ -417,6 +439,57 @@ impl VariableType {
             VariableType::Object => value.is_null(),
         }
     }
+}
+
+/// One input or output of a function: a name and what it holds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Param {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: VariableType,
+}
+
+/// A function a visual script declares. Its Function node begins its actions with the inputs as
+/// values, a Return node gives back the outputs, and Call Function nodes run it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Function {
+    pub name: String,
+    #[serde(default)]
+    pub inputs: Vec<Param>,
+    #[serde(default)]
+    pub outputs: Vec<Param>,
+}
+
+/// Most functions a graph declares, and most inputs or outputs one has.
+pub const MAX_FUNCTIONS: usize = 64;
+pub const MAX_PARAMS: usize = 16;
+
+/// Pin names a function's inputs and outputs cannot take: the flow pins of its nodes.
+const FLOW_PINS: [&str; 2] = ["run", "then"];
+
+/// The pins a list of params becomes, as nodes keep them: `name:type`.
+pub fn param_pins(params: &[Param]) -> Value {
+    Value::from(params.iter().map(|p| format!("{}:{}", p.name, p.ty.code())).collect::<Vec<_>>())
+}
+
+/// A function's inputs or outputs: at most [`MAX_PARAMS`], each named like a variable, no name twice
+/// and none a flow pin's.
+fn check_params(function: &str, params: &[Param]) -> Result<(), String> {
+    if params.len() > MAX_PARAMS {
+        return Err(format!("a function has at most {MAX_PARAMS} inputs and {MAX_PARAMS} outputs"));
+    }
+    for (index, param) in params.iter().enumerate() {
+        check_variable_name(&param.name)?;
+        if FLOW_PINS.contains(&param.name.as_str()) {
+            return Err(format!("{function}: {} is the name of a flow pin", param.name));
+        }
+        if params[..index].iter().any(|p| p.name == param.name) {
+            return Err(format!("{function}: {} is there twice", param.name));
+        }
+    }
+    Ok(())
 }
 
 /// A variable a visual script declares: its name, what it holds, and what it starts at.
@@ -489,6 +562,81 @@ impl Graph {
         Ok(())
     }
 
+    pub fn function(&self, name: &str) -> Option<&Function> {
+        self.functions.iter().find(|f| f.name == name)
+    }
+
+    /// Declares a function with no inputs or outputs.
+    pub fn add_function(&mut self, name: &str) -> Result<(), GraphError> {
+        check_variable_name(name).map_err(|_| GraphError::Refused(format!("function name {name:?} must be 1 to 64 letters, digits or _")))?;
+        if self.function(name).is_some() {
+            return Err(GraphError::Refused(format!("there is already a function {name}")));
+        }
+        if self.functions.len() >= MAX_FUNCTIONS {
+            return Err(GraphError::Refused(format!("a graph declares at most {MAX_FUNCTIONS} functions")));
+        }
+        self.functions.push(Function { name: name.to_owned(), inputs: Vec::new(), outputs: Vec::new() });
+        Ok(())
+    }
+
+    /// Renames a function or changes its inputs or outputs. Nodes of `kinds` that name it (their
+    /// `function` setting) follow: the new name, and their `inputs` and `outputs` pins; links to
+    /// pins that went away go too.
+    pub fn set_function(
+        &mut self,
+        catalog: &Catalog,
+        name: &str,
+        rename: Option<&str>,
+        inputs: Option<Vec<Param>>,
+        outputs: Option<Vec<Param>>,
+        kinds: &[&str],
+    ) -> Result<(), GraphError> {
+        let mut function = self.function(name).cloned().ok_or_else(|| GraphError::Refused(format!("there is no function {name}")))?;
+        if let Some(new) = rename.filter(|n| *n != name) {
+            check_variable_name(new).map_err(|_| GraphError::Refused(format!("function name {new:?} must be 1 to 64 letters, digits or _")))?;
+            if self.function(new).is_some() {
+                return Err(GraphError::Refused(format!("there is already a function {new}")));
+            }
+            function.name = new.to_owned();
+        }
+        if let Some(inputs) = inputs {
+            check_params(name, &inputs).map_err(GraphError::Refused)?;
+            function.inputs = inputs;
+        }
+        if let Some(outputs) = outputs {
+            check_params(name, &outputs).map_err(GraphError::Refused)?;
+            function.outputs = outputs;
+        }
+        // Try it on a copy, so a refused node change leaves the graph as it was.
+        let mut trial = self.clone();
+        if let Some(slot) = trial.functions.iter_mut().find(|f| f.name == name) {
+            *slot = function.clone();
+        }
+        let named: Vec<u32> = trial
+            .nodes
+            .iter()
+            .filter(|n| kinds.contains(&n.kind.as_str()) && n.values.get("function").and_then(Value::as_str) == Some(name))
+            .map(|n| n.id)
+            .collect();
+        for id in named {
+            trial.set_value(catalog, id, "inputs", param_pins(&function.inputs))?;
+            trial.set_value(catalog, id, "outputs", param_pins(&function.outputs))?;
+            trial.set_value(catalog, id, "function", Value::from(function.name.as_str()))?;
+        }
+        *self = trial;
+        Ok(())
+    }
+
+    /// Takes a function away; nodes naming it stay, and the compiler says they name no function.
+    pub fn remove_function(&mut self, name: &str) -> Result<(), GraphError> {
+        let before = self.functions.len();
+        self.functions.retain(|f| f.name != name);
+        if self.functions.len() == before {
+            return Err(GraphError::Refused(format!("there is no function {name}")));
+        }
+        Ok(())
+    }
+
     /// Takes a declaration away; nodes naming it keep working, starting from the type's zero.
     pub fn remove_variable(&mut self, name: &str) -> Result<(), GraphError> {
         let before = self.variables.len();
@@ -512,6 +660,7 @@ impl Graph {
             comments: Vec::new(),
             variables: Vec::new(),
             menu: String::new(),
+            functions: Vec::new(),
         }
     }
 
@@ -619,6 +768,17 @@ impl Graph {
             }
             if self.variables[..index].iter().any(|v| v.name == variable.name) {
                 return Err(GraphError::Format(format!("variable {} is declared twice", variable.name)));
+            }
+        }
+        if self.functions.len() > MAX_FUNCTIONS {
+            return Err(GraphError::Format(format!("a graph declares at most {MAX_FUNCTIONS} functions")));
+        }
+        for (index, function) in self.functions.iter().enumerate() {
+            check_variable_name(&function.name).map_err(GraphError::Format)?;
+            check_params(&function.name, &function.inputs).map_err(GraphError::Format)?;
+            check_params(&function.name, &function.outputs).map_err(GraphError::Format)?;
+            if self.functions[..index].iter().any(|f| f.name == function.name) {
+                return Err(GraphError::Format(format!("function {} is declared twice", function.name)));
             }
         }
         if self.domain != catalog.domain {

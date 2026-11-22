@@ -75,7 +75,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    graph nodes go through craft-i18n, with catalogs embedded from a craft-i18n checkout and a Window >
    Language choice (left-to-right languages; the engine's own messages stay English). Script
    properties have types: number, whole number, true/false, vector, colour, text and object, each
-   with its own Inspector field (scene format version 16). Later the
+   with its own Inspector field (scene format version 16). Visual scripts have functions with typed
+   inputs and outputs (Function, Return and Call Function nodes; `graph.function.*`; graph version
+   4). Later the
    editor took craft-ui (widget-state colours, sections, combo boxes, the font stack) and with it the
    suite's egui and winit forks; its theme tokens stay its own, as in every Craft app. Then: narrow
    panels put an inspector value under its label instead of past the panel's edge; the Project panel's
@@ -222,6 +224,25 @@ No crate below L6 may use egui, eframe, winit or rfd.
    every camera is past the Keep Margin (scene format version 15; `stream.areas`, `stream.wait`).
    Object > Split into Streamed Areas (`stream.split`) cuts the open scene's top objects into one scene
    file per grid cell, leaving cameras, sun lights, environment, rules and players in place.
+9. **M8 Game export and script speed** (not started). A project builds into a game people run
+   without the editor: the player under the game's name and icon, with its scenes, assets and
+   scripts, for Windows, Linux, macOS and the web, built only with the modules the game uses.
+   Visual scripts are compiled to WebAssembly at export, not at start. Each project chooses in
+   Project Settings how its scripts run, per platform, and the editor shows what each choice gives
+   up:
+   - **Interpreted** (today, wasmi): starts at once and reloads while playing; slowest.
+   - **Compiled to machine code** (the default for exported games): the same WebAssembly modules,
+     still sandboxed with the same ABI, limits and faults, compiled by a WebAssembly compiler
+     ahead of time at export, or when the module loads where ahead of time is not possible (the
+     web runs WebAssembly natively). Close to native speed. The compiler crate must be on the
+     craft-contrib licence list; to check first: wasmtime (Apache-2.0).
+   - **Native** (opt-in, Rust scripts only): the script crate is linked into the player at export,
+     with no sandbox. Fastest, for code its maker trusts (heavy simulation, say); the export warns
+     that a native script can do anything a program can, and a fault in it stops the game. Visual
+     scripts and scripts without their source stay compiled WebAssembly.
+   The editor's play mode keeps running scripts interpreted or compiled to WebAssembly, so reloading
+   while playing works whatever the export uses. Before choosing defaults, a frame profile of the
+   demo and a heavier test scene measures how much of a frame scripts take in each mode.
 
 ## Open questions
 
