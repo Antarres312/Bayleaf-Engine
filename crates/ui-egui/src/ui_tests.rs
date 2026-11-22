@@ -1426,3 +1426,46 @@ fn a_script_is_chosen_as_a_component_from_the_list_or_by_dragging_and_its_proper
     assert!(harness.query_by_label_contains(&format!("Output Speed (Number) of Get Component {get}")).is_some());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn nodes_naming_a_script_follow_its_properties_when_the_script_changes() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-script-refresh-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    let editor = harness.state_mut();
+    editor.dispatch("project.new", &json!({ "path": dir }), None);
+    // Bob declares speed.
+    editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
+    let property = editor.dispatch("graph.node.add", &json!({ "kind": "property", "position": [40, 420] }), None).unwrap()["node"].clone();
+    editor.dispatch("graph.node.set", &json!({ "node": property, "name": "name", "value": "speed" }), None);
+    editor.dispatch("graph.save", &json!({ "path": dir.join("bob.bscript") }), None);
+    // Another script reads Bob's speed.
+    editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
+    let read = editor.dispatch("graph.node.add", &json!({ "kind": "tryGetComponent", "position": [300, 20] }), None).unwrap()["node"].as_u64().unwrap() as u32;
+    editor.dispatch("graph.node.set", &json!({ "node": read, "name": "component", "value": "Bob" }), None).unwrap();
+    editor.dispatch("graph.node.set", &json!({ "node": read, "name": "fields", "value": ["speed"] }), None).unwrap();
+    let log = editor.dispatch("graph.node.add", &json!({ "kind": "log", "position": [600, 20] }), None).unwrap()["node"].as_u64().unwrap() as u32;
+    editor.dispatch("graph.link.add", &json!({ "from": { "node": read, "pin": "speed" }, "to": { "node": log, "pin": "value" } }), None).unwrap();
+    editor.project.rescan_soon();
+    harness.run_steps(2);
+    assert_eq!(graph(&harness).value(read, "fields"), Some(&json!(["speed"])), "nothing changes while the script does not");
+
+    // Bob's speed becomes pace, and it gains height.
+    let file = dir.join("bob.bscript");
+    let mut bob: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    for node in bob["nodes"].as_array_mut().unwrap() {
+        if node["kind"] == "property" {
+            node["values"]["name"] = json!("pace");
+        }
+    }
+    bob["nodes"].as_array_mut().unwrap().push(json!({ "id": 99, "kind": "property", "position": [0, 0], "values": { "name": "height" } }));
+    std::fs::write(&file, bob.to_string()).unwrap();
+    harness.run_steps(2);
+
+    let fields = graph(&harness).value(read, "fields").cloned().unwrap();
+    let names: Vec<&str> = fields.as_array().unwrap().iter().filter_map(serde_json::Value::as_str).collect();
+    assert!(names.contains(&"pace") && names.contains(&"height") && !names.contains(&"speed"), "the node follows the script: {names:?}");
+    assert!(harness.query_by_label_contains(&format!("Output Height (Number) of Try Get Component {read}")).is_some(), "its pins too");
+    assert!(graph(&harness).links.is_empty(), "the link from the property the script dropped is gone");
+    std::fs::remove_dir_all(&dir).ok();
+}

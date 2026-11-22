@@ -94,6 +94,19 @@ const COMPONENT_KINDS: [&str; 3] = ["getComponent", "tryGetComponent", "setCompo
 /// The node kinds that search by a component, a tag or a script, in their `kind` setting.
 const SEARCH_KINDS: [&str; 3] = ["findWith", "countWith", "forEachWith"];
 
+/// Keeps the property names of nodes that name a script in step with what the script declares now:
+/// one edit per node that changed, so it undoes, and links to properties the script dropped go away.
+fn refresh_script_fields(editor: &mut Editor, graph: &Graph, search: &SearchChoices) {
+    for node in graph.nodes.iter().filter(|n| COMPONENT_KINDS.contains(&n.kind.as_str())) {
+        let Some(kept) = bayleaf_engine::script::visual::script_fields(node) else { continue };
+        let Some(name) = node.values.get("component").and_then(Value::as_str) else { continue };
+        let Some((script, declared)) = search.scripts.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) else { continue };
+        if *declared != kept && editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "fields", "value": declared }), None).is_some() {
+            editor.status = format!("Node {}: the properties of {script} changed, so its pins did too.", node.id);
+        }
+    }
+}
+
 /// The name a search uses for a script file: the name the Inspector shows for it.
 fn script_name(module: &str) -> String {
     bayleaf_engine::scene::components::ScriptRef { module: module.to_owned(), properties: Default::default() }.display_name()
@@ -108,8 +121,11 @@ impl SearchChoices {
             if scripts.iter().any(|(n, _)| *n == name) {
                 continue;
             }
-            let properties = editor.script_info.properties(&dir.join(&module)).map(|p| p.into_iter().map(|(n, _)| n).collect()).unwrap_or_default();
-            scripts.push((name, properties));
+            // A script that cannot be read (not built yet, or broken) is left out, so nodes keep its
+            // last known properties.
+            if let Ok(properties) = editor.script_info.properties(&dir.join(&module)) {
+                scripts.push((name, properties.into_iter().map(|(n, _)| n).collect()));
+            }
         }
         let scene = editor.session.scene();
         let components = scene.registry().kinds().iter().filter(|k| k.listed).map(|k| k.label).collect();
@@ -224,6 +240,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
     } else {
         SearchChoices::default()
     };
+    refresh_script_fields(editor, &doc.graph, &view.search);
     let problems = bayleaf_engine::problems(&doc.graph);
 
     toolbar(editor, ui, &doc, catalog, &mut view);

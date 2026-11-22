@@ -137,7 +137,9 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   Rigid Body, Collider and Character when play starts, so Set Component refuses them.
   A script is a component too: pick it from the Scripts in the list, or drag it from the Project
   panel onto Component, and its properties become number pins (the node keeps their names in its
-  `fields`, so the graph compiles on its own). Reads see the other script's values as the step
+  `fields`, so the graph compiles on its own). While the graph is open, the editor updates those
+  names when the script's properties change (one undo step; links to dropped properties go away);
+  a script that does not build leaves them as they were. Reads see the other script's values as the step
   began; a set reaches it when the step ends.
 - Position Of, Set Position Of, Send Message, Walk, Jump, Add Impulse, Set Velocity and **Destroy
   Object** take an Object input. Unlinked, they use the first object named in Object Name, else

@@ -12,7 +12,7 @@ use bayleaf_graph::{Catalog, Graph, NodeDef, PinDef, PinDefault, PinType, Proble
 use PinType::{Any, Bool, Float, Flow, Vec3};
 
 mod fields;
-pub use fields::{COMPONENTS, ComponentNodes, component_of};
+pub use fields::{COMPONENTS, ComponentNodes, component_of, script_fields};
 
 const fn pin(name: &'static str, label: &'static str, ty: PinType) -> PinDef {
     PinDef::new(name, label, ty)
