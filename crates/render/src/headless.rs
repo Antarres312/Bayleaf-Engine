@@ -82,7 +82,7 @@ impl HeadlessGpu {
         self.read_back(&target)
     }
 
-    fn read_back(&self, target: &RenderTarget) -> Result<Image, RenderError> {
+    pub(crate) fn read_back(&self, target: &RenderTarget) -> Result<Image, RenderError> {
         let (width, height) = target.size();
         let unpadded = width * 4;
         let padded = unpadded.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;

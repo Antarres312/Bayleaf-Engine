@@ -351,6 +351,20 @@ impl EffectsAllowed {
         EffectsAllowed { tone_mapping: true, bloom: true, color: true, vignette: true, depth_fog: true, occlusion: true, antialiasing: true };
 }
 
+/// `model` as the object's Model Animation poses it at `time` seconds, or as it is when the object
+/// has none playing or the model has no such animation.
+fn animated(scene: &Scene, id: StableId, model: Arc<MeshData>, time: f32) -> Arc<MeshData> {
+    let Some(animation) = scene.get::<bayleaf_scene::components::ModelAnimation>(id).filter(|a| a.playing) else { return model };
+    let Some(skeleton) = model.skeleton.clone() else { return model };
+    let Some(index) = skeleton.animation(&animation.animation) else { return model };
+    let at = time * animation.speed;
+    // Its own id, so each object's pose is its own mesh, and a version for each moment.
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&(model.id, id), &mut hasher);
+    let own = std::hash::Hasher::finish(&hasher) | 1;
+    Arc::new(skeleton.posed(&model, Some(index), at, animation.looping, own, u64::from(at.to_bits()) + 1))
+}
+
 /// What a post-processing asset asks for, as far as `allowed` lets it; its lookup image is for the
 /// caller to load (see [`lookup_image`]).
 pub fn post_settings(post: &bayleaf_scene::post::PostProcessing, allowed: &EffectsAllowed) -> crate::PostSettings {
@@ -466,6 +480,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
         if let Some(mesh) = scene.get::<Mesh>(id) {
             let material = if mesh.material.is_empty() { None } else { assets.material(&mesh.material) };
             let model = if mesh.model.is_empty() { None } else { assets.model(&mesh.model) };
+            let model = model.map(|model| animated(scene, id, model, options.time));
             let mut item = DrawItem {
                 object: id,
                 shape: mesh.shape,

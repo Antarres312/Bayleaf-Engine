@@ -195,6 +195,14 @@ warns of one not there yet. `post.lookup.neutral` (`{path, steps?}`, a `.png`, s
 writes one that changes no colour, to recolour in an image editor; it returns `{path, relative}` and
 does not write over a file.
 
+A Model Animation component (`modelAnimation`, scene format 23: `{animation, playing, looping,
+speed}`) plays one of the animations of the object's glTF model, by name (empty for the first), from
+when the view's clock starts: nodes move by their translation, rotation and scale keys, parts
+without a skin follow their node and skinned parts their joints (up to four a vertex), posed on the
+CPU each frame. Cubic spline keys are joined in straight lines; shape blending (morph targets) is
+left out and the model's asset info says so. `asset.info` lists a model's animations and their
+lengths.
+
 A Particle Emitter component (`particleEmitter`, scene format 19) starts particles while the game
 plays: its cycle (`playing`, `looping`, `duration`, `rate`, `burst`, `maxParticles`), where they start
 (`shape`: `point`, `sphere`, `cone` or `box`, with `radius`, `angle` and `boxSize`), how they live

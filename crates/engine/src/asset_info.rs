@@ -164,6 +164,12 @@ fn model(path: &Path) -> Info {
                 let normal = if m.normal.is_some() { ", a normal map" } else { "" };
                 info.row("Material", format!("its own colour, {image}{normal}, metallic {:.2}, roughness {:.2}", m.metallic, m.roughness));
             }
+            if let Some(skeleton) = &mesh.skeleton {
+                let animations: Vec<String> = skeleton.animations.iter().map(|a| format!("{} ({:.2} s)", a.name, a.duration)).collect();
+                if !animations.is_empty() {
+                    info.row("Animations", animations.join(", "));
+                }
+            }
             info.problems.extend(mesh.warnings.iter().cloned());
         }
         Err(e) => info.problems.push(e),

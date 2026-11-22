@@ -832,6 +832,43 @@ impl SceneComponent for Collider {
 /// The file extensions an Audio Source's clip may have.
 pub const SOUND_EXTENSIONS: &[&str] = &["wav", "ogg", "flac", "mp3", "aif", "aiff", "opus", "m4a", "aac"];
 
+/// Plays one of the animations of the object's model (its Mesh's glTF model): its parts and skin
+/// move as the animation says, from when the view's clock starts.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelAnimation {
+    /// The animation's name in the model; empty for its first.
+    pub animation: String,
+    pub playing: bool,
+    /// Starts over at its end; otherwise it stays at its last moment.
+    pub looping: bool,
+    /// 1 as made; 0.5 half as fast.
+    pub speed: f32,
+}
+
+impl Default for ModelAnimation {
+    fn default() -> Self {
+        Self { animation: String::new(), playing: true, looping: true, speed: 1.0 }
+    }
+}
+
+impl SceneComponent for ModelAnimation {
+    const NAME: &'static str = "modelAnimation";
+    const LABEL: &'static str = "Model Animation";
+    const MENU: &'static str = "Rendering/Model Animation";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        if self.animation.len() > 256 {
+            return Err("animation is longer than 256 bytes".to_owned());
+        }
+        if !(self.speed.is_finite() && (0.0..=10.0).contains(&self.speed)) {
+            return Err("speed must be between 0 and 10".to_owned());
+        }
+        Ok(())
+    }
+}
+
 /// A sound the object plays in play mode: from its own place when spatial, heard from the first
 /// camera (quieter with distance, from the side it is on), or the same everywhere.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

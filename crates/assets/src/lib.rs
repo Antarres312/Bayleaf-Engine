@@ -15,6 +15,7 @@ use std::time::SystemTime;
 
 pub mod import;
 mod neutral;
+pub mod skeleton;
 
 /// Largest image side, in pixels.
 pub const MAX_IMAGE_SIDE: u32 = 8192;
@@ -104,6 +105,10 @@ pub struct MeshData {
     pub parts: Vec<MeshPart>,
     /// What was left out or repaired while reading (an image that could not be read, for one).
     pub warnings: Vec<String>,
+    /// The model's nodes and animations, when it has any: the vertices above are its rest pose.
+    pub skeleton: Option<Arc<skeleton::Skeleton>>,
+    /// Changes when the vertices change while the id stays (a model posed by its animation).
+    pub version: u64,
 }
 
 /// Triangles `indices[first..first + count]` and the material they use.
@@ -394,6 +399,8 @@ fn load_gltf(path: &Path) -> Result<MeshData, String> {
         material: None,
         parts: Vec::new(),
         warnings: Vec::new(),
+        skeleton: None,
+        version: 0,
     };
     let scene = gltf.default_scene().or_else(|| gltf.scenes().next()).ok_or_else(|| format!("{}: the model has no scene", path.display()))?;
     // Runs of indices and the glTF material each uses.
@@ -404,8 +411,18 @@ fn load_gltf(path: &Path) -> Result<MeshData, String> {
         import::UpAxis::Z => glam::Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2),
     };
     let root = glam::Mat4::from_scale(glam::Vec3::splat(settings.scale)) * up;
+    let mut rig = Rig::default();
     for node in scene.nodes() {
-        add_node(&node, root, &buffers, &mut mesh, &mut runs, 0).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut gathered = Gathered { buffers: &buffers, root, mesh: &mut mesh, runs: &mut runs, rig: &mut rig };
+        add_node(&node, glam::Mat4::IDENTITY, &mut gathered, 0).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    if gltf.animations().len() > 0 || gltf.skins().len() > 0 {
+        let skeleton = rig_skeleton(&gltf, &scene, &buffers, rig, root, &mut mesh.warnings).map_err(|e| format!("{}: {e}", path.display()))?;
+        // Skinned parts stand as their joints hold them.
+        let rest = skeleton.posed(&mesh, None, 0.0, false, mesh.id, 0);
+        mesh.positions = rest.positions;
+        mesh.normals = rest.normals;
+        mesh.skeleton = Some(Arc::new(skeleton));
     }
     let mut materials: HashMap<usize, ModelMaterial> = HashMap::new();
     for (first, count, index) in runs {
@@ -496,19 +513,159 @@ fn texture_image(texture: &gltf::Texture<'_>, buffers: &[Vec<u8>], folder: &Path
     image.id = (model_id ^ (source.index() as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)) | 1;
     Ok(Arc::new(image))
 }
-fn add_node(
-    node: &gltf::Node<'_>,
-    parent: glam::Mat4,
+/// What a model's vertices are bound to, gathered as its parts are read.
+#[derive(Default)]
+struct Rig {
+    bindings: Vec<skeleton::Binding>,
+    /// Binding index by skin and joint, or (no skin) by node.
+    binding_of: HashMap<(Option<usize>, usize), u16>,
+    /// Each skin's inverse bind matrices.
+    skins: HashMap<usize, Vec<glam::Mat4>>,
+    vertex_bindings: Vec<[u16; 4]>,
+    vertex_weights: Vec<[f32; 4]>,
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+}
+
+impl Rig {
+    fn bind(&mut self, key: (Option<usize>, usize), binding: impl FnOnce() -> Result<skeleton::Binding, String>) -> Result<u16, String> {
+        if let Some(index) = self.binding_of.get(&key) {
+            return Ok(*index);
+        }
+        let index = u16::try_from(self.bindings.len()).map_err(|_| "the model has more than 65535 joints and parts".to_owned())?;
+        self.bindings.push(binding()?);
+        self.binding_of.insert(key, index);
+        Ok(index)
+    }
+}
+
+/// A skinned part's skin, and its vertices' joints and weights.
+type Skinned<'a, 'b> = (&'a gltf::Skin<'b>, &'a [[u16; 4]], &'a [[f32; 4]]);
+
+/// A part's vertices as read, and its node's matrix into the model's space.
+#[derive(Clone, Copy)]
+struct Part<'a> {
+    positions: &'a [[f32; 3]],
+    normals: &'a [[f32; 3]],
+    local: glam::Mat4,
+    local_normals: glam::Mat3,
+}
+
+/// Where a model's parts are gathered.
+struct Gathered<'a> {
+    buffers: &'a [Vec<u8>],
+    root: glam::Mat4,
+    mesh: &'a mut MeshData,
+    runs: &'a mut Vec<(u32, u32, Option<usize>)>,
+    rig: &'a mut Rig,
+}
+
+/// The skeleton of a glTF model: its nodes at rest, the bindings its parts gathered, and its
+/// animations.
+fn rig_skeleton(
+    gltf: &gltf::Gltf,
+    scene: &gltf::Scene<'_>,
     buffers: &[Vec<u8>],
-    mesh: &mut MeshData,
-    runs: &mut Vec<(u32, u32, Option<usize>)>,
-    depth: usize,
-) -> Result<(), String> {
+    rig: Rig,
+    root: glam::Mat4,
+    warnings: &mut Vec<String>,
+) -> Result<skeleton::Skeleton, String> {
+    let mut nodes: Vec<skeleton::Node> = gltf
+        .nodes()
+        .map(|n| {
+            let (t, r, s) = n.transform().decomposed();
+            skeleton::Node { parent: None, translation: glam::Vec3::from(t), rotation: glam::Quat::from_array(r).normalize(), scale: glam::Vec3::from(s) }
+        })
+        .collect();
+    for node in gltf.nodes() {
+        for child in node.children() {
+            if let Some(slot) = nodes.get_mut(child.index()) {
+                slot.parent = Some(node.index());
+            }
+        }
+    }
+    // Parents before children: down from the scene's roots, then any node left over.
+    let mut order = Vec::with_capacity(nodes.len());
+    let mut seen = vec![false; nodes.len()];
+    let mut stack: Vec<usize> = scene.nodes().map(|n| n.index()).collect();
+    stack.extend((0..nodes.len()).filter(|i| nodes[*i].parent.is_none()));
+    stack.reverse();
+    while let Some(i) = stack.pop() {
+        if seen.get(i).copied().unwrap_or(true) {
+            continue;
+        }
+        seen[i] = true;
+        order.push(i);
+        if let Some(node) = gltf.nodes().nth(i) {
+            stack.extend(node.children().map(|c| c.index()).collect::<Vec<_>>().into_iter().rev());
+        }
+    }
+    let mut animations = Vec::new();
+    let mut keys = 0usize;
+    for animation in gltf.animations() {
+        let name = animation.name().map_or_else(|| format!("Animation {}", animation.index() + 1), str::to_owned);
+        let mut channels = Vec::new();
+        let mut duration = 0.0f32;
+        for channel in animation.channels() {
+            let reader = channel.reader(|b| buffers.get(b.index()).map(Vec::as_slice));
+            let property = match channel.target().property() {
+                gltf::animation::Property::Translation => skeleton::Property::Translation,
+                gltf::animation::Property::Rotation => skeleton::Property::Rotation,
+                gltf::animation::Property::Scale => skeleton::Property::Scale,
+                gltf::animation::Property::MorphTargetWeights => {
+                    warnings.push(format!("{name}: shape blending (morph targets) is left out"));
+                    continue;
+                }
+            };
+            let times: Vec<f32> = reader.read_inputs().ok_or_else(|| format!("{name}: a channel has no key times"))?.collect();
+            let mut values: Vec<[f32; 4]> = match reader.read_outputs() {
+                Some(gltf::animation::util::ReadOutputs::Translations(v)) | Some(gltf::animation::util::ReadOutputs::Scales(v)) => {
+                    v.map(|[x, y, z]| [x, y, z, 0.0]).collect()
+                }
+                Some(gltf::animation::util::ReadOutputs::Rotations(v)) => v.into_f32().collect(),
+                _ => return Err(format!("{name}: a channel has no key values")),
+            };
+            let interpolation = channel.sampler().interpolation();
+            if interpolation == gltf::animation::Interpolation::CubicSpline {
+                // In-tangent, value, out-tangent for each key: the values.
+                values = values.chunks(3).filter_map(|c| c.get(1).copied()).collect();
+            }
+            keys += times.len();
+            if keys > skeleton::MAX_KEYS {
+                return Err(format!("the animations have more than {} keys", skeleton::MAX_KEYS));
+            }
+            if values.len() != times.len() || times.windows(2).any(|w| w[0] > w[1]) || times.iter().any(|t| !t.is_finite()) {
+                warnings.push(format!("{name}: a channel with keys out of order or unmatched is left out"));
+                continue;
+            }
+            duration = duration.max(times.last().copied().unwrap_or(0.0));
+            let step = interpolation == gltf::animation::Interpolation::Step;
+            channels.push(skeleton::Channel { node: channel.target().node().index(), property, step, times, values });
+        }
+        animations.push(skeleton::Animation { name, duration, channels });
+    }
+    Ok(skeleton::Skeleton {
+        nodes,
+        order,
+        bindings: rig.bindings,
+        vertex_bindings: rig.vertex_bindings,
+        vertex_weights: rig.vertex_weights,
+        positions: rig.positions,
+        normals: rig.normals,
+        root,
+        animations,
+    })
+}
+
+fn add_node(node: &gltf::Node<'_>, parent: glam::Mat4, gathered: &mut Gathered<'_>, depth: usize) -> Result<(), String> {
     if depth > 64 {
         return Err("the node tree is too deep".to_owned());
     }
-    let world = parent * glam::Mat4::from_cols_array_2d(&node.transform().matrix());
+    let (buffers, root) = (gathered.buffers, gathered.root);
+    let local = parent * glam::Mat4::from_cols_array_2d(&node.transform().matrix());
+    let world = root * local;
     let normal_matrix = glam::Mat3::from_mat4(world).inverse().transpose();
+    let local_normals = glam::Mat3::from_mat4(local).inverse().transpose();
     if let Some(gltf_mesh) = node.mesh() {
         for primitive in gltf_mesh.primitives() {
             if primitive.mode() != gltf::mesh::Mode::Triangles {
@@ -517,6 +674,7 @@ fn add_node(
             let reader = primitive.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
             let Some(positions) = reader.read_positions() else { continue };
             let positions: Vec<[f32; 3]> = positions.collect();
+            let mesh = &mut *gathered.mesh;
             if mesh.positions.len() + positions.len() > MAX_VERTICES {
                 return Err(format!("models may have at most {MAX_VERTICES} vertices"));
             }
@@ -543,18 +701,69 @@ fn add_node(
             mesh.positions.extend(positions.iter().map(|p| world.transform_point3(glam::Vec3::from(*p)).to_array()));
             mesh.normals.extend(normals.iter().map(|n| (normal_matrix * glam::Vec3::from(*n)).normalize_or_zero().to_array()));
             mesh.uvs.extend(uvs);
-            let (first, count) = (mesh.indices.len() as u32, indices.len() as u32);
+            let (first, index_count) = (mesh.indices.len() as u32, indices.len() as u32);
             mesh.indices.extend(indices.into_iter().map(|i| base + i));
             // Neighbouring parts with the same material draw as one.
             let material = primitive.material().index();
-            match runs.last_mut() {
-                Some(last) if last.2 == material && last.0 + last.1 == first => last.1 += count,
-                _ => runs.push((first, count, material)),
+            match gathered.runs.last_mut() {
+                Some(last) if last.2 == material && last.0 + last.1 == first => last.1 += index_count,
+                _ => gathered.runs.push((first, index_count, material)),
             }
+            let skin = node.skin().and_then(|skin| {
+                let joints: Vec<[u16; 4]> = reader.read_joints(0)?.into_u16().collect();
+                let weights: Vec<[f32; 4]> = reader.read_weights(0)?.into_f32().collect();
+                Some((skin, joints, weights))
+            });
+            let part = Part { positions: &positions, normals: &normals, local, local_normals };
+            bind_part(node.index(), skin.as_ref().map(|(s, j, w)| (s, j.as_slice(), w.as_slice())), &part, gathered)?;
         }
     }
     for child in node.children() {
-        add_node(&child, world, buffers, mesh, runs, depth + 1)?;
+        add_node(&child, local, gathered, depth + 1)?;
+    }
+    Ok(())
+}
+
+/// What a part's vertices follow when the model moves: its skin's joints by their weights, or
+/// else its own node.
+fn bind_part(node: usize, skinned: Option<Skinned<'_, '_>>, part: &Part<'_>, gathered: &mut Gathered<'_>) -> Result<(), String> {
+    let buffers = gathered.buffers;
+    let rig = &mut *gathered.rig;
+    let Part { positions, normals, local, local_normals } = *part;
+    let count = positions.len();
+    if let Some((skin, joints, weights)) = skinned {
+        if joints.len() != count || weights.len() != count {
+            return Err("a skinned part has a different number of joints or weights than positions".to_owned());
+        }
+        rig.skins.entry(skin.index()).or_insert_with(|| {
+            skin.reader(|b| buffers.get(b.index()).map(Vec::as_slice))
+                .read_inverse_bind_matrices()
+                .map(|m| m.map(|c| glam::Mat4::from_cols_array_2d(&c)).collect())
+                .unwrap_or_default()
+        });
+        for (joint_set, weight_set) in joints.iter().zip(weights) {
+            let mut bound = [0u16; 4];
+            for (slot, joint) in bound.iter_mut().zip(joint_set) {
+                let joint = usize::from(*joint);
+                let inverse = rig.skins.get(&skin.index()).and_then(|m| m.get(joint)).copied().unwrap_or(glam::Mat4::IDENTITY);
+                let node = skin.joints().nth(joint).map(|n| n.index()).ok_or("a vertex names a joint its skin does not have")?;
+                *slot = rig.bind((Some(skin.index()), joint), || Ok(skeleton::Binding { node, inverse_bind: inverse }))?;
+            }
+            let total: f32 = weight_set.iter().filter(|w| w.is_finite() && **w > 0.0).sum();
+            let weights = if total > 0.0 { weight_set.map(|w| if w.is_finite() && w > 0.0 { w / total } else { 0.0 }) } else { [1.0, 0.0, 0.0, 0.0] };
+            rig.vertex_bindings.push(bound);
+            rig.vertex_weights.push(weights);
+        }
+        // A skinned part's vertices are in its skin's space: its own node does not move them.
+        rig.positions.extend_from_slice(positions);
+        rig.normals.extend_from_slice(normals);
+    } else {
+        let inverse = local.inverse();
+        let bound = rig.bind((None, node), || Ok(skeleton::Binding { node, inverse_bind: inverse }))?;
+        rig.vertex_bindings.extend(std::iter::repeat_n([bound, 0, 0, 0], count));
+        rig.vertex_weights.extend(std::iter::repeat_n([1.0, 0.0, 0.0, 0.0], count));
+        rig.positions.extend(positions.iter().map(|p| local.transform_point3(glam::Vec3::from(*p)).to_array()));
+        rig.normals.extend(normals.iter().map(|n| (local_normals * glam::Vec3::from(*n)).normalize_or_zero().to_array()));
     }
     Ok(())
 }

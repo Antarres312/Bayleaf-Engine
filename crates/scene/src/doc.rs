@@ -20,8 +20,8 @@ pub const FORMAT: &str = "bayleaf.scene";
 /// post-processing asset a scene's settings and a camera may name; version 19 added `particleEmitter`;
 /// version 20 added `interface`; version 21 interfaces in the world (`space`, `size`, `pointsPerUnit`,
 /// `faceCamera`); version 22 particles from a mesh's surface and size and colour curves (`sizeKeys`,
-/// `colorKeys`). Older files still load.
-pub const VERSION: u32 = 22;
+/// `colorKeys`); version 23 the Model Animation component (`modelAnimation`). Older files still load.
+pub const VERSION: u32 = 23;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.

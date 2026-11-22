@@ -87,6 +87,8 @@ pub fn load_model(path: &Path) -> Result<MeshData, String> {
         material: None,
         parts: Vec::new(),
         warnings: scene.warnings.clone(),
+        skeleton: None,
+        version: 0,
     };
     // Runs of indices and the material each uses.
     let mut runs: Vec<(u32, u32, Option<usize>)> = Vec::new();

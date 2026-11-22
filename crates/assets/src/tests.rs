@@ -268,3 +268,71 @@ fn a_data_image_averages_its_numbers_and_compression_keeps_every_level_in_blocks
     assert!(bc3.levels[0].len() == bc1.levels[0].len() * 2, "BC3 keeps twice the bytes, for smooth alpha");
     assert!(super::compress(&Image::new(1, 6, 4, vec![0; 96]), super::import::Compression::Bc1).is_err(), "sides must be multiples of 4");
 }
+
+/// A glTF triangle on node 1 (a child of node 0) and an animation "Slide" moving node 1 from x 0
+/// to x 2 over a second. With `skinned`, the triangle's vertices instead follow joint node 1 of a
+/// skin, from a mesh on node 0.
+fn animated_triangle(dir: &Path, skinned: bool) -> PathBuf {
+    let mut bin: Vec<u8> = Vec::new();
+    let f32s = |values: &[f32], bin: &mut Vec<u8>| values.iter().for_each(|v| bin.extend(v.to_le_bytes()));
+    f32s(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0], &mut bin); // positions: 0..36
+    f32s(&[0.0, 1.0], &mut bin); // key times: 36..44
+    f32s(&[0.0, 0.0, 0.0, 2.0, 0.0, 0.0], &mut bin); // translations: 44..68
+    for _ in 0..3 {
+        bin.extend([1u8, 0, 0, 0]); // joints: 68..80 (joint 1 of the skin is node 1)
+    }
+    f32s(&[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], &mut bin); // weights: 80..128
+    std::fs::write(dir.join("slide.bin"), &bin).unwrap();
+    let mut attributes = serde_json::json!({ "POSITION": 0 });
+    if skinned {
+        attributes["JOINTS_0"] = serde_json::json!(3);
+        attributes["WEIGHTS_0"] = serde_json::json!(4);
+    }
+    let nodes =
+        if skinned { serde_json::json!([{ "children": [1], "mesh": 0, "skin": 0 }, {}]) } else { serde_json::json!([{ "children": [1] }, { "mesh": 0 }]) };
+    let gltf = serde_json::json!({
+        "asset": { "version": "2.0" }, "scene": 0, "scenes": [{ "nodes": [0] }], "nodes": nodes,
+        "meshes": [{ "primitives": [{ "attributes": attributes }] }],
+        "skins": if skinned { serde_json::json!([{ "joints": [0, 1] }]) } else { serde_json::json!([]) },
+        "animations": [{ "name": "Slide", "channels": [{ "sampler": 0, "target": { "node": 1, "path": "translation" } }],
+            "samplers": [{ "input": 1, "output": 2 }] }],
+        "buffers": [{ "uri": "slide.bin", "byteLength": bin.len() }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 36 }, { "buffer": 0, "byteOffset": 36, "byteLength": 8 },
+            { "buffer": 0, "byteOffset": 44, "byteLength": 24 }, { "buffer": 0, "byteOffset": 68, "byteLength": 12 },
+            { "buffer": 0, "byteOffset": 80, "byteLength": 48 }
+        ],
+        "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0] },
+            { "bufferView": 1, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+            { "bufferView": 2, "componentType": 5126, "count": 2, "type": "VEC3" },
+            { "bufferView": 3, "componentType": 5121, "count": 3, "type": "VEC4" },
+            { "bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC4" }
+        ]
+    });
+    let path = dir.join(if skinned { "skinned.gltf" } else { "slide.gltf" });
+    std::fs::write(&path, gltf.to_string()).unwrap();
+    path
+}
+
+#[test]
+fn a_model_s_animation_moves_its_parts_and_its_skin() {
+    let dir = temp_dir("animated");
+    for skinned in [false, true] {
+        let model = load_model(&animated_triangle(&dir, skinned)).unwrap();
+        let skeleton = model.skeleton.as_ref().expect("an animated model keeps its skeleton");
+        let slide = skeleton.animation("Slide").unwrap();
+        assert_eq!(skeleton.animation(""), Some(slide), "no name picks the first");
+        assert!((skeleton.animations[slide].duration - 1.0).abs() < 1e-6);
+        let x = |mesh: &super::MeshData| mesh.positions[1][0];
+        assert!((x(&model) - 1.0).abs() < 1e-5, "at rest where it was made (skinned: {skinned})");
+        let half = skeleton.posed(&model, Some(slide), 0.5, false, 7, 1);
+        assert!((x(&half) - 2.0).abs() < 1e-4, "half way, a unit along (skinned: {skinned}): {}", x(&half));
+        let looped = skeleton.posed(&model, Some(slide), 1.25, true, 7, 2);
+        assert!((x(&looped) - 1.5).abs() < 1e-4, "looping wraps round: {}", x(&looped));
+        let held = skeleton.posed(&model, Some(slide), 3.0, false, 7, 3);
+        assert!((x(&held) - 3.0).abs() < 1e-4, "not looping, it stays at the end: {}", x(&held));
+        assert!(half.max[0] > model.max[0], "its box follows");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -421,7 +421,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
      Apache-2.0; MIT-0 is not on the licence list); KTX2, which no craft-libs crate reads yet. Images
      take a colour space (colours or plain numbers) and BC1 or BC3 block compression (craft-dds).
      Sounds may stream from their file (WAV, AIFF, MP3, Opus and AAC; Ogg Vorbis and FLAC load
-     whole, as craft-audio has no streaming decoder for them). Still to do: a model's animations.)
+     whole, as craft-audio has no streaming decoder for them). A glTF model's animations are kept
+     (its nodes and skin) and played by the Model Animation component, posed on the CPU; morph
+     targets are left out.)
    - **Fix: material previews draw only the sphere.** The material pictures (Project panel tiles,
      the Inspector, the Graph panel's preview) show the sky behind the sphere. Draw them with a
      transparent background instead, so only the sphere shows over the panel; the sphere is still

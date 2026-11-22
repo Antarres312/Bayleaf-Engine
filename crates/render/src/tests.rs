@@ -1034,3 +1034,52 @@ fn a_data_image_draws_its_numbers_and_a_compressed_one_keeps_its_colour() {
     let high = with(bayleaf_assets::Image::new((1 << 63) | 17, 4, 4, [20u8, 20, 230, 255].repeat(16)));
     assert!(high[2] > high[0] + 60, "an image with a large id draws blue: {high:?}");
 }
+
+#[test]
+fn a_model_animation_moves_the_model_from_frame_to_frame() {
+    let Some(gpu) = gpu() else { return };
+    let dir = asset_folder("animated");
+    // The wall, sliding 1.5 to the right over a second.
+    let mut keys: Vec<u8> = Vec::new();
+    for v in [0.0f32, 1.0, 0.0, 0.0, 0.0, 1.5, 0.0, 0.0] {
+        keys.extend(v.to_le_bytes());
+    }
+    std::fs::write(dir.join("slide.bin"), &keys).unwrap();
+    let mut gltf: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("wall.gltf")).unwrap()).unwrap();
+    gltf["buffers"].as_array_mut().unwrap().push(json!({"uri": "slide.bin", "byteLength": 32}));
+    gltf["bufferViews"]
+        .as_array_mut()
+        .unwrap()
+        .extend([json!({"buffer": 1, "byteOffset": 0, "byteLength": 8}), json!({"buffer": 1, "byteOffset": 8, "byteLength": 24})]);
+    gltf["accessors"].as_array_mut().unwrap().extend([
+        json!({"bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1]}),
+        json!({"bufferView": 3, "componentType": 5126, "count": 2, "type": "VEC3"}),
+    ]);
+    gltf["animations"] =
+        json!([{"name": "Slide", "channels": [{"sampler": 0, "target": {"node": 0, "path": "translation"}}], "samplers": [{"input": 2, "output": 3}]}]);
+    std::fs::write(dir.join("slide.gltf"), gltf.to_string()).unwrap();
+
+    let mut scene = Scene::new();
+    let wall =
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "slide.gltf"}), [0.0; 3], [0.0; 3]);
+    scene.add_component(wall, "modelAnimation").unwrap();
+    object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3}), [0.0; 3], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO, 60.0, 1.0);
+    let mut cache = bayleaf_assets::AssetCache::new();
+    let mut materials = crate::MaterialLibrary::new();
+    let allow = |p: &std::path::Path| Ok(p.to_path_buf());
+    let mut renderer = crate::Renderer::new(&gpu.device);
+    let target = crate::RenderTarget::new(&gpu.device, 64, 64);
+    let mut lit_columns = |time: f32| {
+        let mut assets = crate::FileAssets { base: dir.clone(), materials: &mut materials, cache: &mut cache, allow: &allow, warnings: Vec::new() };
+        let frame = extract_with(&scene, camera, FrameOptions { time, ..OPTIONS }, &mut assets);
+        renderer.render(&gpu.device, &gpu.queue, &target, &frame);
+        let image = gpu.read_back(&target).unwrap();
+        (0..64).filter(|x| brightness(image.pixel(*x, 32).unwrap()) > 300).collect::<Vec<u32>>()
+    };
+    let start = lit_columns(0.0);
+    let later = lit_columns(0.9);
+    assert!(!start.is_empty() && !later.is_empty(), "the wall shows: {start:?} {later:?}");
+    assert!(later[0] > start[0] + 8, "later the same renderer draws it further right: {start:?} then {later:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}

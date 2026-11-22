@@ -98,6 +98,8 @@ struct GpuMesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
+    /// The model's version its vertices are of.
+    version: u64,
 }
 
 /// What a frame drew and what the renderer keeps on the GPU.
@@ -425,7 +427,7 @@ impl Renderer {
                     contents: bytemuck::cast_slice(&data.indices),
                     usage: wgpu::BufferUsages::INDEX,
                 });
-                (shape, GpuMesh { vertices, indices, index_count: data.indices.len() as u32 })
+                (shape, GpuMesh { vertices, indices, index_count: data.indices.len() as u32, version: 0 })
             })
             .collect();
 
@@ -552,10 +554,18 @@ impl Renderer {
             for image in item.textures.iter().flatten() {
                 self.textures.entry(image.id).or_insert_with(|| upload_image(device, queue, image));
             }
-            if let Some(mesh) = &item.mesh
-                && !self.models.contains_key(&mesh.id)
-            {
-                self.models.insert(mesh.id, upload_model(device, mesh));
+            if let Some(mesh) = &item.mesh {
+                match self.models.get_mut(&mesh.id) {
+                    Some(gpu) if gpu.version == mesh.version => {}
+                    // A posed model: the same vertices moved, written over the old ones.
+                    Some(gpu) if gpu.vertices.size() == (mesh.positions.len() * std::mem::size_of::<Vertex>()) as u64 => {
+                        queue.write_buffer(&gpu.vertices, 0, bytemuck::cast_slice(&model_vertices(mesh)));
+                        gpu.version = mesh.version;
+                    }
+                    _ => {
+                        self.models.insert(mesh.id, upload_model(device, mesh));
+                    }
+                }
             }
             keys.push(texture_key(item));
         }
@@ -1467,24 +1477,28 @@ fn upload_image(device: &wgpu::Device, queue: &wgpu::Queue, image: &bayleaf_asse
 
 /// A model on the GPU.
 fn upload_model(device: &wgpu::Device, mesh: &bayleaf_assets::MeshData) -> GpuMesh {
-    let vertices: Vec<Vertex> = (0..mesh.positions.len())
-        .map(|i| Vertex {
-            position: mesh.positions[i],
-            normal: mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
-            uv: mesh.uvs.get(i).copied().unwrap_or([0.0; 2]),
-        })
-        .collect();
     let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("bayleaf model vertices"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
+        contents: bytemuck::cast_slice(&model_vertices(mesh)),
+        // Written again when an animation poses the model.
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     });
     let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("bayleaf model indices"),
         contents: bytemuck::cast_slice(&mesh.indices),
         usage: wgpu::BufferUsages::INDEX,
     });
-    GpuMesh { vertices, indices, index_count: mesh.indices.len() as u32 }
+    GpuMesh { vertices, indices, index_count: mesh.indices.len() as u32, version: mesh.version }
+}
+
+fn model_vertices(mesh: &bayleaf_assets::MeshData) -> Vec<Vertex> {
+    (0..mesh.positions.len())
+        .map(|i| Vertex {
+            position: mesh.positions[i],
+            normal: mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
+            uv: mesh.uvs.get(i).copied().unwrap_or([0.0; 2]),
+        })
+        .collect()
 }
 
 /// Which mesh an item draws: a built-in shape (its index) or a model (its id, with the top bit set).
