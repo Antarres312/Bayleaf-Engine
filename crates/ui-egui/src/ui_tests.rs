@@ -1484,3 +1484,35 @@ fn an_unlinked_text_input_is_typed_in_the_node() {
     assert_eq!(graph(&harness).value(join, "a").and_then(|v| v.as_str()), Some("Score: "));
     assert!(harness.query_by_label_contains(&format!("Output Result (Text) of Join Text {join}")).is_some(), "the output says it carries text");
 }
+
+#[test]
+fn a_tab_maximises_its_panel_and_restores_the_layout() {
+    // Frames of 1/60 s, so two clicks a few frames apart make a double-click.
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1440.0, 900.0))
+        .with_step_dt(1.0 / 60.0)
+        .with_max_steps(60)
+        .build_ui_state(|ui, editor: &mut Editor| editor.ui(ui, None), Editor::default());
+    harness.run();
+    assert!(harness.query_by_label("Hierarchy").is_some());
+    harness.get_by_label("Inspector").click_secondary();
+    harness.run();
+    harness.get_by_label("Maximise").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().maximized, Some(crate::Panel::Inspector));
+    assert!(harness.query_by_label("Hierarchy").is_none(), "only the maximised panel shows");
+    assert!(harness.query_by_label("Inspector").is_some());
+    // A double-click on the tab restores the layout.
+    let tab = harness.get_by_label("Inspector").rect().center();
+    harness.hover_at(tab);
+    // Half a second, so the menu click before does not make this a triple-click.
+    harness.run_steps(30);
+    for pressed in [true, false, true, false] {
+        harness.event(egui::Event::PointerButton { pos: tab, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        harness.step();
+    }
+    harness.run();
+    harness.run_steps(2);
+    assert_eq!(harness.state().maximized, None);
+    assert!(harness.query_by_label("Hierarchy").is_some(), "the layout is back as it was");
+}

@@ -159,6 +159,10 @@ pub(crate) fn set_open(dock: &mut DockState<Panel>, panel: Panel, open: bool) {
 struct Panels<'a> {
     editor: &'a mut Editor,
     gpu: Option<&'a egui_wgpu::RenderState>,
+    /// A panel fills the dock area.
+    maximized: bool,
+    /// A panel whose tab asked to be maximised or restored.
+    toggle: Option<Panel>,
 }
 
 impl TabViewer for Panels<'_> {
@@ -185,8 +189,27 @@ impl TabViewer for Panels<'_> {
         }
     }
 
+    /// A double-click on a tab maximises its panel, or restores the layout.
+    fn on_tab_button(&mut self, tab: &mut Panel, response: &egui::Response) {
+        if response.double_clicked() {
+            self.toggle = Some(*tab);
+        }
+        response.ctx.accesskit_node_builder(response.id, |node| {
+            node.set_description(if self.maximized { "Double-click to restore the layout" } else { "Double-click to maximise" });
+        });
+    }
+
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut Panel, _path: egui_dock::NodePath) {
+        let label = if self.maximized { "Restore Layout" } else { "Maximise" };
+        if ui.button(label).clicked() {
+            self.toggle = Some(*tab);
+            ui.close();
+        }
+    }
+
     fn is_closeable(&self, tab: &Panel) -> bool {
-        tab.closable()
+        // A maximised panel is restored, not closed.
+        !self.maximized && tab.closable()
     }
 
     fn allowed_in_windows(&self, _tab: &mut Panel) -> bool {
@@ -223,15 +246,25 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
     style.tab.hovered.text_color = t.text;
     style.overlay.selection_color = t.accent.gamma_multiply(0.35);
 
+    // A maximised panel is shown alone; the layout itself stays as it was.
+    let maximized = editor.maximized.filter(|panel| is_open(&dock, *panel));
+    let mut alone = maximized.map(|panel| DockState::new(vec![panel]));
+    let mut panels = Panels { editor, gpu, maximized: maximized.is_some(), toggle: None };
     egui::Frame::new().fill(t.backdrop).show(ui, |ui| {
-        DockArea::new(&mut dock)
-            .id(egui::Id::unique("bayleaf dock"))
+        DockArea::new(alone.as_mut().unwrap_or(&mut dock))
+            .id(egui::Id::unique(if maximized.is_some() { "bayleaf dock maximised" } else { "bayleaf dock" }))
             .style(style)
             .show_add_buttons(false)
             .show_leaf_collapse_buttons(false)
             .show_leaf_close_all_buttons(false)
-            .show_inside(ui, &mut Panels { editor, gpu });
+            .show_inside(ui, &mut panels);
     });
+    let toggle = panels.toggle;
+    editor.maximized = match toggle {
+        Some(panel) if maximized.is_none() => Some(panel),
+        Some(_) => None,
+        None => maximized,
+    };
     editor.dock = dock;
     name_dividers(ui.ctx());
 }

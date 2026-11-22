@@ -60,6 +60,8 @@ pub struct Editor {
     /// The project folder as last frame saw it, to notice when another one opens.
     last_project: Option<std::path::PathBuf>,
     dock: egui_dock::DockState<Panel>,
+    /// The panel filling the whole dock area, when one is maximised (double-click its tab).
+    maximized: Option<Panel>,
     hierarchy_filter: String,
     /// The object being renamed in the hierarchy, if any.
     renaming: Option<hierarchy::Rename>,
@@ -107,6 +109,7 @@ impl Default for Editor {
             recent_projects: Vec::new(),
             last_project: None,
             dock: Layout::Standard.build(),
+            maximized: None,
             hierarchy_filter: String::new(),
             renaming: None,
             automation_note: None,
