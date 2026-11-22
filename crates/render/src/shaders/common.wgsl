@@ -49,6 +49,9 @@ struct Globals {
     grid: vec4<f32>,
     // x: where world z = 0 is along z, y: where world x = 0 is along x, both from the eye.
     grid_axes: vec4<f32>,
+    // xyz: the world point the frame's coordinates start from (the eye's own place, mostly), so a
+    // position plus it is where it is in the world.
+    origin: vec4<f32>,
     lights: array<Light, MAX_LIGHTS>,
 };
 

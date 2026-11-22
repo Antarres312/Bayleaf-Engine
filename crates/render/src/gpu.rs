@@ -59,6 +59,8 @@ struct Globals {
     grid: [f32; 4],
     // x, y: where the world's X and Z axes (world z = 0 and x = 0) are from the eye, along z and x.
     grid_axes: [f32; 4],
+    // The world point the frame's coordinates start from, for materials that read world positions.
+    origin: [f32; 4],
     lights: [LightRaw; MAX_LIGHTS],
 }
 
@@ -1046,6 +1048,7 @@ fn globals_for(frame: &Frame, shadows: &[ShadowView], shadow_size: u32) -> Globa
             [origin.x.rem_euclid(10.0) as f32, (-origin.y) as f32, origin.z.rem_euclid(10.0) as f32, 0.0]
         },
         grid_axes: [(-frame.camera.origin.z) as f32, (-frame.camera.origin.x) as f32, 0.0, 0.0],
+        origin: frame.camera.origin.as_vec3().extend(0.0).to_array(),
         lights,
     }
 }

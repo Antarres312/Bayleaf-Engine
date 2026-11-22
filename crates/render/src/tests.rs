@@ -1083,3 +1083,34 @@ fn a_model_animation_moves_the_model_from_frame_to_frame() {
     assert!(later[0] > start[0] + 8, "later the same renderer draws it further right: {start:?} then {later:?}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_world_position_pattern_stays_on_its_surface_wherever_the_view_s_origin_is() {
+    let Some(gpu) = gpu() else { return };
+    // A floor with a checker of world positions, half a unit to a cell.
+    let mut graph = Graph::new(&CATALOG);
+    let output = graph.nodes.iter().find(|n| n.kind == "output").unwrap().id;
+    let checker = graph.add_node(&CATALOG, "checker", [0.0, 0.0]).unwrap();
+    graph.set_value(&CATALOG, checker, "scale", json!(2.0)).unwrap();
+    graph.connect(&CATALOG, Link { from: PinRef::new(checker, "value"), to: PinRef::new(output, "baseColor") }).unwrap();
+    let material = Arc::new(compile(&graph).unwrap());
+    let scene = floor_scene(&[("directionalLight", json!({"color": [1, 1, 1], "intensity": 2}), [0.0, 5.0, 0.0], [-60.0, 20.0, 0.0])]);
+    let draw = |camera: CameraView| {
+        let mut frame = extract(&scene, camera, OPTIONS);
+        for item in &mut frame.items {
+            item.material = Some(Arc::clone(&material));
+        }
+        gpu.render(&frame, 64, 64).unwrap()
+    };
+    // The same view, measured from the world's centre and from the eye (as cameras in the scene
+    // are), and from the eye after it has moved a little sideways.
+    let (eye, target) = (DVec3::new(0.3, 3.0, 4.0), DVec3::new(0.3, 0.0, 0.0));
+    let centred = draw(CameraView::look_at(eye.as_vec3(), target.as_vec3(), 50.0, 1.0));
+    let from_eye = draw(CameraView::look_at_world(eye, target, 50.0, 1.0));
+    let differing = centred.pixels.chunks(4).zip(from_eye.pixels.chunks(4)).filter(|(a, b)| a.iter().zip(*b).any(|(x, y)| x.abs_diff(*y) > 8)).count();
+    assert!(differing < 40, "the cells stay where they are in the world: {differing} pixels differ");
+    // Moved by one whole cell pair, the floor looks the same.
+    let moved = draw(CameraView::look_at_world(eye + DVec3::X, target + DVec3::X, 50.0, 1.0));
+    let shifted = from_eye.pixels.chunks(4).zip(moved.pixels.chunks(4)).filter(|(a, b)| a.iter().zip(*b).any(|(x, y)| x.abs_diff(*y) > 8)).count();
+    assert!(shifted < 40, "a unit along, the checker repeats: {shifted} pixels differ");
+}

@@ -415,7 +415,8 @@ impl Compiler<'_> {
             PinDefault::Vec3(v) | PinDefault::Color(v) => (vec_lit(v), Ty::V),
             PinDefault::Implicit("normal") => ("s.normal".to_owned(), Ty::V),
             PinDefault::Implicit("uv") => ("vec3<f32>(s.uv, 0.0)".to_owned(), Ty::V),
-            PinDefault::Implicit(_) => ("s.position".to_owned(), Ty::V),
+            // A world position, as the World Position node gives it.
+            PinDefault::Implicit(_) => ("(s.position + globals.origin.xyz)".to_owned(), Ty::V),
             PinDefault::Bool(_) | PinDefault::Text(_) | PinDefault::Int(_) | PinDefault::None => {
                 (if declared == Ty::F { "0.0f".to_owned() } else { "vec3<f32>(0.0)".to_owned() }, declared)
             }
@@ -454,7 +455,9 @@ impl Compiler<'_> {
                 self.animated = true;
                 ("s.time".to_owned(), Ty::F)
             }
-            "position" => ("s.position".to_owned(), Ty::V),
+            // Measured from the world's centre: the surface's positions start from the view's origin,
+            // which moves with the eye, so a pattern from them would slide along with the camera.
+            "position" => ("(s.position + globals.origin.xyz)".to_owned(), Ty::V),
             "uv" => ("vec3<f32>(s.uv, 0.0)".to_owned(), Ty::V),
             "texture" => {
                 let sample = format!("n{node}_sample");
