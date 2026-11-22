@@ -157,7 +157,13 @@ impl Player {
         let image = egui::Image::new(egui::load::SizedTexture::new(view.texture, size)).sense(egui::Sense::click_and_drag());
         let response = ui.add(image);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Game view"));
-        let over_interface = bayleaf_ui_egui::game_interface::show(ui, response.rect, &mut self.session, &mut self.interfaces, true) || over_world_panel;
+        // The screen's interface follows the gamepad unless a world panel has it.
+        let over_screen = if self.world.has_keyboard() {
+            self.interfaces.without_pad(|cache| bayleaf_ui_egui::game_interface::show(ui, response.rect, &mut self.session, cache, true))
+        } else {
+            bayleaf_ui_egui::game_interface::show(ui, response.rect, &mut self.session, &mut self.interfaces, true)
+        };
+        let over_interface = over_screen || over_world_panel;
         let pointer = response.hover_pos().map(|p| {
             let local = (p - response.rect.min) / response.rect.size();
             [local.x * 2.0 - 1.0, 1.0 - local.y * 2.0]

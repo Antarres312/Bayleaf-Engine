@@ -149,9 +149,10 @@ The Scene view shows it where it stands.
 While the game plays, the pointer reaches the nearest panel it points at, through the scene, and
 the panel's buttons, toggles, sliders and On Click elements answer as on the screen, with the same
 messages to the scripts; a click on an element that takes the pointer is not also the game's.
-Commands and scripts treat a world interface as any other. Not yet: the keyboard and gamepad on a
-world panel, its elements in the accessibility tree, and panels in front of it hiding it from the
-pointer (the nearest panel answers even behind a wall).
+Something in the scene in front of a panel keeps the pointer from it. A press on a panel gives it the
+keyboard and the gamepad (typing goes into its focused text field, the D-pad moves between its
+controls) until a press lands elsewhere. Commands and scripts treat a world interface as any other.
+Not yet: a world panel's elements in the accessibility tree.
 
 ## While the game plays
 

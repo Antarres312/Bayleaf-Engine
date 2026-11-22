@@ -40,6 +40,16 @@ struct Panel {
 pub struct WorldInterfaces {
     painter: Option<egui_wgpu::Renderer>,
     panels: HashMap<StableId, Panel>,
+    /// The panel the keyboard and the gamepad drive: the one last pressed on, until a press lands
+    /// elsewhere.
+    keyboard: Option<StableId>,
+}
+
+impl WorldInterfaces {
+    /// Whether a world panel has the keyboard and the gamepad now, so the screen's interface does not.
+    pub fn has_keyboard(&self) -> bool {
+        self.keyboard.is_some()
+    }
 }
 
 /// The pointer as the view saw it this frame: where, as -1 to 1 across the view, and its button
@@ -47,6 +57,8 @@ pub struct WorldInterfaces {
 pub struct PointerInput {
     pub ndc: Option<Vec2>,
     pub buttons: Vec<(egui::PointerButton, bool)>,
+    /// Keys and typed text this frame, for the panel that has the keyboard.
+    pub keys: Vec<egui::Event>,
 }
 
 impl PointerInput {
@@ -65,7 +77,8 @@ impl PointerInput {
                 })
                 .collect()
         });
-        Self { ndc, buttons }
+        let keys = ui.input(|i| i.events.iter().filter(|e| matches!(e, egui::Event::Key { .. } | egui::Event::Text(_))).cloned().collect());
+        Self { ndc, buttons, keys }
     }
 }
 
@@ -142,6 +155,21 @@ impl WorldInterfaces {
             }
             placed.push((id, component, model, points));
         }
+        // Something in the scene in front of the panel keeps the pointer from it.
+        if let (Some((t, id, _)), Some(ray)) = (nearest, ray) {
+            let others: Vec<DrawItem> = items.iter().filter(|i| i.object != id).cloned().collect();
+            if bayleaf_render::nearest_hit(&others, ray).is_some_and(|(_, wall)| wall < t) {
+                nearest = None;
+            }
+        }
+        // A press lands on a panel (it then has the keyboard and the gamepad) or elsewhere.
+        if interactive && pointer.ndc.is_some() && pointer.buttons.iter().any(|(_, pressed)| *pressed) {
+            self.keyboard = nearest.map(|(_, id, _)| id);
+        }
+        if self.keyboard.is_some_and(|id| !self.panels.contains_key(&id) && !placed.iter().any(|(p, ..)| *p == id)) {
+            self.keyboard = None;
+        }
+        let keyboard = self.keyboard;
         let painter = self.painter.get_or_insert_with(|| egui_wgpu::Renderer::new(&gpu.device, FORMAT, egui_wgpu::RendererOptions::default()));
         let mut blocked = false;
         for (id, component, model, points) in placed {
@@ -162,12 +190,22 @@ impl WorldInterfaces {
                 None if panel.hovered => events.push(egui::Event::PointerGone),
                 None => {}
             }
+            let has_keyboard = interactive && keyboard == Some(id);
+            if has_keyboard {
+                events.extend(pointer.keys.iter().cloned());
+            }
             panel.hovered = over.is_some();
             let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(points[0] as f32, points[1] as f32));
             let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
             let mut blocks_here = false;
             let output = panel.ctx.run_ui(input, |ui| {
-                blocks_here = crate::game_interface::show_list(ui, screen, session, cache, interactive, vec![(id, component.clone())]);
+                let one = vec![(id, component.clone())];
+                // Only the panel that has the keyboard follows the gamepad.
+                blocks_here = if has_keyboard {
+                    crate::game_interface::show_list(ui, screen, session, cache, interactive, one)
+                } else {
+                    cache.without_pad(|cache| crate::game_interface::show_list(ui, screen, session, cache, interactive, one))
+                };
             });
             blocked |= blocks_here && over.is_some();
             paint(gpu, painter, panel, output);

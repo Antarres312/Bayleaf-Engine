@@ -3048,3 +3048,93 @@ fn a_style_file_is_edited_rule_by_rule_in_the_inspector() {
     assert_eq!(read().rules.len(), 1, "the new rule went again");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn with_a_gpu_a_wall_keeps_the_pointer_from_a_world_panel_and_the_keyboard_types_into_one() {
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-world-keys-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let editor = harness.state_mut();
+    editor.dispatch("project.new", &json!({ "path": dir }), None);
+    let field = json!({
+        "format": "bayleaf.interface", "version": 1,
+        "root": { "kind": "column", "style": { "width": "100%", "height": "100%", "background": "#203040ff", "alignItems": "center", "justify": "center" },
+            "children": [ { "kind": "textField", "name": "Name", "style": { "width": "80%", "fontSize": "28px" } } ] }
+    });
+    editor.dispatch("ui.layout.set", &json!({ "path": "field.bui", "layout": field }), None);
+    let button = json!({
+        "format": "bayleaf.interface", "version": 1,
+        "root": { "kind": "column", "style": { "width": "100%", "height": "100%", "background": "#402020ff", "alignItems": "center", "justify": "center" },
+            "children": [ { "kind": "button", "name": "Hidden", "text": "Behind the wall", "style": { "width": "90%", "height": "80%" } } ] }
+    });
+    editor.dispatch("ui.layout.set", &json!({ "path": "button.bui", "layout": button }), None);
+    let panel = |layout: &str, x: f64| {
+        json!({
+            "transform": { "position": [x, 1.6, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0] },
+            "interface": { "layout": layout, "visible": true, "order": 0, "space": "world", "size": [1.6, 0.8], "pointsPerUnit": 200, "faceCamera": true }
+        })
+    };
+    let field_id = editor.dispatch("scene.object.create", &json!({ "name": "Field", "components": panel("field.bui", -1.0) }), None).unwrap()["id"].clone();
+    let button_id = editor.dispatch("scene.object.create", &json!({ "name": "Behind", "components": panel("button.bui", 1.0) }), None).unwrap()["id"].clone();
+    // A wall halfway between the camera and the second panel.
+    let (eye, behind) = {
+        let scene = editor.session.scene();
+        let camera = bayleaf_render::game_camera(scene, 16.0 / 9.0);
+        let behind = scene.world_matrix(bayleaf_core::StableId::parse_hex(button_id.as_str().unwrap()).unwrap()).unwrap().w_axis.truncate();
+        (camera.origin + camera.position.as_dvec3(), behind)
+    };
+    let wall = (eye + behind) * 0.5;
+    editor.dispatch(
+        "scene.object.create",
+        &json!({ "name": "Wall", "components": { "transform": { "position": [wall.x, wall.y, wall.z], "rotation": [0.0, 0.0, 0.0], "scale": [1.5, 1.5, 1.5] }, "mesh": null } }),
+        None,
+    );
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(4);
+    let view = harness.get_by_label("Game view, playing").rect();
+    let on_screen = |harness: &Harness<'static, Editor>, id: &serde_json::Value| {
+        let scene = harness.state().session.scene();
+        let camera = bayleaf_render::game_camera(scene, view.width() / view.height());
+        let world = scene.world_matrix(bayleaf_core::StableId::parse_hex(id.as_str().unwrap()).unwrap()).unwrap().w_axis.truncate();
+        let clip = camera.view_proj() * camera.relative_point(world).extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        view.min + egui::vec2((ndc.x + 1.0) / 2.0 * view.width(), (1.0 - ndc.y) / 2.0 * view.height())
+    };
+    let click = |harness: &mut Harness<'static, Editor>, at: egui::Pos2| {
+        harness.input_mut().events.push(egui::Event::PointerMoved(at));
+        harness.run_steps(2);
+        for pressed in [true, false] {
+            harness.input_mut().events.push(egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.run_steps(2);
+        }
+    };
+    let shown = |harness: &mut Harness<'static, Editor>, id: &serde_json::Value, element: &str| {
+        let state = harness.state_mut().dispatch("play.ui.state", &json!({ "id": id }), None).unwrap();
+        state["elements"].as_array().unwrap().iter().find(|e| e["name"] == element).cloned().unwrap()
+    };
+
+    // The wall takes the click meant for the panel behind it: no message reaches its interface.
+    let behind_at = on_screen(&harness, &button_id);
+    click(&mut harness, behind_at);
+    assert!(
+        harness.state().session.interface_state(bayleaf_core::StableId::parse_hex(button_id.as_str().unwrap()).unwrap()).is_none(),
+        "nothing reached the hidden panel"
+    );
+
+    // A click on the other panel's field gives it the keyboard; what is typed goes into it.
+    let field_at = on_screen(&harness, &field_id);
+    click(&mut harness, field_at);
+    harness.input_mut().events.push(egui::Event::Text("Ada".to_owned()));
+    harness.run_steps(3);
+    assert_eq!(shown(&mut harness, &field_id, "Name")["text"], "Ada", "{}", harness.state().status);
+    let picture_now = picture(&mut harness);
+    keep_for_review(&picture_now, "world-interface-keyboard");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(2);
+    std::fs::remove_dir_all(&dir).ok();
+}

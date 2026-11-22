@@ -436,9 +436,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
      panel once it has the focus. The Scene view shows world interfaces where they stand. Commands
      and scripts treat it as any other interface. (Done: `space: world`, `size`, `pointsPerUnit`,
      `faceCamera` (scene version 21), drawn into a picture each frame and shown on its panel in the
-     Game view, the Scene view and the player, the pointer reaching it through the scene. Still to
-     do: the keyboard and gamepad on a world panel, its elements in the accessibility tree, and
-     objects in front of a panel keeping the pointer from it.)
+     Game view, the Scene view and the player, the pointer reaching it through the scene. A wall in front of a panel keeps the pointer
+     from it, and the panel last pressed on has the keyboard and the gamepad. Still to do: its
+     elements in the accessibility tree.)
    - **Interface elements block the pointer, or let it through.** A click on the interface does not
      also reach the game: while the pointer is over an element that takes it, scripts read no mouse
      button (`mouse_down`, pointer actions).

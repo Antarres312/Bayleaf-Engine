@@ -701,9 +701,14 @@ fn unit_box_corners() -> impl Iterator<Item = Vec3> {
 
 /// The nearest drawn object under a point in normalized device coordinates.
 pub fn pick(frame: &Frame, ndc: Vec2) -> Option<StableId> {
-    let ray = frame.camera.ray(ndc);
+    nearest_hit(&frame.items, frame.camera.ray(ndc)).map(|(id, _)| id)
+}
+
+/// The nearest item `ray` (measured from the view's origin) meets, and how far along it: the
+/// distance in lengths of the ray's direction.
+pub fn nearest_hit(items: &[DrawItem], ray: Ray) -> Option<(StableId, f32)> {
     let mut best: Option<(f32, StableId)> = None;
-    for item in &frame.items {
+    for item in items {
         let inverse = item.model.inverse();
         if !inverse.is_finite() {
             continue;
@@ -724,7 +729,7 @@ pub fn pick(frame: &Frame, ndc: Vec2) -> Option<StableId> {
             best = Some((t, item.object));
         }
     }
-    best.map(|(_, id)| id)
+    best.map(|(t, id)| (id, t))
 }
 
 fn hit_sphere(ray: Ray, radius: f32) -> Option<f32> {

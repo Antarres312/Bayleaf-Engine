@@ -128,7 +128,13 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
     let response = ui.add(image);
     // The game's interfaces over it: answering the player while it plays, a preview before. Where
     // an element takes the pointer, its clicks are the interface's, not the game's.
-    let over_interface = crate::game_interface::show(ui, response.rect, &mut editor.session, &mut editor.game_interfaces, playing) || over_world_panel;
+    // The screen's interface follows the gamepad unless a world panel has it.
+    let over_screen = if editor.world_game.has_keyboard() {
+        editor.game_interfaces.without_pad(|cache| crate::game_interface::show(ui, response.rect, &mut editor.session, cache, playing))
+    } else {
+        crate::game_interface::show(ui, response.rect, &mut editor.session, &mut editor.game_interfaces, playing)
+    };
+    let over_interface = over_screen || over_world_panel;
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, if playing { "Game view, playing" } else { "Game view" }));
     if response.clicked() {
         response.request_focus();

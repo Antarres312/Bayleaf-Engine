@@ -53,6 +53,17 @@ impl GameInterfaces {
     fn pad_pressed(&self) -> u32 {
         self.pad_now & !self.pad_before
     }
+
+    /// Runs `draw` with no gamepad, for an interface the gamepad is not driving now.
+    pub fn without_pad<T>(&mut self, draw: impl FnOnce(&mut Self) -> T) -> T {
+        let (before, now) = (self.pad_before, self.pad_now);
+        self.pad_before = 0;
+        self.pad_now = 0;
+        let out = draw(self);
+        self.pad_before = before;
+        self.pad_now = now;
+        out
+    }
 }
 
 /// A list's key in [`GameInterfaces::scroll`]: its name, else its place in the tree.
