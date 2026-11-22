@@ -47,6 +47,8 @@ struct Player {
     gamepads: bayleaf_ui_egui::gamepad::Gamepads,
     /// How shadows are drawn, from the project's graphics settings.
     shadows: render::ShadowSettings,
+    /// The post-processing effects the project lets the game use.
+    effects: render::EffectsAllowed,
 }
 
 /// Opens `game` and starts play mode. Returns the window title.
@@ -116,7 +118,9 @@ impl Player {
             allow: &allow,
             warnings: Vec::new(),
         };
-        let options = FrameOptions { show_grid: false, selected: None, time: self.session.play_time() as f32, shadows: self.shadows };
+        // The game camera's own post-processing, else the scene's, as the project allows.
+        let effects = render::Effects { show: true, allowed: self.effects, camera: render::camera_object(scene) };
+        let options = FrameOptions { show_grid: false, selected: None, time: self.session.play_time() as f32, shadows: self.shadows, effects };
         let frame = render::extract_with(scene, camera, options, &mut assets);
         view.renderer.render(&gpu.device, &gpu.queue, &view.target, &frame);
 
@@ -197,7 +201,8 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
         viewport = viewport.with_icon(egui::IconData { rgba: icon.rgba, width: icon.size, height: icon.size });
     }
     let options = eframe::NativeOptions { viewport, persist_window: false, ..Default::default() };
-    let shadows = bayleaf_engine::project_cmds::settings_of(&session).graphics.shadows();
+    let graphics = bayleaf_engine::project_cmds::settings_of(&session).graphics;
+    let (shadows, effects) = (graphics.shadows(), graphics.effects.render());
     let player = Player {
         session,
         materials: render::MaterialLibrary::default(),
@@ -205,6 +210,7 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
         gpu: None,
         gamepads: bayleaf_ui_egui::gamepad::Gamepads::default(),
         shadows,
+        effects,
         failure,
         fullscreen: args.fullscreen,
     };

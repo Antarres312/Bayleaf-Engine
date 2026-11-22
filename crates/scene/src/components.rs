@@ -199,11 +199,14 @@ pub struct Camera {
     pub size: f32,
     pub near: f32,
     pub far: f32,
+    /// A post-processing asset (`.bpost`) for what this camera shows; empty for the scene's.
+    #[serde(default, rename = "postProcessing", skip_serializing_if = "String::is_empty")]
+    pub post_processing: String,
 }
 
 impl Default for Camera {
     fn default() -> Self {
-        Self { projection: Projection::Perspective, fov: 60.0, size: 5.0, near: 0.1, far: 1000.0 }
+        Self { projection: Projection::Perspective, fov: 60.0, size: 5.0, near: 0.1, far: 1000.0, post_processing: String::new() }
     }
 }
 
@@ -224,6 +227,7 @@ impl SceneComponent for Camera {
         if self.near <= 0.0 || self.far <= self.near {
             return Err("near must be greater than 0 and far greater than near".to_owned());
         }
+        crate::lighting::file_path("postProcessing", &self.post_processing, crate::post::EXTENSION)?;
         Ok(())
     }
 

@@ -19,7 +19,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "scene.settings.set",
             "Change Scene Settings",
-            "{lighting?}: the lighting asset (.blight, relative to the project folder; empty for the engine's light) the scene uses; returns the settings",
+            "{lighting?, postProcessing?}: the lighting asset (.blight, relative to the project folder; empty for the engine's light) and the post-processing asset (.bpost; empty for none) the scene uses; returns the settings",
             Mutates::Scene,
             settings_set,
         ),
@@ -37,7 +37,51 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             Mutates::No,
             lighting_set,
         ),
+        spec(
+            "post.get",
+            "Read Post-processing",
+            "{path}: a post-processing asset (.bpost); returns {post: {toneMapping, bloom, color, vignette, depthFog, occlusion, antialiasing}}",
+            Mutates::No,
+            post_get,
+        ),
+        spec(
+            "post.set",
+            "Change Post-processing",
+            "{path, post}: writes a post-processing asset (all of it, as post.get returns it); every scene and camera that names it changes",
+            Mutates::No,
+            post_set,
+        ),
     ]
+}
+
+/// A post-processing asset's path, relative to the project folder or absolute, checked for `access`.
+fn post_path(session: &Session, path: &Path, access: Access) -> Result<PathBuf, CommandError> {
+    if !path.to_string_lossy().to_ascii_lowercase().ends_with(&format!(".{}", bayleaf_scene::post::EXTENSION)) {
+        return Err(CommandError::BadParams(format!("give a .{} file", bayleaf_scene::post::EXTENSION)));
+    }
+    session.allowed(&session.script_dir().join(path), access)
+}
+
+fn post_get(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: PathParams = parse(params)?;
+    let path = post_path(session, &p.path, Access::Read)?;
+    let post = bayleaf_scene::post::PostProcessing::load(&path)?;
+    Ok(json!({ "post": post }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PostSetParams {
+    path: PathBuf,
+    post: bayleaf_scene::post::PostProcessing,
+}
+
+fn post_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: PostSetParams = parse(params)?;
+    p.post.validate().map_err(CommandError::BadParams)?;
+    let path = post_path(session, &p.path, Access::Write)?;
+    p.post.save(&path)?;
+    Ok(json!({ "path": path }))
 }
 
 fn settings_get(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
@@ -50,6 +94,8 @@ fn settings_get(session: &mut Session, params: &Value) -> Result<Value, CommandE
 struct SettingsParams {
     #[serde(default)]
     lighting: Option<String>,
+    #[serde(default, rename = "postProcessing")]
+    post_processing: Option<String>,
 }
 
 fn settings_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
@@ -57,6 +103,9 @@ fn settings_set(session: &mut Session, params: &Value) -> Result<Value, CommandE
     let mut settings = session.scene.settings().clone();
     if let Some(lighting) = p.lighting {
         settings.lighting = lighting.trim().replace('\\', "/");
+    }
+    if let Some(post) = p.post_processing {
+        settings.post_processing = post.trim().replace('\\', "/");
     }
     settings.validate().map_err(CommandError::BadParams)?;
     session.scene.set_settings(settings)?;

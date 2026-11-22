@@ -162,6 +162,7 @@ fn asset_kind(path: &Path) -> &'static str {
         Some("wasm") => "Script",
         Some("binput") => "Input Map",
         Some("blight") => "Lighting",
+        Some("bpost") => "Post-processing",
         Some("bproject") => "Project",
         Some("glb" | "gltf") => "Model",
         Some("png" | "jpg" | "jpeg") => "Image",
@@ -246,6 +247,8 @@ pub enum AssetKind {
     InputMap,
     /// A lighting asset (`.blight`): the sky, the light around everything, fog and a sun.
     Lighting,
+    /// A post-processing asset (`.bpost`): what a camera does to the drawn picture.
+    PostProcessing,
 }
 
 impl AssetKind {
@@ -258,6 +261,7 @@ impl AssetKind {
             AssetKind::VisualScript => Some(bayleaf_script::visual::CATALOG.extension),
             AssetKind::InputMap => Some(crate::input_cmds::INPUT_EXTENSION),
             AssetKind::Lighting => Some(bayleaf_scene::lighting::EXTENSION),
+            AssetKind::PostProcessing => Some(bayleaf_scene::post::EXTENSION),
         }
     }
 }
@@ -310,6 +314,7 @@ fn asset_create(session: &mut Session, params: &Value) -> Result<Value, CommandE
         AssetKind::VisualScript => std::fs::write(&path, bayleaf_graph::Graph::new(&bayleaf_script::visual::CATALOG).to_json()).map_err(failed)?,
         AssetKind::InputMap => std::fs::write(&path, crate::input_cmds::InputAsset::starter().to_text()).map_err(failed)?,
         AssetKind::Lighting => std::fs::write(&path, bayleaf_scene::lighting::Lighting::default().to_text()).map_err(failed)?,
+        AssetKind::PostProcessing => std::fs::write(&path, bayleaf_scene::post::PostProcessing::default().to_text()).map_err(failed)?,
     }
     Ok(json!({ "path": path }))
 }

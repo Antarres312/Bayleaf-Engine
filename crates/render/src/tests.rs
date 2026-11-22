@@ -1,5 +1,5 @@
 use bayleaf_core::StableId;
-use bayleaf_core::math::{DVec3, Vec2, Vec3};
+use bayleaf_core::math::{DVec3, Vec2, Vec3, Vec4};
 use bayleaf_scene::Scene;
 use serde_json::json;
 
@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use bayleaf_graph::{Graph, Link, PinRef};
 
+use crate::Effects;
 use crate::material::{CATALOG, compile};
 use crate::{CameraView, FrameOptions, HeadlessGpu, RenderError, ShadowSettings, extract, extract_with, pick, scene_camera};
 
@@ -22,7 +23,7 @@ fn mesh(scene: &mut Scene, shape: &str, position: [f32; 3]) -> StableId {
     object(scene, "mesh", json!({"shape": shape, "color": [0.8, 0.8, 0.8, 1], "metallic": 0, "roughness": 0.5}), position, [0.0; 3])
 }
 
-const OPTIONS: FrameOptions = FrameOptions { show_grid: false, selected: None, time: 0.0, shadows: ShadowSettings::DEFAULT };
+const OPTIONS: FrameOptions = FrameOptions { show_grid: false, selected: None, time: 0.0, shadows: ShadowSettings::DEFAULT, effects: Effects::DEFAULT };
 
 #[test]
 fn pick_returns_the_nearest_object_under_the_point() {
@@ -892,4 +893,72 @@ fn the_example_materials_compile() {
     }
     let toon = seen.iter().find(|(name, _)| name == "toon").map(|(_, m)| m).expect("the toon example ships");
     assert!(toon.outline.is_some() && toon.surface.contains("CUSTOM_LIGHTING: bool = true"), "it shows the stylised nodes together");
+}
+
+#[test]
+fn post_processing_effects_each_change_the_picture_as_they_say() {
+    let Some(gpu) = gpu() else { return };
+    use crate::PostSettings;
+    // A bright orange cube in the middle on a grey floor, under a sun, against a grey background.
+    let mut scene = floor_scene(&[("directionalLight", json!({"color": [1, 1, 1], "intensity": 2}), [0.0, 5.0, 0.0], [-60.0, 20.0, 0.0])]);
+    object(&mut scene, "mesh", json!({"shape": "cube", "color": [1.0, 0.5, 0.1, 1], "metallic": 0, "roughness": 0.6}), [0.0, 0.5, 0.0], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 2.5, 4.0), Vec3::new(0.0, 0.3, 0.0), 50.0, 1.0);
+    let base = extract(&scene, camera, OPTIONS);
+    let render = |post: PostSettings| {
+        let mut frame = base.clone();
+        frame.post = post;
+        gpu.render(&frame, 96, 96).unwrap()
+    };
+    let plain = render(PostSettings::default());
+    let centre = camera_pixel(&base.camera, Vec3::new(0.0, 0.5, 0.5), 96);
+    let at = |image: &crate::Image, p: (u32, u32)| image.pixel(p.0, p.1).unwrap();
+    let light = |p: [u8; 4]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+
+    let darker = render(PostSettings { exposure: 0.4, ..PostSettings::default() });
+    assert!(light(at(&darker, centre)) + 60 < light(at(&plain, centre)), "less exposure, darker");
+
+    let grey = render(PostSettings { saturation: 0.0, ..PostSettings::default() });
+    let [r, g, b, _] = at(&grey, centre);
+    assert!(r.abs_diff(g) < 6 && g.abs_diff(b) < 6, "no saturation, grey: {:?}", [r, g, b]);
+
+    let corner = (2, 2);
+    let vignetted = render(PostSettings { vignette: 0.8, ..PostSettings::default() });
+    assert!(light(at(&vignetted, corner)) + 30 < light(at(&plain, corner)), "darker corners");
+    assert!(light(at(&vignetted, centre)).abs_diff(light(at(&plain, centre))) < 12, "the middle as it was");
+
+    // An overbright cube: without tone mapping its colour clips; with it, it keeps its hue.
+    let mut bright = base.clone();
+    // Only the cube (the orange item), not the floor.
+    for item in bright.items.iter_mut().filter(|i| (i.color.y - 0.5).abs() < 1e-3) {
+        item.color *= Vec4::new(6.0, 6.0, 6.0, 1.0);
+    }
+    let render_bright = |post: PostSettings| {
+        let mut frame = bright.clone();
+        frame.post = post;
+        gpu.render(&frame, 96, 96).unwrap()
+    };
+    let clipped = at(&render_bright(PostSettings::default()), centre);
+    let mapped = at(&render_bright(PostSettings { tone_mapping: true, ..PostSettings::default() }), centre);
+    assert!(clipped[0] == 255 && clipped[1] == 255, "clipped: {clipped:?}");
+    assert!(mapped[0] > mapped[1] && mapped[1] > mapped[2], "tone mapped keeps orange: {mapped:?}");
+
+    // Bloom: the overbright cube's glow reaches past its edge onto the floor beside it.
+    let beside = camera_pixel(&base.camera, Vec3::new(0.85, 0.05, 0.6), 96);
+    let glow = render_bright(PostSettings { bloom: 1.0, bloom_threshold: 1.0, ..PostSettings::default() });
+    assert!(light(at(&glow, beside)) > light(at(&render_bright(PostSettings::default()), beside)) + 20, "a glow beside the cube");
+
+    // Depth fog: the far floor takes the fog colour, the near one less so.
+    let fogged = render(PostSettings { fog: Some(([0.0, 0.0, 1.0], 2.0, 8.0)), ..PostSettings::default() });
+    let far = camera_pixel(&base.camera, Vec3::new(0.0, 0.0, -6.0), 96);
+    let [r, _, b, _] = at(&fogged, far);
+    assert!(b > r + 60, "the far floor is blue fog: {:?}", at(&fogged, far));
+
+    // Ambient occlusion: where the cube meets the floor goes darker.
+    let crease = camera_pixel(&base.camera, Vec3::new(0.0, 0.02, 0.55), 96);
+    let occluded = render(PostSettings { occlusion: 1.0, occlusion_radius: 0.4, ..PostSettings::default() });
+    assert!(light(at(&occluded, crease)) + 15 < light(at(&plain, crease)), "the crease darkens");
+
+    // Antialiasing changes only edges: the middle of the cube stays.
+    let smoothed = render(PostSettings { antialiasing: true, ..PostSettings::default() });
+    assert_eq!(at(&smoothed, centre), at(&plain, centre));
 }

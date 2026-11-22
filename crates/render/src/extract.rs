@@ -22,6 +22,10 @@ pub trait AssetSource {
     fn lighting(&mut self, _path: &str) -> Option<Arc<Lighting>> {
         None
     }
+    /// A post-processing asset (`.bpost`) the scene's settings or a camera name.
+    fn post(&mut self, _path: &str) -> Option<Arc<bayleaf_scene::post::PostProcessing>> {
+        None
+    }
 }
 
 /// Reads materials, images and models from files, relative to `base`, through caches that
@@ -63,6 +67,9 @@ impl AssetSource for FileAssets<'_> {
     }
     fn lighting(&mut self, path: &str) -> Option<Arc<Lighting>> {
         self.load(path, |s, full| s.materials.lighting(full))
+    }
+    fn post(&mut self, path: &str) -> Option<Arc<bayleaf_scene::post::PostProcessing>> {
+        self.load(path, |s, full| s.materials.post(full))
     }
 }
 
@@ -284,6 +291,8 @@ pub struct Frame {
     pub selected: Option<StableId>,
     /// How shadows are drawn.
     pub shadows: ShadowSettings,
+    /// What post-processing makes of the drawn picture.
+    pub post: crate::PostSettings,
     /// More selected objects, highlighted like `selected`.
     pub highlighted: Vec<StableId>,
     /// Seconds, for animated materials.
@@ -299,6 +308,79 @@ pub struct FrameOptions {
     pub time: f32,
     /// How shadows are drawn (Project Settings > Graphics).
     pub shadows: ShadowSettings,
+    /// Which post-processing applies.
+    pub effects: Effects,
+}
+
+/// Which post-processing a view shows: whether at all, which effects the project allows, and the
+/// camera object whose own asset comes before the scene's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Effects {
+    /// Off, the plain picture (the Scene view's switch).
+    pub show: bool,
+    pub allowed: EffectsAllowed,
+    pub camera: Option<StableId>,
+}
+
+impl Effects {
+    pub const DEFAULT: Effects = Effects { show: true, allowed: EffectsAllowed::ALL, camera: None };
+}
+
+/// The effects a project lets its scenes use (Project Settings > Graphics).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EffectsAllowed {
+    pub tone_mapping: bool,
+    pub bloom: bool,
+    pub color: bool,
+    pub vignette: bool,
+    pub depth_fog: bool,
+    pub occlusion: bool,
+    pub antialiasing: bool,
+}
+
+impl EffectsAllowed {
+    pub const ALL: EffectsAllowed =
+        EffectsAllowed { tone_mapping: true, bloom: true, color: true, vignette: true, depth_fog: true, occlusion: true, antialiasing: true };
+}
+
+/// What a post-processing asset asks for, as far as `allowed` lets it.
+pub fn post_settings(post: &bayleaf_scene::post::PostProcessing, allowed: &EffectsAllowed) -> crate::PostSettings {
+    let mut s = crate::PostSettings::default();
+    if post.tone_mapping.enabled && allowed.tone_mapping {
+        s.tone_mapping = true;
+        s.exposure = post.tone_mapping.exposure;
+    }
+    if post.bloom.enabled && allowed.bloom {
+        s.bloom = post.bloom.strength;
+        s.bloom_threshold = post.bloom.threshold;
+    }
+    if post.color.enabled && allowed.color {
+        s.contrast = post.color.contrast;
+        s.saturation = post.color.saturation;
+    }
+    if post.vignette.enabled && allowed.vignette {
+        s.vignette = post.vignette.strength;
+        s.vignette_smoothness = post.vignette.smoothness;
+    }
+    if post.depth_fog.enabled && allowed.depth_fog {
+        s.fog = Some((post.depth_fog.color, post.depth_fog.start, post.depth_fog.end));
+    }
+    if post.occlusion.enabled && allowed.occlusion {
+        s.occlusion = post.occlusion.strength;
+        s.occlusion_radius = post.occlusion.radius;
+    }
+    s.antialiasing = post.antialiasing && allowed.antialiasing;
+    s
+}
+
+/// The post-processing a frame gets: the camera's own asset, else the scene's, as the options allow.
+fn frame_post(scene: &Scene, options: &FrameOptions, assets: &mut dyn AssetSource) -> crate::PostSettings {
+    if !options.effects.show {
+        return crate::PostSettings::default();
+    }
+    let camera = options.effects.camera.and_then(|id| scene.get::<Camera>(id)).map(|c| c.post_processing.clone()).filter(|p| !p.is_empty());
+    let path = camera.or_else(|| Some(scene.settings().post_processing.clone()).filter(|p| !p.is_empty()));
+    path.and_then(|p| assets.post(&p)).map_or_else(crate::PostSettings::default, |post| post_settings(&post, &options.effects.allowed))
 }
 
 /// How shadows are drawn: the same for every scene of a project.
@@ -456,7 +538,8 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
         Some(env) => environment_light(env),
         None => (DEFAULT_AMBIENT, DEFAULT_AMBIENT * 0.35, DEFAULT_CLEAR, None),
     };
-    // Half of what lies ogDistance away is hidden: 1 - exp(-density * distance) = 0.5.
+    let post = frame_post(scene, &options, assets);
+    // Half of what lies fogDistance away is hidden: 1 - exp(-density * distance) = 0.5.
     let fog = match environment {
         Some(env) if env.fog_distance > 0.0 => (Vec3::from(env.horizon_color), std::f32::consts::LN_2 / env.fog_distance),
         _ => (Vec3::ZERO, 0.0),
@@ -473,6 +556,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
         fog,
         show_grid: options.show_grid,
         shadows: options.shadows,
+        post,
         selected: options.selected,
         highlighted: Vec::new(),
         time: options.time,
@@ -526,10 +610,16 @@ pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Ar
         show_grid: false,
         // Nothing casts a shadow here, so the smallest map.
         shadows: ShadowSettings { resolution: 256, cascades: 1, reach: 0.0, lights: 1 },
+        post: crate::PostSettings::default(),
         selected: None,
         highlighted: Vec::new(),
         time,
     }
+}
+
+/// The first camera object in hierarchy order, if the scene has one: the one the game shows.
+pub fn camera_object(scene: &Scene) -> Option<StableId> {
+    scene.world_matrices().into_iter().map(|(id, _)| id).find(|id| scene.get::<Camera>(*id).is_some())
 }
 
 /// The view of the first camera object in hierarchy order, if the scene has one.
@@ -568,7 +658,8 @@ pub fn object_bounds(scene: &Scene, id: StableId) -> Option<(DVec3, f32)> {
 fn world_bounds(scene: &Scene, only: Option<StableId>) -> Option<(DVec3, f32)> {
     let origin = scene.world_matrices().first().map_or(DVec3::ZERO, |(_, m)| m.w_axis.truncate());
     let camera = CameraView { origin, ..CameraView::look_at(Vec3::ONE, Vec3::ZERO, 60.0, 1.0) };
-    let frame = extract(scene, camera, FrameOptions { show_grid: false, selected: None, time: 0.0, shadows: ShadowSettings::DEFAULT });
+    let frame =
+        extract(scene, camera, FrameOptions { show_grid: false, selected: None, time: 0.0, shadows: ShadowSettings::DEFAULT, effects: Effects::DEFAULT });
     let (center, radius) = item_bounds(frame.items.iter().filter(|i| only.is_none_or(|id| i.object == id)))?;
     Some((origin + center.as_dvec3(), radius))
 }

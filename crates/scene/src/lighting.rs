@@ -160,6 +160,19 @@ pub struct SceneSettings {
     /// A lighting asset (`.blight`), relative to the project folder; empty for the engine's light.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub lighting: String,
+    /// A post-processing asset (`.bpost`), relative to the project folder; empty for none. A
+    /// camera's own comes first.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub post_processing: String,
+}
+
+/// Whether `path` is empty or a short path of a file with `extension`.
+pub(crate) fn file_path(field: &str, path: &str, extension: &str) -> Result<(), String> {
+    if path.is_empty() || (path.len() <= 512 && path.to_ascii_lowercase().ends_with(&format!(".{extension}"))) {
+        Ok(())
+    } else {
+        Err(format!("{field} must be the path of a .{extension} file"))
+    }
 }
 
 impl SceneSettings {
@@ -168,11 +181,7 @@ impl SceneSettings {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        let lighting = &self.lighting;
-        if lighting.is_empty() || (lighting.len() <= 512 && lighting.to_ascii_lowercase().ends_with(&format!(".{EXTENSION}"))) {
-            Ok(())
-        } else {
-            Err(format!("lighting must be the path of a .{EXTENSION} file"))
-        }
+        file_path("lighting", &self.lighting, EXTENSION)?;
+        file_path("postProcessing", &self.post_processing, crate::post::EXTENSION)
     }
 }

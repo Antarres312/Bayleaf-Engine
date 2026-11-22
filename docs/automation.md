@@ -172,3 +172,13 @@ Prefabs open inside one another; `session.open_prefabs` lists them. `prefab.save
 innermost one to its file, and `prefab.close` (`{discard?}`) goes back a level, refusing unsaved
 changes unless `discard`; the copies underneath then follow the file, keeping their own changes.
 While a prefab is open, play mode, saving the scene and opening another scene or project wait.
+
+A post-processing asset (`.bpost`) says what a camera does to the drawn picture: `toneMapping`
+(`enabled`, `exposure`), `bloom` (`enabled`, `strength`, `threshold`), `color` (`enabled`, `contrast`,
+`saturation`), `vignette` (`enabled`, `strength`, `smoothness`), `depthFog` (`enabled`, `color`,
+`start`, `end`), `occlusion` (`enabled`, `strength`, `radius`) and `antialiasing`. `post.get`
+(`{path}`) reads one and `post.set` (`{path, post}`) writes it, inside the write roots; `asset.create`
+with kind `postProcessing` makes one. `scene.settings.set` takes `postProcessing` (the scene's asset),
+a Camera component's `postProcessing` field names its own (used by the Game view, the player and
+`scene.render` through that camera), and `settings.graphics.effects` in the project settings turns
+effects off for every scene (project format 8; scene format 18).

@@ -87,7 +87,9 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
         target.target = RenderTarget::new(&gpu.device, width, height);
         gpu.renderer.write().update_egui_texture_from_wgpu_texture(&gpu.device, target.target.view(), bayleaf_render::wgpu::FilterMode::Linear, target.texture);
     }
-    let shadows = crate::project_settings::current(editor).graphics.shadows();
+    let graphics = crate::project_settings::current(editor).graphics;
+    let shadows = graphics.shadows();
+    let effects = bayleaf_render::Effects { show: true, allowed: graphics.effects.render(), camera: bayleaf_render::camera_object(editor.session.scene()) };
     let scene = editor.session.scene();
     let camera = bayleaf_render::game_camera(scene, size.x / size.y);
     let base = editor.session.script_dir();
@@ -95,7 +97,7 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
     // The scene view's caches: both views draw the same files.
     let shared = &mut editor.scene_view;
     let mut assets = bayleaf_render::FileAssets { base, materials: &mut shared.materials, cache: &mut shared.assets, allow: &allow, warnings: Vec::new() };
-    let options = FrameOptions { show_grid: false, selected: None, time: editor.session.play_time() as f32, shadows };
+    let options = FrameOptions { show_grid: false, selected: None, time: editor.session.play_time() as f32, shadows, effects };
     let frame = bayleaf_render::extract_with(scene, camera, options, &mut assets);
     target.renderer.render(&gpu.device, &gpu.queue, &target.target, &frame);
 

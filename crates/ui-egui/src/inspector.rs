@@ -606,8 +606,22 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
     let input_map = scene.get::<InputMap>(id).cloned();
     let rules = scene.get::<GameRules>(id).is_some();
     let audio = scene.get::<AudioSource>(id).cloned();
+    let camera = scene.get::<bayleaf_engine::scene::components::Camera>(id).cloned();
     let streamed = scene.get::<StreamedArea>(id).cloned();
     let mut fields = Vec::new();
+    if let Some(camera) = camera {
+        let missing = !camera.post_processing.is_empty() && !base.join(&camera.post_processing).is_file();
+        fields.push(FileField {
+            component: "camera",
+            field: "postProcessing",
+            label: "Post-processing",
+            none: "The scene's",
+            no_files: "No .bpost files in the project folder",
+            files: editor.project.post_files(),
+            problem: missing.then(|| crate::i18n::tf("{file} is not there", &[("file", &camera.post_processing.to_string())])),
+            editable: false,
+        });
+    }
     if let Some(source) = audio {
         let missing = !source.clip.is_empty() && !base.join(&source.clip).is_file();
         fields.push(FileField {

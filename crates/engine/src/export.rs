@@ -31,6 +31,7 @@ const GAME_EXTENSIONS: &[&str] = &[
     "wasm",
     crate::input_cmds::INPUT_EXTENSION,
     bayleaf_scene::lighting::EXTENSION,
+    bayleaf_scene::post::EXTENSION,
     "glb",
     "gltf",
     "bin",
@@ -417,6 +418,7 @@ fn player_program(session: &Session, given: Option<&Path>) -> Result<PathBuf, Co
 const REFERENCED_EXTENSIONS: &[&str] = &[
     "bscene",
     "blight",
+    "bpost",
     "bprefab",
     "bmaterial",
     "bscript",

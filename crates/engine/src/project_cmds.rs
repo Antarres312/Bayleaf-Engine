@@ -17,8 +17,9 @@ pub const PROJECT_EXTENSION: &str = "bproject";
 /// Version 2 added `settings`; version 3 moved the input actions into an Input Map asset
 /// (`settings.input.map`); version 4 added the editor preferences (`settings.editor`); version 5 added the game's icon
 /// (`settings.game.icon`); version 6 the script mode per platform (`settings.game.scriptModes`); version 7 the
-/// shadow quality (`settings.graphics`). Older files still open; opening one moves its actions.
-pub(crate) const PROJECT_VERSION: u32 = 7;
+/// shadow quality (`settings.graphics`); version 8 the post-processing effects games may use
+/// (`settings.graphics.effects`). Older files still open; opening one moves its actions.
+pub(crate) const PROJECT_VERSION: u32 = 8;
 
 /// A project file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -65,6 +66,50 @@ pub struct GraphicsSettings {
     /// How many lights cast shadows at once, 1 to 4.
     #[serde(default = "default_shadow_lights")]
     pub shadow_lights: u32,
+    /// The post-processing effects scenes may use at all.
+    #[serde(default)]
+    pub effects: EffectsAllowed,
+}
+
+/// The post-processing effects a project lets its scenes use; each on unless turned off.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EffectsAllowed {
+    #[serde(default = "yes")]
+    pub tone_mapping: bool,
+    #[serde(default = "yes")]
+    pub bloom: bool,
+    #[serde(default = "yes")]
+    pub color: bool,
+    #[serde(default = "yes")]
+    pub vignette: bool,
+    #[serde(default = "yes")]
+    pub depth_fog: bool,
+    #[serde(default = "yes")]
+    pub occlusion: bool,
+    #[serde(default = "yes")]
+    pub antialiasing: bool,
+}
+
+impl Default for EffectsAllowed {
+    fn default() -> Self {
+        Self { tone_mapping: true, bloom: true, color: true, vignette: true, depth_fog: true, occlusion: true, antialiasing: true }
+    }
+}
+
+impl EffectsAllowed {
+    /// As the renderer takes them.
+    pub fn render(&self) -> bayleaf_render::EffectsAllowed {
+        bayleaf_render::EffectsAllowed {
+            tone_mapping: self.tone_mapping,
+            bloom: self.bloom,
+            color: self.color,
+            vignette: self.vignette,
+            depth_fog: self.depth_fog,
+            occlusion: self.occlusion,
+            antialiasing: self.antialiasing,
+        }
+    }
 }
 
 /// The shadow-map sizes on offer.
@@ -87,7 +132,13 @@ fn default_shadow_lights() -> u32 {
 impl Default for GraphicsSettings {
     fn default() -> Self {
         let shadows = bayleaf_render::ShadowSettings::DEFAULT;
-        Self { shadow_resolution: shadows.resolution, shadow_cascades: shadows.cascades, shadow_distance: shadows.reach, shadow_lights: shadows.lights }
+        Self {
+            shadow_resolution: shadows.resolution,
+            shadow_cascades: shadows.cascades,
+            shadow_distance: shadows.reach,
+            shadow_lights: shadows.lights,
+            effects: EffectsAllowed::default(),
+        }
     }
 }
 

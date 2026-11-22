@@ -612,7 +612,12 @@ pub struct MaterialLibrary {
     live_graph: Option<Graph>,
     /// Lighting files, read once and again when the file changes.
     lightings: HashMap<PathBuf, LightingEntry>,
+    /// Post-processing files, read once and again when the file changes.
+    posts: HashMap<PathBuf, PostEntry>,
 }
+
+/// A post-processing file as last read: when it changed, and what it held or why it did not read.
+type PostEntry = (Option<SystemTime>, Result<Arc<bayleaf_scene::post::PostProcessing>, String>);
 
 /// A lighting file as last read: when it changed, and what it held or why it did not read.
 type LightingEntry = (Option<SystemTime>, Result<Arc<bayleaf_scene::lighting::Lighting>, String>);
@@ -639,6 +644,21 @@ impl MaterialLibrary {
         }
         let result = bayleaf_scene::lighting::Lighting::load(&key).map(Arc::new).map_err(|e| e.to_string());
         self.lightings.insert(key, (modified, result.clone()));
+        result
+    }
+
+    /// A post-processing file (`.bpost`), read again when it changes on disk.
+    pub fn post(&mut self, path: &Path) -> Result<Arc<bayleaf_scene::post::PostProcessing>, String> {
+        let key = normalize(path);
+        let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
+        if let Some((seen, result)) = self.posts.get(&key)
+            && *seen == modified
+            && modified.is_some()
+        {
+            return result.clone();
+        }
+        let result = bayleaf_scene::post::PostProcessing::load(&key).map(Arc::new).map_err(|e| e.to_string());
+        self.posts.insert(key, (modified, result.clone()));
         result
     }
 

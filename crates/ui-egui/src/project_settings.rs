@@ -219,6 +219,23 @@ fn graphics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut Project
         );
     });
     ui.add_space(theme::GAP);
+    ui.add_space(theme::SECTION_GAP);
+    theme::headed(t, "Post-processing Effects").show(ui, |ui| {
+        let effects = &mut graphics.effects;
+        for (on, label) in [
+            (&mut effects.tone_mapping, "Tone Mapping"),
+            (&mut effects.bloom, "Bloom"),
+            (&mut effects.color, "Color Adjustment"),
+            (&mut effects.vignette, "Vignette"),
+            (&mut effects.depth_fog, "Depth Fog"),
+            (&mut effects.occlusion, "Ambient Occlusion"),
+            (&mut effects.antialiasing, "Antialiasing"),
+        ] {
+            ui.checkbox(on, tl(label));
+        }
+        note(ui, "The effects scenes may use at all: an effect turned off here stays off whatever a post-processing asset says.");
+    });
+    ui.add_space(theme::GAP);
     note(ui, "The Scene and Game views show changes at once; the exported game and scene renders use them too.");
 }
 

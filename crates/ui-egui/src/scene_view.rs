@@ -85,6 +85,8 @@ pub(crate) struct SceneView {
     pub show_grid: bool,
     /// Outlines every collider and character, not only the selected objects'.
     pub show_colliders: bool,
+    /// Shows the scene's post-processing; off, the plain picture.
+    pub show_effects: bool,
     gpu: Option<GpuView>,
     framed_once: bool,
     /// Back was pressed with the open prefab changed: the bar asks what to do with the changes.
@@ -110,7 +112,7 @@ impl SceneView {
     }
 
     pub fn new() -> Self {
-        Self { show_grid: true, ..Self::default() }
+        Self { show_grid: true, show_effects: true, ..Self::default() }
     }
 
     pub fn frame_selection(&mut self, editor: &Editor) {
@@ -210,6 +212,8 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
         }
         ui.checkbox(&mut view.show_grid, tl("Grid"));
         ui.checkbox(&mut view.show_colliders, tl("Colliders")).on_hover_text(tl("Outline every physics shape; selected objects always show theirs"));
+        ui.checkbox(&mut view.show_effects, tl("Effects"))
+            .on_hover_text(tl("Show the scene's post-processing (its settings name the asset); off, the plain picture"));
         ui.separator();
         for tool in gizmo::Tool::ALL {
             let key = tool.key().name();
@@ -260,7 +264,10 @@ pub(crate) fn play_controls(ui: &mut egui::Ui, session: &bayleaf_engine::Session
 }
 
 fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &egui_wgpu::RenderState) {
-    let shadows = crate::project_settings::current(editor).graphics.shadows();
+    let graphics = crate::project_settings::current(editor).graphics;
+    let shadows = graphics.shadows();
+    // The scene's post-processing, unless the view's Effects switch is off.
+    let effects = bayleaf_render::Effects { show: view.show_effects, allowed: graphics.effects.render(), camera: None };
     let size = ui.available_size().max(egui::vec2(16.0, 16.0));
     let ppp = ui.ctx().pixels_per_point();
     let (width, height) = ((size.x * ppp).round().max(1.0) as u32, (size.y * ppp).round().max(1.0) as u32);
@@ -294,7 +301,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let base = editor.session.script_dir();
     let allow = |path: &std::path::Path| Ok(path.to_path_buf());
     let mut assets = bayleaf_render::FileAssets { base, materials: &mut view.materials, cache: &mut view.assets, allow: &allow, warnings: Vec::new() };
-    let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time, shadows };
+    let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time, shadows, effects };
     let mut frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut assets);
     frame.highlighted = editor.also_selected.clone();
     // The object a dragged script would go to is outlined too.
@@ -321,7 +328,8 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
             };
             gpu_view.preview = Some((target, texture));
         }
-        let options = FrameOptions { show_grid: false, selected: None, time, shadows };
+        // The selected camera's view, with its own post-processing.
+        let options = FrameOptions { show_grid: false, selected: None, time, shadows, effects: bayleaf_render::Effects { camera: editor.selected, ..effects } };
         let preview_frame = bayleaf_render::extract_with(editor.session.scene(), camera, options, &mut assets);
         if let Some((target, texture)) = &gpu_view.preview {
             gpu_view.renderer.render(&gpu.device, &gpu.queue, target, &preview_frame);

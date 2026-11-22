@@ -30,11 +30,13 @@ pub(crate) struct Inspected {
     show_source: bool,
     /// A lighting asset as read, or why it could not be.
     lighting: Option<Result<bayleaf_engine::scene::lighting::Lighting, String>>,
+    /// A post-processing asset as read, or why it could not be.
+    post: Option<Result<bayleaf_engine::scene::post::PostProcessing, String>>,
 }
 
 impl Inspected {
     pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path, info: Info::default(), modified: None, texture: None, markdown: None, show_source: false, input: None, lighting: None }
+        Self { path, info: Info::default(), modified: None, texture: None, markdown: None, show_source: false, input: None, lighting: None, post: None }
     }
 
     /// Reads the file again when it changed since it was last read.
@@ -49,6 +51,8 @@ impl Inspected {
             self.input = is_input.then(|| bayleaf_engine::input_cmds::read_asset(editor_session, &self.path).map(|a| crate::input_editor::Draft::of(&a)));
             let is_lighting = self.path.extension().is_some_and(|e| e == bayleaf_engine::scene::lighting::EXTENSION);
             self.lighting = is_lighting.then(|| bayleaf_engine::scene::lighting::Lighting::load(&self.path).map_err(|e| e.to_string()));
+            let is_post = self.path.extension().is_some_and(|e| e == bayleaf_engine::scene::post::EXTENSION);
+            self.post = is_post.then(|| bayleaf_engine::scene::post::PostProcessing::load(&self.path).map_err(|e| e.to_string()));
         }
     }
 }
@@ -70,6 +74,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let mut action = None;
     let mut save_input = None;
     let mut changed_lighting = None;
+    let mut changed_post = None;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(4.0);
@@ -94,6 +99,12 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             && crate::scene_settings::lighting_editor(ui, lighting)
         {
             changed_lighting = Some(lighting.clone());
+        }
+        // A post-processing asset is edited here; every scene and camera that names it changes.
+        if let Some(Ok(post)) = file.post.as_mut()
+            && crate::scene_settings::post_editor(ui, post)
+        {
+            changed_post = Some(post.clone());
         }
 
         theme::section(t).show(ui, |ui| {
@@ -174,6 +185,11 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     // An edited lighting asset is written; its new time on disk is taken, so it is not read back.
     if let Some(lighting) = changed_lighting
         && editor.dispatch("lighting.set", &serde_json::json!({ "path": file.path, "lighting": lighting }), None).is_some()
+    {
+        file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
+    }
+    if let Some(post) = changed_post
+        && editor.dispatch("post.set", &serde_json::json!({ "path": file.path, "post": post }), None).is_some()
     {
         file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
     }

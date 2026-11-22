@@ -13,6 +13,8 @@ use crate::mesh::{self, Vertex};
 
 /// Colour format of [`RenderTarget`]. sRGB, so shaders write linear colour.
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// The scene's own colour, before post-processing makes the displayed picture: high range, linear.
+pub(crate) const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SAMPLES: u32 = 4;
 /// The selection mask: one channel, set where a selected shape is.
@@ -103,9 +105,13 @@ pub struct RenderTarget {
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
     msaa_view: wgpu::TextureView,
+    /// The scene's colour resolved from the multisampled one, which post-processing reads.
+    hdr_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
     /// Where the selected shapes are, for their outline.
     mask_view: wgpu::TextureView,
+    /// Bloom's chain of half-size pictures.
+    bloom_views: Vec<wgpu::TextureView>,
 }
 
 impl RenderTarget {
@@ -130,14 +136,45 @@ impl RenderTarget {
             1,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         );
-        let msaa = texture("bayleaf msaa", COLOR_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT);
-        let depth = texture("bayleaf depth", DEPTH_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let msaa = texture("bayleaf msaa", HDR_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let hdr = texture("bayleaf scene colour", HDR_FORMAT, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
+        let depth = texture("bayleaf depth", DEPTH_FORMAT, SAMPLES, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
+        let bloom_views = (0..crate::post::BLOOM_LEVELS)
+            .map(|level| {
+                let size = wgpu::Extent3d { width: (width >> (level + 1)).max(1), height: (height >> (level + 1)).max(1), depth_or_array_layers: 1 };
+                device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some("bayleaf bloom"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: HDR_FORMAT,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    })
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            })
+            .collect();
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
         let msaa_view = msaa.create_view(&wgpu::TextureViewDescriptor::default());
+        let hdr_view = hdr.create_view(&wgpu::TextureViewDescriptor::default());
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
         let mask = texture("bayleaf selection mask", MASK_FORMAT, 1, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
         let mask_view = mask.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { width, height, color, color_view, msaa_view, depth_view, mask_view }
+        Self { width, height, color, color_view, msaa_view, hdr_view, depth_view, mask_view, bloom_views }
+    }
+
+    pub(crate) fn hdr_view(&self) -> &wgpu::TextureView {
+        &self.hdr_view
+    }
+
+    pub(crate) fn depth_view(&self) -> &wgpu::TextureView {
+        &self.depth_view
+    }
+
+    pub(crate) fn bloom_views(&self) -> &[wgpu::TextureView] {
+        &self.bloom_views
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -184,6 +221,7 @@ pub struct Renderer {
     pipelines: HashMap<u64, Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>>,
     /// Outline pipelines of the materials that have an outline, by material key.
     outlines: HashMap<u64, wgpu::RenderPipeline>,
+    post: crate::post::Post,
     /// Why the last refused material shader was refused.
     material_error: Option<String>,
     grid: wgpu::RenderPipeline,
@@ -348,6 +386,7 @@ impl Renderer {
         });
         let sky = sky_pipeline(device, &layout, &sky_shader);
         let (mask_pipeline, outline_pipeline, outline_layout) = outline_pipelines(device, &globals_layout);
+        let post = crate::post::Post::new(device, &globals_layout, with_common(include_str!("shaders/post.wgsl")));
 
         let meshes = Shape::ALL
             .iter()
@@ -375,6 +414,7 @@ impl Renderer {
             layout,
             pipelines,
             outlines: HashMap::new(),
+            post,
             material_error: None,
             grid,
             sky,
@@ -576,7 +616,7 @@ impl Renderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &target.msaa_view,
                     depth_slice: None,
-                    resolve_target: Some(&target.color_view),
+                    resolve_target: Some(&target.hdr_view),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color { r: f64::from(c.x), g: f64::from(c.y), b: f64::from(c.z), a: f64::from(c.w) }),
                         store: wgpu::StoreOp::Discard,
@@ -584,7 +624,8 @@ impl Renderer {
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &target.depth_view,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    // Kept for post-processing (depth fog, ambient occlusion).
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: None,
@@ -659,6 +700,8 @@ impl Renderer {
             .filter(|(_, i)| frame.selected == Some(i.object) || frame.highlighted.contains(&i.object))
             .map(|(index, i)| (index as u32, *i))
             .collect();
+        // The displayed picture, from the scene's colour.
+        self.post.run(device, queue, &mut encoder, target, &self.globals_group, &frame.post);
         if !selected.is_empty() {
             self.outline(device, &mut encoder, target, &selected);
         }
@@ -1133,7 +1176,7 @@ fn mesh_pipeline_with(
             entry_point: Some(if outline { "fs_outline" } else { "fs_main" }),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             targets: &[Some(wgpu::ColorTargetState {
-                format: COLOR_FORMAT,
+                format: HDR_FORMAT,
                 blend: transparent.then_some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
@@ -1168,11 +1211,7 @@ fn grid_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &
             module: shader,
             entry_point: Some("fs_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: COLOR_FORMAT,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
+            targets: &[Some(wgpu::ColorTargetState { format: HDR_FORMAT, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
         }),
         multiview_mask: None,
         cache: None,
@@ -1369,7 +1408,7 @@ fn sky_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &w
             module: shader,
             entry_point: Some("fs_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState { format: COLOR_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            targets: &[Some(wgpu::ColorTargetState { format: HDR_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
         }),
         multiview_mask: None,
         cache: None,

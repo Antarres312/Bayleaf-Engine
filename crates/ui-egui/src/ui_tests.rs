@@ -2199,3 +2199,31 @@ fn a_prefab_opens_from_its_copy_and_back_asks_about_unsaved_changes() {
     assert_eq!(editor.session.scene().children(Some(id)).len(), 1, "the copy follows the saved prefab");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn the_scene_s_settings_make_a_post_processing_asset_the_inspector_edits() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-post-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir.join("Looks") }), None);
+    harness.state_mut().project.rescan_soon();
+    harness.run_steps(3);
+    let project = dir.join("Looks");
+    harness.get_by_label("main scene").click();
+    harness.run();
+    harness.get_by_label("New post-processing").click();
+    harness.run_steps(2);
+    let named = harness.state().session.scene().settings().post_processing.clone();
+    assert!(named.ends_with(".bpost") && project.join(&named).is_file(), "a new asset the scene names: {named}");
+
+    harness.get_by_label("Edit post-processing").click();
+    harness.run_steps(3);
+    let before = bayleaf_engine::scene::post::PostProcessing::load(&project.join(&named)).unwrap();
+    // The first section's switch: Tone Mapping, on in a new asset.
+    assert!(before.tone_mapping.enabled);
+    harness.query_all(egui_kittest::kittest::By::new().role(egui::accesskit::Role::CheckBox).label("On")).next().expect("each effect has its switch").click();
+    harness.run();
+    let after = bayleaf_engine::scene::post::PostProcessing::load(&project.join(&named)).unwrap();
+    assert!(!after.tone_mapping.enabled, "unticking Tone Mapping writes the file through post.set");
+    std::fs::remove_dir_all(&dir).ok();
+}

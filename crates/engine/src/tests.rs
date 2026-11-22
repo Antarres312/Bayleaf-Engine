@@ -2071,3 +2071,52 @@ fn a_prefab_opens_on_its_own_and_its_copies_follow_when_it_is_saved() {
     assert_eq!(session.scene().get::<bayleaf_scene::components::Transform>(second).unwrap().position[0], 5.0, "a copy keeps its own transform");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_scenes_post_processing_asset_changes_its_render_as_far_as_the_project_allows() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let base = std::env::temp_dir().join(format!("bayleaf-post-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let project = base.join("Looks");
+    registry.execute(&mut session, "project.new", &json!({"path": project})).unwrap();
+    let made = registry.execute(&mut session, "asset.create", &json!({"kind": "postProcessing", "folder": project, "name": "grey"})).unwrap();
+    let path = made["path"].as_str().unwrap().to_owned();
+    let mut post = registry.execute(&mut session, "post.get", &json!({"path": path})).unwrap()["post"].clone();
+    post["color"] = json!({"enabled": true, "contrast": 1.0, "saturation": 0.0});
+    post["toneMapping"]["enabled"] = json!(false);
+    registry.execute(&mut session, "post.set", &json!({"path": path, "post": post})).unwrap();
+    let mut bad = post.clone();
+    bad["vignette"]["strength"] = json!(3.0);
+    assert!(registry.execute(&mut session, "post.set", &json!({"path": path, "post": bad})).is_err(), "out of range");
+    create(
+        &registry,
+        &mut session,
+        json!({"name": "Red", "components": {"mesh": {"shape": "cube", "color": [0.9, 0.1, 0.1, 1], "metallic": 0, "roughness": 0.5}}}),
+    );
+
+    let centre = |session: &mut Session, name: &str| -> Option<[u8; 4]> {
+        let png = base.join(name);
+        registry.execute(session, "scene.render", &json!({"path": png, "width": 32, "height": 32})).ok()?;
+        let image = bayleaf_render::assets::load_image(&png).ok()?;
+        let at = (16 * image.width as usize + 16) * 4;
+        Some([image.rgba[at], image.rgba[at + 1], image.rgba[at + 2], 255])
+    };
+    let Some(plain) = centre(&mut session, "plain.png") else { return }; // no GPU here
+    assert!(plain[0] > plain[1] + 40, "red as drawn: {plain:?}");
+    registry.execute(&mut session, "scene.settings.set", &json!({"postProcessing": "grey.bpost"})).unwrap();
+    let grey = centre(&mut session, "grey.png").unwrap();
+    assert!(grey[0].abs_diff(grey[1]) < 8, "the scene's post-processing takes the colour out: {grey:?}");
+
+    // A project that does not allow colour adjustment shows the colour again.
+    let mut settings = registry.execute(&mut session, "project.settings", &Value::Null).unwrap()["settings"].clone();
+    settings["graphics"]["effects"] = json!({"color": false});
+    registry.execute(&mut session, "project.settings.set", &json!({"settings": settings})).unwrap();
+    let allowed = centre(&mut session, "allowed.png").unwrap();
+    assert!(allowed[0] > allowed[1] + 40, "colour adjustment is not allowed: {allowed:?}");
+
+    // Agents read and write post-processing assets only inside their folders.
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&project), std::slice::from_ref(&project)).unwrap()));
+    assert!(registry.execute(&mut session, "post.get", &json!({"path": base.join("elsewhere.bpost")})).is_err());
+    std::fs::remove_dir_all(&base).ok();
+}
