@@ -1,5 +1,5 @@
 use bayleaf_core::StableId;
-use bayleaf_core::math::{Vec2, Vec3};
+use bayleaf_core::math::{DVec3, Vec2, Vec3};
 use bayleaf_scene::Scene;
 use serde_json::json;
 
@@ -716,4 +716,22 @@ fn a_selected_shape_keeps_its_colours_and_gets_an_outline_around_it() {
     let outside = selected.pixel(edge - 2, 32).unwrap();
     assert_eq!(plain.pixel(edge - 2, 32), Some(background), "outside the cube there is background");
     assert!(outside[0] > outside[2] + 80, "a selected shape has an orange band around it: {outside:?}");
+}
+
+#[test]
+fn the_ground_grid_shows_when_it_is_on_near_and_far_from_the_centre() {
+    let Some(gpu) = gpu() else { return };
+    let scene = Scene::new();
+    // Pixels that differ between two pictures of the same view.
+    let changed = |a: &crate::headless::Image, b: &crate::headless::Image| {
+        (0..64).flat_map(|y| (0..64).map(move |x| (x, y))).filter(|&(x, y)| a.pixel(x, y) != b.pixel(x, y)).count()
+    };
+    // Looking down at the ground from above, at the world's centre and far from it, as the editor's
+    // view measures the frame from its eye.
+    for at in [DVec3::new(0.0, 0.0, 0.0), DVec3::new(250_000.5, 0.0, -75_000.25)] {
+        let camera = || CameraView::look_at_world(at + DVec3::new(0.0, 6.0, 6.0), at, 60.0, 1.0);
+        let with = gpu.render(&extract(&scene, camera(), FrameOptions { show_grid: true, ..OPTIONS }), 64, 64).unwrap();
+        let without = gpu.render(&extract(&scene, camera(), OPTIONS), 64, 64).unwrap();
+        assert!(changed(&with, &without) > 64, "the grid draws lines on the ground around {at:?}");
+    }
 }

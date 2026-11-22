@@ -1,13 +1,15 @@
-// Editor ground grid on the y = 0 plane: thin lines every unit, stronger lines every 10 units,
-// the X axis in red and the Z axis in blue. Lines use screen-space derivatives so they stay
-// one pixel wide at any distance.
+// Editor ground grid on the world's y = 0 plane: thin lines every unit, stronger lines every 10
+// units, the X axis in red and the Z axis in blue. Lines use screen-space derivatives so they stay
+// one pixel wide at any distance. Positions are measured from the eye (`globals.grid` says where the
+// ground and the grid's pattern are), so the grid stays exact far from the world's centre.
 
 const EXTENT: f32 = 500.0;
 
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) world_xz: vec2<f32>,
+    // The point measured from the eye, along the ground.
+    @location(0) local_xz: vec2<f32>,
 };
 
 @vertex
@@ -18,8 +20,8 @@ fn vs_main(@builtin(vertex_index) index: u32) -> VertexOut {
     );
     let xz = corners[index] * EXTENT + globals.camera_pos.xz;
     var out: VertexOut;
-    out.clip = globals.view_proj * vec4<f32>(xz.x, 0.0, xz.y, 1.0);
-    out.world_xz = xz;
+    out.clip = globals.view_proj * vec4<f32>(xz.x, globals.grid.y, xz.y, 1.0);
+    out.local_xz = xz;
     return out;
 }
 
@@ -32,15 +34,18 @@ fn line_strength(coord: vec2<f32>, spacing: f32) -> f32 {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let minor = line_strength(in.world_xz, 1.0);
-    let major = line_strength(in.world_xz, 10.0);
-    let width = fwidth(in.world_xz);
-    let on_x_axis = abs(in.world_xz.y) < width.y;
-    let on_z_axis = abs(in.world_xz.x) < width.x;
+    // The grid's pattern repeats every 10 units, so the world position modulo 10 places it.
+    let pattern = in.local_xz + globals.grid.xz;
+    let minor = line_strength(pattern, 1.0);
+    let major = line_strength(pattern, 10.0);
+    let width = fwidth(in.local_xz);
+    let on_x_axis = abs(in.local_xz.y - globals.grid_axes.x) < width.y;
+    let on_z_axis = abs(in.local_xz.x - globals.grid_axes.y) < width.x;
 
-    let distance = length(in.world_xz - globals.camera_pos.xz);
-    // Fade out with distance, further when the camera is higher, so the horizon does not shimmer.
-    let reach = abs(globals.camera_pos.y) * 40.0 + 60.0;
+    let distance = length(in.local_xz - globals.camera_pos.xz);
+    // Fade out with distance, further when the eye is higher above the ground, so the horizon does
+    // not shimmer.
+    let reach = abs(globals.camera_pos.y - globals.grid.y) * 40.0 + 60.0;
     let fade = 1.0 - smoothstep(0.25, 1.0, distance / reach);
 
     var color = vec3<f32>(0.55, 0.55, 0.58);

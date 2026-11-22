@@ -44,6 +44,11 @@ struct Globals {
     shadow_faces: [[[f32; 4]; 4]; SHADOW_FACES],
     // x: faces in use (1, or 6 for a point light)
     shadow_extra: [f32; 4],
+    // The ground grid in view coordinates: x, z: the world's position modulo 10 under the eye (the
+    // grid's pattern), y: the height of the ground (world y = 0) from the eye.
+    grid: [f32; 4],
+    // x, y: where the world's X and Z axes (world z = 0 and x = 0) are from the eye, along z and x.
+    grid_axes: [f32; 4],
     lights: [LightRaw; MAX_LIGHTS],
 }
 
@@ -796,6 +801,11 @@ fn globals_for(frame: &Frame, shadow: Option<&ShadowView>) -> Globals {
         fog: frame.fog.0.extend(frame.fog.1).to_array(),
         shadow_faces: std::array::from_fn(|i| shadow.as_ref().and_then(|v| v.faces.get(i)).copied().unwrap_or(Mat4::IDENTITY).to_cols_array_2d()),
         shadow_extra: shadow.map_or([0.0; 4], |v| [v.faces.len() as f32, v.mode, v.splits[0], v.splits[1]]),
+        grid: {
+            let origin = frame.camera.origin;
+            [origin.x.rem_euclid(10.0) as f32, (-origin.y) as f32, origin.z.rem_euclid(10.0) as f32, 0.0]
+        },
+        grid_axes: [(-frame.camera.origin.z) as f32, (-frame.camera.origin.x) as f32, 0.0, 0.0],
         lights,
     }
 }

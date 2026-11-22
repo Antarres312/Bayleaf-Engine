@@ -40,6 +40,11 @@ struct Globals {
     shadow_faces: array<mat4x4<f32>, 6>,
     // x: faces in use
     shadow_extra: vec4<f32>,
+    // The ground grid from the eye: x, z: the world's position modulo 10 under the eye, y: the ground's
+    // height (world y = 0).
+    grid: vec4<f32>,
+    // x: where world z = 0 is along z, y: where world x = 0 is along x, both from the eye.
+    grid_axes: vec4<f32>,
     lights: array<Light, MAX_LIGHTS>,
 };
 
