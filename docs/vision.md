@@ -425,6 +425,28 @@ No crate below L6 may use egui, eframe, winit or rfd.
      wrap to the window's width instead of widening it, and the folder field gives way so the
      button always shows. A UI test chooses each mode at the window's opening size and checks the
      Choose… button lies inside the window. (Done.)
+   - **Interfaces in the world.** An Interface can stand in the scene instead of over the screen: a
+     flat panel at the object's place, turned with it, with a size in world units and a number of
+     interface points per unit (how sharp it is). It is drawn with the scene (lit or unlit, and
+     hidden behind what is in front of it), and can always face the camera (a name tag over a
+     character, a health bar over an enemy). The pointer reaches it through the scene: a ray from
+     the pointer finds the panel, and its buttons, toggles, sliders and On Click elements answer as
+     on the screen, with the same messages to the scripts; the keyboard and gamepad reach a world
+     panel once it has the focus. The Scene view shows world interfaces where they stand. Commands
+     and scripts treat it as any other interface.
+   - **Interface elements block the pointer, or let it through.** A click on the interface does not
+     also reach the game: while the pointer is over an element that takes it, scripts read no mouse
+     button (`mouse_down`, pointer actions), and physics rays from the pointer do not see past it.
+     Each element says whether it takes the pointer with a style property: `pointer: block` or
+     `pointer: pass`. By default buttons, toggles, sliders, text fields, elements with On Click and
+     boxes with a background block it; text, images and empty boxes let it through, so a display's
+     layout panels never stop the game. Scripts can ask whether the pointer is over the interface.
+   - **Graphs in tabs of their own.** Each material and visual script opens in a tab of its own
+     instead of sharing one Graph panel, so several graphs are open at once and side by side: the
+     tab shows the graph's name and whether it has unsaved changes, and closing a tab with changes
+     asks first. Double-clicking a graph that is open brings its tab forward. The `graph.*`
+     commands name the graph they work on (its path, or the open graph last used when left out),
+     and `graph.list` gives the open graphs. Each graph keeps its own undo steps.
 
 ## Open questions
 
