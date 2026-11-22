@@ -1928,10 +1928,14 @@ fn a_native_export_writes_a_workspace_that_builds_the_player_with_the_rust_scrip
     std::fs::create_dir_all(project.join("scripts/mover/src")).unwrap();
     std::fs::write(
         project.join("scripts/mover/Cargo.toml"),
-        "[package]\nname = \"mover\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nbayleaf-script-sdk = { path = \"../../sdk\" }\nhelper = { path = \"../helper\" }\n\n[workspace]\n\n[profile.release]\nopt-level = \"s\"\n",
+        "[package]\nname = \"mover\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nbayleaf-script-sdk = { path = \"../../sdk\" }\nhelper = { path = \"../../../helper\" }\n\n[workspace]\n\n[profile.release]\nopt-level = \"s\"\n",
     )
     .unwrap();
     std::fs::write(project.join("scripts/mover/src/lib.rs"), "// the mover").unwrap();
+    // A library of its own beside the project, which the script uses.
+    std::fs::create_dir_all(base.join("helper/src")).unwrap();
+    std::fs::write(base.join("helper/Cargo.toml"), "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2024\"\n").unwrap();
+    std::fs::write(base.join("helper/src/lib.rs"), "").unwrap();
     std::fs::write(project.join("scripts/mover.wasm"), b"\0asm\x01\0\0\0").unwrap();
     let out = base.join("out");
 
@@ -1943,7 +1947,7 @@ fn a_native_export_writes_a_workspace_that_builds_the_player_with_the_rust_scrip
 
     let root = read("Cargo.toml");
     assert!(root.contains("[patch.crates-io]"), "the engine's patches, which Cargo takes only from the workspace built:\n{root}");
-    assert!(root.contains("script-sdk") && root.contains("\"scripts/*\""), "{root}");
+    assert!(root.contains("script-sdk") && root.contains("\"scripts/mover\""), "{root}");
     assert!(build.folder.join("Cargo.lock").is_file(), "the engine's dependency versions");
     let main = read("player/src/main.rs");
     assert!(main.contains("PathBuf::from(\"scripts/mover.wasm\")") && main.contains("script_0::bayleaf_native()"), "{main}");
@@ -1951,14 +1955,45 @@ fn a_native_export_writes_a_workspace_that_builds_the_player_with_the_rust_scrip
     let copy = read("scripts/mover/Cargo.toml");
     assert!(!copy.contains("crate-type") && !copy.contains("[workspace]") && !copy.contains("[profile"), "a plain library of the workspace:\n{copy}");
     assert!(copy.contains("bayleaf-script-sdk = { workspace = true }"), "the engine's SDK:\n{copy}");
-    let helper = project.join("scripts/mover").join("../helper").to_string_lossy().replace('\\', "/");
+    let helper = project.join("scripts/mover").join("../../../helper").to_string_lossy().replace('\\', "/");
     assert!(copy.contains(&helper), "relative paths still lead where they did:\n{copy}");
     assert_eq!(read("scripts/mover/src/lib.rs"), "// the mover");
+
+    assert_cargo_reads(&build.folder);
 
     // The game is exported as native, so its player runs it that way.
     let found = crate::export::packaged_game(&build.program).unwrap();
     let mut game = Session::default();
     registry.execute(&mut game, "project.open", &json!({"path": found})).unwrap();
     assert_eq!(crate::export::chosen_mode(&game, Platform::current()), ScriptMode::Native);
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// Cargo loads the generated workspace: every member is there and every manifest reads.
+fn assert_cargo_reads(folder: &std::path::Path) {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = std::process::Command::new(cargo)
+        .args(["metadata", "--no-deps", "--offline", "--format-version", "1", "--manifest-path"])
+        .arg(folder.join("Cargo.toml"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "cargo does not read the workspace:\n{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
+fn a_native_export_of_a_game_without_rust_scripts_builds_a_workspace_cargo_reads() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let base = std::env::temp_dir().join(format!("bayleaf-native-plain-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let project = base.join("Plain");
+    registry.execute(&mut session, "project.new", &json!({"path": project})).unwrap();
+    let check = registry.execute(&mut session, "project.export.check", &json!({"mode": "native"})).unwrap();
+    let notes: Vec<&str> = check["findings"].as_array().unwrap().iter().filter_map(|f| f["message"].as_str()).collect();
+    assert!(notes.iter().any(|n| n.contains("no Rust script")), "it says Native gains nothing here: {notes:?}");
+    let result = registry.execute(&mut session, "project.export", &json!({"folder": base.join("out"), "mode": "native", "wait": false})).unwrap();
+    assert_eq!(result["native"], json!([]));
+    let build: crate::native_export::NativeBuild = serde_json::from_value(result["build"].clone()).unwrap();
+    assert_cargo_reads(&build.folder);
     std::fs::remove_dir_all(&base).ok();
 }

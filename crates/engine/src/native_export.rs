@@ -85,7 +85,7 @@ pub fn prepare(engine: &Path, project: &Path, scripts: &[NativeSource], folder: 
         names.push(name);
     }
     let root = folder.join("Cargo.toml");
-    std::fs::write(&root, workspace_manifest(engine, project)?).map_err(|e| fail(&root, e))?;
+    std::fs::write(&root, workspace_manifest(engine, project, &names)?).map_err(|e| fail(&root, e))?;
     // The engine's versions of every dependency, so the player builds as the engine does.
     let lock = engine.join("Cargo.lock");
     if lock.is_file() {
@@ -177,10 +177,10 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The workspace: the player and the scripts; the project's shared script settings; the SDK from
+/// The workspace: the player and the scripts (`scripts`, their crate names); the project's shared script settings; the SDK from
 /// the engine; the engine's patches (which Cargo takes only from the workspace being built) and
 /// release profile.
-fn workspace_manifest(engine: &Path, project: &Path) -> Result<String, String> {
+fn workspace_manifest(engine: &Path, project: &Path, scripts: &[String]) -> Result<String, String> {
     let read = |path: &Path| -> Result<DocumentMut, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         text.parse().map_err(|e| format!("{} does not read: {e}", path.display()))
@@ -196,7 +196,11 @@ fn workspace_manifest(engine: &Path, project: &Path) -> Result<String, String> {
     workspace.insert("resolver", value("3"));
     let mut members = toml_edit::Array::new();
     members.push("player");
-    members.push("scripts/*");
+    // Each script by name: a pattern for a folder that is not there (a game with no Rust scripts)
+    // stops Cargo.
+    for name in scripts {
+        members.push(format!("scripts/{name}"));
+    }
     workspace.insert("members", value(members));
     if let Some(package) = shared("package") {
         workspace.insert("package", Item::Table(package));

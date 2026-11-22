@@ -602,7 +602,13 @@ pub fn check(session: &Session, platform: Platform, mode: ScriptMode, player: Op
             found(Severity::Error, format!("{shown} uses {missing}, which is not in the project."), Some(shown.clone()));
         }
     }
-    if findings.iter().all(|f| f.severity != Severity::Error) {
+    if mode == ScriptMode::Native && !scripts.iter().any(|s| s.runs == ScriptMode::Native) {
+        let message =
+            "There is no Rust script with its source in the project, so Native builds a player that runs the scripts as Compiled to machine code does.";
+        findings.push(Finding { severity: Severity::Note, message: message.to_owned(), file: None });
+    }
+    // Native's warning already says what it gives up.
+    if mode != ScriptMode::Native && findings.iter().all(|f| f.severity != Severity::Error) {
         findings.push(Finding { severity: Severity::Note, message: mode.summary().to_owned(), file: None });
     }
     let ready = findings.iter().all(|f| f.severity != Severity::Error);
