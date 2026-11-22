@@ -4,7 +4,9 @@
 //! the picture on the panel, so the panel hides behind what stands in front of it. The pointer
 //! reaches it through the scene: a ray from the pointer finds the nearest panel, and the spot it
 //! hits is where the panel's own pointer is, so its buttons, toggles, sliders and On Click
-//! elements answer as on the screen and the scripts hear the same messages.
+//! elements answer as on the screen and the scripts hear the same messages. Each panel's own
+//! accessibility tree is kept too, and the view puts its elements in the window's tree where they
+//! show on the screen ([`WorldInterfaces::accessible`]), so assistive technology finds them.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -43,6 +45,23 @@ pub struct WorldInterfaces {
     /// The panel the keyboard and the gamepad drive: the one last pressed on, until a press lands
     /// elsewhere.
     keyboard: Option<StableId>,
+    /// The panels' elements as assistive technology sees them, where they show in the view.
+    accessible: Vec<WorldNode>,
+}
+
+/// An element of a world panel, for the window's accessibility tree.
+#[derive(Clone, Debug)]
+pub struct WorldNode {
+    /// Where it shows in the view.
+    pub rect: egui::Rect,
+    pub role: egui::Role,
+    pub label: String,
+    /// A toggle's state.
+    pub selected: Option<bool>,
+    /// A slider's number.
+    pub value: Option<f64>,
+    /// Stays the same from frame to frame: the panel's object and the node in its own tree.
+    pub key: (StableId, u64),
 }
 
 impl WorldInterfaces {
@@ -50,6 +69,71 @@ impl WorldInterfaces {
     pub fn has_keyboard(&self) -> bool {
         self.keyboard.is_some()
     }
+
+    /// The panels' named elements (buttons, toggles, sliders, fields, text) as the last
+    /// [`Self::prepare`] drew them, where they show in the view.
+    pub fn accessible(&self) -> &[WorldNode] {
+        &self.accessible
+    }
+
+    /// Puts the panels' elements in `ui`'s accessibility tree, each over where it shows, sensing
+    /// nothing (the view's picture keeps the pointer).
+    pub fn expose(&self, ui: &mut egui::Ui) {
+        for node in &self.accessible {
+            let id = ui.make_persistent_id(("world interface element", node.key.0.as_u128(), node.key.1));
+            let response = ui.interact(node.rect, id, egui::Sense::hover());
+            response.widget_info(|| {
+                let mut info = egui::WidgetInfo::labeled(node.role, true, &node.label);
+                info.selected = node.selected;
+                info.value = node.value;
+                info
+            });
+        }
+    }
+}
+
+/// The named elements of a panel's accessibility tree, placed where the panel at `model` shows them
+/// in a view of `camera` drawn over `rect`.
+fn world_nodes(
+    update: &egui::accesskit::TreeUpdate,
+    id: StableId,
+    points: [u32; 2],
+    model: bayleaf_core::math::Mat4,
+    camera: &CameraView,
+    rect: egui::Rect,
+) -> Vec<WorldNode> {
+    use egui::accesskit::Role;
+    let to_view = |x: f64, y: f64| {
+        let local = Vec3::new(x as f32 / points[0].max(1) as f32 - 0.5, 0.5 - y as f32 / points[1].max(1) as f32, 0.0);
+        let clip = camera.view_proj() * model.transform_point3(local).extend(1.0);
+        (clip.w > 1e-6).then(|| {
+            let ndc = clip.truncate() / clip.w;
+            rect.min + egui::vec2((ndc.x + 1.0) / 2.0 * rect.width(), (1.0 - ndc.y) / 2.0 * rect.height())
+        })
+    };
+    update
+        .nodes
+        .iter()
+        .filter(|(_, node)| matches!(node.role(), Role::Button | Role::CheckBox | Role::Slider | Role::TextInput | Role::Label | Role::Image))
+        .filter_map(|(key, node)| {
+            let label = node.label().filter(|l| !l.is_empty()).or_else(|| node.value().filter(|v| !v.is_empty()))?.to_owned();
+            let bounds = node.bounds()?;
+            let corners = [(bounds.x0, bounds.y0), (bounds.x1, bounds.y0), (bounds.x0, bounds.y1), (bounds.x1, bounds.y1)].map(|(x, y)| to_view(x, y));
+            let mut shown = egui::Rect::NOTHING;
+            for corner in corners {
+                shown.extend_with(corner?);
+            }
+            let shown = shown.intersect(rect);
+            (shown.is_positive()).then(|| WorldNode {
+                rect: shown,
+                role: node.role(),
+                label,
+                selected: node.toggled().map(|t| t != egui::accesskit::Toggled::False),
+                value: node.numeric_value(),
+                key: (id, key.0),
+            })
+        })
+        .collect()
 }
 
 /// The pointer as the view saw it this frame: where, as -1 to 1 across the view, and its button
@@ -90,6 +174,8 @@ pub struct View<'a> {
     pub pointer: &'a PointerInput,
     /// The panels answer the pointer (while the game plays).
     pub interactive: bool,
+    /// Where the view's picture is on the screen.
+    pub rect: egui::Rect,
 }
 
 /// A panel's place in the world: at its object, turned with it or toward the eye, sized.
@@ -130,7 +216,8 @@ impl WorldInterfaces {
     /// `items`. With `interactive`, the pointer reaches the panel it points at. Returns whether the
     /// pointer is over an element that takes it, so the game does not also get its clicks.
     pub fn prepare(&mut self, view: View<'_>, session: &mut Session, cache: &mut GameInterfaces, items: &mut Vec<DrawItem>) -> bool {
-        let View { gpu, renderer, camera, pointer, interactive } = view;
+        let View { gpu, renderer, camera, pointer, interactive, rect } = view;
+        self.accessible.clear();
         let scene = session.scene();
         let list: Vec<(StableId, Interface, DMat4)> = scene
             .world_matrices()
@@ -208,6 +295,9 @@ impl WorldInterfaces {
                 };
             });
             blocked |= blocks_here && over.is_some();
+            if let Some(update) = &output.platform_output.accesskit_update {
+                self.accessible.extend(world_nodes(update, id, points, model, camera, rect));
+            }
             paint(gpu, painter, panel, output);
             renderer.set_texture(panel.image.id, panel.texture.clone(), panel.view.clone());
             items.push(DrawItem {
@@ -244,6 +334,8 @@ fn new_panel(device: &wgpu::Device, id: StableId, points: [u32; 2]) -> Panel {
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let ctx = egui::Context::default();
     crate::fonts::install_fonts(&ctx);
+    // Its elements are put in the window's accessibility tree.
+    ctx.enable_accesskit();
     let image = Arc::new(bayleaf_render::assets::Image { mipmaps: false, ..bayleaf_render::assets::Image::new(picture_id(id, points), 1, 1, vec![0; 4]) });
     Panel { ctx, texture, view, points, image, hovered: false }
 }

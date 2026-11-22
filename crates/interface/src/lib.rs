@@ -19,7 +19,8 @@ pub use style::{Align, Color, Direction, Justify, Length, PROPERTIES, Rule, STYL
 
 pub const LAYOUT_FORMAT: &str = "bayleaf.interface";
 pub const LAYOUT_EXTENSION: &str = "bui";
-pub const VERSION: u32 = 1;
+/// Version 2 lets a part change the text of named elements inside it (`texts`).
+pub const VERSION: u32 = 2;
 /// Most elements in one layout.
 pub const MAX_ELEMENTS: usize = 4096;
 /// Deepest nesting.
@@ -141,6 +142,10 @@ pub struct Element {
     /// Its own style, applied last: property name to value.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub style: BTreeMap<String, String>,
+    /// On a part: the text shown by named elements inside it, by their name in the part, instead
+    /// of the part's own (a character card's name, say, different where each card is used).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub texts: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Element>,
 }
@@ -172,6 +177,7 @@ impl Element {
             max: 1.0,
             bind: String::new(),
             style: BTreeMap::new(),
+            texts: BTreeMap::new(),
             children: Vec::new(),
         }
     }
@@ -303,6 +309,12 @@ fn check_element(element: &Element) -> Result<(), String> {
     if element.text.len() > MAX_TEXT {
         return Err(format!("{what}: text is at most {MAX_TEXT} bytes"));
     }
+    if !element.texts.is_empty() && element.kind != Kind::Part {
+        return Err(format!("{what}: only a part changes the texts inside it"));
+    }
+    if element.texts.len() > 256 || element.texts.iter().any(|(name, text)| name.is_empty() || name.len() > MAX_PART_NAME || text.len() > MAX_TEXT) {
+        return Err(format!("{what}: texts holds at most 256 names, each of an element inside the part, and texts of at most {MAX_TEXT} bytes"));
+    }
     if element.classes.len() > 16 || element.classes.iter().any(|c| c.is_empty() || c.len() > 64 || c.contains(char::is_whitespace)) {
         return Err(format!("{what}: at most 16 classes, each 1 to 64 characters without spaces"));
     }
@@ -385,6 +397,21 @@ fn expand_in(element: &mut Element, load: &mut dyn FnMut(&str) -> Result<Layout,
         open.push(element.layout.clone());
         expand_in(&mut root, load, out, open)?;
         open.pop();
+        // Texts changed where the part is used, by the names inside it.
+        for (name, text) in &element.texts {
+            let mut found = false;
+            let mut pending: Vec<&mut Element> = vec![&mut root];
+            while let Some(inner) = pending.pop() {
+                if inner.name == *name {
+                    inner.text.clone_from(text);
+                    found = true;
+                }
+                pending.extend(inner.children.iter_mut());
+            }
+            if !found {
+                return Err(format!("part {}: no element inside it is named {name:?}, so its text cannot change", element.layout));
+            }
+        }
         if !element.name.is_empty() {
             let prefix = element.name.clone();
             for child in &mut root.children {

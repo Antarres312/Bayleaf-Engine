@@ -84,6 +84,7 @@ fn fields(element: &Element) -> serde_json::Map<String, Value> {
         ("onClick", json!("")),
         ("bind", json!("")),
         ("style", json!({})),
+        ("texts", json!({})),
     ] {
         map.entry(key).or_insert(empty);
     }
@@ -103,6 +104,9 @@ enum Change {
     Out,
     /// Into the sibling before it, last.
     In,
+    /// Dragged in the tree: the element at the first path into the second, at an index counted
+    /// without it.
+    Place(Vec<usize>, Vec<usize>, usize),
     /// Into a layout file of its own, used here as a part.
     SaveAsPart,
     /// The picked part's layout, opened in the panel.
@@ -187,7 +191,22 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 if let Some((at, draft)) = view.draft.as_mut() {
-                    if let Some(set) = element_fields(ui, t, draft, at.is_empty()) {
+                    // A part's named elements that show text, with the part's own text.
+                    let inside: Vec<(String, String)> = if draft.kind == Kind::Part {
+                        bayleaf_interface::Layout::load(&editor.session.script_dir().join(&draft.layout))
+                            .map(|part| {
+                                part.root
+                                    .walk()
+                                    .into_iter()
+                                    .filter(|e| !e.name.is_empty() && matches!(e.kind, Kind::Text | Kind::Button | Kind::Toggle | Kind::TextField))
+                                    .map(|e| (e.name.clone(), e.text.clone()))
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(set) = element_fields(ui, t, draft, at.is_empty(), &inside) {
                         change = Some(Change::Set(at.clone(), set));
                     }
                 } else {
@@ -283,7 +302,41 @@ fn add_menu(ui: &mut egui::Ui, change: &mut Option<Change>) {
     .on_hover_text(tl("Add an element into the picked one, or after it"));
 }
 
-/// The tree's rows, indented by depth. Delete on a focused row removes it.
+/// An element being dragged in the tree, by its path.
+#[derive(Clone, Debug)]
+struct Dragged(Vec<usize>);
+
+/// Where a dragged element goes when let go over a row: before it, into it (last), or after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Drop {
+    Before,
+    Into,
+    After,
+}
+
+/// Where `from` lands when dropped `how` on the row at `on`: the element to go into and the index
+/// there, counted without `from` (as `ui.element.move` takes it); `None` onto itself or inside it.
+fn drop_target(from: &[usize], on: &[usize], how: Drop, holds: usize) -> Option<(Vec<usize>, usize)> {
+    if on.starts_with(from) {
+        return None;
+    }
+    let (into, index) = match (how, on.split_last()) {
+        (Drop::Into, _) => (on.to_vec(), holds),
+        (Drop::Before, Some((i, parent))) => (parent.to_vec(), *i),
+        (Drop::After, Some((i, parent))) => (parent.to_vec(), i + 1),
+        // Before or after the root: into it.
+        (_, None) => (Vec::new(), holds),
+    };
+    // Taken out first, it no longer counts among its old siblings before the place.
+    let index = match from.split_last() {
+        Some((i, parent)) if parent == into.as_slice() && *i < index => index - 1,
+        _ => index,
+    };
+    Some((into, index))
+}
+
+/// The tree's rows, indented by depth. Delete on a focused row removes it; a row dragged onto
+/// another goes before it, into it (its middle, when it holds others) or after it.
 fn tree(ui: &mut egui::Ui, element: &Element, at: &mut Vec<usize>, selected: &mut Vec<usize>, change: &mut Option<Change>) {
     let depth = at.len() as f32;
     ui.horizontal(|ui| {
@@ -291,6 +344,7 @@ fn tree(ui: &mut egui::Ui, element: &Element, at: &mut Vec<usize>, selected: &mu
         let row = ui.add(
             egui::Button::selectable(*at == *selected, (row_label(element), egui::Atom::grow()))
                 .truncate()
+                .sense(if at.is_empty() { egui::Sense::click() } else { egui::Sense::click_and_drag() })
                 .min_size(egui::vec2(ui.available_width(), ROW_HEIGHT)),
         );
         if row.clicked() {
@@ -300,6 +354,36 @@ fn tree(ui: &mut egui::Ui, element: &Element, at: &mut Vec<usize>, selected: &mu
         if row.has_focus() && !at.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Delete)) {
             selected.clone_from(at);
             *change = Some(Change::Remove);
+        }
+        if !at.is_empty() {
+            row.dnd_set_drag_payload(Dragged(at.clone()));
+        }
+        if let (Some(dragged), Some(pointer)) = (row.dnd_hover_payload::<Dragged>(), ui.input(|i| i.pointer.interact_pos())) {
+            let third = (pointer.y - row.rect.top()) / row.rect.height().max(1.0);
+            let how = match third {
+                t if element.kind.holds_children() && (0.3..0.7).contains(&t) => Drop::Into,
+                t if t < 0.5 => Drop::Before,
+                _ => Drop::After,
+            };
+            if let Some((into, index)) = drop_target(&dragged.0, at, how, element.children.len()) {
+                let t = theme::tokens(ui);
+                let stroke = egui::Stroke::new(2.0, t.focus);
+                match how {
+                    Drop::Into => {
+                        ui.painter().rect_stroke(row.rect, theme::RADIUS, stroke, egui::StrokeKind::Inside);
+                    }
+                    Drop::Before => {
+                        ui.painter().hline(row.rect.x_range(), row.rect.top(), stroke);
+                    }
+                    Drop::After => {
+                        ui.painter().hline(row.rect.x_range(), row.rect.bottom(), stroke);
+                    }
+                }
+                if ui.input(|i| i.pointer.any_released()) {
+                    egui::DragAndDrop::clear_payload(ui.ctx());
+                    *change = Some(Change::Place(dragged.0.clone(), into, index));
+                }
+            }
         }
     });
     for (i, child) in element.children.iter().enumerate() {
@@ -311,7 +395,13 @@ fn tree(ui: &mut egui::Ui, element: &Element, at: &mut Vec<usize>, selected: &mu
 
 /// The picked element's fields and its own style. Returns the fields to write once an edit is
 /// finished (a field left, a drag let go, a choice made).
-fn element_fields(ui: &mut egui::Ui, t: &theme::Tokens, draft: &mut Element, is_root: bool) -> Option<serde_json::Map<String, Value>> {
+fn element_fields(
+    ui: &mut egui::Ui,
+    t: &theme::Tokens,
+    draft: &mut Element,
+    is_root: bool,
+    inside: &[(String, String)],
+) -> Option<serde_json::Map<String, Value>> {
     let mut done = false;
     let finished = |r: &egui::Response| r.lost_focus() || r.drag_stopped() || (r.changed() && !r.dragged() && !r.has_focus());
     theme::headed(t, "Element").show(ui, |ui| {
@@ -341,6 +431,21 @@ fn element_fields(ui: &mut egui::Ui, t: &theme::Tokens, draft: &mut Element, is_
         }
         if draft.kind == Kind::Part {
             done |= text_row(ui, t, "Layout", &mut draft.layout, "A .bui in the project");
+            // The texts inside the part, changed here only: empty keeps the part's own.
+            for (name, own) in inside {
+                let mut text = draft.texts.get(name).cloned().unwrap_or_default();
+                crate::value_editor::row(ui, t, name, |ui, label, width| {
+                    let r = ui.add_sized([width, ROW_HEIGHT], egui::TextEdit::singleline(&mut text).hint_text(own.as_str())).labelled_by(label);
+                    if r.lost_focus() {
+                        done = true;
+                    }
+                });
+                if text.is_empty() {
+                    draft.texts.remove(name);
+                } else {
+                    draft.texts.insert(name.clone(), text);
+                }
+            }
         }
         if matches!(draft.kind, Kind::Toggle | Kind::Slider | Kind::Progress) {
             for (name, value) in [("Value", &mut draft.value), ("Min", &mut draft.min), ("Max", &mut draft.max)] {
@@ -456,6 +561,7 @@ fn apply(editor: &mut Editor, view: &mut InterfaceView, layout: &Layout, path: &
             let end = layout.element_at(&into).map_or(0, |e| e.children.len());
             editor.dispatch("ui.element.move", &json!({ "path": path, "at": at, "into": into, "index": end }), None)
         }
+        Change::Place(from, into, index) => editor.dispatch("ui.element.move", &json!({ "path": path, "at": from, "into": into, "index": index }), None),
         Change::Set(at, set) => editor.dispatch("ui.element.set", &json!({ "path": path, "at": at, "element": set }), None).map(|_| json!({ "at": at })),
         Change::SaveAsPart => {
             let Some(element) = layout.element_at(&at) else { return };

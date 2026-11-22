@@ -140,7 +140,8 @@ impl Player {
         // Interfaces standing in the world, answering the pointer where it meets them.
         let rect = egui::Rect::from_min_size(ui.cursor().min, size);
         let pointer = bayleaf_ui_egui::world_interface::PointerInput::of(ui, rect);
-        let parts = bayleaf_ui_egui::world_interface::View { gpu, renderer: &mut view.renderer, camera: &frame.camera, pointer: &pointer, interactive: true };
+        let parts =
+            bayleaf_ui_egui::world_interface::View { gpu, renderer: &mut view.renderer, camera: &frame.camera, pointer: &pointer, interactive: true, rect };
         let over_world_panel = self.world.prepare(parts, &mut self.session, &mut self.interfaces, &mut frame.items);
         let drawing = std::time::Instant::now();
         view.renderer.render(&gpu.device, &gpu.queue, &view.target, &frame);
@@ -158,6 +159,7 @@ impl Player {
 
         let image = egui::Image::new(egui::load::SizedTexture::new(view.texture, size)).sense(egui::Sense::click_and_drag());
         let response = ui.add(image);
+        self.world.expose(ui);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Game view"));
         // The screen's interface follows the gamepad unless a world panel has it.
         let over_screen = if self.world.has_keyboard() {

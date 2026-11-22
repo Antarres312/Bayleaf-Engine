@@ -352,7 +352,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
      playing (Add and Remove Interface Element, a kind or a part), and visual scripts have the
      interface events and changes. Lists scroll, and scripts read values and text (`ui_value`, `ui_text`, Interface Value
      and Interface Text). Style files are edited rule by rule in the Inspector, and the D-pad moves the focus between
-     controls. Still to do: dragging elements in the tree.)
+     controls, rows drag in the tree, and a part's texts change where it is used (`texts`).)
    - **Particle systems.** A Particle Emitter component: when and how many particles start (a rate,
      bursts, a shape to start on: point, sphere, cone, box, a mesh's surface), how they live (life
      length, speed, gravity, drag, size and colour over their life as curves and gradients,
@@ -446,8 +446,8 @@ No crate below L6 may use egui, eframe, winit or rfd.
      and scripts treat it as any other interface. (Done: `space: world`, `size`, `pointsPerUnit`,
      `faceCamera` (scene version 21), drawn into a picture each frame and shown on its panel in the
      Game view, the Scene view and the player, the pointer reaching it through the scene. A wall in front of a panel keeps the pointer
-     from it, and the panel last pressed on has the keyboard and the gamepad. Still to do: its
-     elements in the accessibility tree.)
+     from it, and the panel last pressed on has the keyboard and the gamepad. Its elements are in
+     the window's accessibility tree where they show, in the Game view and the player.)
    - **Interface elements block the pointer, or let it through.** A click on the interface does not
      also reach the game: while the pointer is over an element that takes it, scripts read no mouse
      button (`mouse_down`, pointer actions).

@@ -54,11 +54,14 @@ classes and style come after the part layout's root's (the bigger layout sizes a
 part's style files come along. Named elements inside it are called `<part>/<name>` (`Character/Health`),
 so two uses never clash: scripts set `Character/Health` and hear `pressed:Character/Use`. Parts nest
 up to 8 deep; one inside itself, a missing file, or a name grown past 56 bytes is an error, shown
-over the game. Changing a part's file changes every layout that uses it.
+over the game. Changing a part's file changes every layout that uses it. A part element's `texts`
+(`{"Name": "Rogue"}`, layout version 2) gives named elements inside it other text where it is used,
+by their names in the part (a name not in it is an error); the Interface panel shows a row for each.
 
 In the Interface panel, **Save as Part** writes the picked element and what it holds to a layout
 file of its own beside the layout (named after it) and puts a part using it in its place; **Open
-Part** edits a picked part's layout.
+Part** edits a picked part's layout. A row dragged in the tree goes before another, into it (its
+middle, when it holds others) or after it; Up, Down, In and Out do the same from the keyboard.
 
 A layout holds at most 4096 elements, nested at most 32 deep.
 
@@ -203,5 +206,4 @@ field, as the player would. `asset.create` makes a layout (`interface`) or a sty
 
 ## Not yet
 
-Dragging elements in the tree, changing a part's inner text in the bigger layout's file (scripts
-set it while playing), and right-to-left text.
+Right-to-left text.

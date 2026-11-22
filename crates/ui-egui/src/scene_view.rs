@@ -387,7 +387,8 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     }
     // Interfaces standing in the world show where they stand; here they do not answer the pointer.
     let no_pointer = crate::world_interface::PointerInput { ndc: None, buttons: Vec::new(), keys: Vec::new() };
-    let parts = crate::world_interface::View { gpu, renderer: &mut gpu_view.renderer, camera: &frame.camera, pointer: &no_pointer, interactive: false };
+    let rect = egui::Rect::from_min_size(ui.cursor().min, ui.available_size());
+    let parts = crate::world_interface::View { gpu, renderer: &mut gpu_view.renderer, camera: &frame.camera, pointer: &no_pointer, interactive: false, rect };
     editor.world_scene.prepare(parts, &mut editor.session, &mut editor.game_interfaces, &mut frame.items);
     gpu_view.renderer.render(&gpu.device, &gpu.queue, &gpu_view.target, &frame);
 

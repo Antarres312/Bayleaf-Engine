@@ -109,7 +109,7 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
     let playing = editor.session.is_playing();
     let rect = egui::Rect::from_min_size(ui.cursor().min, size);
     let pointer = crate::world_interface::PointerInput::of(ui, rect);
-    let view_parts = crate::world_interface::View { gpu, renderer: &mut target.renderer, camera: &frame.camera, pointer: &pointer, interactive: playing };
+    let view_parts = crate::world_interface::View { gpu, renderer: &mut target.renderer, camera: &frame.camera, pointer: &pointer, interactive: playing, rect };
     let over_world_panel = editor.world_game.prepare(view_parts, &mut editor.session, &mut editor.game_interfaces, &mut frame.items);
     let drawing = std::time::Instant::now();
     target.renderer.render(&gpu.device, &gpu.queue, &target.target, &frame);
@@ -128,6 +128,8 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
 
     let image = egui::Image::new(egui::load::SizedTexture::new(target.texture, size)).sense(egui::Sense::click_and_drag());
     let response = ui.add(image);
+    // The world panels' elements, for assistive technology, where they show.
+    editor.world_game.expose(ui);
     // The game's interfaces over it: answering the player while it plays, a preview before. Where
     // an element takes the pointer, its clicks are the interface's, not the game's.
     // The screen's interface follows the gamepad unless a world panel has it.

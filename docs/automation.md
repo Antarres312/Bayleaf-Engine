@@ -243,7 +243,7 @@ new material made beside the image. Dropping files on the editor runs the same c
 Game interfaces (`docs/interface.md`) are layout files (`.bui`) and style files (`.bstyle`):
 `ui.layout.get` and `ui.layout.set` (`{path, layout}`), `ui.style.get` and `ui.style.set` (`{path,
 style}`) read and write them, checked first; `ui.element.add`, `ui.element.remove`,
-`ui.element.move` and `ui.element.set` change one element, named by its place in the tree (child
+`ui.element.move` and `ui.element.set` (a part's `texts` among its fields) change one element, named by its place in the tree (child
 indices from the root), and `ui.element.saveAsPart` (`{path, at, to}`) makes an element a part of
 its own, used in its place; `asset.create` makes them (kinds `interface` and `interfaceStyle`). While the game plays, `play.ui.state` (`{id}`) gives an object's interface as it
 shows (`{visible, elements: [{name, kind, text, value, visible}]}`), `play.ui.press` (`{id,

@@ -2583,6 +2583,18 @@ fn save_as_part_in_the_interface_panel_puts_a_part_in_its_place() {
     harness.run_steps(2);
     assert!(dir.join("Start.bui").is_file(), "{}", harness.state().status);
     assert!(harness.query_by_label("Part: Start").is_some(), "the tree shows the part in the button's place");
+    // The part's text changes here only: a row for each named element inside it.
+    harness.get_by_label("Part: Start").click();
+    harness.run_steps(2);
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Start").click();
+    harness.run();
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Start").type_text("Begin");
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    let menu = bayleaf_interface::Layout::load(&dir.join("menu.bui")).unwrap();
+    assert_eq!(menu.root.children[1].texts.get("Start").map(String::as_str), Some("Begin"), "{}", harness.state().status);
+    let part = bayleaf_interface::Layout::load(&dir.join("Start.bui")).unwrap();
+    assert_eq!(part.root.text, "Start", "the part's own file keeps its text");
     // Open Part edits the part's own layout.
     harness.get_by_label("Open Part").click();
     harness.run_steps(2);
@@ -2937,6 +2949,10 @@ fn with_a_gpu_an_interface_stands_in_the_world_and_answers_the_pointer_there() {
         view.min + egui::vec2((ndc.x + 1.0) / 2.0 * view.width(), (1.0 - ndc.y) / 2.0 * view.height())
     };
     assert!(view.contains(at), "the sign is in view");
+    // Its elements are in the window's accessibility tree, where they show in the view.
+    let open = harness.get_by_role_and_label(egui::accesskit::Role::Button, "Open the door").rect();
+    assert!(view.contains(open.center()), "the sign's button is found over the view: {open:?} in {view:?}");
+    assert!(harness.query_by_label("A sign in the world").is_some(), "and its text");
     let shown = picture(&mut harness);
     keep_for_review(&shown, "world-interface");
     // The sign's blue shows a little above its middle (the title), where the scene had sky or the cube.
@@ -3150,5 +3166,60 @@ fn with_a_gpu_a_wall_keeps_the_pointer_from_a_world_panel_and_the_keyboard_types
     keep_for_review(&picture_now, "world-interface-keyboard");
     harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
     harness.run_steps(2);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn dragging_a_row_in_the_interface_tree_moves_the_element_before_into_or_after_another() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-interface-drag-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().dispatch("asset.create", &json!({ "kind": "interface", "folder": "", "name": "menu" }), None);
+    let file = dir.join("menu.bui");
+    harness.state_mut().open_interface(&file);
+    harness.run_steps(2);
+    let names = || bayleaf_interface::Layout::load(&file).unwrap().root.children.iter().map(|e| e.name.clone()).collect::<Vec<_>>();
+    let drag = |harness: &mut Harness<'static, Editor>, from: &str, to: &str, at: f32| {
+        let (start, target) = (harness.get_by_label(from).rect(), harness.get_by_label(to).rect());
+        let end = egui::pos2(target.center().x, target.top() + target.height() * at);
+        harness.input_mut().events.push(egui::Event::PointerMoved(start.center()));
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: start.center(),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(2);
+        for step in 1..=4 {
+            harness.input_mut().events.push(egui::Event::PointerMoved(start.center().lerp(end, step as f32 / 4.0)));
+            harness.run_steps(1);
+        }
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(3);
+    };
+
+    // Start dropped on Title's upper part goes before it.
+    drag(&mut harness, "Button: Start", "Text: Title", 0.1);
+    assert_eq!(names(), ["Start", "Title"], "{}", harness.state().status);
+    // A panel added after them takes Title dropped on its middle.
+    harness.get_by_label("Text: Title").click();
+    harness.run();
+    harness.get_by_label("Add").click();
+    harness.run();
+    harness.get_by_label("Panel").click();
+    harness.run_steps(2);
+    assert_eq!(names().len(), 3);
+    let panel = harness.query_all_by_label("Panel").map(|n| n.rect()).find(|r| r.width() > 100.0).is_some();
+    assert!(panel, "the new panel has its row");
+    drag(&mut harness, "Text: Title", "Panel", 0.5);
+    let layout = bayleaf_interface::Layout::load(&file).unwrap();
+    assert_eq!(layout.root.children.len(), 2, "Title left the root: {:?}", names());
+    assert_eq!(layout.root.children[1].children[0].name, "Title", "and went into the panel");
     std::fs::remove_dir_all(&dir).ok();
 }

@@ -266,3 +266,34 @@ fn a_list_scrolls_by_its_value_no_further_than_what_it_holds() {
     let (_, scroll) = at(&list);
     assert_eq!(scroll.unwrap()[0], most, "no further than the end");
 }
+
+#[test]
+fn a_part_shows_the_texts_its_use_gives_to_the_names_inside_it() {
+    let mut card_root = element(Kind::Panel, "Card", &[]);
+    let mut name = element(Kind::Text, "Name", &[]);
+    name.text = "Hero".to_owned();
+    card_root.children = vec![name];
+    let card = Layout { root: card_root, ..Layout::starter() };
+    let mut left = element(Kind::Part, "Left", &[]);
+    left.layout = "card.bui".to_owned();
+    let mut right = left.clone();
+    right.name = "Right".to_owned();
+    right.texts.insert("Name".to_owned(), "Rogue".to_owned());
+    let mut root = element(Kind::Row, "Display", &[]);
+    root.children = vec![left, right.clone()];
+    let display = Layout { root, ..Layout::starter() };
+    display.validate().unwrap();
+
+    let mut load = |_: &str| Ok(card.clone());
+    let expanded = expand(&display, &mut load).unwrap();
+    let text = |name: &str| expanded.root.walk().into_iter().find(|e| e.name == name).map(|e| e.text.clone()).unwrap();
+    assert_eq!((text("Left/Name"), text("Right/Name")), ("Hero".to_owned(), "Rogue".to_owned()), "each use its own");
+
+    // A name that is not inside the part says so; texts belong to parts only.
+    let mut wrong = display.clone();
+    wrong.root.children[1].texts.insert("Title".to_owned(), "?".to_owned());
+    assert!(expand(&wrong, &mut load).unwrap_err().contains("Title"));
+    let mut text_only = display.clone();
+    text_only.root.texts.insert("Name".to_owned(), "x".to_owned());
+    assert!(text_only.validate().is_err());
+}
