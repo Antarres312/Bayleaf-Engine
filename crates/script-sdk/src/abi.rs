@@ -21,6 +21,8 @@ mod raw {
         pub fn count_with(kind_ptr: *const u8, kind_len: usize) -> i32;
         pub fn name_of(handle: i32, out: *mut u8, cap: usize) -> i32;
         pub fn object_ref(handle: i32) -> i32;
+        pub fn scene_load(path_ptr: *const u8, path_len: usize, additive: i32) -> i32;
+        pub fn scene_unload(path_ptr: *const u8, path_len: usize) -> i32;
         pub fn object_of(reference: i32) -> i32;
         pub fn component_get(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, out: *mut f32) -> i32;
         pub fn component_set(handle: i32, c_ptr: *const u8, c_len: usize, f_ptr: *const u8, f_len: usize, value: *const f32) -> i32;
@@ -90,6 +92,12 @@ mod raw {
         0
     }
     pub unsafe fn object_ref(_: i32) -> i32 {
+        0
+    }
+    pub unsafe fn scene_load(_: *const u8, _: usize, _: i32) -> i32 {
+        0
+    }
+    pub unsafe fn scene_unload(_: *const u8, _: usize) -> i32 {
         0
     }
     pub unsafe fn object_of(_: i32) -> i32 {
@@ -233,6 +241,16 @@ pub(crate) fn find_with(kind: &str, index: i32) -> i32 {
 pub(crate) fn count_with(kind: &str) -> i32 {
     // SAFETY: the pointer and length describe `kind`; the host only reads.
     unsafe { raw::count_with(kind.as_ptr(), kind.len()) }
+}
+
+pub(crate) fn scene_load(path: &str, additive: bool) -> bool {
+    // SAFETY: the pointer and length describe `path`; the host only reads.
+    unsafe { raw::scene_load(path.as_ptr(), path.len(), i32::from(additive)) != 0 }
+}
+
+pub(crate) fn scene_unload(path: &str) -> bool {
+    // SAFETY: the pointer and length describe `path`; the host only reads.
+    unsafe { raw::scene_unload(path.as_ptr(), path.len()) != 0 }
 }
 
 pub(crate) fn object_ref(handle: i32) -> i32 {

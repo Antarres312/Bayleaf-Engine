@@ -1457,3 +1457,77 @@ fn set_component_changes_a_field_in_play_and_stop_restores_it() {
     assert_eq!(intensity(&session), before, "stopping play puts the light back");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A visual script with an On Start chain of `actions`, each `(kind, settings)`, saved as `file`.
+fn script_file(file: &std::path::Path, actions: &[(&str, Value)]) {
+    use bayleaf_graph::{Graph, Link, PinRef};
+    let catalog = &bayleaf_script::visual::CATALOG;
+    let mut graph = Graph::empty(catalog);
+    let mut previous = (graph.add_node(catalog, "start", [0.0, 0.0]).unwrap(), "then");
+    for (kind, settings) in actions {
+        let node = graph.add_node(catalog, kind, [0.0, 0.0]).unwrap();
+        for (name, value) in settings.as_object().cloned().unwrap_or_default() {
+            graph.set_value(catalog, node, &name, value).unwrap();
+        }
+        graph.connect(catalog, Link { from: PinRef::new(previous.0, previous.1), to: PinRef::new(node, "run") }).unwrap();
+        previous = (node, "then");
+    }
+    std::fs::write(file, graph.to_json()).unwrap();
+}
+
+#[test]
+fn scenes_load_in_play_added_or_in_place_and_added_ones_unload() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-scene-load-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    // The room scene: one object whose script says it started.
+    script_file(&dir.join("room.bscript"), &[("log", json!({ "message": "room started" }))]);
+    create(&registry, &mut session, json!({"name": "Room", "components": {"scripts": [{"module": "room.bscript"}]}}));
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("room.bscene")})).unwrap();
+    // The hub scene: its script adds the room when play starts.
+    registry.execute(&mut session, "scene.new", &Value::Null).unwrap();
+    script_file(&dir.join("hub.bscript"), &[("loadScene", json!({ "scene": "room.bscene", "additive": true }))]);
+    create(&registry, &mut session, json!({"name": "Hub", "components": {"scripts": [{"module": "hub.bscript"}]}}));
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("hub.bscene")})).unwrap();
+    let edited = session.scene().to_doc();
+    let names = |session: &Session| -> Vec<String> {
+        session.scene().world_matrices().iter().filter_map(|(id, _)| session.scene().name(*id).map(str::to_owned)).collect()
+    };
+    let room_starts = |session: &Session| session.console().iter().filter(|l| l.text.contains("room started")).count();
+
+    registry.execute(&mut session, "play.start", &Value::Null).unwrap();
+    registry.execute(&mut session, "play.step", &json!({"seconds": 0.1})).unwrap();
+    assert_eq!(names(&session), ["Hub", "Room"], "the hub's Load Scene added the room");
+    assert_eq!(room_starts(&session), 1, "the added room's script started");
+    let listed = registry.execute(&mut session, "play.scene.list", &Value::Null).unwrap();
+    assert_eq!(listed["added"][0]["path"], "room.bscene");
+
+    let removed = registry.execute(&mut session, "play.scene.unload", &json!({"path": "room.bscene"})).unwrap();
+    assert_eq!(removed["removed"], 1);
+    assert_eq!(names(&session), ["Hub"], "unloading removes what was added");
+    assert!(registry.execute(&mut session, "play.scene.unload", &json!({"path": "room.bscene"})).is_err(), "nothing left to unload");
+
+    // In place of the playing scene: the room alone, its script starts, the game's values stay.
+    registry.execute(&mut session, "game.state.set", &json!({"name": "coins", "value": 3})).unwrap();
+    registry.execute(&mut session, "play.scene.load", &json!({"path": "room.bscene"})).unwrap();
+    assert_eq!(names(&session), ["Room"]);
+    assert_eq!(room_starts(&session), 2);
+    assert_eq!(registry.execute(&mut session, "game.state", &Value::Null).unwrap()["game"]["coins"], 3.0, "the game's values carry over");
+    assert!(registry.execute(&mut session, "play.scene.load", &json!({"path": "room.bmaterial"})).is_err(), "only scene files load");
+
+    // An agent cannot load a scene from outside its folders.
+    let outside = std::env::temp_dir().join(format!("bayleaf-scene-load-outside-{}", std::process::id()));
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::copy(dir.join("room.bscene"), outside.join("room.bscene")).unwrap();
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), std::slice::from_ref(&dir)).unwrap()));
+    let escape = format!("../{}/room.bscene", outside.file_name().unwrap().to_string_lossy());
+    assert!(registry.execute(&mut session, "play.scene.load", &json!({"path": escape, "additive": true})).is_err(), "outside the readable folders");
+    session.set_confinement(None);
+
+    registry.execute(&mut session, "play.stop", &Value::Null).unwrap();
+    assert_eq!(session.scene().to_doc(), edited, "stopping brings back the scene as edited");
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&outside).ok();
+}

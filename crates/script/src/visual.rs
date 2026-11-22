@@ -46,6 +46,8 @@ const STATE_NAME: SettingDef = SettingDef { name: "name", label: "Name", kind: S
 const STATE_SCOPE: SettingDef = SettingDef { name: "scope", label: "Scope", kind: SettingKind::Choice(&["Game", "Player", "This Object", "Saved"]) };
 const STATE_PLAYER: SettingDef = SettingDef { name: "player", label: "Player", kind: SettingKind::Text("") };
 const FLAG: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("done") };
+/// A scene file of the project, relative to its folder.
+const SCENE_FILE: SettingDef = SettingDef { name: "scene", label: "Scene File", kind: SettingKind::Text("") };
 const TEXT_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("label") };
 const OBJECT_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("thing") };
 const COLOR_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("tint") };
@@ -487,6 +489,26 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[RUN, TARGET],
             outputs: &[THEN],
             settings: &[fields::COMPONENT, fields::FIELDS],
+            unique: false,
+        },
+        NodeDef {
+            kind: "loadScene",
+            label: "Load Scene",
+            category: "Actions",
+            description: "After this step, loads a scene file: in place of the playing scene (every script starts again; the game's values stay), or, with Add to This Scene, its objects join this one and Unload Scene removes them again.",
+            inputs: &[RUN, PinDef::with("additive", "Add to This Scene", Bool, PinDefault::Bool(false))],
+            outputs: &[THEN],
+            settings: &[SCENE_FILE],
+            unique: false,
+        },
+        NodeDef {
+            kind: "unloadScene",
+            label: "Unload Scene",
+            category: "Actions",
+            description: "After this step, removes the objects of the scenes added from this file while playing.",
+            inputs: &[RUN],
+            outputs: &[THEN],
+            settings: &[SCENE_FILE],
             unique: false,
         },
         action("destroySelf", "Destroy This Object", "Deletes this object and its children after this step.", &[RUN]),
@@ -1243,6 +1265,19 @@ impl Compiler<'_> {
                 let [x, y, z] = vec3(self, "position")?;
                 let _ = writeln!(code, "{indent}(drop (call $spawn (i32.const {at}) (i32.const {len}) {x} {y} {z}))");
             }
+            "loadScene" | "unloadScene" => {
+                let scene = self.setting_text(next, "scene", "");
+                if !scene.ends_with(".bscene") {
+                    return Err(Problem::on(next, "choose a .bscene file"));
+                }
+                let (at, len) = self.text(scene.as_bytes());
+                if n.kind == "loadScene" {
+                    let additive = self.input(next, "additive").and_then(|v| as_bool(next, v))?;
+                    let _ = writeln!(code, "{indent}(drop (call $scene_load (i32.const {at}) (i32.const {len}) {additive}))");
+                } else {
+                    let _ = writeln!(code, "{indent}(drop (call $scene_unload (i32.const {at}) (i32.const {len})))");
+                }
+            }
             "destroySelf" => {
                 let _ = writeln!(code, "{indent}(drop (call $destroy (call $self_handle)))");
             }
@@ -1758,6 +1793,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "component_get" (func $component_get (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "component_set" (func $component_set (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "name_of" (func $name_of (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "scene_load" (func $scene_load (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "scene_unload" (func $scene_unload (param i32 i32) (result i32)))
   (import "bayleaf" "object_ref" (func $object_ref (param i32) (result i32)))
   (import "bayleaf" "object_of" (func $object_of (param i32) (result i32)))
   (import "bayleaf" "transform_get_of" (func $transform_get_of (param i32 i32)))

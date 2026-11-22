@@ -1329,6 +1329,17 @@ fn setting_row(
             if response.lost_focus() {
                 requests.end_gesture = true;
             }
+            // A file setting takes a file of its kind dragged from the Project panel.
+            let extension = match setting.name {
+                "scene" => Some(".bscene"),
+                "prefab" => Some(".bprefab"),
+                _ => None,
+            };
+            if let Some(extension) = extension
+                && let Some(path) = crate::value_editor::file_drop(ui, &response, |path| path.ends_with(extension))
+            {
+                requests.run("graph.node.set", json!({ "node": node.id, "name": setting.name, "value": path }));
+            }
         }
         SettingKind::Choice(choices) => {
             let default = choices.first().copied().unwrap_or_default();

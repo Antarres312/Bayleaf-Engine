@@ -140,6 +140,10 @@ pub enum Request {
     Walk { by: StableId, object: StableId, velocity: [f32; 3] },
     /// Make a character on the ground jump with an upward speed.
     Jump { by: StableId, object: StableId, speed: f32 },
+    /// Load a scene file (relative to the project folder): in place of the playing one, or added to it.
+    LoadScene { by: StableId, path: String, additive: bool },
+    /// Remove the scenes added from this file while playing.
+    UnloadScene { by: StableId, path: String },
     /// Set a field of a component (`pointLight`, `intensity`): a number takes `value[0]`, true/false
     /// whether it is not 0, a vector or colour its first parts from `value`.
     SetField { by: StableId, object: StableId, component: &'static str, field: String, value: [f32; 3] },
@@ -1682,6 +1686,29 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             }
             let by = state.object;
             state.requests.push(Request::Spawn { by, prefab, position: [x, y, z] });
+            Ok(1)
+        })?;
+        linker.func_wrap("bayleaf", "scene_load", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, additive: i32| -> Result<i32, wasmi::Error> {
+            let path = read_text(&caller, ptr, len, 512).map_err(|m| fault(&mut caller, format!("scene_load: {m}")))?;
+            if !path.ends_with(".bscene") {
+                return Err(fault(&mut caller, "scene_load: give a .bscene path".to_owned()));
+            }
+            let state = caller.data_mut();
+            if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+                return Ok(0);
+            }
+            let by = state.object;
+            state.requests.push(Request::LoadScene { by, path, additive: additive != 0 });
+            Ok(1)
+        })?;
+        linker.func_wrap("bayleaf", "scene_unload", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+            let path = read_text(&caller, ptr, len, 512).map_err(|m| fault(&mut caller, format!("scene_unload: {m}")))?;
+            let state = caller.data_mut();
+            if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+                return Ok(0);
+            }
+            let by = state.object;
+            state.requests.push(Request::UnloadScene { by, path });
             Ok(1)
         })?;
         linker.func_wrap("bayleaf", "destroy", |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, wasmi::Error> {

@@ -169,6 +169,11 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   Find in Text, Count Objects With and For Each Object With's Index are whole numbers, and Log and
   Number to Text print whole numbers with every digit. **Set Whole Number Variable** and **Whole
   Number Variable** keep one.
+- **Load Scene** loads a scene file after the step: in place of the playing scene (every script
+  starts again, physics starts over, the game's values stay), or with **Add to This Scene** its
+  objects join the playing one and their scripts start; **Unload Scene** removes what was added from
+  that file. Drag a `.bscene` (or, for Spawn Prefab, a `.bprefab`) from the Project panel onto the
+  node's file field. Stop still brings back the scene as edited.
 - Data nodes have no side effects. They are computed where an action needs them.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a

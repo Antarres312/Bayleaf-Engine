@@ -1579,3 +1579,19 @@ fn whole_number_variables_and_pins_say_what_they_carry() {
     let declared = graph(&harness).variable("whole").map(|v| (v.ty, v.start.clone()));
     assert_eq!(declared, Some((bayleaf_engine::graph::VariableType::WholeNumber, json!(0))));
 }
+
+#[test]
+fn a_scene_file_is_dragged_onto_a_load_scene_node() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-scene-node-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut harness = harness();
+    harness.state_mut().dispatch("scene.saveAs", &json!({ "path": dir.join("level.bscene") }), None);
+    harness.state_mut().dispatch("graph.new", &json!({ "domain": "script" }), None);
+    let load =
+        harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "loadScene", "position": [320, 260] }), None).unwrap()["node"].as_u64().unwrap() as u32;
+    harness.run_steps(2);
+    drag_entry(&mut harness, "level, Scene", &format!("Scene File of node {load}"));
+    assert_eq!(graph(&harness).value(load, "scene").and_then(|v| v.as_str()), Some("level.bscene"));
+    std::fs::remove_dir_all(&dir).ok();
+}

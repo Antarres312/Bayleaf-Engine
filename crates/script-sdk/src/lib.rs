@@ -90,6 +90,18 @@ pub fn mouse_down(button: Button) -> bool {
     abi::mouse_down(button as i32)
 }
 
+/// After this step, loads a scene file (a `.bscene` relative to the project folder): in place of the
+/// playing scene (every script starts again; the game's values stay), or with `additive` its objects
+/// join the playing scene. False when this call already asked too often.
+pub fn load_scene(path: &str, additive: bool) -> bool {
+    abi::scene_load(path, additive)
+}
+
+/// After this step, removes the objects of the scenes added from `path` while playing.
+pub fn unload_scene(path: &str) -> bool {
+    abi::scene_unload(path)
+}
+
 /// An object kept from step to step, from [`Object::keep`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Kept(i32);

@@ -405,6 +405,11 @@ fn every_node_kind_compiles_and_runs() {
     b.link(text_log, "then", named_gate, "run");
     b.link(by_name, "found", named_gate, "condition");
     b.link(named_gate, "true", keep_text, "run");
+    // Scenes, behind a branch that stays false.
+    let add_room = b.node("loadScene", json!({ "scene": "room.bscene", "additive": true }));
+    let drop_room = b.node("unloadScene", json!({ "scene": "room.bscene" }));
+    b.link(named_gate, "false", add_room, "run");
+    b.link(add_room, "then", drop_room, "run");
     // Whole numbers: typed, made whole, divided with a remainder, kept in a variable.
     let seven = b.node("wholeNumber", json!({ "value": 7 }));
     let made = b.node("toWhole", json!({ "rounding": "Up" }));

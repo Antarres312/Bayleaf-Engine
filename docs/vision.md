@@ -169,7 +169,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    Then: On Init (`bayleaf_init`, `Script::init`): a scene's scripts all load, then all init, then
    all start; Text pins and text nodes, and `name_of` (`Object::name`). Then: text, object and colour
    variables (`object_ref` and `object_of`, `Object::keep` in the Rust SDK, keep objects from step to step). Then: whole numbers (a Whole Number pin type and variables, To Whole Number,
-   Remainder; counts and indexes are whole).
+   Remainder; counts and indexes are whole). Then: scenes load while playing, in place of the playing one or added to
+   it, and added ones unload (`scene_load`, `scene_unload`, Load Scene and Unload Scene nodes,
+   `play.scene.*` commands).
 7. **M6 Gameplay framework** as opt-in modules (`gameplay` feature of `bayleaf-engine`). Started:
    input actions in the project settings (named actions bound to keys, mouse, gamepad buttons and
    sticks; `action` in the ABI, Action and On Action Pressed nodes, the Input Actions panel); since

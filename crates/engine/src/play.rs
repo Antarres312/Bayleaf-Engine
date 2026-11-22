@@ -37,6 +37,8 @@ pub(crate) struct Play {
     /// Whether play mode already said single-precision physics is too far from the centre.
     #[cfg(feature = "physics")]
     told_far: bool,
+    /// Scenes added while playing (Load Scene with Add), with their top objects, in load order.
+    loaded: Vec<(String, Vec<bayleaf_core::StableId>)>,
 }
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
@@ -156,6 +158,39 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             run: physics_raycast,
         },
         CommandSpec {
+            id: "play.scene.load",
+            label: "Load Scene in Play",
+            menu: "",
+            shortcut: "",
+            params: "{path, additive?}: a .bscene relative to the project; added to the playing scene, or in its place (scripts restart, the game state stays); returns {objects}",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: |s| playing(s),
+            run: scene_load_command,
+        },
+        CommandSpec {
+            id: "play.scene.unload",
+            label: "Unload Scene in Play",
+            menu: "",
+            shortcut: "",
+            params: "{path}: removes the scenes added from that file while playing; returns {removed}",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: |s| playing(s),
+            run: scene_unload_command,
+        },
+        CommandSpec {
+            id: "play.scene.list",
+            label: "Scenes Added in Play",
+            menu: "",
+            shortcut: "",
+            params: "none; returns {added: [{path, objects}]}",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: |s| playing(s),
+            run: scene_list_command,
+        },
+        CommandSpec {
             id: "play.status",
             label: "Play Status",
             menu: "",
@@ -197,30 +232,12 @@ fn one() -> u32 {
 fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     parse::<NoParams>(params)?;
     let dir = session.script_dir();
-    // Under automation every script module must be inside the readable folders.
-    let modules: Vec<std::path::PathBuf> = session
-        .scene
-        .world_matrices()
-        .into_iter()
-        .flat_map(|(id, _)| {
-            session.scene.get::<bayleaf_scene::components::Scripts>(id).map(|s| s.0.iter().map(|r| dir.join(&r.module)).collect::<Vec<_>>()).unwrap_or_default()
-        })
-        .collect();
-    for module in modules {
-        session.allowed(&module, crate::confine::Access::Read)?;
-    }
+    readable_modules(session, &session.scene)?;
     let snapshot = session.scene.to_doc();
-    let mut host = ScriptHost::new();
     let input = std::sync::Arc::clone(&session.input);
     // Input: the project's Input Map, and objects' own, ready before any script starts. A map that
     // cannot be read is reported, and play runs without it.
-    let mut input_problems = Vec::new();
-    match project_input(session) {
-        Ok(maps) => host.with_input(|set| set.project = maps.map(bayleaf_script::actions::InputState::new)),
-        Err(problem) => input_problems.push(format!("The project's Input Map: {problem}")),
-    }
-    let mut input_assets = InputAssets::new();
-    input_problems.extend(sync_object_input(session, &host, &mut input_assets));
+    let (mut host, input_assets, input_problems) = fresh_host(session);
     // Saved values from earlier plays, before any script starts.
     let (saved_on_disk, saved_problem) = match crate::saved::read_saved(session) {
         Ok(values) => (Some(values), None),
@@ -232,14 +249,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     host.load_scene(&mut session.scene, &dir, 0.0, &input);
     let (scripts, running) = (host.len(), host.running());
     #[cfg(feature = "physics")]
-    let physics = {
-        let settings = crate::project_cmds::settings_of(session).physics;
-        let precision = match settings.precision {
-            crate::project_cmds::PhysicsPrecision::Single => bayleaf_physics::Precision::Single,
-            crate::project_cmds::PhysicsPrecision::Double => bayleaf_physics::Precision::Double,
-        };
-        settings.enabled.then(|| bayleaf_physics::Physics::build(&session.scene, settings.gravity.map(f64::from), precision))
-    };
+    let physics = build_physics(session);
     session.play = Some(Play {
         #[cfg(feature = "physics")]
         physics,
@@ -254,6 +264,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         time: 0.0,
         paused: false,
         since_reload_check: 0.0,
+        loaded: Vec::new(),
     });
     session.log(Level::Info, format!("Play mode started: {running} of {scripts} scripts running."));
     for problem in input_problems {
@@ -266,6 +277,158 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     spawn_player(session);
     drain(session);
     Ok(json!({ "scripts": scripts, "running": running }))
+}
+
+/// Under automation every script module of `scene` must be inside the readable folders.
+fn readable_modules(session: &Session, scene: &Scene) -> Result<(), CommandError> {
+    let dir = session.script_dir();
+    for (id, _) in scene.world_matrices() {
+        for script in scene.get::<bayleaf_scene::components::Scripts>(id).map(|s| s.0.clone()).unwrap_or_default() {
+            session.allowed(&dir.join(&script.module), crate::confine::Access::Read)?;
+        }
+    }
+    Ok(())
+}
+
+/// A script host with the project's Input Map and objects' own, before any script starts, and what
+/// could not be read.
+fn fresh_host(session: &Session) -> (ScriptHost, InputAssets, Vec<String>) {
+    let host = ScriptHost::new();
+    let mut problems = Vec::new();
+    match project_input(session) {
+        Ok(maps) => host.with_input(|set| set.project = maps.map(bayleaf_script::actions::InputState::new)),
+        Err(problem) => problems.push(format!("The project's Input Map: {problem}")),
+    }
+    let mut assets = InputAssets::new();
+    problems.extend(sync_object_input(session, &host, &mut assets));
+    (host, assets, problems)
+}
+
+/// The physics world for the playing scene, as Project Settings say; `None` when they turn it off.
+#[cfg(feature = "physics")]
+fn build_physics(session: &Session) -> Option<bayleaf_physics::Physics> {
+    let settings = crate::project_cmds::settings_of(session).physics;
+    let precision = match settings.precision {
+        crate::project_cmds::PhysicsPrecision::Single => bayleaf_physics::Precision::Single,
+        crate::project_cmds::PhysicsPrecision::Double => bayleaf_physics::Precision::Double,
+    };
+    settings.enabled.then(|| bayleaf_physics::Physics::build(&session.scene, settings.gravity.map(f64::from), precision))
+}
+
+/// Reads a scene file of the project for play: a `.bscene`, relative to the project folder.
+fn read_scene(session: &Session, relative: &str) -> Result<Scene, String> {
+    if !relative.ends_with(".bscene") {
+        return Err("give a .bscene file".to_owned());
+    }
+    let path = session.allowed(&session.script_dir().join(relative), crate::confine::Access::Read).map_err(|e| e.to_string())?;
+    let scene = Scene::load(&path).map_err(|e| e.to_string())?;
+    readable_modules(session, &scene).map_err(|e| e.to_string())?;
+    Ok(scene)
+}
+
+/// Loads a scene while playing. Added (`additive`), its objects join the playing scene, their
+/// scripts start, and Unload Scene removes them again. Otherwise it takes the playing scene's
+/// place: every script starts again with the game's state kept, and physics starts over. Stop
+/// still brings back the scene as it was before play. Returns the new top objects.
+pub(crate) fn load_scene(session: &mut Session, relative: &str, additive: bool) -> Result<Vec<bayleaf_core::StableId>, String> {
+    if session.play.is_none() {
+        return Err("play mode is not running".to_owned());
+    }
+    let loaded = read_scene(session, relative)?;
+    if additive {
+        if session.scene.object_count() + loaded.object_count() > MAX_OBJECTS {
+            return Err(format!("the scene would have more than {MAX_OBJECTS} objects"));
+        }
+        let objects = loaded.export(loaded.children(None)).map_err(|e| e.to_string())?;
+        let roots = session.scene.import(&objects, None, None).map_err(|e| e.to_string())?;
+        start_scripts_of(session, &roots)?;
+        drain(session);
+        if let Some(play) = session.play.as_mut() {
+            play.loaded.push((relative.to_owned(), roots.clone()));
+        }
+        session.log(Level::Info, format!("Added the scene {relative}."));
+        return Ok(roots);
+    }
+    // What the scripts said so far reaches the console before their host goes.
+    drain(session);
+    let state = session.play.as_ref().map(|p| p.host.state()).unwrap_or_default();
+    session.scene = loaded;
+    let input = std::sync::Arc::clone(&session.input);
+    let (mut host, input_assets, problems) = fresh_host(session);
+    host.with_state(|s| *s = state);
+    let time = session.play.as_ref().map_or(0.0, |p| p.time);
+    let dir = session.script_dir();
+    host.load_scene(&mut session.scene, &dir, time, &input);
+    #[cfg(feature = "physics")]
+    let physics = build_physics(session);
+    if let Some(play) = session.play.as_mut() {
+        play.host = host;
+        play.input_assets = input_assets;
+        play.loaded.clear();
+        #[cfg(feature = "physics")]
+        {
+            play.physics = physics;
+        }
+    }
+    for problem in problems {
+        session.log(Level::Error, problem);
+    }
+    session.log(Level::Info, format!("Loaded the scene {relative}."));
+    #[cfg(feature = "gameplay")]
+    spawn_player(session);
+    drain(session);
+    Ok(session.scene.children(None).to_vec())
+}
+
+/// Removes every scene added from `relative` while playing. Returns how many objects went.
+pub(crate) fn unload_scene(session: &mut Session, relative: &str) -> Result<usize, String> {
+    let play = session.play.as_mut().ok_or("play mode is not running")?;
+    let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut play.loaded).into_iter().partition(|(path, _)| path == relative);
+    play.loaded = kept;
+    if gone.is_empty() {
+        return Err(format!("{relative} was not added while playing"));
+    }
+    let mut removed = 0;
+    for root in gone.into_iter().flat_map(|(_, roots)| roots) {
+        if session.scene.contains(root) {
+            removed += session.scene.delete_object(root).unwrap_or(0);
+        }
+    }
+    session.log(Level::Info, format!("Removed the scene {relative}."));
+    Ok(removed)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SceneLoadParams {
+    path: String,
+    #[serde(default)]
+    additive: bool,
+}
+
+fn scene_load_command(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: SceneLoadParams = parse(params)?;
+    let objects = load_scene(session, &p.path, p.additive).map_err(CommandError::Failed)?;
+    Ok(json!({ "objects": objects }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SceneUnloadParams {
+    path: String,
+}
+
+fn scene_unload_command(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: SceneUnloadParams = parse(params)?;
+    let removed = unload_scene(session, &p.path).map_err(CommandError::Failed)?;
+    Ok(json!({ "removed": removed }))
+}
+
+fn scene_list_command(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    parse::<NoParams>(params)?;
+    let added: Vec<Value> =
+        session.play.as_ref().map(|p| p.loaded.iter().map(|(path, objects)| json!({ "path": path, "objects": objects })).collect()).unwrap_or_default();
+    Ok(json!({ "added": added }))
 }
 
 fn stop(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
@@ -500,6 +663,18 @@ fn apply_requests(session: &mut Session) {
                     None
                 };
             }),
+            Request::LoadScene { by, path, additive } => {
+                if let Err(error) = load_scene(session, &path, additive) {
+                    let who = session.scene.name(by).unwrap_or("Object").to_owned();
+                    session.log(Level::Error, format!("[{who}] could not load the scene {path}: {error}"));
+                }
+            }
+            Request::UnloadScene { by, path } => {
+                if let Err(error) = unload_scene(session, &path) {
+                    let who = session.scene.name(by).unwrap_or("Object").to_owned();
+                    session.log(Level::Error, format!("[{who}] could not unload the scene {path}: {error}"));
+                }
+            }
             Request::Spawn { by, prefab, position } => {
                 if let Err(error) = spawn(session, &prefab, position) {
                     let who = session.scene.name(by).unwrap_or("Object").to_owned();
@@ -878,30 +1053,31 @@ fn spawn_with(session: &mut Session, prefab: &str, place: impl FnOnce(&mut bayle
     place(&mut transform);
     session.scene.set(id, transform).map_err(|e| e.to_string())?;
     session.scene.set(id, bayleaf_scene::components::Prefab::new(prefab)).map_err(|e| e.to_string())?;
-    // Start the scripts of every object in the new copy.
+    start_scripts_of(session, &[id])?;
+    Ok(id)
+}
+
+/// Starts the scripts of `roots` and everything under them: all load, then all run On Init, then
+/// On Start.
+fn start_scripts_of(session: &mut Session, roots: &[bayleaf_core::StableId]) -> Result<(), String> {
     let base = session.script_dir();
     let input = std::sync::Arc::clone(&session.input);
-    let mut started = Vec::new();
+    let mut scripts = Vec::new();
     for (object, _) in session.scene.world_matrices() {
-        if object != id && !session.scene.is_inside(object, id) {
+        if !roots.iter().any(|root| object == *root || session.scene.is_inside(object, *root)) {
             continue;
         }
         for (index, script) in session.scene.get::<bayleaf_scene::components::Scripts>(object).map(|s| s.0.clone()).unwrap_or_default().into_iter().enumerate()
         {
-            started.push((object, index, script));
+            let path = session.allowed(&base.join(&script.module), crate::confine::Access::Read).map_err(|e| e.to_string())?;
+            scripts.push((object, index, path, script));
         }
     }
-    // Every script of the copy loads, then they all run On Init, then On Start.
-    let mut scripts = Vec::new();
-    for (object, index, script) in started {
-        let path = session.allowed(&base.join(&script.module), crate::confine::Access::Read).map_err(|e| e.to_string())?;
-        scripts.push((object, index, path, script));
-    }
-    let Some(play) = session.play.as_mut() else { return Ok(id) };
+    let Some(play) = session.play.as_mut() else { return Ok(()) };
     for (object, index, error) in play.host.load_files(&scripts, &mut session.scene, play.time, &input) {
         let who = session.scene.name(object).unwrap_or("Object").to_owned();
         let script = scripts.iter().find(|(o, i, _, _)| (*o, *i) == (object, index)).map(|(_, _, _, s)| s.display_name()).unwrap_or_default();
         session.log(Level::Error, format!("[{who} · {script}] {error}"));
     }
-    Ok(id)
+    Ok(())
 }
