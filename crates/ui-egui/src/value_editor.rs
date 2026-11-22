@@ -2,6 +2,7 @@
 //! value never changes the width of the panel around it.
 
 use crate::i18n::tl;
+use bayleaf_engine::scene::components::{MAX_PROPERTY_TEXT, PropertyType, PropertyValue};
 use serde_json::{Number, Value};
 
 use crate::theme::{self, GAP, LABEL_WIDTH, ROW_HEIGHT, Tokens};
@@ -353,9 +354,19 @@ fn edit_named_numbers(ui: &mut egui::Ui, map: &mut serde_json::Map<String, Value
     outcome
 }
 
-/// A labelled number row for a named value, with a reset button that is always there and works
-/// only when the value is not its default. Returns the edit outcome and whether reset was clicked.
-pub(crate) fn named_number(ui: &mut egui::Ui, name: &str, value: &mut Value, changed: bool, salt: impl std::hash::Hash + std::fmt::Debug) -> (Outcome, bool) {
+/// A labelled row for a script property of type `ty`, with a reset button that is always there and
+/// works only when the value is not its default. `objects` are the scene's object names, for an
+/// object property (which also takes an object dragged from the hierarchy). Returns the edit outcome
+/// and whether reset was clicked.
+pub(crate) fn named_property(
+    ui: &mut egui::Ui,
+    name: &str,
+    ty: PropertyType,
+    value: &mut PropertyValue,
+    changed: bool,
+    objects: &[(bayleaf_core::StableId, String)],
+    salt: impl std::hash::Hash + std::fmt::Debug,
+) -> (Outcome, bool) {
     let t = theme::tokens(ui);
     let mut reset = false;
     let title = title_case(name);
@@ -370,16 +381,94 @@ pub(crate) fn named_number(ui: &mut egui::Ui, name: &str, value: &mut Value, cha
                         reset = true;
                     }
                     let field_width = (ui.available_width() - 1.0).max(40.0);
-                    match value {
-                        Value::Number(n) => edit_number(ui, n, label, field_width),
-                        _ => Outcome::default(),
-                    }
+                    property_field(ui, ty, value, objects, label, field_width)
                 })
                 .inner
             })
         })
         .inner;
     (outcome, reset)
+}
+
+/// The field for one script property value of type `ty`.
+fn property_field(
+    ui: &mut egui::Ui,
+    ty: PropertyType,
+    value: &mut PropertyValue,
+    objects: &[(bayleaf_core::StableId, String)],
+    label: egui::Id,
+    width: f32,
+) -> Outcome {
+    match (ty, &mut *value) {
+        (PropertyType::Number, PropertyValue::Number(n)) => {
+            let response = ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(n).speed(0.02).max_decimals(3)).labelled_by(label);
+            Outcome::from_response(&response)
+        }
+        (PropertyType::WholeNumber, PropertyValue::Number(n)) => {
+            let mut whole = *n as i32;
+            let response = ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(&mut whole).speed(0.1)).labelled_by(label);
+            *n = f64::from(whole);
+            Outcome::from_response(&response)
+        }
+        (PropertyType::TrueFalse, PropertyValue::Flag(b)) => {
+            let response = ui.checkbox(b, "").labelled_by(label);
+            Outcome { changed: response.changed(), ended: response.changed() }
+        }
+        (PropertyType::Vector, PropertyValue::Triple(v)) => {
+            let mut items: Vec<Value> = v.iter().map(|x| Value::from(f64::from(*x))).collect();
+            let outcome = edit_vector(ui, &mut items, width);
+            for (slot, item) in v.iter_mut().zip(&items) {
+                *slot = item.as_f64().unwrap_or(0.0) as f32;
+            }
+            outcome
+        }
+        (PropertyType::Color, PropertyValue::Triple(v)) => {
+            let response = ui.color_edit_button_rgb(v).labelled_by(label);
+            Outcome { changed: response.changed(), ended: response.changed() }
+        }
+        (PropertyType::Text, PropertyValue::Text(text)) => {
+            let response = ui.add_sized([width, ROW_HEIGHT], egui::TextEdit::singleline(text).char_limit(MAX_PROPERTY_TEXT)).labelled_by(label);
+            Outcome::from_response(&response)
+        }
+        (PropertyType::Object, PropertyValue::Text(chosen)) => {
+            let shown = if chosen.is_empty() { tl("None").to_owned() } else { chosen.clone() };
+            let mut picked = None;
+            let combo = egui::ComboBox::from_id_salt("object").selected_text(shown).width(width).show_ui(ui, |ui| {
+                if ui.selectable_label(chosen.is_empty(), tl("None")).clicked() {
+                    picked = Some(String::new());
+                }
+                for (_, name) in objects {
+                    if ui.selectable_label(chosen == name, name).clicked() {
+                        picked = Some(name.clone());
+                    }
+                }
+            });
+            let response = combo.response.labelled_by(label);
+            // An object dragged from the hierarchy and dropped on the field chooses it.
+            if let Some(id) = crate::hierarchy::dragged_object(ui.ctx())
+                && response.contains_pointer()
+                && ui.input(|i| i.pointer.any_released())
+                && let Some((_, name)) = objects.iter().find(|(o, _)| *o == id)
+            {
+                picked = Some(name.clone());
+            }
+            match picked {
+                Some(name) if name != *chosen => {
+                    *chosen = name;
+                    Outcome { changed: true, ended: true }
+                }
+                _ => Outcome::default(),
+            }
+        }
+        // A saved value of another shape than the script declares: start from the type's zero.
+        _ => {
+            if ui.add_sized([width, ROW_HEIGHT], egui::Button::new(tl("Not this type: reset"))).labelled_by(label).clicked() {
+                *value = ty.zero();
+                return Outcome { changed: true, ended: true };
+            }
+            Outcome::default()
+        }
+    }
 }
 
 /// A square button with a circular-arrow icon that puts `name` back to its default; greyed out and

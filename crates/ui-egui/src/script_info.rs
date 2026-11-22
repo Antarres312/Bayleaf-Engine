@@ -7,7 +7,7 @@ use std::time::SystemTime;
 
 use bayleaf_engine::script::{Description, ScriptHost};
 
-type Declared = Result<Vec<(String, f32)>, String>;
+type Declared = Result<Vec<bayleaf_engine::scene::components::DeclaredProperty>, String>;
 
 #[derive(Default)]
 pub(crate) struct ScriptInfo {

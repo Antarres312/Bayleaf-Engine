@@ -73,7 +73,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    the scene opens; prefabs may hold copies of other prefabs, which follow their own files (scene
    format version 7). Then the translation system: the editor's labels, menus, panels, components and
    graph nodes go through craft-i18n, with catalogs embedded from a craft-i18n checkout and a Window >
-   Language choice (left-to-right languages; the engine's own messages stay English). Later the
+   Language choice (left-to-right languages; the engine's own messages stay English). Script
+   properties have types: number, whole number, true/false, vector, colour, text and object, each
+   with its own Inspector field (scene format version 16). Later the
    editor took craft-ui (widget-state colours, sections, combo boxes, the font stack) and with it the
    suite's egui and winit forks; its theme tokens stay its own, as in every Craft app. Then: narrow
    panels put an inspector value under its label instead of past the panel's edge; the Project panel's

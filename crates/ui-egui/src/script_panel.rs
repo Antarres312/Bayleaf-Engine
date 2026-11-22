@@ -184,31 +184,86 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
     }
 }
 
-/// The script's properties: its Property nodes, whose values the Inspector sets per object.
+/// The script's properties: its Property nodes, whose values the Inspector sets per object. Each has
+/// a type, chosen when it is added, and a default edited here.
 fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at: [f32; 2]) {
+    use bayleaf_engine::scene::components::PropertyType;
+    use bayleaf_engine::script::visual::{property_kind, property_type};
     theme::headed(t, "Properties").show(ui, |ui| {
-        let nodes: Vec<&Node> = graph.nodes.iter().filter(|n| n.kind == "property").collect();
+        let nodes: Vec<(&Node, PropertyType)> = graph.nodes.iter().filter_map(|n| property_type(&n.kind).map(|ty| (n, ty))).collect();
         if nodes.is_empty() {
-            ui.add(egui::Label::new(egui::RichText::new(tl("Numbers set per object in the Inspector.")).small().color(t.text_muted)).wrap());
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(tl("Values set per object in the Inspector: numbers, text, objects and more.")).small().color(t.text_muted),
+                )
+                .wrap(),
+            );
         }
-        for node in nodes {
+        for (node, ty) in nodes {
             let name = node.values.get("name").and_then(Value::as_str).unwrap_or("speed").to_owned();
-            let mut default = node.values.get("default").and_then(Value::as_f64).unwrap_or(1.0);
-            ui.horizontal(|ui| {
-                ui.label(&name);
-                let field = ui.add(egui::DragValue::new(&mut default).speed(0.05).max_decimals(3));
-                ui.ctx().accesskit_node_builder(field.id, |n| n.set_label(crate::i18n::tf("Default of property {name}", &[("name", &name.to_string())])));
-                if field.changed() {
-                    let key = format!("property default {} {}", node.id, editor.gesture);
-                    editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "default", "value": default }), Some(&key));
-                }
+            ui.push_id(("property", node.id), |ui| {
+                ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new(tl(ty.label())).small().color(t.text_muted));
+                    ui.add(egui::Label::new(name.as_str()).truncate());
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(tl("Default")).color(t.text_muted));
+                    if let Some(value) = default_editor(ui, ty, node.values.get("default"), &name) {
+                        let key = format!("property default {} {}", node.id, editor.gesture);
+                        editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "default", "value": value }), Some(&key));
+                    }
+                });
             });
+            ui.add_space(4.0);
         }
-        if ui.button(tl("Add Property")).on_hover_text(tl("Place a Property node: a number the Inspector sets per object")).clicked() {
-            let taken = |n: &str| graph.nodes.iter().any(|node| node.kind == "property" && node.values.get("name").and_then(Value::as_str) == Some(n));
-            place(editor, "property", at, &free_name("value", taken));
-        }
+        ui.menu_button(tl("Add Property"), |ui| {
+            for ty in PropertyType::ALL {
+                if ui.button(tl(ty.label())).clicked() {
+                    let stem = match ty {
+                        PropertyType::Number => "value",
+                        PropertyType::WholeNumber => "count",
+                        PropertyType::TrueFalse => "enabled",
+                        PropertyType::Vector => "offset",
+                        PropertyType::Color => "tint",
+                        PropertyType::Text => "label",
+                        PropertyType::Object => "target",
+                    };
+                    let taken = |n: &str| {
+                        graph.nodes.iter().any(|node| property_type(&node.kind).is_some() && node.values.get("name").and_then(Value::as_str) == Some(n))
+                    };
+                    place(editor, property_kind(ty), at, &free_name(stem, taken));
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text(tl("Place a Property node of a type: a value the Inspector sets per object"));
     });
+}
+
+/// An editor for a Property node's default. Returns the new setting value when it changed.
+fn default_editor(ui: &mut egui::Ui, ty: bayleaf_engine::scene::components::PropertyType, current: Option<&Value>, name: &str) -> Option<Value> {
+    use bayleaf_engine::scene::components::PropertyType;
+    let variable = match ty {
+        PropertyType::Number => VariableType::Number,
+        PropertyType::WholeNumber => VariableType::WholeNumber,
+        PropertyType::Vector => VariableType::Vector,
+        PropertyType::Color => VariableType::Color,
+        PropertyType::Text => VariableType::Text,
+        PropertyType::TrueFalse => {
+            // The node keeps True or False as a word.
+            let mut on = current.and_then(Value::as_str) == Some("True");
+            let field = ui.checkbox(&mut on, "");
+            ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Default of property {name}", &[("name", name)])));
+            return field.changed().then(|| json!(if on { "True" } else { "False" }));
+        }
+        PropertyType::Object => {
+            ui.label(egui::RichText::new(tl("none; chosen per object in the Inspector")).color(theme::tokens(ui).text_muted));
+            return None;
+        }
+    };
+    let fallback = if ty == PropertyType::Color { json!([1.0, 1.0, 1.0]) } else { variable.zero() };
+    start_editor(ui, variable, current.unwrap_or(&fallback), name)
 }
 
 /// Where Add Component lists the script: a path typed here (`graph.menu.set`). What is typed stays

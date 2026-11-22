@@ -212,7 +212,13 @@ fn properties(info: &mut Info, path: &Path) {
         .and_then(|bytes| bayleaf_script::ScriptHost::new().describe(&name, &bytes).map_err(|e| e.to_string()));
     match declared {
         Ok(list) if list.is_empty() => info.row("Properties", "None"),
-        Ok(list) => info.row("Properties", list.iter().map(|(n, v)| format!("{n} = {v}")).collect::<Vec<_>>().join(", ")),
+        Ok(list) => info.row(
+            "Properties",
+            list.iter()
+                .map(|p| format!("{} ({}) = {}", p.name, p.ty.code(), serde_json::to_string(&p.default).unwrap_or_default()))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
         Err(e) => info.problems.push(e),
     }
 }

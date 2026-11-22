@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bayleaf_core::StableId;
 use bayleaf_graph::{Graph, Link, PinRef};
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{ScriptRef, Transform};
+use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue, ScriptRef, Transform};
 use serde_json::json;
 
 use super::{CATALOG, compile};
@@ -39,7 +39,10 @@ impl Builder {
 fn run(bytes: &[u8], properties: &[(&str, f32)]) -> (Scene, StableId, ScriptHost) {
     let mut scene = Scene::new();
     let id = scene.create_object(None, "Scripted").unwrap();
-    let script = ScriptRef { module: "test.bscript".into(), properties: properties.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect::<BTreeMap<_, _>>() };
+    let script = ScriptRef {
+        module: "test.bscript".into(),
+        properties: properties.iter().map(|(k, v)| ((*k).to_owned(), PropertyValue::Number(f64::from(*v)))).collect::<BTreeMap<_, _>>(),
+    };
     let mut host = ScriptHost::new();
     host.load_bytes(id, 0, Path::new("test.bscript"), None, bytes, &script, &mut scene, 0.0, &Arc::new(Input::default())).unwrap();
     (scene, id, host)
@@ -67,7 +70,8 @@ fn spinner() -> Builder {
 #[test]
 fn a_visual_script_rotates_by_its_declared_property() {
     let bytes = spinner().bytes();
-    assert_eq!(ScriptHost::new().describe("spin.bscript", &bytes).unwrap(), vec![("speed".to_owned(), 90.0)]);
+    let declared = ScriptHost::new().describe("spin.bscript", &bytes).unwrap();
+    assert_eq!(declared, [DeclaredProperty { name: "speed".to_owned(), ty: PropertyType::Number, default: PropertyValue::Number(90.0) }]);
     let (mut scene, id, mut host) = run(&bytes, &[]);
     for _ in 0..10 {
         host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
@@ -431,6 +435,38 @@ fn every_node_kind_compiles_and_runs() {
     let whole_log = b.node("log", json!({ "message": "whole" }));
     b.link(keep_whole, "then", whole_log, "run");
     b.link(read_whole, "value", whole_log, "value");
+    // Typed properties, each read once.
+    let count = b.node("wholeProperty", json!({ "name": "count", "default": 3 }));
+    let count_log = b.node("log", json!({ "message": "count" }));
+    b.link(whole_log, "then", count_log, "run");
+    b.link(count, "value", count_log, "value");
+    let on = b.node("flagProperty", json!({ "name": "on", "default": "True" }));
+    let on_gate = b.node("branch", json!({}));
+    b.link(count_log, "then", on_gate, "run");
+    b.link(on, "value", on_gate, "condition");
+    let offset = b.node("vectorProperty", json!({ "name": "offset", "default": [1.0, 2.0, 3.0] }));
+    let offset_parts = b.node("split", json!({}));
+    b.link(offset, "value", offset_parts, "vector");
+    let offset_log = b.node("log", json!({ "message": "offset" }));
+    b.link(on_gate, "true", offset_log, "run");
+    b.link(offset_parts, "y", offset_log, "value");
+    let tint = b.node("colorProperty", json!({ "name": "tint", "default": [0.5, 0.5, 1.0] }));
+    let keep_tint = b.node("setColorVariable", json!({}));
+    b.link(offset_log, "then", keep_tint, "run");
+    b.link(tint, "value", keep_tint, "value");
+    let label = b.node("textProperty", json!({ "name": "label", "default": "hi" }));
+    let label_log = b.node("log", json!({ "message": "label" }));
+    b.link(keep_tint, "then", label_log, "run");
+    b.link(label, "value", label_log, "text");
+    let other = b.node("objectProperty", json!({ "name": "target" }));
+    let other_name = b.node("nameOf", json!({}));
+    b.link(other, "value", other_name, "target");
+    let other_gate = b.node("branch", json!({}));
+    b.link(label_log, "then", other_gate, "run");
+    b.link(other, "found", other_gate, "condition");
+    let other_log = b.node("log", json!({ "message": "target" }));
+    b.link(other_gate, "true", other_log, "run");
+    b.link(other_name, "result", other_log, "text");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -1154,4 +1190,111 @@ fn whole_numbers_add_divide_round_and_print_exactly() {
         lines,
         ["sum 9", "quotient 3", "by zero 0", "remainder -1", "big 123456789", "Nearest 3", "Nearest -3", "Down -2", "Up 2", "Toward Zero -1", "mixed 7.5",]
     );
+}
+
+#[test]
+fn typed_properties_read_their_defaults_and_the_values_an_object_sets() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let mut previous = (start, "then");
+    let mut log = |b: &mut Builder, message: &str, pin: &str, from: (u32, &str)| {
+        let node = b.node("log", json!({ "message": message }));
+        b.link(previous.0, previous.1, node, "run");
+        b.link(from.0, from.1, node, pin);
+        previous = (node, "then");
+    };
+    let count = b.node("wholeProperty", json!({ "name": "count", "default": 3 }));
+    log(&mut b, "count", "value", (count, "value"));
+    let label = b.node("textProperty", json!({ "name": "label", "default": "hi" }));
+    log(&mut b, "label", "text", (label, "value"));
+    let on = b.node("flagProperty", json!({ "name": "on", "default": "False" }));
+    let on_number = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    b.link(on, "value", on_number, "condition");
+    log(&mut b, "on", "value", (on_number, "result"));
+    let offset = b.node("vectorProperty", json!({ "name": "offset", "default": [1.0, 2.0, 3.0] }));
+    let parts = b.node("split", json!({}));
+    b.link(offset, "value", parts, "vector");
+    log(&mut b, "offset", "value", (parts, "z"));
+    let target = b.node("objectProperty", json!({ "name": "target" }));
+    let target_name = b.node("nameOf", json!({}));
+    b.link(target, "value", target_name, "target");
+    log(&mut b, "target", "text", (target_name, "result"));
+    let bytes = b.bytes();
+
+    // What the script declares, with types and defaults.
+    let declared = ScriptHost::new().describe("typed.bscript", &bytes).unwrap();
+    let types: Vec<(&str, PropertyType)> = declared.iter().map(|p| (p.name.as_str(), p.ty)).collect();
+    assert_eq!(
+        types,
+        [
+            ("count", PropertyType::WholeNumber),
+            ("label", PropertyType::Text),
+            ("on", PropertyType::TrueFalse),
+            ("offset", PropertyType::Vector),
+            ("target", PropertyType::Object)
+        ]
+    );
+
+    let lines = |properties: BTreeMap<String, PropertyValue>| -> Vec<String> {
+        let mut scene = Scene::new();
+        let id = scene.create_object(None, "Scripted").unwrap();
+        scene.create_object(None, "Box").unwrap();
+        let script = ScriptRef { module: "typed.bscript".into(), properties };
+        let mut host = ScriptHost::new();
+        let input = Arc::new(Input::default());
+        host.load_bytes(id, 0, Path::new("typed.bscript"), None, &bytes, &script, &mut scene, 0.0, &input).unwrap();
+        host.update(&mut scene, 0.1, 0.1, &input);
+        assert!(host.take_faults().is_empty());
+        host.take_logs().into_iter().map(|l| l.text).collect()
+    };
+    assert_eq!(lines(BTreeMap::new()), ["count 3", "label hi", "on 0", "offset 3", "target "], "the defaults");
+    let set = BTreeMap::from([
+        ("count".to_owned(), PropertyValue::Number(7.0)),
+        ("label".to_owned(), PropertyValue::Text("hello".to_owned())),
+        ("on".to_owned(), PropertyValue::Flag(true)),
+        ("offset".to_owned(), PropertyValue::Triple([0.0, 0.0, 9.0])),
+        ("target".to_owned(), PropertyValue::Text("Box".to_owned())),
+    ]);
+    assert_eq!(lines(set), ["count 7", "label hello", "on 1", "offset 9", "target Box"], "the object's values");
+    // A value of the wrong type is ignored for the default.
+    let wrong = BTreeMap::from([("count".to_owned(), PropertyValue::Text("seven".to_owned()))]);
+    assert_eq!(lines(wrong)[0], "count 3");
+}
+
+#[test]
+fn another_script_s_whole_number_property_is_read_and_set_as_a_whole_number() {
+    let mut counter = Builder::new();
+    let update = counter.node("update", json!({}));
+    let count = counter.node("wholeProperty", json!({ "name": "count", "default": 2 }));
+    let log = counter.node("log", json!({ "message": "count" }));
+    counter.link(update, "then", log, "run");
+    counter.link(count, "value", log, "value");
+    // The setter sets Counter's count on Target to 7.6 made whole: 8.
+    let mut setter = Builder::new();
+    let update = setter.node("update", json!({}));
+    let target = setter.node("findNamed", json!({ "name": "Target" }));
+    let value = setter.node("toWhole", json!({ "value": 7.6, "rounding": "Nearest" }));
+    let write = setter.node("setComponent", json!({ "component": "Counter", "fields": ["count:whole"] }));
+    setter.link(update, "then", write, "run");
+    setter.link(target, "object", write, "target");
+    setter.link(value, "result", write, "count");
+    let read = setter.node("getComponent", json!({ "component": "Counter", "fields": ["count:whole"] }));
+    setter.link(target, "object", read, "target");
+    let said = setter.node("log", json!({ "message": "read" }));
+    setter.link(write, "then", said, "run");
+    setter.link(read, "count", said, "value");
+
+    let mut scene = Scene::new();
+    let target_id = scene.create_object(None, "Target").unwrap();
+    let setter_id = scene.create_object(None, "Setter").unwrap();
+    let mut host = ScriptHost::new();
+    let input = Arc::new(Input::default());
+    let plain = |module: &str| ScriptRef { module: module.into(), properties: BTreeMap::new() };
+    host.load_bytes(target_id, 0, Path::new("counter.bscript"), None, &counter.bytes(), &plain("counter.bscript"), &mut scene, 0.0, &input).unwrap();
+    host.load_bytes(setter_id, 0, Path::new("setter.bscript"), None, &setter.bytes(), &plain("setter.bscript"), &mut scene, 0.0, &input).unwrap();
+    host.update(&mut scene, 0.1, 0.1, &input);
+    host.update(&mut scene, 0.1, 0.2, &input);
+    assert!(host.take_faults().is_empty());
+    let lines: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(lines, ["count 2", "read 2", "count 8", "read 8"]);
 }

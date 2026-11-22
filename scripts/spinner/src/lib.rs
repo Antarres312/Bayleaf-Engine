@@ -1,12 +1,12 @@
 //! Turns the object around its Y axis. Property `speed`: degrees per second (default 90).
 
-use bayleaf_script_sdk::{Script, Transform, log, property, script};
+use bayleaf_script_sdk::{Property, Script, Transform, log, property, script};
 
 #[derive(Default)]
 struct Spinner;
 
 impl Script for Spinner {
-    const PROPERTIES: &'static [(&'static str, f32)] = &[("speed", 90.0)];
+    const PROPERTIES: &'static [Property] = &[Property::Number("speed", 90.0)];
 
     fn start(&mut self) {
         log("spinner: started");

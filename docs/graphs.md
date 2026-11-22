@@ -91,7 +91,11 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
 - **On Start** and **On Update** begin chains of actions joined by flow links. On Update's
   **Step Seconds** output is the step length.
 - **Branch** continues with True or False.
-- **Property** nodes declare numbers that the Inspector shows per object, with a default.
+- **Property** nodes declare values that the Inspector shows per object, with a default: a number,
+  or a **Whole Number**, **True/False**, **Vector**, **Color**, **Text** or **Object Property** (an
+  object of the scene chosen per object, from a list or by dragging it from the hierarchy; Found
+  is false while none is chosen). Get and Set Component read and set another script's number,
+  whole-number, true/false, vector and colour properties as pins of those types.
 - **Set Variable** keeps a number under a name and **Variable** reads it; **Set Vector Variable**
   and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False
   Variable** for true or false. **Set Text Variable** and **Text Variable** keep text (up to 1024 bytes;
@@ -234,7 +238,7 @@ steps. Automation file access to graphs is confined like any other file (`docs/a
 A visual script has a panel left of its canvas. **Variables** lists the script's variables: rename
 one (its nodes follow), set where it **Starts at**, place a node that reads it (**Get**) or sets it
 (**Set**), remove it, or **Add Variable** of a type. **Properties** lists the Property nodes with
-their defaults (**Add Property** places another), and **Script** has the **Menu path** field,
+their types and defaults (**Add Property** places another, of a type), and **Script** has the **Menu path** field,
 which keeps what is typed and says why while it does not read right yet. On a variable node, Name is a list of the script's variables of that type (and names
 other nodes use without declaring them); **New Variable…** declares a new one and picks it.
 

@@ -127,3 +127,6 @@ agents can do it too; they read the console with `console.read` and list the pro
 `asset.list`. What stays in the editor is its own view: selection, the scene camera, the panel
 layout (and maximised panels), recent projects, opening files with other programs, and building a
 Rust script, which `script.build` refuses for agents because it runs the crate's own build code.
+
+`scene.script.setProperty` takes a value of the property's type: a number, `true`/`false`, three numbers or text
+(an object property's object name); `null` goes back to the script's default.

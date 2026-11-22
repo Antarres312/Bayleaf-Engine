@@ -442,15 +442,172 @@ impl SceneComponent for Sprite {
     }
 }
 
+/// What kind of value a script property holds: what the Inspector edits it with and how the script
+/// reads it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PropertyType {
+    #[default]
+    Number,
+    /// A 32-bit whole number.
+    WholeNumber,
+    TrueFalse,
+    Vector,
+    Color,
+    /// Text up to [`MAX_PROPERTY_TEXT`] bytes.
+    Text,
+    /// An object of the scene, by its name; empty for none.
+    Object,
+}
+
+/// Longest text (and object name) a script property holds, in bytes.
+pub const MAX_PROPERTY_TEXT: usize = 1024;
+
+impl PropertyType {
+    pub const ALL: [PropertyType; 7] = [
+        PropertyType::Number,
+        PropertyType::WholeNumber,
+        PropertyType::TrueFalse,
+        PropertyType::Vector,
+        PropertyType::Color,
+        PropertyType::Text,
+        PropertyType::Object,
+    ];
+
+    /// English name shown to people.
+    pub fn label(self) -> &'static str {
+        match self {
+            PropertyType::Number => "Number",
+            PropertyType::WholeNumber => "Whole Number",
+            PropertyType::TrueFalse => "True/False",
+            PropertyType::Vector => "Vector",
+            PropertyType::Color => "Color",
+            PropertyType::Text => "Text",
+            PropertyType::Object => "Object",
+        }
+    }
+
+    /// The word scripts declare it with (`bayleaf_describe`): `number`, `whole`, `bool`, `vector`,
+    /// `color`, `text` or `object`.
+    pub fn code(self) -> &'static str {
+        match self {
+            PropertyType::Number => "number",
+            PropertyType::WholeNumber => "whole",
+            PropertyType::TrueFalse => "bool",
+            PropertyType::Vector => "vector",
+            PropertyType::Color => "color",
+            PropertyType::Text => "text",
+            PropertyType::Object => "object",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<PropertyType> {
+        PropertyType::ALL.into_iter().find(|t| t.code() == code)
+    }
+
+    /// The value a property of this type has when nothing sets it.
+    pub fn zero(self) -> PropertyValue {
+        match self {
+            PropertyType::Number | PropertyType::WholeNumber => PropertyValue::Number(0.0),
+            PropertyType::TrueFalse => PropertyValue::Flag(false),
+            PropertyType::Vector => PropertyValue::Triple([0.0; 3]),
+            PropertyType::Color => PropertyValue::Triple([1.0; 3]),
+            PropertyType::Text | PropertyType::Object => PropertyValue::Text(String::new()),
+        }
+    }
+}
+
+/// A script property's value, stored in the scene as plain JSON: a number, `true`/`false`, three
+/// numbers (a vector or a colour) or text (text, or an object's name).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PropertyValue {
+    Flag(bool),
+    Number(f64),
+    Triple([f32; 3]),
+    Text(String),
+}
+
+impl PropertyValue {
+    /// Whether the value can be a property of type `ty`: the right shape, finite numbers, a whole
+    /// number in 32 bits, colours from 0 to 1, text not too long.
+    pub fn fits(&self, ty: PropertyType) -> bool {
+        match (ty, self) {
+            (PropertyType::Number, PropertyValue::Number(v)) => v.is_finite() && v.abs() <= f64::from(f32::MAX),
+            (PropertyType::WholeNumber, PropertyValue::Number(v)) => v.fract() == 0.0 && (f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(v),
+            (PropertyType::TrueFalse, PropertyValue::Flag(_)) => true,
+            (PropertyType::Vector, PropertyValue::Triple(v)) => v.iter().all(|n| n.is_finite()),
+            (PropertyType::Color, PropertyValue::Triple(v)) => v.iter().all(|n| (0.0..=1.0).contains(n)),
+            (PropertyType::Text | PropertyType::Object, PropertyValue::Text(t)) => t.len() <= MAX_PROPERTY_TEXT && !t.contains('\0'),
+            _ => false,
+        }
+    }
+
+    /// The type a value of this shape has when no script declares it: a number, true/false, a
+    /// vector or text.
+    pub fn shape_type(&self) -> PropertyType {
+        match self {
+            PropertyValue::Flag(_) => PropertyType::TrueFalse,
+            PropertyValue::Number(_) => PropertyType::Number,
+            PropertyValue::Triple(_) => PropertyType::Vector,
+            PropertyValue::Text(_) => PropertyType::Text,
+        }
+    }
+
+    /// The value as one number: a number, a whole number, or 1 and 0 for true and false.
+    pub fn number(&self) -> Option<f32> {
+        match self {
+            PropertyValue::Number(v) => Some(*v as f32),
+            PropertyValue::Flag(b) => Some(f32::from(u8::from(*b))),
+            _ => None,
+        }
+    }
+
+    /// The value as three numbers, as Get Component reads fields: one number in the first place,
+    /// or a vector or colour.
+    pub fn numbers(&self) -> Option<[f32; 3]> {
+        match self {
+            PropertyValue::Triple(v) => Some(*v),
+            other => other.number().map(|n| [n, 0.0, 0.0]),
+        }
+    }
+
+    pub fn text(&self) -> Option<&str> {
+        if let PropertyValue::Text(t) = self { Some(t) } else { None }
+    }
+
+    /// A value of type `ty` from three numbers, as Set Component writes fields; `None` for text.
+    pub fn from_numbers(ty: PropertyType, [x, y, z]: [f32; 3]) -> Option<PropertyValue> {
+        let value = match ty {
+            PropertyType::Number => PropertyValue::Number(f64::from(x)),
+            PropertyType::WholeNumber => PropertyValue::Number(f64::from(x).round().clamp(f64::from(i32::MIN), f64::from(i32::MAX))),
+            PropertyType::TrueFalse => PropertyValue::Flag(x != 0.0),
+            PropertyType::Vector => PropertyValue::Triple([x, y, z]),
+            PropertyType::Color => PropertyValue::Triple([x, y, z].map(|c| c.clamp(0.0, 1.0))),
+            PropertyType::Text | PropertyType::Object => return None,
+        };
+        value.fits(ty).then_some(value)
+    }
+}
+
+/// A property a script declares: its name, type and default.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeclaredProperty {
+    pub name: String,
+    pub ty: PropertyType,
+    pub default: PropertyValue,
+}
+
 /// One WebAssembly script on an object; see `docs/script-abi.md`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScriptRef {
     /// Path to the `.wasm` module or `.bscript` visual script, relative to the project folder (or the scene file's folder outside a project).
     pub module: String,
-    /// Property values changed from the script's declared defaults.
+    /// Property values changed from the script's declared defaults. Each must fit the type the script
+    /// declares; one that does not is ignored when the script runs.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub properties: std::collections::BTreeMap<String, f32>,
+    pub properties: std::collections::BTreeMap<String, PropertyValue>,
 }
 
 impl ScriptRef {
@@ -493,7 +650,9 @@ impl SceneComponent for Scripts {
             if script.module.is_empty() || script.module.contains('\0') {
                 return Err("a script needs a module path without NUL characters".to_owned());
             }
-            finite("script property", script.properties.values())?;
+            if script.properties.values().any(|v| !PropertyType::ALL.iter().any(|ty| v.fits(*ty))) {
+                return Err("a script property must be a finite number, true or false, three finite numbers, or text up to 1024 bytes".to_owned());
+            }
         }
         Ok(())
     }

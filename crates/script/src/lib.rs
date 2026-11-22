@@ -14,6 +14,7 @@ use std::time::SystemTime;
 use bayleaf_core::StableId;
 use bayleaf_core::math::{DMat4, DVec3, Vec3};
 use bayleaf_scene::Scene;
+use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue};
 use bayleaf_scene::components::{ScriptRef, Scripts, Transform};
 use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc};
 
@@ -335,8 +336,11 @@ impl WorldView {
 #[derive(Clone, Debug)]
 struct ScriptValues {
     keys: [String; 2],
-    properties: BTreeMap<String, f32>,
+    properties: Properties,
 }
+
+/// A script's properties as it runs: each with its declared type and current value.
+type Properties = BTreeMap<String, (PropertyType, PropertyValue)>;
 
 /// A property of a script on an object, set by another script after the step.
 #[derive(Clone, Debug)]
@@ -344,7 +348,8 @@ struct PropertyWrite {
     object: StableId,
     key: String,
     name: String,
-    value: f32,
+    /// The value as three numbers; a property of one number takes the first.
+    value: [f32; 3],
 }
 
 /// The search keys of a script: its shown name and its file name without the extension.
@@ -445,7 +450,7 @@ struct HostState {
     state: SharedState,
     transform: [f32; 9],
     transform_changed: bool,
-    properties: BTreeMap<String, f32>,
+    properties: Properties,
     time: f64,
     input: Arc<Input>,
     logs: Vec<String>,
@@ -455,7 +460,7 @@ struct HostState {
 }
 
 impl HostState {
-    fn new(object: StableId, transform: [f32; 9], properties: BTreeMap<String, f32>, time: f64, input: &Arc<Input>) -> Self {
+    fn new(object: StableId, transform: [f32; 9], properties: Properties, time: f64, input: &Arc<Input>) -> Self {
         Self {
             object,
             world: Arc::new(WorldView::default()),
@@ -510,7 +515,8 @@ impl HostState {
 }
 
 /// Calls the optional `bayleaf_describe` export and parses the declared properties.
-/// The export returns `(ptr << 32) | len` of UTF-8 JSON: `{"properties": [["speed", 90.0], ...]}`.
+/// The export returns `(ptr << 32) | len` of UTF-8 JSON: `{"properties": [["speed", 90.0], ["label",
+/// "Hi", "text"], ...]}`: each property a name, a default and its type (`number` when left out).
 fn describe_instance(store: &mut Store<HostState>, instance: &wasmi::Instance, name: &str) -> Result<Description, ScriptError> {
     let Ok(describe) = instance.get_typed_func::<(), i64>(&*store, "bayleaf_describe") else {
         return Ok(Description::default());
@@ -528,15 +534,26 @@ fn describe_instance(store: &mut Store<HostState>, instance: &wasmi::Instance, n
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
     let mut out = Vec::new();
     for entry in value.get("properties").and_then(serde_json::Value::as_array).map_or(&[][..], Vec::as_slice) {
-        let pair = entry.as_array().filter(|p| p.len() == 2);
-        let (Some(key), Some(default)) = (pair.and_then(|p| p[0].as_str()), pair.and_then(|p| p[1].as_f64())) else {
-            return Err(invalid(format!("each property must be [name, number], got {entry}")));
+        let parts = entry.as_array().filter(|p| (2..=3).contains(&p.len()));
+        let Some(parts) = parts else {
+            return Err(invalid(format!("each property must be [name, default] or [name, default, type], got {entry}")));
         };
-        let default = default as f32;
-        if key.is_empty() || key.len() > 64 || !default.is_finite() {
-            return Err(invalid(format!("property {key:?} needs a name of 1 to 64 bytes and a finite default")));
+        let key = parts[0].as_str().unwrap_or_default();
+        if key.is_empty() || key.len() > 64 || key.contains(':') {
+            return Err(invalid(format!("property {key:?} needs a name of 1 to 64 bytes without ':'")));
         }
-        out.push((key.to_owned(), default));
+        let ty = match parts.get(2) {
+            None => PropertyType::Number,
+            Some(code) => code.as_str().and_then(PropertyType::from_code).ok_or_else(|| invalid(format!("property {key:?} has an unknown type {code}")))?,
+        };
+        let default = serde_json::from_value::<PropertyValue>(parts[1].clone()).ok().filter(|v| v.fits(ty));
+        let Some(default) = default else {
+            return Err(invalid(format!("property {key:?}: the default {} is not a {}", parts[1], ty.label())));
+        };
+        if out.iter().any(|p: &DeclaredProperty| p.name == key) {
+            return Err(invalid(format!("property {key:?} is declared twice")));
+        }
+        out.push(DeclaredProperty { name: key.to_owned(), ty, default });
     }
     let menu = match value.get("menu").and_then(serde_json::Value::as_str) {
         Some(text) => Some(menu_path(text).map_err(invalid)?),
@@ -548,8 +565,8 @@ fn describe_instance(store: &mut Store<HostState>, instance: &wasmi::Instance, n
 /// What a script says about itself (`bayleaf_describe`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Description {
-    /// Properties the editor shows, with their defaults.
-    pub properties: Vec<(String, f32)>,
+    /// Properties the editor shows, with their types and defaults.
+    pub properties: Vec<DeclaredProperty>,
     /// Where Add Component lists it: folders, then its name (`Light/Flicker`).
     pub menu: Option<String>,
 }
@@ -715,7 +732,7 @@ impl ScriptHost {
 
     /// The properties a module declares, with their defaults, in declaration order. Runs no script
     /// code but `bayleaf_describe`; a module without it declares nothing.
-    pub fn describe(&self, name: &str, bytes: &[u8]) -> Result<Vec<(String, f32)>, ScriptError> {
+    pub fn describe(&self, name: &str, bytes: &[u8]) -> Result<Vec<DeclaredProperty>, ScriptError> {
         self.describe_all(name, bytes).map(|d| d.properties)
     }
 
@@ -775,7 +792,7 @@ impl ScriptHost {
         let module_name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         let module = Module::new(&self.engine, bytes).map_err(|e| ScriptError::Invalid(module_name.clone(), e.to_string()))?;
         self.reads_fields |= module.imports().any(|i| matches!(i.name(), "component_get" | "component_set"));
-        let mut state = HostState::new(object, read_transform(scene, object), script.properties.clone(), time, input);
+        let mut state = HostState::new(object, read_transform(scene, object), Properties::new(), time, input);
         state.position = read_position(scene, object);
         state.state = Arc::clone(&self.state);
         state.input_maps = Arc::clone(&self.input_maps);
@@ -796,9 +813,19 @@ impl ScriptHost {
         if instance.get_export(&store, "memory").and_then(wasmi::Extern::into_memory).is_none() {
             return Err(ScriptError::Invalid(module_name, "it exports no memory".to_owned()));
         }
-        // Declared defaults, overridden by the values saved in the scene.
-        let mut properties: BTreeMap<String, f32> = describe_instance(&mut store, &instance, &module_name)?.properties.into_iter().collect();
-        properties.extend(script.properties.iter().map(|(k, v)| (k.clone(), *v)));
+        // Declared defaults, overridden by the values saved in the scene that fit the declared type.
+        // A saved value the script does not declare is still there to read, typed by its shape.
+        let mut properties: Properties =
+            describe_instance(&mut store, &instance, &module_name)?.properties.into_iter().map(|p| (p.name, (p.ty, p.default))).collect();
+        for (name, value) in &script.properties {
+            match properties.get_mut(name) {
+                Some((ty, slot)) if value.fits(*ty) => *slot = value.clone(),
+                Some(_) => {}
+                None => {
+                    properties.insert(name.clone(), (value.shape_type(), value.clone()));
+                }
+            }
+        }
         store.data_mut().properties = properties;
         let update = instance.get_typed_func::<f32, ()>(&store, "bayleaf_update").ok();
         let on_message = instance.get_typed_func::<f32, ()>(&store, "bayleaf_message").ok();
@@ -931,8 +958,10 @@ impl ScriptHost {
     fn apply_property_writes(&mut self) {
         for write in std::mem::take(&mut self.property_writes) {
             for entry in self.instances.iter_mut().filter(|i| i.object == write.object && script_keys(&i.script_name, &i.path).contains(&write.key)) {
-                if let Some(slot) = entry.store.data_mut().properties.get_mut(&write.name) {
-                    *slot = write.value;
+                if let Some((ty, slot)) = entry.store.data_mut().properties.get_mut(&write.name)
+                    && let Some(value) = PropertyValue::from_numbers(*ty, write.value)
+                {
+                    *slot = value;
                 }
             }
         }
@@ -1403,7 +1432,39 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         })?;
         linker.func_wrap("bayleaf", "property", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<f32, wasmi::Error> {
             let key = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("property: {m}")))?;
-            Ok(caller.data().properties.get(&key).copied().unwrap_or(f32::NAN))
+            Ok(caller.data().properties.get(&key).and_then(|(_, v)| v.number()).unwrap_or(f32::NAN))
+        })?;
+        linker.func_wrap("bayleaf", "property_whole", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+            let key = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("property_whole: {m}")))?;
+            Ok(caller.data().properties.get(&key).and_then(|(_, v)| v.number()).map_or(0, |n| n.round() as i32))
+        })?;
+        linker.func_wrap("bayleaf", "property_vector", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, out: i32| -> Result<i32, wasmi::Error> {
+            let key = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("property_vector: {m}")))?;
+            let numbers = caller.data().properties.get(&key).and_then(|(_, v)| v.numbers());
+            let bytes: Vec<u8> = numbers.unwrap_or([0.0; 3]).iter().flat_map(|v| v.to_le_bytes()).collect();
+            write_guest(&mut caller, out, &bytes, "property_vector")?;
+            Ok(i32::from(numbers.is_some()))
+        })?;
+        linker.func_wrap(
+            "bayleaf",
+            "property_text",
+            |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, out: i32, cap: i32| -> Result<i32, wasmi::Error> {
+                let key = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("property_text: {m}")))?;
+                let text = caller.data().properties.get(&key).and_then(|(_, v)| v.text().map(str::to_owned)).unwrap_or_default();
+                let cap = usize::try_from(cap).map_err(|_| fault(&mut caller, "property_text: the room must not be negative".to_owned()))?;
+                let bytes = text.as_bytes();
+                write_guest(&mut caller, out, &bytes[..bytes.len().min(cap)], "property_text")?;
+                Ok(i32::try_from(bytes.len()).unwrap_or(i32::MAX))
+            },
+        )?;
+        linker.func_wrap("bayleaf", "property_object", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+            let key = read_text(&caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("property_object: {m}")))?;
+            let state = caller.data();
+            let name = state.properties.get(&key).filter(|(ty, _)| *ty == PropertyType::Object).and_then(|(_, v)| v.text()).unwrap_or_default();
+            if name.is_empty() {
+                return Ok(0);
+            }
+            Ok(state.world.objects.iter().position(|(_, n, _)| n == name).map_or(0, |i| i as i32 + 1))
         })?;
         linker.func_wrap("bayleaf", "time", |caller: Caller<'_, HostState>| -> f64 { caller.data().time })?;
         linker.func_wrap("bayleaf", "key_down", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
@@ -1571,7 +1632,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                         let script = world.object(handle).and_then(|(id, _)| world.scripts.get(&id)?.iter().find(|s| s.keys.contains(&key)));
                         match script {
                             Some(_) if field.is_empty() => Some([0.0; 3]),
-                            Some(s) => s.properties.get(&field).map(|v| [*v, 0.0, 0.0]),
+                            Some(s) => s.properties.get(&field).and_then(|(_, v)| v.numbers()),
                             None => None,
                         }
                     }
@@ -1601,13 +1662,17 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                 let Some(name) = readable_component(&component) else {
                     // A script on the object, by its name: set one of its properties after the step.
                     let key = kind_key(&component);
-                    let declares =
-                        world.scripts.get(&object).is_some_and(|scripts| scripts.iter().any(|s| s.keys.contains(&key) && s.properties.contains_key(&field)));
+                    // Text and objects are not set through numbers.
+                    let declares = world.scripts.get(&object).is_some_and(|scripts| {
+                        scripts.iter().any(|s| {
+                            s.keys.contains(&key) && s.properties.get(&field).is_some_and(|(ty, _)| PropertyValue::from_numbers(*ty, [0.0; 3]).is_some())
+                        })
+                    });
                     let state = caller.data_mut();
                     if !declares || state.property_writes.len() >= MAX_REQUESTS_PER_CALL {
                         return Ok(0);
                     }
-                    state.property_writes.push(PropertyWrite { object, key, name: field, value: x });
+                    state.property_writes.push(PropertyWrite { object, key, name: field, value: [x, y, z] });
                     return Ok(1);
                 };
                 if !visual::COMPONENTS.iter().any(|c| c.name == name && c.settable()) {

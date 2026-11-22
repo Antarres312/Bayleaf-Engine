@@ -4,12 +4,15 @@
 //! `wasm32-unknown-unknown` as a `cdylib`:
 //!
 //! ```ignore
-//! use bayleaf_script_sdk::{Script, Transform, property, script};
+//! use bayleaf_script_sdk::{Property, Script, Transform, property, script};
 //!
 //! #[derive(Default)]
 //! struct Spinner;
 //!
 //! impl Script for Spinner {
+//!     // The Inspector shows Speed on each object; property("speed") reads it.
+//!     const PROPERTIES: &'static [Property] = &[Property::Number("speed", 90.0)];
+//!
 //!     fn update(&mut self, dt: f32) {
 //!         let speed = property("speed").unwrap_or(90.0);
 //!         let mut t = Transform::get();
@@ -55,10 +58,51 @@ pub fn log(text: &str) {
     abi::log(text);
 }
 
-/// A number from the script component's `properties`, if set.
+/// A number property ([`Property::Number`]) as the scene sets it, else its default; a whole number
+/// or true/false reads as a number too. `None` when the script declares no such property.
 pub fn property(name: &str) -> Option<f32> {
     let value = abi::property(name);
     (!value.is_nan()).then_some(value)
+}
+
+/// A whole-number property ([`Property::Whole`]); 0 when there is none.
+pub fn property_whole(name: &str) -> i32 {
+    abi::property_whole(name)
+}
+
+/// A true/false property ([`Property::Flag`]); false when there is none.
+pub fn property_flag(name: &str) -> bool {
+    abi::property_whole(name) != 0
+}
+
+/// A vector or colour property ([`Property::Vector`], [`Property::Color`]), if there is one.
+pub fn property_vector(name: &str) -> Option<[f32; 3]> {
+    abi::property_vector(name)
+}
+
+/// A text property ([`Property::Text`]); empty when there is none.
+pub fn property_text(name: &str) -> String {
+    abi::property_text(name)
+}
+
+/// The object an object property ([`Property::Object`]) names, if it is chosen and in the scene.
+pub fn property_object(name: &str) -> Option<Object> {
+    Some(abi::property_object(name)).filter(|h| *h != 0).map(Object)
+}
+
+/// A property a script declares in [`Script::PROPERTIES`]: its name and default. The Inspector
+/// edits it per object with a field of its type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Property {
+    Number(&'static str, f32),
+    Whole(&'static str, i32),
+    Flag(&'static str, bool),
+    Vector(&'static str, [f32; 3]),
+    /// Red, green and blue from 0 to 1.
+    Color(&'static str, [f32; 3]),
+    Text(&'static str, &'static str),
+    /// An object of the scene, chosen per object; none by default.
+    Object(&'static str),
 }
 
 /// Seconds since play mode started.
@@ -409,7 +453,7 @@ pub fn pad_button(button: PadButton) -> bool {
 pub trait Script: Default + Send + 'static {
     /// Properties the editor shows on this script, with their defaults. `property(name)` returns
     /// the value set in the scene, or this default.
-    const PROPERTIES: &'static [(&'static str, f32)] = &[];
+    const PROPERTIES: &'static [Property] = &[];
     /// Where Add Component lists the script: folders, then its name (`"Light/Flicker"`). Empty
     /// for the Scripts folder, under the module's name.
     const MENU: &'static str = "";
@@ -480,12 +524,22 @@ macro_rules! script {
 
 /// The `bayleaf_describe` text for `properties` (used by [`script!`]).
 #[doc(hidden)]
-pub fn describe(properties: &[(&str, f32)], menu: &str) -> String {
+pub fn describe(properties: &[Property], menu: &str) -> String {
+    let number = |v: f32| if v.is_finite() { v } else { 0.0 };
+    let three = |v: [f32; 3]| format!("[{:?}, {:?}, {:?}]", number(v[0]), number(v[1]), number(v[2]));
     let entries: Vec<String> = properties
         .iter()
-        .map(|(name, default)| {
-            let value = if default.is_finite() { *default } else { 0.0 };
-            format!("[\"{}\", {value:?}]", escape(name))
+        .map(|property| {
+            let (name, default, ty) = match property {
+                Property::Number(name, v) => (name, format!("{:?}", number(*v)), "number"),
+                Property::Whole(name, v) => (name, v.to_string(), "whole"),
+                Property::Flag(name, v) => (name, v.to_string(), "bool"),
+                Property::Vector(name, v) => (name, three(*v), "vector"),
+                Property::Color(name, v) => (name, three(v.map(|c| c.clamp(0.0, 1.0))), "color"),
+                Property::Text(name, v) => (name, format!("\"{}\"", escape(v)), "text"),
+                Property::Object(name) => (name, "\"\"".to_owned(), "object"),
+            };
+            format!("[\"{}\", {default}, \"{ty}\"]", escape(name))
         })
         .collect();
     let menu = if menu.is_empty() { String::new() } else { format!(", \"menu\": \"{}\"", escape(menu)) };
@@ -511,12 +565,12 @@ pub fn pack(text: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Transform, property};
+    use super::{Property, Transform, property};
 
     #[test]
     fn descriptions_are_json_the_host_can_read() {
-        let text = super::describe(&[("speed", 90.0), ("odd \"name\"", 1.5)], "");
-        assert_eq!(text, r#"{"properties": [["speed", 90.0], ["odd \"name\"", 1.5]]}"#);
+        let text = super::describe(&[Property::Number("speed", 90.0), Property::Text("odd \"name\"", "a\\b"), Property::Object("target")], "");
+        assert_eq!(text, r#"{"properties": [["speed", 90.0, "number"], ["odd \"name\"", "a\\b", "text"], ["target", "", "object"]]}"#);
         let text = super::describe(&[], "Light/\"Flicker\"");
         assert_eq!(text, r#"{"properties": [], "menu": "Light/\"Flicker\""}"#);
     }

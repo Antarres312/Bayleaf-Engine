@@ -3,7 +3,7 @@
 //! script declares. Its width comes from the dock; nothing inside sets it.
 
 use crate::i18n::tl;
-use bayleaf_engine::scene::components::{SceneComponent, ScriptRef, Scripts};
+use bayleaf_engine::scene::components::{DeclaredProperty, PropertyType, PropertyValue, SceneComponent, ScriptRef, Scripts};
 use serde_json::{Value, json};
 
 use crate::theme::{self, ROW_HEIGHT};
@@ -21,7 +21,7 @@ enum Pending {
     ScriptProperty {
         index: usize,
         name: String,
-        value: Option<f32>,
+        value: Option<PropertyValue>,
     },
     /// A prefab command (`scene.prefab.apply` or `scene.prefab.revert`) for this object.
     Prefab(&'static str),
@@ -31,7 +31,7 @@ enum Pending {
 struct ScriptCard {
     script: ScriptRef,
     /// Declared properties with their defaults, or why they could not be read.
-    declared: Result<Vec<(String, f32)>, String>,
+    declared: Result<Vec<DeclaredProperty>, String>,
 }
 
 pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
@@ -54,6 +54,11 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let kinds = editor.session.scene().registry().kinds().to_vec();
     let script_dir = editor.session.script_dir();
     let scripts: Vec<ScriptRef> = editor.session.scene().get::<Scripts>(id).map(|s| s.0.clone()).unwrap_or_default();
+    // The scene's objects by name, for object properties.
+    let objects: Vec<(bayleaf_core::StableId, String)> = {
+        let scene = editor.session.scene();
+        scene.world_matrices().into_iter().map(|(o, _)| (o, scene.name(o).unwrap_or_default().to_owned())).filter(|(_, n)| !n.is_empty()).collect()
+    };
     let cards: Vec<ScriptCard> =
         scripts.into_iter().map(|script| ScriptCard { declared: editor.script_info.properties(&script_dir.join(&script.module)), script }).collect();
     // Every script of the project, with the menu path it gives itself (read once per file change).
@@ -167,7 +172,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tf("Warning: {message}", &[("message", &message.to_string())])).color(t.warning)).wrap());
                 }
                 Ok(declared) => {
-                    let outcome = script_properties(ui, index, &card_data.script, declared, &mut pending);
+                    let outcome = script_properties(ui, index, &card_data.script, declared, &objects, &mut pending);
                     gesture_ended |= outcome.ended;
                 }
             });
@@ -325,7 +330,14 @@ fn card(
 }
 
 /// The declared properties of one script, plus any saved values it no longer declares.
-fn script_properties(ui: &mut egui::Ui, index: usize, script: &ScriptRef, declared: &[(String, f32)], pending: &mut Option<Pending>) -> value_editor::Outcome {
+fn script_properties(
+    ui: &mut egui::Ui,
+    index: usize,
+    script: &ScriptRef,
+    declared: &[DeclaredProperty],
+    objects: &[(bayleaf_core::StableId, String)],
+    pending: &mut Option<Pending>,
+) -> value_editor::Outcome {
     let t = theme::tokens(ui);
     let mut outcome = value_editor::Outcome::default();
     if declared.is_empty() && script.properties.is_empty() {
@@ -334,25 +346,24 @@ fn script_properties(ui: &mut egui::Ui, index: usize, script: &ScriptRef, declar
     }
     // Each row: name, value, and whether it differs from the script's default (a value the script
     // no longer declares has no default, so it can always be reset away).
-    let mut rows: Vec<(String, f32, bool)> = declared
+    let mut rows: Vec<(String, PropertyType, PropertyValue, bool)> = declared
         .iter()
-        .map(|(name, default)| {
-            let set = script.properties.get(name);
-            (name.clone(), *set.unwrap_or(default), set.is_some_and(|v| v != default))
+        .map(|p| {
+            let set = script.properties.get(&p.name).filter(|v| v.fits(p.ty));
+            (p.name.clone(), p.ty, set.unwrap_or(&p.default).clone(), set.is_some_and(|v| *v != p.default))
         })
         .collect();
     for (name, value) in &script.properties {
-        if !declared.iter().any(|(d, _)| d == name) {
-            rows.push((name.clone(), *value, true));
+        if !declared.iter().any(|p| p.name == *name) {
+            // A value the script no longer declares: shown by its shape.
+            rows.push((name.clone(), value.shape_type(), value.clone(), true));
         }
     }
-    for (name, value, changed) in rows {
-        let mut field = Value::from(f64::from(value));
-        let (row_outcome, reset) = value_editor::named_number(ui, &name, &mut field, changed, ("script property", index, name.as_str()));
+    for (name, ty, mut value, changed) in rows {
+        let (row_outcome, reset) = value_editor::named_property(ui, &name, ty, &mut value, changed, objects, ("script property", index, name.as_str()));
         outcome.ended |= row_outcome.ended;
         if row_outcome.changed {
-            let number = field.as_f64().map(|v| v as f32);
-            *pending = Some(Pending::ScriptProperty { index, name: name.clone(), value: number });
+            *pending = Some(Pending::ScriptProperty { index, name: name.clone(), value: Some(value) });
         }
         if reset {
             *pending = Some(Pending::ScriptProperty { index, name, value: None });

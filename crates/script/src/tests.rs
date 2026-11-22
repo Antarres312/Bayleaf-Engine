@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bayleaf_core::StableId;
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{ScriptRef, Scripts, Transform};
+use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue, ScriptRef, Scripts, Transform};
 
 use crate::{Input, ScriptError, ScriptHost};
 
@@ -41,7 +41,10 @@ const ROTATE: &str = r#"
 fn setup(properties: &[(&str, f32)]) -> (Scene, StableId, ScriptRef) {
     let mut scene = Scene::new();
     let id = scene.create_object(None, "Scripted").unwrap();
-    let script = ScriptRef { module: "test.wasm".into(), properties: properties.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect::<BTreeMap<_, _>>() };
+    let script = ScriptRef {
+        module: "test.wasm".into(),
+        properties: properties.iter().map(|(k, v)| ((*k).to_owned(), PropertyValue::Number(f64::from(*v)))).collect::<BTreeMap<_, _>>(),
+    };
     (scene, id, script)
 }
 
@@ -209,7 +212,8 @@ fn declared_defaults_apply_unless_the_scene_overrides_them() {
     host.update(&mut scene, 1.0, 0.0, &input);
     assert!((rotation_y(&scene, id) - 10.0).abs() < 1e-3, "the scene's value wins");
 
-    assert_eq!(host.describe("d.wasm", &described("")).unwrap(), [("speed".to_owned(), 45.0)]);
+    let declared = host.describe("d.wasm", &described("")).unwrap();
+    assert_eq!(declared, [DeclaredProperty { name: "speed".to_owned(), ty: PropertyType::Number, default: PropertyValue::Number(45.0) }]);
     assert!(host.describe("plain.wasm", &module(1, "")).unwrap().is_empty());
 }
 

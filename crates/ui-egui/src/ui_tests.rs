@@ -1272,7 +1272,7 @@ fn dragging_a_script_property_from_its_default_keeps_going_and_reset_turns_on_an
     let height = |harness: &Harness<'static, Editor>| {
         let id = harness.state().selected.unwrap();
         let scripts = harness.state().session.scene().get::<bayleaf_engine::scene::components::Scripts>(id).unwrap().clone();
-        scripts.0[0].properties.get("height").copied()
+        scripts.0[0].properties.get("height").and_then(|v| v.number())
     };
     assert!(egui_kittest::kittest::NodeT::accesskit_node(&harness.get_by_label("Reset Height")).is_disabled(), "at its default, reset is off");
     let field = harness.get_by_role_and_label(egui::accesskit::Role::SpinButton, "Height").rect().center();
@@ -1755,4 +1755,37 @@ fn a_whole_number_variable_does_not_widen_the_script_panel() {
     harness.run_steps(10);
     assert!(graph(&harness).variable("whole").is_some());
     assert_eq!(harness.get_by_label("Graph canvas").rect().left(), canvas.left(), "the panel beside the canvas kept its width");
+}
+
+#[test]
+fn a_typed_property_is_added_in_the_panel_and_edited_with_its_own_field_in_the_inspector() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-typed-property-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().dispatch("graph.new", &json!({ "domain": "script" }), None);
+    harness.run();
+    harness.get_by_label("Add Property").click();
+    harness.run();
+    harness.get_by_label("Text").click();
+    harness.run();
+    let placed = graph(&harness).nodes.iter().find(|n| n.kind == "textProperty").map(|n| n.id);
+    assert!(placed.is_some(), "Add Property > Text places a Text Property node");
+    harness.state_mut().dispatch("graph.save", &json!({ "path": dir.join("sign.bscript") }), None);
+
+    // An object with the script shows the property as a text field.
+    let editor = harness.state_mut();
+    let id = editor.dispatch("scene.object.create", &json!({ "name": "Sign" }), None).unwrap()["id"].as_str().map(str::to_owned).unwrap();
+    let id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    editor.dispatch("scene.script.add", &json!({ "id": id, "module": "sign.bscript" }), None);
+    editor.select_only(Some(id));
+    harness.run();
+    let field = harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Label");
+    field.click();
+    harness.run();
+    harness.get_by_role_and_label(egui::accesskit::Role::TextInput, "Label").type_text("Shop");
+    harness.run();
+    let scripts = harness.state().session.scene().get::<bayleaf_engine::scene::components::Scripts>(id).cloned().unwrap();
+    assert_eq!(scripts.0[0].properties.get("label").and_then(|v| v.text()), Some("Shop"), "the typed text is the object's value");
+    std::fs::remove_dir_all(&dir).ok();
 }

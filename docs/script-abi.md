@@ -16,7 +16,7 @@ so module-level state belongs to that one script slot. Any language that compile
 | `bayleaf_start` | `() -> ()` | no | once, after every script loaded with it ran `bayleaf_init`: when play mode starts, or after a hot reload |
 | `bayleaf_update` | `(dt: f32) -> ()` | no | every simulation step; `dt` is in seconds |
 | `bayleaf_message` | `(value: f32) -> ()` | no | for each message sent to this object or to every object, after the step; `message_name` or `message_is` tell which |
-| `bayleaf_describe` | `() -> i64` | no | when the editor or play mode loads the module; returns `(ptr << 32) \| len` of UTF-8 JSON `{"properties": [["speed", 90.0], ...], "menu": "Light/Flicker"}`: the properties the editor shows, with defaults, and optionally where Add Component lists the script (1 to 4 names of up to 64 characters separated by `/`; without it, under Scripts), at most 64 KiB |
+| `bayleaf_describe` | `() -> i64` | no | when the editor or play mode loads the module; returns `(ptr << 32) \| len` of UTF-8 JSON `{"properties": [["speed", 90.0], ["label", "Hi", "text"], ...], "menu": "Light/Flicker"}`: the properties the editor shows, each a name (1 to 64 bytes, no `:`), a default and a type (`number` when left out; `whole`, `bool`, `vector`, `color`, `text` or `object`; the default is a number, a whole number, `true`/`false`, three numbers (a colour from 0 to 1), text, or `""` for an object), and optionally where Add Component lists the script (1 to 4 names of up to 64 characters separated by `/`; without it, under Scripts), at most 64 KiB |
 
 ## Imports (module `bayleaf`, the host provides)
 
@@ -25,7 +25,11 @@ so module-level state belongs to that one script slot. Any language that compile
 | `log` | `(ptr: i32, len: i32)` | writes UTF-8 text to the editor console |
 | `transform_get` | `(out: i32)` | writes 9 little-endian `f32`: position xyz, rotation xyz (degrees), scale xyz |
 | `transform_set` | `(ptr: i32)` | reads 9 `f32` in the same layout; non-finite values are an error |
-| `property` | `(key_ptr: i32, key_len: i32) -> f32` | the property's value: the one set in the scene, else the declared default, else `NaN` |
+| `property` | `(key_ptr: i32, key_len: i32) -> f32` | the property's value: the one set in the scene (when it fits the declared type), else the declared default, else `NaN`; a whole number reads as a number and true/false as 1 or 0 |
+| `property_whole` | `(key_ptr: i32, key_len: i32) -> i32` | a whole-number or true/false property (1 or 0), or a number rounded; `0` when there is none |
+| `property_vector` | `(key_ptr: i32, key_len: i32, out: i32) -> i32` | writes a vector or colour property as 3 `f32` at `out`; `1` when there is one, else `0` (and zeros) |
+| `property_text` | `(key_ptr: i32, key_len: i32, out: i32, cap: i32) -> i32` | copies at most `cap` bytes of a text or object property (the object's name) to `out` and returns its whole length; `cap` 0 only asks for the length |
+| `property_object` | `(key_ptr: i32, key_len: i32) -> i32` | the handle of the object an object property names (the first with that name), or `0` for none |
 | `time` | `() -> f64` | seconds since play mode started |
 | `key_down` | `(name_ptr: i32, name_len: i32) -> i32` | `1` while the key is held (names like `W`, `Space`, `ArrowUp`), else `0` |
 | `pointer` | `(out: i32) -> i32` | writes 2 `f32`: the pointer over the game view, from -1 to 1 (x right, y up); returns `1` when it is over the view, else `0` (and writes zeros) |

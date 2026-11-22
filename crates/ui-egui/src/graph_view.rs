@@ -141,7 +141,13 @@ impl SearchChoices {
             // A script that cannot be read (not built yet, or broken) is left out, so nodes keep its
             // last known properties.
             if let Ok(properties) = editor.script_info.properties(&dir.join(&module)) {
-                scripts.push((name, properties.into_iter().map(|(n, _)| n).collect()));
+                // Fields as `name:type`; text and object properties are not read or set as numbers.
+                let fields = properties.into_iter().filter_map(|p| match p.ty.code() {
+                    "number" => Some(p.name),
+                    "text" | "object" => None,
+                    code => Some(format!("{}:{code}", p.name)),
+                });
+                scripts.push((name, fields.collect()));
             }
         }
         let scene = editor.session.scene();

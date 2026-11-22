@@ -11,6 +11,10 @@ mod raw {
         pub fn transform_get(out: *mut f32);
         pub fn transform_set(ptr: *const f32);
         pub fn property(key_ptr: *const u8, key_len: usize) -> f32;
+        pub fn property_whole(key_ptr: *const u8, key_len: usize) -> i32;
+        pub fn property_vector(key_ptr: *const u8, key_len: usize, out: *mut f32) -> i32;
+        pub fn property_text(key_ptr: *const u8, key_len: usize, out: *mut u8, cap: usize) -> i32;
+        pub fn property_object(key_ptr: *const u8, key_len: usize) -> i32;
         pub fn time() -> f64;
         pub fn key_down(name_ptr: *const u8, name_len: usize) -> i32;
         pub fn pointer(out: *mut f32) -> i32;
@@ -66,6 +70,18 @@ mod raw {
     pub unsafe fn transform_set(_: *const f32) {}
     pub unsafe fn property(_: *const u8, _: usize) -> f32 {
         f32::NAN
+    }
+    pub unsafe fn property_whole(_: *const u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn property_vector(_: *const u8, _: usize, _: *mut f32) -> i32 {
+        0
+    }
+    pub unsafe fn property_text(_: *const u8, _: usize, _: *mut u8, _: usize) -> i32 {
+        0
+    }
+    pub unsafe fn property_object(_: *const u8, _: usize) -> i32 {
+        0
     }
     pub unsafe fn time() -> f64 {
         0.0
@@ -211,6 +227,32 @@ pub(crate) fn transform_set(values: &[f32; 9]) {
 pub(crate) fn property(name: &str) -> f32 {
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::property(name.as_ptr(), name.len()) }
+}
+
+pub(crate) fn property_whole(name: &str) -> i32 {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::property_whole(name.as_ptr(), name.len()) }
+}
+
+pub(crate) fn property_vector(name: &str) -> Option<[f32; 3]> {
+    let mut out = [0.0f32; 3];
+    // SAFETY: the pointer and length describe `name`; `out` is 3 writable f32, what the host writes.
+    let found = unsafe { raw::property_vector(name.as_ptr(), name.len(), out.as_mut_ptr()) };
+    (found != 0).then_some(out)
+}
+
+pub(crate) fn property_text(name: &str) -> String {
+    // SAFETY: a null pointer with no room only asks for the length.
+    let len = unsafe { raw::property_text(name.as_ptr(), name.len(), std::ptr::null_mut(), 0) };
+    let mut bytes = vec![0u8; usize::try_from(len).unwrap_or(0)];
+    // SAFETY: `bytes` has exactly `len` writable bytes, at most what the host writes.
+    unsafe { raw::property_text(name.as_ptr(), name.len(), bytes.as_mut_ptr(), bytes.len()) };
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+pub(crate) fn property_object(name: &str) -> i32 {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::property_object(name.as_ptr(), name.len()) }
 }
 
 pub(crate) fn time() -> f64 {

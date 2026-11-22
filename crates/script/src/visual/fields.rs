@@ -181,7 +181,9 @@ const MAX_SCRIPT_VARIANTS: usize = 1024;
 /// Script variants made so far, by node kind and property names.
 static SCRIPT_VARIANTS: std::sync::Mutex<Vec<(String, Vec<String>, &'static NodeDef)>> = std::sync::Mutex::new(Vec::new());
 
-/// The pins of a node that names a script: one number pin per property.
+/// The pins of a node that names a script: one pin per property, typed as `name:type` says
+/// (`speed`, a number, or `count:whole`, `on:bool`, `offset:vector`, `tint:color`). Text and object
+/// properties have no pin: fields are read and set as numbers.
 fn script_variant(node: &Node, fields: Vec<String>) -> Option<&'static NodeDef> {
     let mut made = SCRIPT_VARIANTS.lock().ok()?;
     if let Some((_, _, def)) = made.iter().find(|(kind, names, _)| *kind == node.kind && *names == fields) {
@@ -192,7 +194,21 @@ fn script_variant(node: &Node, fields: Vec<String>) -> Option<&'static NodeDef> 
     }
     let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
     let pins = |default: PinDefault| -> Vec<PinDef> {
-        fields.iter().map(|name| PinDef { name: leak(name.clone()), label: leak(super::title(name)), ty: Float, default }).collect()
+        fields
+            .iter()
+            .filter_map(|field| {
+                let (name, code) = field.split_once(':').unwrap_or((field, "number"));
+                let ty = match code {
+                    "number" => Float,
+                    "whole" => PinType::Int,
+                    "bool" => Bool,
+                    "vector" => Vec3,
+                    "color" => PinType::Color,
+                    _ => return None,
+                };
+                Some(PinDef { name: leak(name.to_owned()), label: leak(super::title(name)), ty, default })
+            })
+            .collect()
     };
     let def = match node.kind.as_str() {
         "getComponent" => NodeDef {

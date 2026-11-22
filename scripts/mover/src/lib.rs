@@ -1,7 +1,7 @@
 //! Moves the object on the ground plane with W, A, S and D (or the arrow keys) and hops with Space.
 //! Properties: `speed` in units per second (default 3), `jump` hop height (default 1).
 
-use bayleaf_script_sdk::{Script, Transform, key_down, property, script};
+use bayleaf_script_sdk::{Property, Script, Transform, key_down, property, script};
 
 #[derive(Default)]
 struct Mover {
@@ -10,7 +10,7 @@ struct Mover {
 }
 
 impl Script for Mover {
-    const PROPERTIES: &'static [(&'static str, f32)] = &[("speed", 3.0), ("jump", 1.0)];
+    const PROPERTIES: &'static [Property] = &[Property::Number("speed", 3.0), Property::Number("jump", 1.0)];
 
     fn update(&mut self, dt: f32) {
         let speed = property("speed").unwrap_or(3.0);

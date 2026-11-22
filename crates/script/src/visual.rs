@@ -8,6 +8,7 @@
 use std::fmt::Write as _;
 
 use bayleaf_graph::{Catalog, Graph, NodeDef, PinDef, PinDefault, PinType, Problem, SettingDef, SettingKind, VariableType};
+use bayleaf_scene::components::PropertyType;
 
 use PinType::{Any, Bool, Float, Flow, Vec3};
 
@@ -356,6 +357,81 @@ pub const CATALOG: Catalog = Catalog {
                 SettingDef { name: "name", label: "Name", kind: SettingKind::Name("speed") },
                 SettingDef { name: "default", label: "Default", kind: SettingKind::Float(1.0) },
             ],
+            unique: false,
+        },
+        NodeDef {
+            kind: "wholeProperty",
+            label: "Whole Number Property",
+            category: "Values",
+            description: "A whole number set per object in the Inspector, with a default.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", PinType::Int)],
+            settings: &[
+                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("count") },
+                SettingDef { name: "default", label: "Default", kind: SettingKind::Float(0.0) },
+            ],
+            unique: false,
+        },
+        NodeDef {
+            kind: "flagProperty",
+            label: "True/False Property",
+            category: "Values",
+            description: "True or false, set per object in the Inspector, with a default.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", Bool)],
+            settings: &[
+                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("enabled") },
+                SettingDef { name: "default", label: "Default", kind: SettingKind::Choice(&["False", "True"]) },
+            ],
+            unique: false,
+        },
+        NodeDef {
+            kind: "vectorProperty",
+            label: "Vector Property",
+            category: "Values",
+            description: "A vector set per object in the Inspector, with a default.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", Vec3)],
+            settings: &[
+                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("offset") },
+                SettingDef { name: "default", label: "Default", kind: SettingKind::Vec3([0.0; 3]) },
+            ],
+            unique: false,
+        },
+        NodeDef {
+            kind: "colorProperty",
+            label: "Color Property",
+            category: "Values",
+            description: "A colour set per object in the Inspector, with a default.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", PinType::Color)],
+            settings: &[
+                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("tint") },
+                SettingDef { name: "default", label: "Default", kind: SettingKind::Color([1.0; 3]) },
+            ],
+            unique: false,
+        },
+        NodeDef {
+            kind: "textProperty",
+            label: "Text Property",
+            category: "Values",
+            description: "Text set per object in the Inspector, with a default.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", PinType::Text)],
+            settings: &[
+                SettingDef { name: "name", label: "Name", kind: SettingKind::Name("label") },
+                SettingDef { name: "default", label: "Default", kind: SettingKind::Text("") },
+            ],
+            unique: false,
+        },
+        NodeDef {
+            kind: "objectProperty",
+            label: "Object Property",
+            category: "Values",
+            description: "An object of the scene chosen per object in the Inspector (by its name); none (Found false) when it is not chosen or not there.",
+            inputs: &[],
+            outputs: &[pin("value", "Value", PinType::Object), pin("found", "Found", Bool)],
+            settings: &[SettingDef { name: "name", label: "Name", kind: SettingKind::Name("target") }],
             unique: false,
         },
         node("position", "Position", "Object", "The object's position, relative to its parent.", &[], &[pin("position", "Position", Vec3)]),
@@ -833,7 +909,8 @@ struct Compiler<'g> {
     graph: &'g Graph,
     data: Vec<(u32, Vec<u8>)>,
     next: u32,
-    properties: Vec<(String, f32)>,
+    /// Declared properties: name, type and default, in the order first met.
+    properties: Vec<(String, PropertyType, serde_json::Value)>,
     /// Globals actions need (the object and index of a For Each), declared once each.
     globals: Vec<String>,
     /// Each text variable's buffer and starting length, by name.
@@ -852,6 +929,27 @@ pub fn variable_kinds(ty: VariableType) -> [&'static str; 2] {
         VariableType::Object => ["objectVariable", "setObjectVariable"],
         VariableType::Color => ["colorVariable", "setColorVariable"],
     }
+}
+
+/// The Property node kind for each property type.
+pub const PROPERTY_KINDS: [(PropertyType, &str); 7] = [
+    (PropertyType::Number, "property"),
+    (PropertyType::WholeNumber, "wholeProperty"),
+    (PropertyType::TrueFalse, "flagProperty"),
+    (PropertyType::Vector, "vectorProperty"),
+    (PropertyType::Color, "colorProperty"),
+    (PropertyType::Text, "textProperty"),
+    (PropertyType::Object, "objectProperty"),
+];
+
+/// The property type a node kind declares, if it is a Property node.
+pub fn property_type(kind: &str) -> Option<PropertyType> {
+    PROPERTY_KINDS.iter().find(|(_, k)| *k == kind).map(|(ty, _)| *ty)
+}
+
+/// The Property node kind for a type.
+pub fn property_kind(ty: PropertyType) -> &'static str {
+    PROPERTY_KINDS.iter().find(|(t, _)| *t == ty).map_or("property", |(_, k)| *k)
 }
 
 pub fn compile(graph: &Graph) -> Result<Vec<u8>, Vec<Problem>> {
@@ -938,13 +1036,13 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         }
     }
     // Property nodes declare properties even when nothing reads them yet.
-    for node in graph.nodes.iter().filter(|n| n.kind == "property") {
+    for node in graph.nodes.iter().filter(|n| property_type(&n.kind).is_some()) {
         c.declare_property(node.id);
     }
     if !problems.is_empty() {
         return Err(problems);
     }
-    let mut description = serde_json::json!({ "properties": c.properties.iter().map(|(n, v)| serde_json::json!([n, v])).collect::<Vec<_>>() });
+    let mut description = serde_json::json!({ "properties": c.properties.iter().map(|(n, ty, v)| serde_json::json!([n, v, ty.code()])).collect::<Vec<_>>() });
     if !graph.menu.trim().is_empty() {
         match crate::menu_path(&graph.menu) {
             Ok(path) => description["menu"] = serde_json::json!(path),
@@ -1161,11 +1259,25 @@ impl Compiler<'_> {
         }
     }
 
+    /// Declares the property a Property node names, once, with its type and default.
     fn declare_property(&mut self, node: u32) -> String {
+        let ty = self.graph.node(node).and_then(|n| property_type(&n.kind)).unwrap_or_default();
         let name = self.setting_text(node, "name", "speed");
-        let default = self.setting_number(node, "default", 1.0);
-        if !self.properties.iter().any(|(n, _)| *n == name) {
-            self.properties.push((name.clone(), default));
+        let three = |c: &Self, fallback: f32| -> [f32; 3] {
+            let value = c.graph.value(node, "default");
+            std::array::from_fn(|i| value.and_then(|v| v.get(i)).and_then(bayleaf_graph::as_f32).unwrap_or(fallback))
+        };
+        let default = match ty {
+            PropertyType::Number => serde_json::json!(self.setting_number(node, "default", 1.0)),
+            PropertyType::WholeNumber => serde_json::json!(self.setting_number(node, "default", 0.0).round() as i32),
+            PropertyType::TrueFalse => serde_json::json!(self.setting_text(node, "default", "False") == "True"),
+            PropertyType::Vector => serde_json::json!(three(self, 0.0)),
+            PropertyType::Color => serde_json::json!(three(self, 1.0).map(|c| c.clamp(0.0, 1.0))),
+            PropertyType::Text => serde_json::json!(self.setting_text(node, "default", "")),
+            PropertyType::Object => serde_json::json!(""),
+        };
+        if !self.properties.iter().any(|(n, _, _)| *n == name) {
+            self.properties.push((name.clone(), ty, default));
         }
         name
     }
@@ -1242,6 +1354,7 @@ impl Compiler<'_> {
                     let zero = lit(0.0);
                     let [x, y, z] = match field.ty {
                         Float => [as_float(next, value)?, zero.clone(), zero],
+                        PinType::Int => [format!("(f32.convert_i32_s {})", as_int(next, value)?), zero.clone(), zero],
                         Bool => [format!("(f32.convert_i32_u {})", as_bool(next, value)?), zero.clone(), zero],
                         _ => as_vec(next, value)?,
                     };
@@ -1493,10 +1606,21 @@ impl Compiler<'_> {
                     _ => z,
                 })
             }
-            "property" => {
+            "property" | "wholeProperty" | "flagProperty" | "vectorProperty" | "colorProperty" | "textProperty" | "objectProperty" => {
                 let name = self.declare_property(node);
                 let (at, len) = self.text(name.as_bytes());
-                Val::F(format!("(call $property (i32.const {at}) (i32.const {len}))"))
+                let key = format!("(i32.const {at}) (i32.const {len})");
+                match n.kind.as_str() {
+                    "property" => Val::F(format!("(call $property {key})")),
+                    "wholeProperty" => Val::I(format!("(call $property_whole {key})")),
+                    "flagProperty" => Val::B(format!("(i32.ne (call $property_whole {key}) (i32.const 0))")),
+                    "vectorProperty" | "colorProperty" => Val::V([0, 1, 2].map(|i| format!("(call $property_part {key} (i32.const {i}))"))),
+                    "textProperty" => Val::T(format!("(call $property_string {key})")),
+                    _ => {
+                        let handle = format!("(call $property_object {key})");
+                        if pin == "found" { Val::B(format!("(i32.ne {handle} (i32.const 0))")) } else { Val::O(handle) }
+                    }
+                }
             }
             "position" => transform(0),
             "rotation" => transform(3),
@@ -1535,6 +1659,7 @@ impl Compiler<'_> {
                     };
                     match field.ty {
                         Float => Val::F(part(0)),
+                        PinType::Int => Val::I(format!("(i32.trunc_sat_f32_s {})", part(0))),
                         Bool => Val::B(format!("(f32.ne {} (f32.const 0))", part(0))),
                         _ => Val::V([part(0), part(4), part(8)]),
                     }
@@ -1809,6 +1934,10 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "transform_get" (func $transform_get (param i32)))
   (import "bayleaf" "transform_set" (func $transform_set (param i32)))
   (import "bayleaf" "property" (func $property (param i32 i32) (result f32)))
+  (import "bayleaf" "property_whole" (func $property_whole (param i32 i32) (result i32)))
+  (import "bayleaf" "property_vector" (func $property_vector (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "property_text" (func $property_text (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "property_object" (func $property_object (param i32 i32) (result i32)))
   (import "bayleaf" "time" (func $time (result f64)))
   (import "bayleaf" "key_down" (func $key_down (param i32 i32) (result i32)))
   (import "bayleaf" "pointer" (func $pointer (param i32) (result i32)))
@@ -2113,6 +2242,16 @@ const PRELUDE: &str = r#"(module
   (func $number_or_zero (param $t i64) (result f32) (local $v f32)
     (local.set $v (call $parse (local.get $t)))
     (select (local.get $v) (f32.const 0) (f32.eq (local.get $v) (local.get $v))))
+  ;; Part $i (0, 1 or 2) of a vector or colour property, read through bytes 192..204.
+  (func $property_part (param $a i32) (param $l i32) (param $i i32) (result f32)
+    (drop (call $property_vector (local.get $a) (local.get $l) (i32.const 192)))
+    (f32.load (i32.add (i32.const 192) (i32.shl (local.get $i) (i32.const 2)))))
+  ;; A text property, copied onto the heap.
+  (func $property_string (param $a i32) (param $l i32) (result i64) (local $n i32) (local $p i32)
+    (local.set $n (call $property_text (local.get $a) (local.get $l) (i32.const 0) (i32.const 0)))
+    (local.set $p (call $alloc (local.get $n)))
+    (drop (call $property_text (local.get $a) (local.get $l) (local.get $p) (local.get $n)))
+    (call $mk (local.get $p) (local.get $n)))
   ;; The name of the object with handle $h.
   (func $name (param $h i32) (result i64) (local $n i32) (local $p i32)
     (local.set $n (call $name_of (local.get $h) (i32.const 0) (i32.const 0)))

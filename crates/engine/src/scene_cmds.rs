@@ -231,7 +231,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Set Script Property",
             menu: "",
             shortcut: "",
-            params: "{id, index, name, value}; value null returns to the script's default",
+            params: "{id, index, name, value}: value is a number, true/false, three numbers or text, as the script declares the property (an object property: the object's name); null returns to the script's default",
             prompt: Prompt::SelectedObject,
             mutates: Mutates::Scene,
             enabled: always,
@@ -638,8 +638,9 @@ struct ScriptPropertyParams {
     id: StableId,
     index: usize,
     name: String,
-    /// A number sets the value; null goes back to the script's declared default.
-    value: Option<f32>,
+    /// A value (a number, true/false, three numbers or text, as the script declares the property)
+    /// sets it; null goes back to the script's declared default.
+    value: Option<bayleaf_scene::components::PropertyValue>,
 }
 
 fn scripts_of(session: &Session, id: StableId) -> Result<Scripts, CommandError> {
