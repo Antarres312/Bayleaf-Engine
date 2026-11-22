@@ -1154,6 +1154,15 @@ fn text_nodes_join_measure_search_cut_replace_and_convert() {
     line(&mut b, "checks", None, Some((said, "result")));
     let name = b.node("nameOf", json!({}));
     line(&mut b, "name", Some((name, "result")), None);
+    // To Text also writes vectors and whole numbers.
+    let point = b.node("vector", json!({ "x": 1.5, "y": -2.0, "z": 0.25 }));
+    let spelled_point = b.node("numberToText", json!({}));
+    b.link(point, "vector", spelled_point, "value");
+    line(&mut b, "vector", Some((spelled_point, "result")), None);
+    let big = b.node("wholeNumber", json!({ "value": 123456789 }));
+    let spelled_big = b.node("numberToText", json!({}));
+    b.link(big, "result", spelled_big, "value");
+    line(&mut b, "whole", Some((spelled_big, "result")), None);
 
     let (_, _, mut host) = run(&b.bytes(), &[]);
     assert!(host.take_faults().is_empty());
@@ -1173,6 +1182,8 @@ fn text_nodes_join_measure_search_cut_replace_and_convert() {
             "bad 0",
             "checks 1",
             "name Scripted",
+            "vector (1.5, -2, 0.25)",
+            "whole 123456789",
         ]
     );
 }

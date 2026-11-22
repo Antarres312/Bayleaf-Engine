@@ -1025,7 +1025,14 @@ pub const CATALOG: Catalog = Catalog {
         node("text", "Text", "Text", "Text typed here.", &[text("value", "Value", "")], TEXT_OUT),
         node("joinText", "Join Text", "Text", "A followed by B.", &[text("a", "A", ""), text("b", "B", "")], TEXT_OUT),
         node("textLength", "Text Length", "Text", "How many characters the text has.", &[text("text", "Text", "")], &[pin("result", "Length", PinType::Int)]),
-        node("numberToText", "Number to Text", "Text", "The number as text, with up to three decimals.", &[number("value", "Value", Float, 0.0)], TEXT_OUT),
+        node(
+            "numberToText",
+            "To Text",
+            "Text",
+            "A number (up to three decimals), a whole number (every digit) or a vector, as (x, y, z), written as text.",
+            &[number("value", "Value", Any, 0.0)],
+            TEXT_OUT,
+        ),
         node(
             "textToNumber",
             "Text to Number",
@@ -1450,6 +1457,20 @@ impl Compiler<'_> {
     fn literal(&mut self, text: &str) -> String {
         let (at, len) = self.text(text.as_bytes());
         format!("(i64.const {})", (i64::from(at) << 32) | i64::from(len))
+    }
+
+    /// A number, whole number or vector as text; a vector as "(x, y, z)".
+    fn value_text(&mut self, node: u32, value: Val) -> Result<String, Problem> {
+        let Val::V([x, y, z]) = value else { return number_text(node, value) };
+        let (open, comma, close) = (self.literal("("), self.literal(", "), self.literal(")"));
+        let mut text = open;
+        for (i, part) in [x, y, z].into_iter().enumerate() {
+            if i > 0 {
+                text = format!("(call $join {text} {comma})");
+            }
+            text = format!("(call $join {text} (call $num_text {part}))");
+        }
+        Ok(format!("(call $join {text} {close})"))
     }
 
     /// Places bytes followed by `room` free bytes.
@@ -2175,7 +2196,10 @@ impl Compiler<'_> {
                 }
             }
             "textLength" => Val::I(format!("(call $length {})", self.input(node, "text").and_then(|v| as_text(node, v))?)),
-            "numberToText" => Val::T(self.input(node, "value").and_then(|v| number_text(node, v))?),
+            "numberToText" => {
+                let value = self.input(node, "value")?;
+                Val::T(self.value_text(node, value)?)
+            }
             "textToNumber" => {
                 let t = self.input(node, "text").and_then(|v| as_text(node, v))?;
                 if pin == "valid" { Val::B(format!("(call $is_number {t})")) } else { Val::F(format!("(call $number_or_zero {t})")) }
@@ -2528,7 +2552,7 @@ fn number_text(node: u32, value: Val) -> Result<String, Problem> {
 fn as_text(node: u32, value: Val) -> Result<String, Problem> {
     match value {
         Val::T(text) => Ok(text),
-        _ => Err(Problem::on(node, "this input takes text; use Number to Text or Name Of")),
+        _ => Err(Problem::on(node, "this input takes text; use To Text or Name Of")),
     }
 }
 

@@ -205,7 +205,7 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   **Text Length**, **Part of Text** (Start and Count in characters), **Find in Text** (the index in
   characters, -1 when missing), **Replace Text**, **Upper Case**, **Lower Case** and **Trim Text**
   work on it; **Same Text**, **Text Contains**, **Starts With** and **Ends With** compare it;
-  **Number to Text** and **Text to Number** (with Valid) convert; **Name Of** gives an object's name.
+  **To Text** (a number, a whole number or a vector, as (x, y, z)) and **Text to Number** (with Valid) convert; **Name Of** gives an object's name.
   Characters are counted as written, so ż or ę count once; Upper and Lower Case change a to z only.
   **Log** writes its message, then its linked Text, then its linked Value; **Find Object Named**
   takes a linked Name. Text made while a script runs lives until that call ends: keep numbers, not
@@ -216,7 +216,7 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   Divide on two whole numbers stay whole (they wrap past the 32-bit range; Divide keeps the whole
   part and gives 0 for a divisor of 0); a whole number links anywhere a number does. Text Length,
   Find in Text, Count Objects With and For Each Object With's Index are whole numbers, and Log and
-  Number to Text print whole numbers with every digit. **Set Whole Number Variable** and **Whole
+  To Text print whole numbers with every digit. **Set Whole Number Variable** and **Whole
   Number Variable** keep one.
 - **Load Scene** loads a scene file after the step: in place of the playing scene (every script
   starts again, physics starts over, the game's values stay), or with **Add to This Scene** its
