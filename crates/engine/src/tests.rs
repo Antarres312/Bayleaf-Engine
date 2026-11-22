@@ -2770,7 +2770,7 @@ fn the_showcase_example_opens_and_everything_it_names_reads() {
     let mut session = Session::default();
     let project = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/showcase/Showcase.bproject");
     registry.execute(&mut session, "project.open", &json!({"path": project})).unwrap();
-    for model in ["models/windmill.gltf", "models/crate.obj"] {
+    for model in ["models/windmill.gltf", "models/crate.obj", "materials/ground.bmaterial"] {
         let info = registry.execute(&mut session, "asset.info", &json!({"path": model})).unwrap();
         assert_eq!(info["problems"], json!([]), "{model}: {info}");
     }

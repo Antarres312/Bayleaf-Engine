@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/images/showcase-game.png"><img src="docs/images/showcase-game.png" width="820" alt="The showcase playing: a windmill whose sails turn, an interface sign standing in the world, a sphere giving off sparks, textured crates, and a row of cards along the bottom naming each feature"></a>
+  <a href="docs/images/showcase-game.png"><img src="docs/images/showcase-game.png" width="820" alt="The showcase playing: a windmill whose sails turn, an interface sign standing in the world, a sphere giving off sparks and textured crates on a floor patterned with the Bayleaf leaf, and a row of cards along the bottom naming each feature"></a>
 </p>
 
 Bayleaf Engine is a native editor, a player and a headless CLI built on one engine. Scenes are
@@ -45,6 +45,8 @@ recipe that wrote its interfaces, its post-processing and its objects.
 - **Post-processing:** tone mapping, bloom, ambient occlusion, a vignette and a warm colour lookup image.
 - **Interfaces:** the sign is an interface standing in the world that the pointer can click, and
   the cards along the bottom are one part used five times, each use with its own texts.
+- **Material graphs:** the floor repeats the Bayleaf leaf, its image laid by texture coordinates
+  and its transparency blending the leaf over the ground colour.
 
 <p align="center">
   <a href="docs/images/showcase-editor.png"><img src="docs/images/showcase-editor.png" width="820" alt="The editor with the showcase open: the hierarchy, the Scene view with the windmill picked, and the Inspector showing its Mesh and Model Animation"></a>
