@@ -774,7 +774,6 @@ fn folder_tree(ui: &mut egui::Ui, view: &ProjectView, dir: &Path, rows: &mut Vec
                     let response = folder_row(ui, &entry.name, is_current);
                     object_drop(ui, &response, &entry.path, outcome);
                     folder_menu(&response, view, &entry.path, outcome);
-                    folder_menu(&response, view, &entry.path, outcome);
                     if response.clicked() {
                         outcome.enter = Some(entry.path.clone());
                     }
