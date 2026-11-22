@@ -701,6 +701,36 @@ pub const CATALOG: Catalog = Catalog {
             unique: false,
         },
         NodeDef {
+            kind: "playParticles",
+            label: "Play Particles",
+            category: "Effects",
+            description: "Starts the Particle Emitter of the linked object, else the first object named in Object Name, else this object's: a new cycle, with its burst. After this step.",
+            inputs: &[RUN, TARGET],
+            outputs: &[THEN],
+            settings: &[OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "stopParticles",
+            label: "Stop Particles",
+            category: "Effects",
+            description: "Stops the emitter starting particles; those alive live out their lives. Which emitter: as Play Particles.",
+            inputs: &[RUN, TARGET],
+            outputs: &[THEN],
+            settings: &[OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "burstParticles",
+            label: "Burst Particles",
+            category: "Effects",
+            description: "Starts Count particles at once from the emitter (as many as it has room for). Which emitter: as Play Particles.",
+            inputs: &[RUN, TARGET, PinDef::with("count", "Count", PinType::Int, PinDefault::Int(20))],
+            outputs: &[THEN],
+            settings: &[OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
             kind: "interfacePressed",
             label: "On Interface Pressed",
             category: "Interface",
@@ -1667,6 +1697,23 @@ impl Compiler<'_> {
                 let won = self.input(next, "won").and_then(|v| as_bool(next, v))?;
                 let _ = writeln!(code, "{indent}(drop (call $game_end {won}))");
             }
+            "playParticles" | "stopParticles" | "burstParticles" => {
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
+                match n.kind.as_str() {
+                    "playParticles" => {
+                        let _ = writeln!(code, "{indent}(drop (call $particles_play {handle}))");
+                    }
+                    "stopParticles" => {
+                        let _ = writeln!(code, "{indent}(drop (call $particles_stop {handle}))");
+                    }
+                    _ => {
+                        let count = self.input(next, "count").and_then(|v| as_int(next, v))?;
+                        // A count below 0 starts none.
+                        let _ =
+                            writeln!(code, "{indent}(drop (call $particles_burst {handle} (select (i32.const 0) {count} (i32.lt_s {count} (i32.const 0)))))");
+                    }
+                }
+            }
             "setInterfaceText" | "setInterfaceValue" | "showInterface" => {
                 let handle = self.target(next, Ok("(call $self_handle)"))?;
                 let element = self.setting_text(next, "element", if n.kind == "showInterface" { "" } else { "Start" });
@@ -2454,6 +2501,9 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "game_end" (func $game_end (param i32) (result i32)))
   (import "bayleaf" "action" (func $action (param i32 i32) (result f32)))
   (import "bayleaf" "input_map_set" (func $input_map_set (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "particles_play" (func $particles_play (param i32) (result i32)))
+  (import "bayleaf" "particles_stop" (func $particles_stop (param i32) (result i32)))
+  (import "bayleaf" "particles_burst" (func $particles_burst (param i32 i32) (result i32)))
   (import "bayleaf" "ui_set_text" (func $ui_set_text (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "ui_set_value" (func $ui_set_value (param i32 i32 i32 f64) (result i32)))
   (import "bayleaf" "ui_show" (func $ui_show (param i32 i32 i32 i32) (result i32)))

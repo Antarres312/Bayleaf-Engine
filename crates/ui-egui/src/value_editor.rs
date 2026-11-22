@@ -107,6 +107,7 @@ pub(crate) fn file_drop(ui: &egui::Ui, response: &egui::Response, accepts: impl 
 
 /// Edits `value` in place within `width`. `label` names the value for assistive technology.
 pub(crate) fn edit(ui: &mut egui::Ui, value: &mut Value, salt: impl std::hash::Hash + std::fmt::Debug, label: egui::Id, width: f32) -> Outcome {
+    let field = format!("{salt:?}");
     ui.push_id(salt, |ui| match value {
         Value::Bool(b) => {
             let response = ui.checkbox(b, "").labelled_by(label);
@@ -123,7 +124,7 @@ pub(crate) fn edit(ui: &mut egui::Ui, value: &mut Value, salt: impl std::hash::H
             Outcome::from_response(&response)
         }
         Value::Array(items) if (1..=AXES.len()).contains(&items.len()) && items.iter().all(Value::is_number) => edit_vector(ui, items, width),
-        Value::Array(items) => edit_list(ui, items, label, width),
+        Value::Array(items) => edit_list(ui, items, label, width, &field),
         Value::Object(fields) => {
             let t = theme::tokens(ui);
             let mut outcome = Outcome::default();
@@ -193,9 +194,23 @@ fn edit_vector(ui: &mut egui::Ui, items: &mut [Value], width: f32) -> Outcome {
 }
 
 /// Lists: every item editable. Lists of text can grow and shrink.
-fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: f32) -> Outcome {
+/// A new point for a curve field (a list of points, empty so far), by the field's name.
+fn first_point(field: &str) -> Option<Value> {
+    if field.contains("sizeKeys") {
+        Some(serde_json::json!({ "at": 0.5, "size": 1.0 }))
+    } else if field.contains("colorKeys") {
+        Some(serde_json::json!({ "at": 0.5, "color": [1.0, 1.0, 1.0, 1.0] }))
+    } else {
+        None
+    }
+}
+
+fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: f32, field: &str) -> Outcome {
     let mut outcome = Outcome::default();
-    let text_list = items.iter().all(Value::is_string);
+    // Texts, and points of a curve, are added and removed one by one.
+    let point_list = first_point(field).is_some() && items.iter().all(Value::is_object);
+    let text_list = !point_list && items.iter().all(Value::is_string);
+    let can_remove = text_list || point_list;
     let mut remove = None;
     ui.vertical(|ui| {
         ui.set_width(width);
@@ -203,7 +218,7 @@ fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: 
             // Remove sits at the right edge and the field takes what is left. The row keeps its own height.
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if text_list
+                    if can_remove
                         && ui
                             .add(egui::Button::new(tl("Remove")).min_size(egui::vec2(0.0, ROW_HEIGHT)))
                             .on_hover_text(crate::i18n::tf("Remove item {number}", &[("number", &(index + 1).to_string())]))
@@ -219,8 +234,10 @@ fn edit_list(ui: &mut egui::Ui, items: &mut Vec<Value>, label: egui::Id, width: 
         if items.is_empty() {
             ui.weak("No items");
         }
-        if text_list && ui.add_sized([width, ROW_HEIGHT], egui::Button::new(tl("Add Item"))).clicked() {
-            items.push(Value::String(String::new()));
+        if (text_list || point_list) && ui.add_sized([width, ROW_HEIGHT], egui::Button::new(tl("Add Item"))).clicked() {
+            // A point copies the last one (or starts halfway), so it can be moved from there.
+            let new = if point_list { items.last().cloned().or_else(|| first_point(field)).unwrap_or(Value::Null) } else { Value::String(String::new()) };
+            items.push(new);
             outcome = Outcome { changed: true, ended: true };
         }
     });

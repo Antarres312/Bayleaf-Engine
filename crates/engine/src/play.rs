@@ -334,6 +334,9 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let sound_open = crate::sound::open(session);
     #[cfg(feature = "physics")]
     let physics = build_physics(session);
+    // Particles starting on a model's surface read it from the project.
+    let mut particles = bayleaf_particles::Particles::new();
+    particles.set_base(session.script_dir());
     session.play = Some(Play {
         #[cfg(feature = "physics")]
         physics,
@@ -346,7 +349,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         snapshot,
         host,
         time: 0.0,
-        particles: bayleaf_particles::Particles::new(),
+        particles,
         interfaces: std::collections::HashMap::new(),
         interface_roots: std::collections::HashMap::new(),
         paused: false,

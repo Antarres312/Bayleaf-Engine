@@ -1,11 +1,13 @@
-//! L4: particles. Each object with a Particle Emitter gets particles that start on its shape, move
-//! with their speed, gravity and drag, change size and colour over their life, and go. They are
+//! L4: particles. Each object with a Particle Emitter gets particles that start on its shape (or on
+//! the surface of its own mesh), move with their speed, gravity and drag, change size and colour over
+//! their life (start, middle and end, or a curve of points), and go. They are
 //! simulated on the CPU, a step at a time, and drawn as camera-facing images (with a flipbook's
 //! frames), images stretched along their motion, or small shapes.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use bayleaf_core::StableId;
@@ -13,7 +15,7 @@ use bayleaf_core::math::{DMat4, DVec3, Mat4, Vec3, Vec4};
 use bayleaf_render::assets::Image;
 use bayleaf_render::{AssetSource, CameraView, DrawItem};
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{ParticleEmitter, Shape};
+use bayleaf_scene::components::{ColorKey, Mesh, ParticleEmitter, Shape, SizeKey};
 
 /// Falling things' acceleration, units a second squared.
 const GRAVITY: f32 = 9.81;
@@ -28,6 +30,86 @@ struct Particle {
     /// Degrees, and degrees a second.
     rotation: f32,
     spin: f32,
+}
+
+/// A mesh's surface to start particles on: its triangles (in the object's own space) and how much
+/// of the area lies up to each, so a point is picked evenly over the area.
+#[derive(Debug)]
+pub struct Surface {
+    triangles: Vec<[Vec3; 3]>,
+    /// Running total of the triangles' areas.
+    area_to: Vec<f32>,
+    /// A sphere of this radius, picked as a sphere (no triangles).
+    sphere: Option<f32>,
+}
+
+impl Surface {
+    fn from_triangles(triangles: Vec<[Vec3; 3]>) -> Option<Self> {
+        let mut total = 0.0;
+        let area_to: Vec<f32> = triangles
+            .iter()
+            .map(|[a, b, c]| {
+                total += (*b - *a).cross(*c - *a).length() * 0.5;
+                total
+            })
+            .collect();
+        (total > 0.0).then_some(Self { triangles, area_to, sphere: None })
+    }
+
+    /// The surface of one of the built-in shapes, as unit shapes are drawn.
+    fn of_shape(shape: Shape) -> Option<Self> {
+        let square = |corners: [Vec3; 4]| [[corners[0], corners[1], corners[2]], [corners[0], corners[2], corners[3]]];
+        let h = 0.5;
+        match shape {
+            Shape::Sphere => Some(Self { triangles: Vec::new(), area_to: Vec::new(), sphere: Some(0.5) }),
+            Shape::Plane => Self::from_triangles(square([Vec3::new(-h, 0.0, -h), Vec3::new(-h, 0.0, h), Vec3::new(h, 0.0, h), Vec3::new(h, 0.0, -h)]).to_vec()),
+            Shape::Quad => Self::from_triangles(square([Vec3::new(-h, -h, 0.0), Vec3::new(h, -h, 0.0), Vec3::new(h, h, 0.0), Vec3::new(-h, h, 0.0)]).to_vec()),
+            Shape::Cube => {
+                let mut triangles = Vec::new();
+                // Each face: its normal axis and the two axes across it, wound outward.
+                for (normal, u, v) in [(Vec3::X, Vec3::Y, Vec3::Z), (Vec3::Y, Vec3::Z, Vec3::X), (Vec3::Z, Vec3::X, Vec3::Y)] {
+                    for sign in [1.0f32, -1.0] {
+                        let c = normal * h * sign;
+                        let (u, v) = if sign > 0.0 { (u * h, v * h) } else { (v * h, u * h) };
+                        triangles.extend(square([c - u - v, c + u - v, c + u + v, c - u + v]));
+                    }
+                }
+                Self::from_triangles(triangles)
+            }
+        }
+    }
+
+    fn of_model(mesh: &bayleaf_render::assets::MeshData) -> Option<Self> {
+        let triangles = mesh
+            .indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .filter_map(|t| {
+                let p = |i: u32| mesh.positions.get(i as usize).map(|p| Vec3::from(*p));
+                Some([p(t[0])?, p(t[1])?, p(t[2])?])
+            })
+            .collect();
+        Self::from_triangles(triangles)
+    }
+
+    /// A point on the surface and the way out of it there, from three numbers 0 to 1.
+    fn pick(&self, a: f32, b: f32, c: f32) -> (Vec3, Vec3) {
+        if let Some(radius) = self.sphere {
+            let z = a * 2.0 - 1.0;
+            let angle = b * std::f32::consts::TAU;
+            let r = (1.0 - z * z).max(0.0).sqrt();
+            let out = Vec3::new(r * angle.cos(), z, r * angle.sin());
+            return (out * radius, out);
+        }
+        let total = self.area_to.last().copied().unwrap_or(0.0);
+        let at = self.area_to.partition_point(|to| *to < a * total).min(self.triangles.len().saturating_sub(1));
+        let Some([p, q, r]) = self.triangles.get(at).copied() else { return (Vec3::ZERO, Vec3::Y) };
+        // Evenly over the triangle.
+        let (b, c) = if b + c > 1.0 { (1.0 - b, 1.0 - c) } else { (b, c) };
+        let point = p + (q - p) * b + (r - p) * c;
+        (point, (q - p).cross(r - p).normalize_or(Vec3::Y))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -73,9 +155,17 @@ impl Emitter {
     }
 
     /// Starts one particle on the emitter's shape.
-    fn spawn(&mut self, e: &ParticleEmitter, world: &DMat4) {
+    fn spawn(&mut self, e: &ParticleEmitter, world: &DMat4, surface: Option<&Surface>) {
         let (offset, direction) = match e.shape.as_str() {
             "point" => (Vec3::ZERO, self.direction()),
+            "surface" => match surface {
+                Some(surface) => {
+                    let (a, b, c) = (self.next(), self.next(), self.next());
+                    surface.pick(a, b, c)
+                }
+                // No mesh to start on: from the object's middle, every way.
+                None => (Vec3::ZERO, self.direction()),
+            },
             "sphere" => {
                 let d = self.direction();
                 (d * e.radius * self.next().cbrt(), d)
@@ -105,7 +195,7 @@ impl Emitter {
         self.particles.push(Particle { position, velocity, age: 0.0, life, rotation, spin });
     }
 
-    fn step(&mut self, e: &ParticleEmitter, world: &DMat4, dt: f32) {
+    fn step(&mut self, e: &ParticleEmitter, world: &DMat4, dt: f32, surface: Option<&Surface>) {
         // The particles alive move on and age; the old ones go.
         let pull = Vec3::new(0.0, -GRAVITY * e.gravity, 0.0);
         let slow = (1.0 - e.drag * dt).max(0.0);
@@ -126,14 +216,14 @@ impl Emitter {
                 if !room(self) {
                     break;
                 }
-                self.spawn(e, world);
+                self.spawn(e, world, surface);
             }
         }
         self.owed += e.rate * dt;
         while self.owed >= 1.0 {
             self.owed -= 1.0;
             if room(self) {
-                self.spawn(e, world);
+                self.spawn(e, world, surface);
             }
         }
         self.clock += dt;
@@ -149,14 +239,51 @@ impl Emitter {
 }
 
 /// The particles of a scene's emitters, by emitter object.
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub struct Particles {
     emitters: BTreeMap<StableId, Emitter>,
+    /// The folder models are named from, for emitters that start on a model's surface.
+    base: PathBuf,
+    models: bayleaf_render::assets::AssetCache,
+    /// Surfaces made from models (by model id) and from built-in shapes (by shape).
+    surfaces: HashMap<u64, Arc<Surface>>,
+}
+
+impl std::fmt::Debug for Particles {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Particles").field("emitters", &self.emitters.len()).finish_non_exhaustive()
+    }
 }
 
 impl Particles {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The folder the scene's models are named from (the project's), for `surface` emitters.
+    pub fn set_base(&mut self, base: PathBuf) {
+        self.base = base;
+    }
+
+    /// The surface of object `id`'s own Mesh for a `surface` emitter: its model's triangles, or its
+    /// shape's. `None` when the object has no mesh (or the model does not read).
+    fn surface(&mut self, scene: &Scene, id: StableId, e: &ParticleEmitter) -> Option<Arc<Surface>> {
+        if e.shape != "surface" {
+            return None;
+        }
+        let mesh = scene.get::<Mesh>(id)?;
+        if mesh.model.is_empty() {
+            let key = u64::MAX - mesh.shape as u64;
+            if let std::collections::hash_map::Entry::Vacant(slot) = self.surfaces.entry(key) {
+                slot.insert(Arc::new(Surface::of_shape(mesh.shape)?));
+            }
+            return self.surfaces.get(&key).cloned();
+        }
+        let model = self.models.model(&self.base.join(&mesh.model)).ok()?;
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.surfaces.entry(model.id) {
+            slot.insert(Arc::new(Surface::of_model(&model)?));
+        }
+        self.surfaces.get(&model.id).cloned()
     }
 
     /// Moves every emitter's particles on by `dt` seconds and starts new ones. Emitters new to the
@@ -167,7 +294,8 @@ impl Particles {
         for (id, world) in scene.world_matrices() {
             let Some(e) = scene.get::<ParticleEmitter>(id) else { continue };
             seen.push(id);
-            self.emitters.entry(id).or_insert_with(|| Emitter::new(id, e.playing)).step(e, &world, dt);
+            let surface = self.surface(scene, id, e);
+            self.emitters.entry(id).or_insert_with(|| Emitter::new(id, e.playing)).step(e, &world, dt, surface.as_deref());
         }
         self.emitters.retain(|id, _| seen.contains(id));
     }
@@ -179,7 +307,8 @@ impl Particles {
             return;
         };
         let dt = if dt.is_finite() { dt.clamp(0.0, 0.25) } else { 0.0 };
-        self.emitters.entry(id).or_insert_with(|| Emitter::new(id, true)).step(e, &world, dt);
+        let surface = self.surface(scene, id, e);
+        self.emitters.entry(id).or_insert_with(|| Emitter::new(id, true)).step(e, &world, dt, surface.as_deref());
         self.emitters.retain(|other, _| *other == id);
     }
 
@@ -208,13 +337,20 @@ impl Particles {
     /// Starts `count` particles at once from `id`'s emitter (as many as it has room for).
     pub fn burst(&mut self, scene: &Scene, id: StableId, count: u32) {
         let (Some(e), Some(world)) = (scene.get::<ParticleEmitter>(id), scene.world_matrix(id)) else { return };
+        let surface = self.surface(scene, id, e);
         let emitter = self.emitters.entry(id).or_insert_with(|| Emitter::new(id, e.playing));
         for _ in 0..count.min(e.max_particles) {
             if emitter.particles.len() as u32 >= e.max_particles {
                 break;
             }
-            emitter.spawn(e, &world);
+            emitter.spawn(e, &world, surface.as_deref());
         }
+    }
+
+    /// Where `id`'s particles are, for tests.
+    #[cfg(test)]
+    fn positions(&self, id: StableId) -> Vec<Vec3> {
+        self.emitters.get(&id).map(|e| e.particles.iter().map(|p| p.position.as_vec3()).collect()).unwrap_or_default()
     }
 
     /// Whether `id`'s emitter is starting particles.
@@ -246,9 +382,8 @@ impl Particles {
             let frames = (e.flipbook_columns.max(1), e.flipbook_rows.max(1));
             for p in &emitter.particles {
                 let t = (p.age / p.life).clamp(0.0, 1.0);
-                let size = three(e.start_size, e.middle_size, e.end_size, t);
-                let color = Vec4::from(e.start_color).lerp(Vec4::from(e.middle_color), (t * 2.0).min(1.0));
-                let color = if t > 0.5 { Vec4::from(e.middle_color).lerp(Vec4::from(e.end_color), t * 2.0 - 1.0) } else { color };
+                let size = size_at(e, t);
+                let color = color_at(e, t);
                 let (position, velocity) = if e.space == "local" {
                     (world.transform_point3(p.position), world.transform_vector3(p.velocity.as_dvec3()).as_vec3())
                 } else {
@@ -302,6 +437,43 @@ impl Particles {
 }
 
 /// A value from three keys: at the start, the middle and the end of a life.
+/// A particle's size `t` (0 to 1) through its life: its curve's points when it has any, else start,
+/// middle and end.
+fn size_at(e: &ParticleEmitter, t: f32) -> f32 {
+    if e.size_keys.is_empty() {
+        return three(e.start_size, e.middle_size, e.end_size, t);
+    }
+    keyed(&e.size_keys.iter().map(|k: &SizeKey| (k.at, Vec4::splat(k.size))).collect::<Vec<_>>(), t).x
+}
+
+/// A particle's colour `t` through its life, as [`size_at`].
+fn color_at(e: &ParticleEmitter, t: f32) -> Vec4 {
+    if e.color_keys.is_empty() {
+        let color = Vec4::from(e.start_color).lerp(Vec4::from(e.middle_color), (t * 2.0).min(1.0));
+        return if t > 0.5 { Vec4::from(e.middle_color).lerp(Vec4::from(e.end_color), t * 2.0 - 1.0) } else { color };
+    }
+    keyed(&e.color_keys.iter().map(|k: &ColorKey| (k.at, Vec4::from(k.color))).collect::<Vec<_>>(), t)
+}
+
+/// The value at `t` of points (`at`, value), straight between them, held before the first and after
+/// the last; the points need not be in order.
+fn keyed(points: &[(f32, Vec4)], t: f32) -> Vec4 {
+    let mut sorted = points.to_vec();
+    sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let Some(first) = sorted.first() else { return Vec4::ONE };
+    if t <= first.0 {
+        return first.1;
+    }
+    for pair in sorted.windows(2) {
+        let [(a, va), (b, vb)] = [pair[0], pair[1]];
+        if t <= b {
+            let span = (b - a).max(f32::EPSILON);
+            return va.lerp(vb, (t - a) / span);
+        }
+    }
+    sorted.last().map_or(Vec4::ONE, |last| last.1)
+}
+
 fn three(start: f32, middle: f32, end: f32, t: f32) -> f32 {
     if t < 0.5 { start + (middle - start) * t * 2.0 } else { middle + (end - middle) * (t * 2.0 - 1.0) }
 }

@@ -2,10 +2,10 @@ use bayleaf_core::StableId;
 use bayleaf_core::math::Vec3;
 use bayleaf_render::{CameraView, NoAssets};
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{ParticleEmitter, Transform};
+use bayleaf_scene::components::{ColorKey, ParticleEmitter, SizeKey, Transform};
 use serde_json::json;
 
-use crate::Particles;
+use crate::{Particles, color_at, size_at};
 
 fn scene_with(emitter: serde_json::Value) -> (Scene, StableId) {
     let mut scene = Scene::new();
@@ -110,4 +110,37 @@ fn sprites_face_the_camera_and_flipbooks_move_through_their_frames() {
     }
     let later = particles.draw_items(&scene, &cam, &mut NoAssets).remove(0);
     assert_ne!(later.uv_rect, first.uv_rect, "a later frame later in its life");
+}
+
+#[test]
+fn a_surface_emitter_starts_its_particles_on_its_mesh_and_curves_set_size_and_colour() {
+    let mut scene = Scene::new();
+    let id = scene.create_object(None, "Box").unwrap();
+    scene.add_component(id, "mesh").unwrap();
+    let emitter = ParticleEmitter {
+        shape: "surface".to_owned(),
+        rate: 0.0,
+        burst: 200,
+        speed: [0.0, 0.0],
+        gravity: 0.0,
+        size_keys: vec![SizeKey { at: 0.0, size: 2.0 }, SizeKey { at: 1.0, size: 4.0 }],
+        color_keys: vec![ColorKey { at: 0.0, color: [1.0, 0.0, 0.0, 1.0] }, ColorKey { at: 1.0, color: [0.0, 0.0, 1.0, 1.0] }],
+        ..ParticleEmitter::default()
+    };
+    scene.add_component(id, "particleEmitter").unwrap();
+    scene.set_component(id, "particleEmitter", serde_json::to_value(&emitter).unwrap()).unwrap();
+    let mut particles = Particles::new();
+    particles.step(&scene, 0.001);
+    let positions = particles.positions(id);
+    assert_eq!(positions.len(), 200);
+    // On the unit cube's surface: one coordinate is at its face, none beyond.
+    assert!(positions.iter().all(|p| p.abs().max_element() > 0.499 && p.abs().max_element() < 0.501), "on the faces: {:?}", &positions[..3]);
+    assert!(positions.iter().any(|p| p.x > 0.49) && positions.iter().any(|p| p.y < -0.49), "over every face, not one");
+    // Halfway through the life, halfway along each curve.
+    assert!((size_at(&emitter, 0.5) - 3.0).abs() < 1e-5);
+    let middle = color_at(&emitter, 0.5);
+    assert!((middle.x - 0.5).abs() < 1e-5 && (middle.z - 0.5).abs() < 1e-5);
+    // Without points, start, middle and end.
+    let plain = ParticleEmitter::default();
+    assert!((size_at(&plain, 0.0) - plain.start_size).abs() < 1e-6);
 }

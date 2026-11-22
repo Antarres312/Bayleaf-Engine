@@ -534,8 +534,15 @@ fn every_node_kind_compiles_and_runs() {
     b.link(remove_element, "then", read_log, "run");
     b.link(read_value, "value", read_log, "value");
     b.link(read_text, "text", read_log, "text");
+    // Particles: started, burst and stopped (the object has no emitter, so nothing shows).
+    let play = b.node("playParticles", json!({}));
+    b.link(read_log, "then", play, "run");
+    let burst = b.node("burstParticles", json!({ "count": 5 }));
+    b.link(play, "then", burst, "run");
+    let stop = b.node("stopParticles", json!({}));
+    b.link(burst, "then", stop, "run");
     let found_gate = b.node("branch", json!({}));
-    b.link(read_log, "then", found_gate, "run");
+    b.link(stop, "then", found_gate, "run");
     b.link(read_value, "found", found_gate, "condition");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");

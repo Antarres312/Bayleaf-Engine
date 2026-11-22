@@ -2659,3 +2659,32 @@ fn scripts_read_what_the_player_typed_and_set_in_the_interface() {
     run(&mut session, "play.stop", Value::Null);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_visual_script_bursts_and_stops_an_emitter() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params).unwrap();
+    run(&mut session, "graph.new", json!({"domain": "script"}));
+    let start = session.graph().unwrap().graph.nodes.iter().find(|n| n.kind == "start").unwrap().id;
+    let burst = node(&registry, &mut session, "burstParticles");
+    run(&mut session, "graph.node.set", json!({"node": burst, "name": "count", "value": 10}));
+    let stop = node(&registry, &mut session, "stopParticles");
+    run(&mut session, "graph.link.add", pins(u64::from(start), "then", burst, "run"));
+    run(&mut session, "graph.link.add", pins(burst, "then", stop, "run"));
+    let dir = std::env::temp_dir().join(format!("bayleaf-particle-nodes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    run(&mut session, "graph.save", json!({"path": dir.join("burst.bscript")}));
+    let emitter = json!({"rate": 0.0, "burst": 0, "lifetime": [5.0, 5.0], "playing": true});
+    let mut value = serde_json::to_value(bayleaf_scene::components::ParticleEmitter::default()).unwrap();
+    for (k, v) in emitter.as_object().unwrap() {
+        value[k] = v.clone();
+    }
+    create(&registry, &mut session, json!({"name": "Fountain", "components": {"particleEmitter": value, "scripts": [{"module": "burst.bscript"}]}}));
+    run(&mut session, "scene.saveAs", json!({"path": dir.join("burst.bscene")}));
+    run(&mut session, "play.start", Value::Null);
+    run(&mut session, "play.step", json!({"seconds": 0.05, "steps": 3}));
+    assert_eq!(session.particles().unwrap().count(None), 10, "the burst's ten, and no more once it stopped");
+    run(&mut session, "play.stop", Value::Null);
+    std::fs::remove_dir_all(&dir).ok();
+}

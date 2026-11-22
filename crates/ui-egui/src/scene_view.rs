@@ -246,6 +246,7 @@ fn step_preview(view: &mut SceneView, editor: &Editor, ui: &egui::Ui) {
         return;
     };
     if !view.preview_paused {
+        view.preview.set_base(editor.session.script_dir());
         view.preview.step_one(scene, id, dt);
         ui.ctx().request_repaint();
     }

@@ -360,7 +360,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
      along their motion, or small meshes; blended or added). Simulated on the CPU first, drawn
      instanced; local or world space, looping or once, and Play, Pause and Restart in the Scene
      view with the emitter selected. Scripts start, stop and burst emitters. A material graph can
-     be a particle's material. (Done: the Particle Emitter, `bayleaf-particles`, the Scene view's preview and the script calls. Still to do: starting on a mesh's surface, curves beyond start, middle and end, and visual script nodes for emitters.)
+     be a particle's material. (Done: the Particle Emitter, `bayleaf-particles`, the Scene view's preview and the script calls; starting on the surface of the object's own mesh (`shape: surface`, its model or its shape); size and colour curves of up to 16 points (`sizeKeys`, `colorKeys`, scene version 22), edited in the Inspector; and Play, Stop and Burst Particles in visual scripts.)
    - **Export for the web, and Linux options.** The Web platform: the player built for
      `wasm32-unknown-unknown` with WebGPU (WebGL2 where it is missing), the game's files packed
      beside it, and an `index.html` that loads it; scripts interpreted, saves in the browser's

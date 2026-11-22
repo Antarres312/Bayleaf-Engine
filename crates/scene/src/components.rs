@@ -1292,7 +1292,8 @@ pub struct ParticleEmitter {
     pub burst: u32,
     /// Most particles alive at once.
     pub max_particles: u32,
-    /// Where particles start: `point`, `sphere`, `cone` or `box`.
+    /// Where particles start: `point`, `sphere`, `cone`, `box`, or `surface` (on the surface of
+    /// the object's own Mesh, its model or its shape, moving out along it).
     pub shape: String,
     /// The sphere's radius, or the cone's at its base.
     pub radius: f32,
@@ -1314,6 +1315,13 @@ pub struct ParticleEmitter {
     pub start_color: [f32; 4],
     pub middle_color: [f32; 4],
     pub end_color: [f32; 4],
+    /// Size over life as points (`at` 0 to 1 through the life); when there are any, they are used
+    /// instead of the start, middle and end size.
+    #[serde(default)]
+    pub size_keys: Vec<SizeKey>,
+    /// Colour over life as points, used instead of the start, middle and end colour when there are any.
+    #[serde(default)]
+    pub color_keys: Vec<ColorKey>,
     /// Slowest and fastest spin, degrees a second.
     pub spin: [f32; 2],
     /// How they draw: `sprite` (facing the camera), `stretched` (along their motion) or `mesh`.
@@ -1356,6 +1364,8 @@ impl Default for ParticleEmitter {
             start_color: [1.0, 1.0, 1.0, 1.0],
             middle_color: [1.0, 1.0, 1.0, 0.8],
             end_color: [1.0, 1.0, 1.0, 0.0],
+            size_keys: Vec::new(),
+            color_keys: Vec::new(),
             spin: [0.0, 0.0],
             render: "sprite".to_owned(),
             image: String::new(),
@@ -1368,6 +1378,27 @@ impl Default for ParticleEmitter {
         }
     }
 }
+
+/// A point of a particle's size over its life.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SizeKey {
+    /// 0 at the start of the life, 1 at its end.
+    pub at: f32,
+    pub size: f32,
+}
+
+/// A point of a particle's colour over its life.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColorKey {
+    pub at: f32,
+    /// Linear RGBA, each 0 to 1.
+    pub color: [f32; 4],
+}
+
+/// Most points in a size or colour curve.
+pub const MAX_KEYS: usize = 16;
 
 /// Most particles one emitter may keep alive.
 pub const MAX_PARTICLES: u32 = 10_000;
@@ -1413,6 +1444,19 @@ impl SceneComponent for ParticleEmitter {
                 range("color", v, 0.0, 1.0)?;
             }
         }
+        if self.size_keys.len() > MAX_KEYS || self.color_keys.len() > MAX_KEYS {
+            return Err(format!("sizeKeys and colorKeys hold at most {MAX_KEYS} points each"));
+        }
+        for key in &self.size_keys {
+            range("sizeKeys at", key.at, 0.0, 1.0)?;
+            range("sizeKeys size", key.size, 0.0, 10_000.0)?;
+        }
+        for key in &self.color_keys {
+            range("colorKeys at", key.at, 0.0, 1.0)?;
+            for v in key.color {
+                range("colorKeys color", v, 0.0, 1.0)?;
+            }
+        }
         if !(1..=64).contains(&self.flipbook_columns) || !(1..=64).contains(&self.flipbook_rows) {
             return Err("flipbookColumns and flipbookRows are 1 to 64".to_owned());
         }
@@ -1427,7 +1471,7 @@ impl SceneComponent for ParticleEmitter {
 
     fn options(field: &str) -> &'static [&'static str] {
         match field {
-            "shape" => &["point", "sphere", "cone", "box"],
+            "shape" => &["point", "sphere", "cone", "box", "surface"],
             "render" => &["sprite", "stretched", "mesh"],
             "blend" => &["alpha", "additive"],
             "space" => &["world", "local"],
