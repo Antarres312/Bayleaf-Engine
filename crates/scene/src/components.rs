@@ -887,11 +887,46 @@ pub struct Interface {
     pub visible: bool,
     /// Interfaces with a higher order are drawn over those with a lower one.
     pub order: i32,
+    /// `screen`: over the game; `world`: a flat panel standing in the scene at the object.
+    #[serde(default = "screen_space")]
+    pub space: String,
+    /// A world panel's width and height, in world units.
+    #[serde(default = "panel_size")]
+    pub size: [f32; 2],
+    /// How many interface points one world unit holds: how sharp a world panel is.
+    #[serde(default = "points_per_unit")]
+    pub points_per_unit: f32,
+    /// A world panel always turns to face the camera (a name tag, a health bar over an enemy).
+    #[serde(default)]
+    pub face_camera: bool,
 }
+
+fn screen_space() -> String {
+    "screen".to_owned()
+}
+
+fn panel_size() -> [f32; 2] {
+    [2.0, 1.0]
+}
+
+fn points_per_unit() -> f32 {
+    200.0
+}
+
+/// Largest side of a world panel's picture, in points.
+pub const MAX_PANEL_POINTS: f32 = 2048.0;
 
 impl Default for Interface {
     fn default() -> Self {
-        Self { layout: String::new(), visible: true, order: 0 }
+        Self {
+            layout: String::new(),
+            visible: true,
+            order: 0,
+            space: screen_space(),
+            size: panel_size(),
+            points_per_unit: points_per_unit(),
+            face_camera: false,
+        }
     }
 }
 
@@ -903,7 +938,23 @@ impl SceneComponent for Interface {
 
     fn validate(&self) -> Result<(), String> {
         file_field("layout", &self.layout, &["bui"])?;
-        if (-1000..=1000).contains(&self.order) { Ok(()) } else { Err("order must be between -1000 and 1000".to_owned()) }
+        if !(-1000..=1000).contains(&self.order) {
+            return Err("order must be between -1000 and 1000".to_owned());
+        }
+        if !Self::options("space").contains(&self.space.as_str()) {
+            return Err("space is screen or world".to_owned());
+        }
+        if !self.size.iter().all(|v| v.is_finite() && (0.01..=10_000.0).contains(v)) {
+            return Err("size is two numbers from 0.01 to 10000 world units".to_owned());
+        }
+        if !(self.points_per_unit.is_finite() && (1.0..=10_000.0).contains(&self.points_per_unit)) {
+            return Err("pointsPerUnit is from 1 to 10000".to_owned());
+        }
+        Ok(())
+    }
+
+    fn options(field: &str) -> &'static [&'static str] {
+        if field == "space" { &["screen", "world"] } else { &[] }
     }
 }
 

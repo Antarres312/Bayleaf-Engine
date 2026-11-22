@@ -104,6 +104,13 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
         frame.items.extend(particles.draw_items(scene, &frame.camera, &mut assets));
     }
     let extract = gathering.elapsed();
+    // Interfaces standing in the world: drawn into their pictures, then on their panels. Where the
+    // pointer meets one, its clicks are the panel's.
+    let playing = editor.session.is_playing();
+    let rect = egui::Rect::from_min_size(ui.cursor().min, size);
+    let pointer = crate::world_interface::PointerInput::of(ui, rect);
+    let view_parts = crate::world_interface::View { gpu, renderer: &mut target.renderer, camera: &frame.camera, pointer: &pointer, interactive: playing };
+    let over_world_panel = editor.world_game.prepare(view_parts, &mut editor.session, &mut editor.game_interfaces, &mut frame.items);
     let drawing = std::time::Instant::now();
     target.renderer.render(&gpu.device, &gpu.queue, &target.target, &frame);
     // The game's frame, for the profiler while it records.
@@ -119,10 +126,9 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
 
     let image = egui::Image::new(egui::load::SizedTexture::new(target.texture, size)).sense(egui::Sense::click_and_drag());
     let response = ui.add(image);
-    let playing = editor.session.is_playing();
     // The game's interfaces over it: answering the player while it plays, a preview before. Where
     // an element takes the pointer, its clicks are the interface's, not the game's.
-    let over_interface = crate::game_interface::show(ui, response.rect, &mut editor.session, &mut editor.game_interfaces, playing);
+    let over_interface = crate::game_interface::show(ui, response.rect, &mut editor.session, &mut editor.game_interfaces, playing) || over_world_panel;
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, if playing { "Game view, playing" } else { "Game view" }));
     if response.clicked() {
         response.request_focus();

@@ -2862,3 +2862,99 @@ fn with_a_gpu_two_graphs_show_side_by_side_in_tabs_of_their_own() {
     keep_for_review(&shown, "graph-tabs-side-by-side");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn with_a_gpu_an_interface_stands_in_the_world_and_answers_the_pointer_there() {
+    let Some((_turn, mut harness)) = gpu_harness() else { return };
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-world-panel-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let editor = harness.state_mut();
+    editor.dispatch("project.new", &json!({ "path": dir }), None);
+    // A blue sign with a button in its middle.
+    let layout = json!({
+        "format": "bayleaf.interface", "version": 1,
+        "root": { "kind": "column", "name": "Sign",
+            "style": { "width": "100%", "height": "100%", "background": "#2050c0ff", "radius": "16px", "alignItems": "center", "justify": "center", "gap": "8px" },
+            "children": [
+                { "kind": "text", "name": "Title", "text": "A sign in the world", "style": { "fontSize": "28px" } },
+                { "kind": "button", "name": "Open", "text": "Open the door", "style": { "fontSize": "24px" } }
+            ] }
+    });
+    editor.dispatch("ui.layout.set", &json!({ "path": "sign.bui", "layout": layout }), None);
+    let script = wat::parse_str(
+        r#"(module
+            (import "bayleaf" "message_is" (func $is (param i32 i32) (result i32)))
+            (import "bayleaf" "self_handle" (func $self (result i32)))
+            (import "bayleaf" "ui_set_text" (func $text (param i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "pressed:Open")
+            (data (i32.const 120) "Title")
+            (data (i32.const 140) "The door opens")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param f32))
+            (func (export "bayleaf_message") (param f32)
+              (if (call $is (i32.const 100) (i32.const 12))
+                (then (drop (call $text (call $self) (i32.const 120) (i32.const 5) (i32.const 140) (i32.const 14)))))))"#,
+    )
+    .unwrap();
+    std::fs::write(dir.join("sign.wasm"), script).unwrap();
+    let interface =
+        json!({ "layout": "sign.bui", "visible": true, "order": 0, "space": "world", "size": [2.4, 1.2], "pointsPerUnit": 200, "faceCamera": true });
+    let transform = json!({ "position": [0.0, 1.8, 0.0], "rotation": [0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0] });
+    let made = editor
+        .dispatch(
+            "scene.object.create",
+            &json!({ "name": "Sign", "components": { "transform": transform, "interface": interface, "scripts": [{ "module": "sign.wasm" }] } }),
+            None,
+        )
+        .unwrap();
+    let sign = bayleaf_core::StableId::parse_hex(made["id"].as_str().unwrap()).unwrap();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(4);
+
+    // Where the sign's middle is on the game's picture.
+    let view = harness.get_by_label("Game view, playing").rect();
+    let at = {
+        let scene = harness.state().session.scene();
+        let camera = bayleaf_render::game_camera(scene, view.width() / view.height());
+        let world = scene.world_matrix(sign).unwrap().w_axis.truncate();
+        let clip = camera.view_proj() * camera.relative_point(world).extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        view.min + egui::vec2((ndc.x + 1.0) / 2.0 * view.width(), (1.0 - ndc.y) / 2.0 * view.height())
+    };
+    assert!(view.contains(at), "the sign is in view");
+    let shown = picture(&mut harness);
+    keep_for_review(&shown, "world-interface");
+    // The sign's blue shows a little above its middle (the title), where the scene had sky or the cube.
+    let probe = at + egui::vec2(0.0, -view.height() * 0.06);
+    let pixel = |p: egui::Pos2| {
+        let i = ((p.y as u32 * shown.width + p.x as u32) * 4) as usize;
+        [shown.rgba[i], shown.rgba[i + 1], shown.rgba[i + 2]]
+    };
+    let blue = pixel(probe + egui::vec2(-view.width() * 0.08, 0.0));
+    assert!(blue[2] > blue[0] + 40 && blue[2] > blue[1], "the panel is drawn in the scene: {blue:?}");
+
+    // A click on the button, through the scene, reaches the sign's script.
+    let press = |harness: &mut Harness<'static, Editor>, pressed: bool| {
+        harness.input_mut().events.push(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(2);
+    };
+    harness.input_mut().events.push(egui::Event::PointerMoved(at));
+    harness.run_steps(2);
+    press(&mut harness, true);
+    press(&mut harness, false);
+    harness.run_steps(2);
+    let state = harness.state_mut().dispatch("play.ui.state", &json!({ "id": sign }), None).unwrap();
+    let title = state["elements"].as_array().unwrap().iter().find(|e| e["name"] == "Title").unwrap()["text"].clone();
+    assert_eq!(title, "The door opens", "{}", harness.state().status);
+    let after = picture(&mut harness);
+    keep_for_review(&after, "world-interface-pressed");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
+    harness.run_steps(2);
+    std::fs::remove_dir_all(&dir).ok();
+}

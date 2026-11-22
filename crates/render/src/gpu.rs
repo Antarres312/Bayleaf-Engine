@@ -513,6 +513,14 @@ impl Renderer {
         self.pipelines.insert(material.key, entry);
     }
 
+    /// Draws the texture `id` for items whose image has that id, instead of uploading their
+    /// image: a picture drawn on the GPU each frame (an interface standing in the world). Image
+    /// groups made with an earlier texture of that id are made again.
+    pub fn set_texture(&mut self, id: u64, texture: wgpu::Texture, view: wgpu::TextureView) {
+        self.textures.insert(id, (texture, view));
+        self.texture_groups.retain(|key, _| !key.contains(&id));
+    }
+
     /// Puts the frame's images and models on the GPU the first time they are drawn, and makes
     /// the image groups its items need.
     fn upload_assets(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, frame: &Frame) {

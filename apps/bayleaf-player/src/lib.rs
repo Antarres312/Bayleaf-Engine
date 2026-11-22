@@ -50,6 +50,8 @@ struct Player {
     gamepads: bayleaf_ui_egui::gamepad::Gamepads,
     /// The game's interfaces over the picture.
     interfaces: bayleaf_ui_egui::game_interface::GameInterfaces,
+    /// The game's interfaces standing in the world.
+    world: bayleaf_ui_egui::world_interface::WorldInterfaces,
     /// Where the profile goes when the game closes, if one is recorded.
     profile: Option<PathBuf>,
     /// How shadows are drawn, from the project's graphics settings.
@@ -134,6 +136,11 @@ impl Player {
             frame.items.extend(particles.draw_items(scene, &frame.camera, &mut assets));
         }
         let extract = gathering.elapsed();
+        // Interfaces standing in the world, answering the pointer where it meets them.
+        let rect = egui::Rect::from_min_size(ui.cursor().min, size);
+        let pointer = bayleaf_ui_egui::world_interface::PointerInput::of(ui, rect);
+        let parts = bayleaf_ui_egui::world_interface::View { gpu, renderer: &mut view.renderer, camera: &frame.camera, pointer: &pointer, interactive: true };
+        let over_world_panel = self.world.prepare(parts, &mut self.session, &mut self.interfaces, &mut frame.items);
         let drawing = std::time::Instant::now();
         view.renderer.render(&gpu.device, &gpu.queue, &view.target, &frame);
         let stats = view.renderer.stats();
@@ -149,7 +156,7 @@ impl Player {
         let image = egui::Image::new(egui::load::SizedTexture::new(view.texture, size)).sense(egui::Sense::click_and_drag());
         let response = ui.add(image);
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Game view"));
-        let over_interface = bayleaf_ui_egui::game_interface::show(ui, response.rect, &mut self.session, &mut self.interfaces, true);
+        let over_interface = bayleaf_ui_egui::game_interface::show(ui, response.rect, &mut self.session, &mut self.interfaces, true) || over_world_panel;
         let pointer = response.hover_pos().map(|p| {
             let local = (p - response.rect.min) / response.rect.size();
             [local.x * 2.0 - 1.0, 1.0 - local.y * 2.0]
@@ -252,6 +259,7 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
         gpu: None,
         gamepads: bayleaf_ui_egui::gamepad::Gamepads::default(),
         interfaces: bayleaf_ui_egui::game_interface::GameInterfaces::default(),
+        world: bayleaf_ui_egui::world_interface::WorldInterfaces::default(),
         shadows,
         effects,
         failure,

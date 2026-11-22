@@ -105,17 +105,29 @@ fn color32(color: Color, opacity: f32) -> egui::Color32 {
 /// answer the player and the session hears about it. Returns whether the pointer is over an
 /// element that takes it, so the game does not also get its clicks.
 pub fn show(ui: &mut egui::Ui, area: egui::Rect, session: &mut Session, cache: &mut GameInterfaces, interactive: bool) -> bool {
-    let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| area.contains(*p));
-    let mut blocked = false;
-    let base = session.script_dir();
     let scene = session.scene();
     let mut list: Vec<(StableId, Interface)> = scene
         .world_matrices()
         .into_iter()
         .filter_map(|(id, _)| scene.get::<Interface>(id).cloned().map(|c| (id, c)))
-        .filter(|(_, c)| !c.layout.is_empty())
+        .filter(|(_, c)| !c.layout.is_empty() && c.space != "world")
         .collect();
     list.sort_by_key(|(_, c)| c.order);
+    show_list(ui, area, session, cache, interactive, list)
+}
+
+/// Draws `list` (interfaces, lowest order first) inside `area`; see [`show`].
+pub(crate) fn show_list(
+    ui: &mut egui::Ui,
+    area: egui::Rect,
+    session: &mut Session,
+    cache: &mut GameInterfaces,
+    interactive: bool,
+    list: Vec<(StableId, Interface)>,
+) -> bool {
+    let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| area.contains(*p));
+    let mut blocked = false;
+    let base = session.script_dir();
     let game = session.game_state();
     let mut inputs: Vec<(StableId, String, Input)> = Vec::new();
     let mut problems: Vec<String> = Vec::new();

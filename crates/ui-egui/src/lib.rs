@@ -34,6 +34,7 @@ mod script_panel;
 mod theme;
 mod thumbnails;
 mod value_editor;
+pub mod world_interface;
 
 pub use dock::{Layout, Panel};
 pub use fonts::install_fonts;
@@ -67,6 +68,9 @@ pub struct Editor {
     game_view: game_view::GameView,
     /// Game interfaces drawn over the Game view.
     game_interfaces: game_interface::GameInterfaces,
+    /// Interfaces standing in the world, as the Game view and the Scene view draw them.
+    world_game: world_interface::WorldInterfaces,
+    world_scene: world_interface::WorldInterfaces,
     /// The Interface panel: the layout open in it and what is picked.
     interface_view: interface_view::InterfaceView,
     /// The screen size the Inspector previews an interface layout at (an index of the sizes offered).
@@ -145,6 +149,8 @@ impl Default for Editor {
             scene_view: scene_view::SceneView::new(),
             game_view: game_view::GameView::default(),
             game_interfaces: game_interface::GameInterfaces::default(),
+            world_game: world_interface::WorldInterfaces::default(),
+            world_scene: world_interface::WorldInterfaces::default(),
             interface_view: interface_view::InterfaceView::default(),
             interface_preview_screen: 0,
             thumbnails: thumbnails::Thumbnails::default(),

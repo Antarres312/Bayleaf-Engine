@@ -127,6 +127,23 @@ before the last change. Every change is a `ui.element.*` command, written at onc
 draw over those with a lower one. The Game view shows interfaces while the game plays, and as a
 preview before; the player draws them over the game.
 
+## In the world
+
+With `space: world` an Interface stands in the scene instead of over the screen: a flat panel at
+its object, turned with it, `size` world units wide and high (`[2, 1]` by default), holding
+`pointsPerUnit` interface points per world unit (200 by default; the picture is at most 2048 points
+on a side). With `faceCamera` it always turns toward the camera, for a name tag or a health bar over
+an enemy. The scene draws it like a sprite: hidden behind what stands in front of it, unlit, and
+through the scene's post-processing, so its colours change with the tone mapping as the scene's do.
+The Scene view shows it where it stands.
+
+While the game plays, the pointer reaches the nearest panel it points at, through the scene, and
+the panel's buttons, toggles, sliders and On Click elements answer as on the screen, with the same
+messages to the scripts; a click on an element that takes the pointer is not also the game's.
+Commands and scripts treat a world interface as any other. Not yet: the keyboard and gamepad on a
+world panel, its elements in the accessibility tree, and panels in front of it hiding it from the
+pointer (the nearest panel answers even behind a wall).
+
 ## While the game plays
 
 The player moves the focus between buttons, toggles, sliders and text fields with Tab, presses with
