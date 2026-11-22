@@ -22,6 +22,7 @@ mod hierarchy;
 pub mod i18n;
 mod input_editor;
 mod inspector;
+mod interface_view;
 mod markdown_view;
 mod profiler_view;
 mod project;
@@ -66,6 +67,8 @@ pub struct Editor {
     game_view: game_view::GameView,
     /// Game interfaces drawn over the Game view.
     game_interfaces: game_interface::GameInterfaces,
+    /// The Interface panel: the layout open in it and what is picked.
+    interface_view: interface_view::InterfaceView,
     /// The screen size the Inspector previews an interface layout at (an index of the sizes offered).
     interface_preview_screen: usize,
     /// Material pictures for the Project panel and the Inspector.
@@ -135,6 +138,7 @@ impl Default for Editor {
             scene_view: scene_view::SceneView::new(),
             game_view: game_view::GameView::default(),
             game_interfaces: game_interface::GameInterfaces::default(),
+            interface_view: interface_view::InterfaceView::default(),
             interface_preview_screen: 0,
             thumbnails: thumbnails::Thumbnails::default(),
             was_playing: false,
@@ -729,6 +733,12 @@ impl Editor {
     }
 
     /// Places a linked copy of a prefab file after the selected object (or at the end) and selects it.
+    /// Opens an interface layout in the Interface panel, with its root picked.
+    pub(crate) fn open_interface(&mut self, path: &std::path::Path) {
+        self.interface_view = interface_view::InterfaceView::open(path);
+        self.show_panel(Panel::Interface);
+    }
+
     pub(crate) fn place_prefab(&mut self, path: &std::path::Path) {
         let scene = self.session.scene();
         let (parent, index) = match self.selected {

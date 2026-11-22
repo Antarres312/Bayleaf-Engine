@@ -2445,6 +2445,11 @@ fn with_a_gpu_a_game_interface_answers_the_player_and_reads_in_the_accessibility
     keep_for_review(&shown, "game-interface");
     harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
     harness.run_steps(2);
+    // The layout in the Interface panel, for review.
+    harness.state_mut().open_interface(&dir.join("menu.bui"));
+    harness.run_steps(3);
+    let panel = picture(&mut harness);
+    keep_for_review(&panel, "interface-panel");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -2471,5 +2476,71 @@ fn the_inspector_previews_an_interface_at_the_screen_size_chosen() {
     harness.run_steps(2);
     let upright = start(&harness);
     assert!(upright.center().y > wide.center().y + 20.0, "an upright screen is taller, so the centred button sits lower: {wide:?} then {upright:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn the_interface_panel_edits_a_layout_from_its_tree_fields_and_preview() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-interface-panel-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().dispatch("asset.create", &json!({ "kind": "interface", "folder": "", "name": "menu" }), None);
+    let file = dir.join("menu.bui");
+    harness.state_mut().open_interface(&file);
+    harness.run_steps(2);
+    let read = || bayleaf_interface::Layout::load(&file).unwrap();
+
+    // The tree lists the starter's elements; picking one shows its fields.
+    harness.get_by_label("Button: Start").click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().interface_view.selected, vec![1]);
+    // Added after the picked button, picked, and renamed in its Name field.
+    harness.get_by_label("Add").click();
+    harness.run();
+    harness.get_by_label("Toggle").click();
+    harness.run_steps(2);
+    assert_eq!(read().root.children[2].kind, bayleaf_interface::Kind::Toggle);
+    assert_eq!(harness.state().interface_view.selected, vec![2]);
+    harness.get_by_label("Name").click();
+    harness.run();
+    harness.get_by_label("Name").type_text("Sound");
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    assert_eq!(read().root.children[2].name, "Sound", "{}", harness.state().status);
+    // A style property, added from the list with a value to start from; Undo takes it back.
+    harness.get_by_label("Add Property").click();
+    harness.run();
+    harness.get_by_label("fontSize").click();
+    harness.run_steps(2);
+    assert!(read().root.children[2].style.contains_key("fontSize"), "{} {:?}", harness.state().status, read().root.children[2]);
+    harness.get_by_label("Undo").click();
+    harness.run_steps(2);
+    assert!(!read().root.children[2].style.contains_key("fontSize"), "undone");
+    assert_eq!(read().root.children[2].name, "Sound", "only the last change");
+
+    // A click in the preview picks the element under it.
+    let start = harness
+        .query_all(egui_kittest::kittest::By::new().predicate(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("Start")))
+        .next()
+        .expect("the preview shows the Start button")
+        .rect();
+    harness.input_mut().events.push(egui::Event::PointerMoved(start.center()));
+    harness.run();
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: start.center(),
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+    harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: start.center(),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(2);
+    assert_eq!(harness.state().interface_view.selected, vec![1], "the Start button, picked in the preview");
     std::fs::remove_dir_all(&dir).ok();
 }

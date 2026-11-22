@@ -54,6 +54,7 @@ Unclear means no. A rename changes labels only and keeps command ids and stored 
 | Language, Automatic, Pseudo | not yet | Not checked yet | Generic terms; same |
 | Import Settings, Scale, Up Axis, Y Up, Z Up, Mipmaps, Import Files, Place File, Apply Image, Brought in | not yet | Not checked yet | Generic terms; same |
 | Player (export option) | not yet | Not checked yet | Generic term; same |
+| Interface (panel), Add, Remove, Up, Down, Out, In, Add Property, Undo, Edit in Interface Panel, Add/Remove/Move/Edit Interface Element | not yet | Not checked yet | Generic editor terms; same |
 | Interface, Interface Style, Layout, Order, Screen, Read Interface, Write Interface, Interface State, Press Interface Element, Change Interface Element | not yet | Not checked yet | Generic terms; same |
 
 Command ids, preference keys, code and internal docs are not covered by this check.

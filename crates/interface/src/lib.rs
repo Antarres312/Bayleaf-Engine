@@ -15,7 +15,7 @@ mod layout;
 mod style;
 
 pub use layout::{Placed, Rect, TextMeasure, layout};
-pub use style::{Align, Color, Direction, Justify, Length, Rule, STYLE_EXTENSION, STYLE_FORMAT, Style, StyleSheet, TextAlign};
+pub use style::{Align, Color, Direction, Justify, Length, PROPERTIES, Rule, STYLE_EXTENSION, STYLE_FORMAT, Style, StyleSheet, TextAlign};
 
 pub const LAYOUT_FORMAT: &str = "bayleaf.interface";
 pub const LAYOUT_EXTENSION: &str = "bui";
@@ -253,6 +253,15 @@ impl Layout {
     /// The element named `name`.
     pub fn find(&self, name: &str) -> Option<&Element> {
         self.root.walk().into_iter().find(|e| e.name == name)
+    }
+
+    /// The element at `at`: child indices from the root (empty for the root itself).
+    pub fn element_at(&self, at: &[usize]) -> Option<&Element> {
+        at.iter().try_fold(&self.root, |element, i| element.children.get(*i))
+    }
+
+    pub fn element_at_mut(&mut self, at: &[usize]) -> Option<&mut Element> {
+        at.iter().try_fold(&mut self.root, |element, i| element.children.get_mut(*i))
     }
 }
 

@@ -23,11 +23,23 @@ pub enum Panel {
     Game,
     /// Frame times by part while the game plays, below the scene view.
     Profiler,
+    /// A game interface layout edited visually, a tab beside the scene view.
+    Interface,
 }
 
 impl Panel {
-    pub const ALL: [Panel; 9] =
-        [Panel::Hierarchy, Panel::Scene, Panel::Game, Panel::Graph, Panel::Inspector, Panel::Project, Panel::Console, Panel::ProjectSettings, Panel::Profiler];
+    pub const ALL: [Panel; 10] = [
+        Panel::Hierarchy,
+        Panel::Scene,
+        Panel::Game,
+        Panel::Graph,
+        Panel::Interface,
+        Panel::Inspector,
+        Panel::Project,
+        Panel::Console,
+        Panel::ProjectSettings,
+        Panel::Profiler,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -40,6 +52,7 @@ impl Panel {
             Panel::ProjectSettings => tl("Project Settings"),
             Panel::Game => tl("Game"),
             Panel::Profiler => tl("Profiler"),
+            Panel::Interface => tl("Interface"),
         }
     }
 
@@ -72,7 +85,7 @@ impl Layout {
     }
 
     pub fn build(self) -> DockState<Panel> {
-        let mut state = DockState::new(vec![Panel::Scene, Panel::Game, Panel::Graph, Panel::ProjectSettings]);
+        let mut state = DockState::new(vec![Panel::Scene, Panel::Game, Panel::Graph, Panel::Interface, Panel::ProjectSettings]);
         let surface = state.main_surface_mut();
         match self {
             Layout::Standard => {
@@ -140,7 +153,7 @@ pub(crate) fn set_open(dock: &mut DockState<Panel>, panel: Panel, open: bool) {
                 let node = scene.node_path().node;
                 match panel {
                     // The graph editor shares the scene view's area, as another tab.
-                    Panel::Graph | Panel::ProjectSettings | Panel::Game => {
+                    Panel::Graph | Panel::ProjectSettings | Panel::Game | Panel::Interface => {
                         surface[node].append_tab(panel);
                     }
                     Panel::Hierarchy => {
@@ -191,6 +204,7 @@ impl TabViewer for Panels<'_> {
             Panel::ProjectSettings => project_settings::show(self.editor, ui),
             Panel::Game => game_view::show(self.editor, ui, self.gpu),
             Panel::Profiler => profiler_view::show(self.editor, ui),
+            Panel::Interface => crate::interface_view::show(self.editor, ui),
         }
     }
 

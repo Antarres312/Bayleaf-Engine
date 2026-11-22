@@ -271,10 +271,15 @@ fn interface_preview(ui: &mut egui::Ui, editor: &mut Editor, path: &Path) {
             .response
             .labelled_by(label);
     });
+    if ui.button(tl("Edit in Interface Panel")).on_hover_text(tl("Change its elements and their style, with the preview beside them")).clicked() {
+        editor.open_interface(path);
+    }
     let base = editor.session.script_dir();
     let relative = path.strip_prefix(&base).unwrap_or(path).to_string_lossy().into_owned();
     let screen = screens[editor.interface_preview_screen.min(screens.len() - 1)].1;
-    if let Err(problem) = crate::game_interface::preview(ui, ui.available_width(), screen, &base, &relative, &mut editor.game_interfaces) {
+    if let Err(problem) =
+        crate::game_interface::preview(ui, egui::vec2(ui.available_width(), f32::INFINITY), screen, &base, &relative, &mut editor.game_interfaces)
+    {
         ui.add(
             egui::Label::new(egui::RichText::new(crate::i18n::tf("This interface does not read: {problem}", &[("problem", &problem)])).color(t.text)).wrap(),
         );

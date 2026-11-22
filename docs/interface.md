@@ -92,6 +92,18 @@ Layout is flexible boxes only, one line each, so a layout reads the same way eve
 its children along its direction with its gap, gives the room left over to those that grow (or
 takes it from those that shrink), and places them across by `alignItems`.
 
+## Editing a layout
+
+Double-click a layout in the Project panel (or Edit in Interface Panel in the Inspector) to open it
+in the **Interface** panel. On the left is the element tree: Add puts a new element into the picked
+one when it holds others, else after it; Remove, Up, Down, Out (out of the element holding it) and
+In (into the element above it) rearrange; Delete on a focused row removes it. In the middle the
+layout shows as a game would at the chosen screen size, and a click picks the element under the
+pointer. On the right are the picked element's fields and its own style: a field is written when
+you leave it, Add Property lists every style property with a value to start from, and a value that
+does not read is refused with the reason in the status bar. Undo puts back the layout as it was
+before the last change. Every change is a `ui.element.*` command, written at once.
+
 ## The Interface component
 
 `interface` has a `layout` (a `.bui` file), `visible`, and an `order`: interfaces with a higher order
@@ -116,7 +128,12 @@ play puts every interface back as its files say.
 ## Commands
 
 `ui.layout.get` and `ui.layout.set` (`{path, layout}`), `ui.style.get` and `ui.style.set`
-(`{path, style}`) read and write the files, checking them first. While playing, `play.ui.state`
+(`{path, style}`) read and write the files, checking them first. Elements are addressed by their
+place in the tree, child indices from the root (`[]` is the root, `[1, 0]` the first child of the
+second): `ui.element.add` (`{path, into?, kind, index?}`), `ui.element.remove` (`{path, at}`),
+`ui.element.move` (`{path, at, into, index}`) and `ui.element.set` (`{path, at, element}`, the fields
+to change; `style` replaces the whole style) change one element, and write nothing when the result
+would not read. While playing, `play.ui.state`
 (`{id}`) gives an interface as it shows, `play.ui.press` (`{id, element}`) presses a button or flips a
 toggle, and `play.ui.change` (`{id, element, value | text}`) moves a slider or types into a text
 field, as the player would. `asset.create` makes a layout (`interface`) or a style file
@@ -124,7 +141,7 @@ field, as the player would. `asset.create` makes a layout (`interface`) or a sty
 
 ## Not yet
 
-Editing a layout visually in its own panel (the Inspector previews a layout at a chosen screen
-size), interfaces on surfaces in the world, moving the focus with a gamepad, reading an element's
+Editing style files in the panel (they are edited as text for now), dragging elements in the tree,
+interfaces on surfaces in the world, moving the focus with a gamepad, reading an element's
 value or text from a script, visual script nodes for interfaces, scrolling lists, and right-to-left
 text.

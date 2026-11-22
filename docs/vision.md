@@ -345,9 +345,10 @@ No crate below L6 may use egui, eframe, winit or rfd.
      in the Game view and the player, keyboard focus, `pressed:`/`changed:` messages, `ui_set_text`,
      `ui_set_value` and `ui_show`, values bound to the game's state, `ui.*` and `play.ui.*`
      commands, each element in the accessibility tree, and a preview at chosen screen sizes in the
-     Inspector; see `docs/interface.md`. Still to do: the visual editing panel (element tree and
-     style), interfaces on surfaces in the world, gamepad focus, reading values from scripts,
-     visual script nodes, scrolling lists.)
+     Inspector; see `docs/interface.md`. The Interface panel edits a layout: the element tree, a
+     live preview where a click picks an element, the element's fields and style, through
+     `ui.element.*`. Still to do: editing style files in the panel, interfaces on surfaces in the
+     world, gamepad focus, reading values from scripts, visual script nodes, scrolling lists.)
    - **Particle systems.** A Particle Emitter component: when and how many particles start (a rate,
      bursts, a shape to start on: point, sphere, cone, box, a mesh's surface), how they live (life
      length, speed, gravity, drag, size and colour over their life as curves and gradients,

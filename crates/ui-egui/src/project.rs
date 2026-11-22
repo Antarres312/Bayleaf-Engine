@@ -383,6 +383,8 @@ enum Action {
     AskDelete(PathBuf),
     /// Save this object (and its children) as a new prefab in this folder.
     MakePrefab(bayleaf_core::StableId, PathBuf),
+    /// Edit an interface layout in the Interface panel.
+    OpenInterface(PathBuf),
     /// Bring files from the system into this folder.
     Import(Vec<PathBuf>, PathBuf),
 }
@@ -499,6 +501,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 }
             }
         }
+        Some(Action::OpenInterface(path)) => editor.open_interface(&path),
         Some(Action::Import(files, folder)) => {
             // Only into the project; a drop on the engine's folders goes to the open project folder.
             let folder = editor.project.is_in_project(&folder).then_some(folder);
@@ -700,9 +703,10 @@ fn create(editor: &mut Editor, naming: &Naming, name: &str) -> Result<PathBuf, S
         AssetKind::Material | AssetKind::VisualScript => editor.open_graph(&path),
         AssetKind::Script => editor.build_script(&path),
         // An Input Map opens in the Inspector, where its actions are edited.
-        AssetKind::InputMap | AssetKind::Lighting | AssetKind::PostProcessing | AssetKind::Interface | AssetKind::InterfaceStyle => {
+        AssetKind::InputMap | AssetKind::Lighting | AssetKind::PostProcessing | AssetKind::InterfaceStyle => {
             editor.inspect_file(path.clone());
         }
+        AssetKind::Interface => editor.open_interface(&path),
         AssetKind::Folder | AssetKind::Scene => {}
     }
     Ok(path)
@@ -1270,7 +1274,8 @@ fn default_action(entry: &Entry) -> Option<Action> {
     let path = entry.path.clone();
     match entry.kind {
         // A click already shows an Input Map in the Inspector, where it is edited.
-        Kind::Folder | Kind::InputMap | Kind::Lighting | Kind::PostProcessing | Kind::Interface | Kind::InterfaceStyle => None,
+        Kind::Folder | Kind::InputMap | Kind::Lighting | Kind::PostProcessing | Kind::InterfaceStyle => None,
+        Kind::Interface => Some(Action::OpenInterface(path)),
         Kind::Scene | Kind::Project => Some(Action::OpenScene(path)),
         Kind::Material | Kind::VisualScript => Some(Action::OpenGraph(path)),
         Kind::Prefab => Some(Action::OpenPrefab(path)),

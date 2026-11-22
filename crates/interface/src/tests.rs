@@ -174,3 +174,12 @@ fn a_list_cuts_off_entries_past_its_bottom() {
     assert!(last.clip.h == 0.0, "and none of it shows");
     assert!(placed(&all, "Entry 0").clip.h > 0.0);
 }
+
+#[test]
+fn every_listed_property_starts_from_a_value_it_takes() {
+    for (property, value) in PROPERTIES {
+        assert!(Style::defaults(Kind::Panel).apply(property, value).is_ok(), "{property}: {value}");
+    }
+    // And the list has every property the styles read: an unknown name says so.
+    assert!(Style::defaults(Kind::Panel).apply("float", "left").is_err());
+}

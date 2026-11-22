@@ -159,15 +159,54 @@ pub fn show(ui: &mut egui::Ui, area: egui::Rect, session: &mut Session, cache: &
 pub(crate) const PREVIEW_SCREENS: [(&str, [f32; 2]); 4] =
     [("1280 x 720", [1280.0, 720.0]), ("1920 x 1080", [1920.0, 1080.0]), ("800 x 600", [800.0, 600.0]), ("Phone, upright (390 x 844)", [390.0, 844.0])];
 
+/// A preview drawn: its box, and where each element landed with its place in the tree (child
+/// indices from the root).
+pub(crate) struct Previewed {
+    pub area: egui::Rect,
+    pub elements: Vec<(egui::Rect, Vec<usize>)>,
+}
+
+/// The layout file `layout` (relative to `base`) read, again when it or its style files change.
+pub(crate) fn loaded(cache: &mut GameInterfaces, base: &Path, layout: &str) -> Result<Arc<Loaded>, String> {
+    cache.load(base, layout)
+}
+
+/// Every element of `root` by its address, with its place in the tree.
+fn places(root: &bayleaf_interface::Element) -> HashMap<*const bayleaf_interface::Element, Vec<usize>> {
+    let mut out = HashMap::new();
+    let mut pending = vec![(root, Vec::new())];
+    while let Some((element, at)) = pending.pop() {
+        for (i, child) in element.children.iter().enumerate() {
+            let mut child_at = at.clone();
+            child_at.push(i);
+            pending.push((child, child_at));
+        }
+        out.insert(std::ptr::from_ref(element), at);
+    }
+    out
+}
+
 /// The layout file `layout` (relative to `base`) as a game `screen` points wide and high shows it,
-/// made smaller to fit `width`. It does not answer the pointer: it is a picture of the layout.
-pub(crate) fn preview(ui: &mut egui::Ui, width: f32, screen: [f32; 2], base: &Path, layout: &str, cache: &mut GameInterfaces) -> Result<(), String> {
+/// made smaller to fit `room`. It does not answer the pointer: it is a picture of the layout.
+pub(crate) fn preview(
+    ui: &mut egui::Ui,
+    room: egui::Vec2,
+    screen: [f32; 2],
+    base: &Path,
+    layout: &str,
+    cache: &mut GameInterfaces,
+) -> Result<Previewed, String> {
     let loaded = cache.load(base, layout)?;
-    let fit = (width / screen[0]).min(1.0);
-    let (area, _) = ui.allocate_exact_size(egui::vec2(screen[0] * fit, screen[1] * fit), egui::Sense::hover());
+    let fit = (room.x / screen[0]).min(room.y / screen[1]).min(1.0);
+    // Centred across the room it has.
+    let size = egui::vec2(screen[0] * fit, screen[1] * fit);
+    let (room_rect, _) = ui.allocate_exact_size(egui::vec2(room.x.min(ui.available_width()).max(size.x), size.y), egui::Sense::hover());
+    let area = egui::Rect::from_center_size(egui::pos2(room_rect.center().x, room_rect.center().y), size);
     let painter = ui.painter_at(area);
     // A dark backdrop stands for the game behind the interface.
     painter.rect_filled(area, 2.0, egui::Color32::from_rgb(28, 32, 40));
+    // Its edge, so the screen's size shows against the panel.
+    ui.painter().rect_stroke(area, 2.0, egui::Stroke::new(1.0, crate::theme::tokens(ui).text_muted), egui::StrokeKind::Outside);
     let root = loaded.layout.root.clone();
     cache.load_images(ui.ctx(), base, &root);
     let placed = {
@@ -179,7 +218,9 @@ pub(crate) fn preview(ui: &mut egui::Ui, width: f32, screen: [f32; 2], base: &Pa
     for (index, item) in placed.iter().enumerate() {
         draw(ui, &drawing, index, item, cache, &mut inputs);
     }
-    Ok(())
+    let at = places(&root);
+    let elements = placed.iter().filter_map(|p| Some((to_screen(p.rect, area), at.get(&std::ptr::from_ref(p.element))?.clone()))).collect();
+    Ok(Previewed { area, elements })
 }
 
 fn to_screen(rect: bayleaf_interface::Rect, area: egui::Rect) -> egui::Rect {

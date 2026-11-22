@@ -15,6 +15,34 @@ pub const STYLE_EXTENSION: &str = "bstyle";
 /// Most rules in one style file.
 pub const MAX_RULES: usize = 1024;
 
+/// Every style property, with a value to start from when one is added.
+pub const PROPERTIES: [(&str, &str); 24] = [
+    ("direction", "row"),
+    ("gap", "8px"),
+    ("padding", "8px"),
+    ("width", "100px"),
+    ("height", "40px"),
+    ("minWidth", "0px"),
+    ("minHeight", "0px"),
+    ("maxWidth", "400px"),
+    ("maxHeight", "400px"),
+    ("grow", "1"),
+    ("shrink", "1"),
+    ("alignItems", "center"),
+    ("alignSelf", "center"),
+    ("justify", "center"),
+    ("background", "#202020c0"),
+    ("color", "#ffffff"),
+    ("borderColor", "#808080"),
+    ("borderWidth", "1px"),
+    ("radius", "6px"),
+    ("fontSize", "18px"),
+    ("textAlign", "center"),
+    ("visible", "true"),
+    ("opacity", "1"),
+    ("accent", "#5fb3f9"),
+];
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StyleSheet {

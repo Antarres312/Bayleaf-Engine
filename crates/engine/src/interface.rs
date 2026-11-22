@@ -159,6 +159,30 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             "{path, layout}: checks and writes an interface layout (.bui): elements {kind, name?, classes?, text?, image?, value?, min?, max?, bind?, style?, children?}",
             layout_set,
         ),
+        spec(
+            "ui.element.add",
+            "Add Interface Element",
+            "{path, into?, kind, index?}: adds an element of kind to a layout, inside the element at into (child indices from the root; the root when left out), at index or last. Returns {at}",
+            element_add,
+        ),
+        spec(
+            "ui.element.remove",
+            "Remove Interface Element",
+            "{path, at}: removes the element at at (child indices from the root) and what it holds",
+            element_remove,
+        ),
+        spec(
+            "ui.element.move",
+            "Move Interface Element",
+            "{path, at, into, index}: moves the element at at into the element at into, at index (counted without it). Returns {at}",
+            element_move,
+        ),
+        spec(
+            "ui.element.set",
+            "Edit Interface Element",
+            "{path, at, element: {kind?, name?, classes?, text?, image?, value?, min?, max?, bind?, style?}}: changes the given fields of the element at at; style replaces the element's whole style",
+            element_set,
+        ),
         spec("ui.style.get", "Read Interface Style", "{path}: an interface style file (.bstyle) as {style: {format, version, rules}}", style_get),
         spec(
             "ui.style.set",
@@ -220,6 +244,151 @@ fn layout_set(session: &mut Session, params: &Value) -> Result<Value, CommandErr
     let path = checked(session, &p.path, bayleaf_interface::LAYOUT_EXTENSION, Access::Write)?;
     std::fs::write(&path, p.layout.to_text()).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", path.display())))?;
     Ok(json!({ "path": path }))
+}
+
+/// Reads a layout, changes it with `change`, checks the result and writes it; nothing is written
+/// when the change or the check fails.
+fn edit_layout<T>(session: &Session, path: &Path, change: impl FnOnce(&mut Layout) -> Result<T, String>) -> Result<T, CommandError> {
+    let path = checked(session, path, bayleaf_interface::LAYOUT_EXTENSION, Access::Write)?;
+    let mut layout = Layout::load(&path).map_err(CommandError::Failed)?;
+    let out = change(&mut layout).map_err(CommandError::BadParams)?;
+    layout.validate().map_err(CommandError::BadParams)?;
+    std::fs::write(&path, layout.to_text()).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", path.display())))?;
+    Ok(out)
+}
+
+fn no_element(at: &[usize]) -> String {
+    format!("there is no element at {at:?}")
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AddParams {
+    path: PathBuf,
+    /// The element to add into (child indices from the root; empty for the root).
+    #[serde(default)]
+    into: Vec<usize>,
+    kind: Kind,
+    /// Where among its children; the end when left out.
+    #[serde(default)]
+    index: Option<usize>,
+}
+
+fn element_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: AddParams = parse(params)?;
+    let at = edit_layout(session, &p.path, |layout| {
+        let parent = layout.element_at_mut(&p.into).ok_or_else(|| no_element(&p.into))?;
+        if !parent.kind.holds_children() {
+            return Err(format!("a {} holds no other elements; add into a panel, row, column or list", parent.kind.name()));
+        }
+        let index = p.index.unwrap_or(parent.children.len()).min(parent.children.len());
+        let mut element = Element::new(p.kind);
+        // Something to see and press, to change from.
+        if matches!(p.kind, Kind::Text | Kind::Button | Kind::Toggle) {
+            p.kind.name().clone_into(&mut element.text);
+            element.text[..1].make_ascii_uppercase();
+        }
+        parent.children.insert(index, element);
+        let mut at = p.into.clone();
+        at.push(index);
+        Ok(at)
+    })?;
+    Ok(json!({ "at": at }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AtParams {
+    path: PathBuf,
+    at: Vec<usize>,
+}
+
+fn element_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: AtParams = parse(params)?;
+    edit_layout(session, &p.path, |layout| {
+        let (index, parent) = p.at.split_last().ok_or("the root element stays; change it instead")?;
+        let parent = layout.element_at_mut(parent).ok_or_else(|| no_element(&p.at))?;
+        if *index >= parent.children.len() {
+            return Err(no_element(&p.at));
+        }
+        parent.children.remove(*index);
+        Ok(())
+    })?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MoveParams {
+    path: PathBuf,
+    at: Vec<usize>,
+    /// The element to move it into.
+    into: Vec<usize>,
+    /// Where among the new parent's children, counted after it is taken out.
+    index: usize,
+}
+
+fn element_move(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: MoveParams = parse(params)?;
+    let at = edit_layout(session, &p.path, |layout| {
+        let (index, from) = p.at.split_last().ok_or("the root element cannot move")?;
+        if p.into.starts_with(&p.at) {
+            return Err("an element cannot move into itself".to_owned());
+        }
+        let target = layout.element_at(&p.into).ok_or_else(|| no_element(&p.into))?;
+        if !target.kind.holds_children() {
+            return Err(format!("a {} holds no other elements", target.kind.name()));
+        }
+        let parent = layout.element_at_mut(from).ok_or_else(|| no_element(&p.at))?;
+        if *index >= parent.children.len() {
+            return Err(no_element(&p.at));
+        }
+        let element = parent.children.remove(*index);
+        // Taking it out shifts its later siblings, which may hold the target.
+        let mut into = p.into.clone();
+        if into.len() > from.len() && into.starts_with(from) && into[from.len()] > *index {
+            into[from.len()] -= 1;
+        }
+        let target = layout.element_at_mut(&into).ok_or_else(|| no_element(&p.into))?;
+        let index = p.index.min(target.children.len());
+        target.children.insert(index, element);
+        into.push(index);
+        Ok(into)
+    })?;
+    Ok(json!({ "at": at }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetParams {
+    path: PathBuf,
+    at: Vec<usize>,
+    /// The fields to change: kind, name, classes, text, image, value, min, max, bind or style (the
+    /// whole map). Children stay.
+    element: serde_json::Map<String, Value>,
+}
+
+fn element_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: SetParams = parse(params)?;
+    if p.element.contains_key("children") {
+        return Err(CommandError::BadParams("children change with ui.element.add, remove and move".to_owned()));
+    }
+    edit_layout(session, &p.path, |layout| {
+        let element = layout.element_at_mut(&p.at).ok_or_else(|| no_element(&p.at))?;
+        let mut value = serde_json::to_value(&*element).map_err(|e| e.to_string())?;
+        for (key, field) in &p.element {
+            value[key] = field.clone();
+        }
+        let mut changed: Element = serde_json::from_value(value).map_err(|e| format!("element: {e}"))?;
+        changed.children = std::mem::take(&mut element.children);
+        if !changed.children.is_empty() && !changed.kind.holds_children() {
+            element.children = changed.children;
+            return Err(format!("a {} holds no other elements; remove its children first", changed.kind.name()));
+        }
+        *element = changed;
+        Ok(())
+    })?;
+    Ok(json!({}))
 }
 
 fn style_get(session: &mut Session, params: &Value) -> Result<Value, CommandError> {

@@ -2424,3 +2424,47 @@ fn a_game_exports_for_another_system_with_a_player_built_there() {
     }
     std::fs::remove_dir_all(&base).ok();
 }
+
+#[test]
+fn interface_elements_are_added_moved_changed_and_removed_one_by_one() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-interface-elements-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    registry.execute(&mut session, "project.new", &json!({"path": dir})).unwrap();
+    registry.execute(&mut session, "asset.create", &json!({"kind": "interface", "folder": "", "name": "menu"})).unwrap();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params);
+    let root = |session: &mut Session| registry.execute(session, "ui.layout.get", &json!({"path": "menu.bui"})).unwrap()["layout"]["root"].clone();
+    let path = "menu.bui";
+
+    // The starter is a title and a Start button; a row goes after them, a button into the row.
+    let row = run(&mut session, "ui.element.add", json!({"path": path, "kind": "row"})).unwrap()["at"].clone();
+    assert_eq!(row, json!([2]));
+    let quit = run(&mut session, "ui.element.add", json!({"path": path, "into": [2], "kind": "button"})).unwrap()["at"].clone();
+    assert_eq!(quit, json!([2, 0]));
+    run(&mut session, "ui.element.set", json!({"path": path, "at": [2, 0], "element": {"name": "Quit", "text": "Quit", "style": {"grow": "1"}}})).unwrap();
+    // The Start button moves into the row, before Quit; the row moves up as Start leaves.
+    let moved = run(&mut session, "ui.element.move", json!({"path": path, "at": [1], "into": [2], "index": 0})).unwrap()["at"].clone();
+    assert_eq!(moved, json!([1, 0]));
+    let tree = root(&mut session);
+    let names: Vec<&str> = tree["children"][1]["children"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Start", "Quit"]);
+    assert_eq!(tree["children"][1]["children"][1]["style"]["grow"], "1");
+
+    // What would break the layout is refused and nothing is written.
+    let before = root(&mut session);
+    assert!(run(&mut session, "ui.element.add", json!({"path": path, "into": [0], "kind": "button"})).is_err(), "text holds nothing");
+    assert!(run(&mut session, "ui.element.move", json!({"path": path, "at": [1], "into": [1, 0], "index": 0})).is_err(), "not into itself");
+    assert!(
+        run(&mut session, "ui.element.set", json!({"path": path, "at": [1, 1], "element": {"style": {"width": "12"}}})).is_err(),
+        "a length needs its unit"
+    );
+    assert!(run(&mut session, "ui.element.set", json!({"path": path, "at": [1, 1], "element": {"name": "Title"}})).is_err(), "names are used once");
+    assert!(run(&mut session, "ui.element.set", json!({"path": path, "at": [1], "element": {"kind": "text"}})).is_err(), "a row with children stays a holder");
+    assert!(run(&mut session, "ui.element.remove", json!({"path": path, "at": []})).is_err(), "the root stays");
+    assert_eq!(root(&mut session), before);
+
+    run(&mut session, "ui.element.remove", json!({"path": path, "at": [1]})).unwrap();
+    assert_eq!(root(&mut session)["children"].as_array().unwrap().len(), 1, "the row went with both buttons");
+    std::fs::remove_dir_all(&dir).ok();
+}
