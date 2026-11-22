@@ -1325,6 +1325,10 @@ impl ProjectView {
                         (true, false) => Kind::Folder,
                         _ => Kind::of(&path),
                     };
+                    // The project file is the project itself, opened from the File menu; it is not listed.
+                    if kind == Kind::Project {
+                        return None;
+                    }
                     Some(Entry { path, name, kind })
                 })
                 .collect();
@@ -1350,12 +1354,13 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn scans_folders_first_and_skips_hidden_and_build_folders() {
+    fn scans_folders_first_and_skips_hidden_and_build_folders_and_the_project_file() {
         let dir = std::env::temp_dir().join(format!("bayleaf-project-{}", std::process::id()));
         for sub in ["scripts", "target", ".git"] {
             std::fs::create_dir_all(dir.join(sub)).unwrap();
         }
         std::fs::write(dir.join("a.bscene"), "{}").unwrap();
+        std::fs::write(dir.join("game.bproject"), "{}").unwrap();
         std::fs::write(dir.join("scripts").join("spin.wasm"), [0u8]).unwrap();
         let mut view = ProjectView::default();
         view.rescan(Some(dir.clone()));
