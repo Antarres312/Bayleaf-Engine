@@ -101,12 +101,16 @@ struct GpuMesh {
 }
 
 /// What a frame drew and what the renderer keeps on the GPU.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RenderStats {
     pub draw_calls: u32,
     pub triangles: u64,
     pub mesh_bytes: u64,
     pub image_bytes: u64,
+    /// The GPU's own time for the newest frame it has measured, in milliseconds.
+    pub gpu_ms: Option<f32>,
+    /// Whether the device measures GPU time at all (it needs timestamp queries).
+    pub gpu_timed: bool,
 }
 
 /// Offscreen colour, multisample and depth textures of one size.
@@ -265,6 +269,9 @@ pub struct Renderer {
     models: HashMap<u64, GpuMesh>,
     /// Draw calls and triangles of the last frame's scene.
     drawn: (u32, u64),
+    /// The GPU's time for each frame: made at the first frame (it needs the queue), `None` inside
+    /// when the device cannot write timestamps.
+    timer: Option<Option<crate::timing::GpuTimer>>,
 }
 
 impl Renderer {
@@ -455,6 +462,7 @@ impl Renderer {
             texture_groups: HashMap::new(),
             models: HashMap::new(),
             drawn: (0, 0),
+            timer: None,
         }
     }
 
@@ -471,7 +479,15 @@ impl Renderer {
                 u64::from(size.width) * u64::from(size.height) * 4 * 4 / 3
             })
             .sum();
-        RenderStats { draw_calls: self.drawn.0, triangles: self.drawn.1, mesh_bytes, image_bytes }
+        let timer = self.timer.as_ref().and_then(Option::as_ref);
+        RenderStats {
+            draw_calls: self.drawn.0,
+            triangles: self.drawn.1,
+            mesh_bytes,
+            image_bytes,
+            gpu_ms: timer.and_then(crate::timing::GpuTimer::last),
+            gpu_timed: timer.is_some_and(crate::timing::GpuTimer::works),
+        }
     }
 
     pub fn material_error(&self) -> Option<&str> {
@@ -618,6 +634,10 @@ impl Renderer {
         }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("bayleaf frame") });
+        let timer = self.timer.get_or_insert_with(|| crate::timing::GpuTimer::new(device, queue));
+        if let Some(timer) = timer {
+            timer.begin(device, &mut encoder);
+        }
         let mut drawn = (0u32, 0u64);
         let faces: Vec<Mat4> = shadows.iter().flat_map(|v| v.faces.iter().copied()).collect();
         for (layer, matrix) in faces.iter().enumerate() {
@@ -761,7 +781,14 @@ impl Renderer {
         if !selected.is_empty() {
             self.outline(device, &mut encoder, target, &selected);
         }
+        let timer = self.timer.as_mut().and_then(Option::as_mut);
+        if let Some(timer) = timer {
+            timer.end(&mut encoder);
+        }
         queue.submit([encoder.finish()]);
+        if let Some(timer) = self.timer.as_mut().and_then(Option::as_mut) {
+            timer.after_submit();
+        }
     }
 
     /// Outlines the selected shapes: draws them into the target's mask, then paints a band around

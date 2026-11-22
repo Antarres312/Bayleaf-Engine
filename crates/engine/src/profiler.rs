@@ -1,6 +1,6 @@
 //! The profiler: while it records, each play step's time by part (scripts, each script, physics,
-//! streaming, sound, particles) and, from the views, the time to gather and draw the frame and
-//! what was drawn. It keeps the last few thousand frames; `profile.*` commands read them.
+//! streaming, sound, particles) and, from the views, the time to gather and draw the frame, the
+//! GPU's own time where the device measures it, and what was drawn. It keeps the last few thousand frames; `profile.*` commands read them.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -32,6 +32,9 @@ pub struct FrameProfile {
     pub extract: Option<f32>,
     /// Recording and sending the drawing to the GPU.
     pub draw: Option<f32>,
+    /// The GPU's own time for the newest frame it measured (a frame or two behind), where the
+    /// device can measure it.
+    pub gpu: Option<f32>,
     pub draw_calls: u32,
     pub triangles: u64,
     /// Bytes of meshes and of images on the GPU.
@@ -58,11 +61,17 @@ pub struct DrawnStats {
     pub triangles: u64,
     pub mesh_bytes: u64,
     pub image_bytes: u64,
+    /// The GPU's time in milliseconds, see [`FrameProfile::gpu`].
+    pub gpu: Option<f32>,
+    /// Whether the view's device measures GPU time at all.
+    pub gpu_timed: bool,
 }
 
 #[derive(Default)]
 pub struct Profiler {
     recording: bool,
+    /// Whether the views' devices measure GPU time; unknown until a view has drawn.
+    gpu_timed: Option<bool>,
     frames: VecDeque<FrameProfile>,
     current: FrameProfile,
 }
@@ -74,6 +83,11 @@ fn ms(d: Duration) -> f32 {
 impl Profiler {
     pub fn is_recording(&self) -> bool {
         self.recording
+    }
+
+    /// Whether GPU time is measured: unknown until a view has drawn while recording.
+    pub fn gpu_timed(&self) -> Option<bool> {
+        self.gpu_timed
     }
 
     /// Adds `took` to a part of the step being timed.
@@ -124,7 +138,11 @@ impl Profiler {
         if !self.recording {
             return;
         }
+        self.gpu_timed = Some(self.gpu_timed.unwrap_or(false) || stats.gpu_timed);
         if let Some(frame) = self.frames.back_mut() {
+            if let Some(gpu) = stats.gpu {
+                frame.gpu = Some(frame.gpu.unwrap_or(0.0) + gpu);
+            }
             frame.extract = Some(frame.extract.unwrap_or(0.0) + ms(stats.extract));
             frame.draw = Some(frame.draw.unwrap_or(0.0) + ms(stats.draw));
             frame.draw_calls += stats.draw_calls;
@@ -149,7 +167,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "profile.frames",
             "Profile Frames",
-            "{last?}: the last frames recorded (all, at most 3000): {recording, frames: [{time, step, scripts, byScript, physics, streaming, sound, particles, extract, draw, drawCalls, triangles, meshBytes, imageBytes}], average}",
+            "{last?}: the last frames recorded (all, at most 3000): {recording, gpuMeasured, frames: [{time, step, scripts, byScript, physics, streaming, sound, particles, extract, draw, gpu, drawCalls, triangles, meshBytes, imageBytes}], average}; gpu is the GPU's own time (null where the device gives no timestamps: gpuMeasured false; null while unknown)",
             profile_frames,
         ),
     ]
@@ -188,8 +206,11 @@ fn profile_frames(session: &mut Session, params: &Value) -> Result<Value, Comman
     let chosen: Vec<&FrameProfile> = frames.iter().skip(frames.len() - take).collect();
     let n = chosen.len().max(1) as f32;
     let average = |f: &dyn Fn(&FrameProfile) -> f32| chosen.iter().map(|frame| f(frame)).sum::<f32>() / n;
+    let timed: Vec<f32> = chosen.iter().filter_map(|f| f.gpu).collect();
+    let gpu = (!timed.is_empty()).then(|| timed.iter().sum::<f32>() / timed.len() as f32);
     Ok(json!({
         "recording": session.profiler.recording,
+        "gpuMeasured": session.profiler.gpu_timed,
         "frames": chosen,
         "average": {
             "step": average(&|f| f.step),
@@ -199,6 +220,7 @@ fn profile_frames(session: &mut Session, params: &Value) -> Result<Value, Comman
             "sound": average(&|f| f.sound),
             "particles": average(&|f| f.particles),
             "draw": average(&|f| f.draw.unwrap_or(0.0)),
+            "gpu": gpu,
         },
     }))
 }

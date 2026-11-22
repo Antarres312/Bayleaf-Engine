@@ -32,6 +32,15 @@ fn parts(f: &FrameProfile) -> [(&'static str, f32); 7] {
     ]
 }
 
+/// The GPU's time for a frame, or why there is none.
+fn gpu_text(gpu: Option<f32>, timed: Option<bool>) -> String {
+    match (gpu, timed) {
+        (Some(ms), _) => format!("{ms:.2} ms"),
+        (None, Some(false)) => tl("not measured: this graphics device gives no timestamps").to_owned(),
+        (None, _) => tl("not measured for this frame").to_owned(),
+    }
+}
+
 fn megabytes(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
 }
@@ -92,7 +101,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         graph(editor, ui, &frames, &colors);
         let newest = frames.len() - 1;
         let chosen = &frames[newest - editor.profiler_view.back.unwrap_or(0).min(newest)];
-        details(ui, chosen, &colors);
+        details(ui, chosen, &colors, editor.session.profiler().gpu_timed());
     });
 }
 
@@ -153,7 +162,7 @@ fn graph(editor: &mut Editor, ui: &mut egui::Ui, frames: &[FrameProfile], colors
 }
 
 /// One frame: each part's time, the slowest scripts, and what was drawn.
-fn details(ui: &mut egui::Ui, f: &FrameProfile, colors: &[egui::Color32; 7]) {
+fn details(ui: &mut egui::Ui, f: &FrameProfile, colors: &[egui::Color32; 7], gpu_timed: Option<bool>) {
     let t = theme::tokens(ui);
     let row = |ui: &mut egui::Ui, name: &str, value: String| {
         crate::value_editor::row(ui, t, name, |ui, _, _| {
@@ -170,7 +179,7 @@ fn details(ui: &mut egui::Ui, f: &FrameProfile, colors: &[egui::Color32; 7]) {
                 ui.label(format!("{ms:.2} ms"));
             });
         }
-        row(ui, "GPU", tl("not measured yet").to_owned());
+        row(ui, "GPU", gpu_text(f.gpu, gpu_timed));
         row(ui, "Draw Calls", f.draw_calls.to_string());
         row(ui, "Triangles", f.triangles.to_string());
         row(ui, "Meshes", megabytes(f.mesh_bytes));

@@ -152,6 +152,8 @@ impl Player {
             triangles: stats.triangles,
             mesh_bytes: stats.mesh_bytes,
             image_bytes: stats.image_bytes,
+            gpu: stats.gpu_ms,
+            gpu_timed: stats.gpu_timed,
         });
 
         let image = egui::Image::new(egui::load::SizedTexture::new(view.texture, size)).sense(egui::Sense::click_and_drag());
@@ -256,7 +258,7 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
     } else if let Some(icon) = bayleaf_ui_egui::brand::window_icon() {
         viewport = viewport.with_icon(egui::IconData { rgba: icon.rgba, width: icon.size, height: icon.size });
     }
-    let options = eframe::NativeOptions { viewport, persist_window: false, ..Default::default() };
+    let options = eframe::NativeOptions { viewport, persist_window: false, wgpu_options: bayleaf_ui_egui::wgpu_configuration(), ..Default::default() };
     let graphics = bayleaf_engine::project_cmds::settings_of(&session).graphics;
     let (shadows, effects) = (graphics.shadows(), graphics.effects.render());
     let player = Player {

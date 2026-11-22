@@ -122,6 +122,8 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
         triangles: stats.triangles,
         mesh_bytes: stats.mesh_bytes,
         image_bytes: stats.image_bytes,
+        gpu: stats.gpu_ms,
+        gpu_timed: stats.gpu_timed,
     });
 
     let image = egui::Image::new(egui::load::SizedTexture::new(target.texture, size)).sense(egui::Sense::click_and_drag());

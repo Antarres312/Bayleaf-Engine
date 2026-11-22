@@ -209,7 +209,10 @@ The profiler records while asked: `profile.start` and `profile.stop`, `profile.c
 `byScript`, slowest first, `physics`, `streaming`, `sound`, `particles`), what the Game view or the
 player drew (`extract`, `draw`, `drawCalls`, `triangles`, `meshBytes`, `imageBytes`), and the
 average. It keeps the last 3000 frames. The player's `--profile <file>` records and writes them
-when the game closes. GPU time is not measured yet.
+when the game closes. `gpu` is the GPU's own time for a frame, measured with timestamp queries a frame
+or two behind; `gpuMeasured` is false where the graphics device gives none (some drivers offer
+them and write only zeros), and both are null before a view has drawn. `HeadlessGpu` and the
+windows take `WGPU_BACKEND` and `WGPU_POWER_PREF` to choose another adapter.
 
 Files come into a project with `asset.import` (`{files, folder?}`): models (`.glb`, or `.gltf` with
 the files it names, which then get a folder of their own), images (`.png`, `.jpg`) and sounds. Each is

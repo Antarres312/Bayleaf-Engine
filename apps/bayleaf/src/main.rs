@@ -144,7 +144,7 @@ fn main() -> anyhow::Result<()> {
     if let Some(icon) = bayleaf_ui_egui::brand::window_icon() {
         viewport = viewport.with_icon(eframe::egui::IconData { rgba: icon.rgba, width: icon.size, height: icon.size });
     }
-    let options = eframe::NativeOptions { viewport, ..Default::default() };
+    let options = eframe::NativeOptions { viewport, wgpu_options: bayleaf_ui_egui::wgpu_configuration(), ..Default::default() };
     eframe::run_native(
         "Bayleaf Engine",
         options,

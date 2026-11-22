@@ -48,14 +48,22 @@ pub struct HeadlessGpu {
 }
 
 impl HeadlessGpu {
-    /// Picks a GPU, falling back to a software adapter when there is none.
+    /// Picks a GPU, falling back to a software adapter when there is none. `WGPU_BACKEND` and
+    /// `WGPU_POWER_PREF` choose another, as they do for the editor's window.
     pub fn new() -> Result<Self, RenderError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        if let Some(backends) = wgpu::Backends::from_env() {
+            descriptor.backends = backends;
+        }
+        let instance = wgpu::Instance::new(descriptor);
+        let chosen = wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::from_env().unwrap_or_default(), ..Default::default() };
+        let adapter = pollster::block_on(instance.request_adapter(&chosen))
             .or_else(|_| pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { force_fallback_adapter: true, ..Default::default() })))
             .map_err(|e| RenderError::NoGpu(e.to_string()))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("bayleaf headless"),
+            // GPU time for the profiler, where the adapter can measure it.
+            required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
             required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
             ..Default::default()
         }))

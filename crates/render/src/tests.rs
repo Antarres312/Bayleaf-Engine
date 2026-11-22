@@ -985,3 +985,26 @@ fn an_additive_item_adds_its_light_and_an_alpha_one_covers() {
     assert!(covered[2] > 200 && covered[0] < 40, "covering: blue {covered:?}");
     assert!(added[2] > 200 && added[0] > 200, "adding: red and blue {added:?}");
 }
+
+#[test]
+fn a_device_that_writes_timestamps_measures_the_gpu_s_time_for_a_frame() {
+    let Some(gpu) = gpu() else { return };
+    let mut scene = Scene::new();
+    mesh(&mut scene, "cube", [0.0, 0.0, 0.0]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 50.0, 1.0);
+    let frame = extract(&scene, camera, OPTIONS);
+    let mut renderer = crate::Renderer::new(&gpu.device);
+    let target = crate::RenderTarget::new(&gpu.device, 64, 64);
+    renderer.render(&gpu.device, &gpu.queue, &target, &frame);
+    assert_eq!(renderer.stats().gpu_ms, None, "nothing is read back before the GPU has finished");
+    // Once the GPU is done, the next frame reads the first one's time.
+    gpu.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    renderer.render(&gpu.device, &gpu.queue, &target, &frame);
+    let stats = renderer.stats();
+    if stats.gpu_timed {
+        assert!(stats.gpu_ms.is_some_and(|ms| ms > 0.0), "{stats:?}");
+    } else {
+        eprintln!("skipped: this adapter writes no timestamps");
+        assert_eq!(stats.gpu_ms, None, "an adapter that cannot measure says so");
+    }
+}

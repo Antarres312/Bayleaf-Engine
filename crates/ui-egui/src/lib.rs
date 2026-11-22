@@ -37,6 +37,21 @@ mod thumbnails;
 mod value_editor;
 pub mod world_interface;
 
+/// The window's GPU settings: egui's own, also asking for timestamp queries where the adapter has
+/// them, so the Profiler can show the GPU's time.
+pub fn wgpu_configuration() -> egui_wgpu::WgpuConfiguration {
+    let mut config = egui_wgpu::WgpuConfiguration::default();
+    if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup {
+        let base = std::sync::Arc::clone(&setup.device_descriptor);
+        setup.device_descriptor = std::sync::Arc::new(move |adapter| {
+            let mut descriptor = base(adapter);
+            descriptor.required_features |= adapter.features() & egui_wgpu::wgpu::Features::TIMESTAMP_QUERY;
+            descriptor
+        });
+    }
+    config
+}
+
 pub use dock::{Layout, Panel};
 pub use fonts::install_fonts;
 

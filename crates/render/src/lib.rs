@@ -11,6 +11,7 @@ mod gpu;
 mod headless;
 pub mod material;
 mod post;
+mod timing;
 pub use post::PostSettings;
 mod mesh;
 
