@@ -30,6 +30,9 @@ enum Pending {
     OpenPrefab(String),
     /// A script's button: send this object the message while the game plays.
     Message(String),
+    /// Open a script to change it: a visual script in its graph tab, a Rust script's source in the
+    /// code editor.
+    EditScript(std::path::PathBuf),
 }
 
 /// One script card's data, gathered before drawing.
@@ -120,7 +123,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         // A placed prefab says where it came from, and offers Apply, Revert and Unlink.
         if let Some((_, link)) = components.iter().find(|(n, _)| *n == "prefab") {
             let source = link["source"].as_str().unwrap_or_default().to_owned();
-            card(ui, t, "prefab card", "Prefab", Some(&source), false, |ui| {
+            card(ui, t, "prefab card", "Prefab", Some(&source), CardMenu { removable: false, script: None }, |ui| {
                 ui.add(egui::Label::new(egui::RichText::new(&source).color(t.text_muted)).truncate());
                 // What this copy changed, which stays when the prefab file changes.
                 let overrides: Vec<String> = link["overrides"]
@@ -160,7 +163,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
 
         for (name, value) in components.iter().filter(|(n, _)| *n != "name" && *n != Scripts::NAME && *n != "prefab") {
             let Some(kind) = kinds.iter().find(|k| k.name == *name) else { continue };
-            card(ui, t, ("component card", *name), kind.label, None, kind.removable, |ui| {
+            let menu = CardMenu { removable: kind.removable, script: None };
+            card(ui, t, ("component card", *name), kind.label, None, menu, |ui| {
                 let mut edited = value.clone();
                 // File fields are picked from the project's files below, not typed.
                 let fields: Vec<&FileField> = file_fields.iter().filter(|f| f.component == *name).collect();
@@ -189,12 +193,15 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     }
                 }
             })
+            .removed
             .then(|| pending = Some(Pending::Remove(kind.name)));
         }
 
         for (index, card_data) in cards.iter().enumerate() {
             let title = card_data.script.display_name();
-            let removed = card(ui, t, ("script card", index), &title, Some(&card_data.script.module), true, |ui| match &card_data.declared {
+            let path = script_dir.join(&card_data.script.module);
+            let menu = CardMenu { removable: true, script: Some(editable_script(&path)) };
+            let chosen = card(ui, t, ("script card", index), &title, Some(&card_data.script.module), menu, |ui| match &card_data.declared {
                 Err(message) => {
                     ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tf("Warning: {message}", &[("message", &message.to_string())])).color(t.warning)).wrap());
                 }
@@ -204,8 +211,11 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     gesture_ended |= outcome.ended;
                 }
             });
-            if removed {
+            if chosen.removed {
                 pending = Some(Pending::RemoveScript(index));
+            }
+            if chosen.edit {
+                pending = Some(Pending::EditScript(path));
             }
         }
 
@@ -312,40 +322,114 @@ fn menu_tree(ui: &mut egui::Ui, entries: &[MenuEntry], indices: &[usize], depth:
     }
 }
 
-/// A collapsible card with a title, an optional muted subtitle and a Remove button.
-/// Returns true when Remove was clicked.
+/// What a card's menu offers.
+#[derive(Clone, Copy)]
+struct CardMenu {
+    removable: bool,
+    /// A script card: whether there is something to edit (a visual script, or a Rust script with
+    /// its source in the project).
+    script: Option<bool>,
+}
+
+/// What was chosen on a card.
+#[derive(Default)]
+struct CardChoice {
+    removed: bool,
+    edit: bool,
+}
+
+/// The card's menu: Edit Script on a script's card, and Remove.
+fn card_menu(ui: &mut egui::Ui, menu: CardMenu, chosen: &mut CardChoice) {
+    if let Some(editable) = menu.script {
+        let edit = ui.add_enabled(editable, egui::Button::new(tl("Edit Script")));
+        let edit = edit.on_disabled_hover_text(tl("This script has no Rust source or graph in the project to edit."));
+        if edit.clicked() {
+            chosen.edit = true;
+            ui.close();
+        }
+    }
+    if menu.removable && ui.button(tl("Remove")).clicked() {
+        chosen.removed = true;
+        ui.close();
+    }
+}
+
+/// Whether a script's module can be opened to edit: a visual script, or a Rust script's built
+/// module with its crate's source beside it.
+fn editable_script(module: &std::path::Path) -> bool {
+    module.extension().is_some_and(|e| e == bayleaf_engine::script::VISUAL_EXTENSION) || project::rust_source(module).is_some()
+}
+
+/// Opens a script to change it: a visual script in its graph tab, a Rust script's source in the
+/// code editor the system uses for it.
+fn edit_script(editor: &mut Editor, module: &std::path::Path) {
+    if module.extension().is_some_and(|e| e == bayleaf_engine::script::VISUAL_EXTENSION) {
+        editor.open_graph(module);
+        return;
+    }
+    match project::rust_source(module) {
+        Some(source) => {
+            if let Err(error) = project::system_open(&source, false) {
+                editor.status = crate::i18n::tf("Could not open {path}: {error}", &[("path", &source.display().to_string()), ("error", &error.to_string())]);
+            }
+        }
+        None => editor.status = crate::i18n::tf("{path} has no Rust source in the project to edit.", &[("path", &module.display().to_string())]),
+    }
+}
+
+/// A collapsible card with a title, an optional muted subtitle, and a menu (its title right-clicked,
+/// or the … button) with Edit Script on a script's card and Remove; a removable card also shows a
+/// Remove button. Returns what was chosen.
 fn card(
     ui: &mut egui::Ui,
     t: &theme::Tokens,
     salt: impl std::hash::Hash + std::fmt::Debug,
     title: &str,
     subtitle: Option<&str>,
-    removable: bool,
+    menu: CardMenu,
     body: impl FnOnce(&mut egui::Ui),
-) -> bool {
-    let mut removed = false;
+) -> CardChoice {
+    let mut chosen = CardChoice::default();
     theme::section(t).show(ui, |ui| {
         ui.set_width(ui.available_width());
         // A compact title row, and rows packed a little closer than elsewhere.
         ui.spacing_mut().interact_size.y = theme::SECTION_TITLE;
         ui.spacing_mut().item_spacing.y = 4.0;
         let state_id = ui.make_persistent_id(salt);
+        // A card with nothing to choose (Transform) has no menu.
+        let has_menu = menu.removable || menu.script.is_some();
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true)
             .show_header(ui, |ui| {
-                let label = ui.label(egui::RichText::new(tl(title)).strong());
+                // Right-clicking the title, or the free space beside it, opens the card's menu.
+                let label =
+                    ui.add(egui::Label::new(egui::RichText::new(tl(title)).strong()).sense(if has_menu { egui::Sense::click() } else { egui::Sense::hover() }));
+                if has_menu {
+                    label.context_menu(|ui| card_menu(ui, menu, &mut chosen));
+                }
                 if let Some(subtitle) = subtitle {
                     label.on_hover_text(subtitle);
                 }
-                if removable {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !has_menu {
+                    return;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // The menu from the keyboard too: a button named after the card.
+                    let more = egui::containers::menu::MenuButton::new("…").ui(ui, |ui| card_menu(ui, menu, &mut chosen)).0;
+                    let named = crate::i18n::tf("More for {title}", &[("title", title)]);
+                    more.ctx.accesskit_node_builder(more.id, |node| node.set_label(named.clone()));
+                    more.on_hover_text(named);
+                    if menu.removable {
                         let button = ui.small_button(tl("Remove"));
                         // Several cards have a Remove button; the accessible name says which.
                         button.ctx.accesskit_node_builder(button.id, |node| node.set_label(crate::i18n::tf("Remove {title}", &[("title", title)])));
                         if button.on_hover_text(crate::i18n::tf("Remove {title}", &[("title", title)])).clicked() {
-                            removed = true;
+                            chosen.removed = true;
                         }
-                    });
-                }
+                    }
+                    // The free space between the title and the buttons opens the menu as well.
+                    let rest = ui.available_rect_before_wrap();
+                    ui.interact(rest, state_id.with("header space"), egui::Sense::click()).context_menu(|ui| card_menu(ui, menu, &mut chosen));
+                });
             })
             .body(|ui| {
                 ui.spacing_mut().interact_size.y = ROW_HEIGHT;
@@ -354,7 +438,7 @@ fn card(
             });
     });
     ui.add_space(theme::SECTION_GAP);
-    removed
+    chosen
 }
 
 /// What one script card draws from.
@@ -505,6 +589,7 @@ fn apply(editor: &mut Editor, id: bayleaf_core::StableId, pending: Option<Pendin
         Some(Pending::Message(name)) => {
             editor.dispatch("play.message", &json!({ "id": id, "name": name }), None);
         }
+        Some(Pending::EditScript(path)) => edit_script(editor, &path),
         Some(Pending::ScriptProperty { index, name, value }) => {
             let key = format!("script property:{id}:{index}:{name}:{}", editor.gesture);
             editor.dispatch("scene.script.setProperty", &json!({ "id": id, "index": index, "name": name, "value": value }), Some(&key));

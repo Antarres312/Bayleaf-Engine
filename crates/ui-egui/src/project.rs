@@ -1353,6 +1353,16 @@ fn default_action(entry: &Entry) -> Option<Action> {
     }
 }
 
+/// The source of the Rust script whose built module is `module` (`scripts/mover.wasm` from the crate
+/// `scripts/mover`), if the project has it.
+pub(crate) fn rust_source(module: &Path) -> Option<PathBuf> {
+    if !module.extension().is_some_and(|e| e == "wasm") {
+        return None;
+    }
+    let source = module.with_extension("").join("src").join("lib.rs");
+    source.is_file().then_some(source)
+}
+
 /// The source file of a Rust script: `src/lib.rs` of its crate folder, which sits beside a built
 /// `.wasm` under the same name.
 fn source_file(entry: &Entry) -> Option<PathBuf> {
@@ -1367,7 +1377,7 @@ fn source_file(entry: &Entry) -> Option<PathBuf> {
 
 /// Opens `path` with the program the system uses for it, or with `reveal`, shows it in the
 /// system's file manager.
-fn system_open(path: &Path, reveal: bool) -> std::io::Result<()> {
+pub(crate) fn system_open(path: &Path, reveal: bool) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut command = std::process::Command::new("explorer");

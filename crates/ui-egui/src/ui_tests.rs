@@ -423,7 +423,8 @@ fn buttons_at_the_end_of_inspector_rows_stay_inside_their_section() {
         "scripts": [{ "module": bob.to_string_lossy().replace('\\', "/"), "properties": { "speed": 5.0 } }] } });
     harness.state_mut().dispatch("scene.object.create", &params, None);
     harness.run();
-    let section_right = |harness: &Harness<'static, Editor>, title: &str| harness.get_by_label(&format!("Remove {title}")).rect().right();
+    // The card's menu button sits at the right end of its title row.
+    let section_right = |harness: &Harness<'static, Editor>, title: &str| harness.get_by_label(&format!("More for {title}")).rect().right();
     let reset = harness.get_by_label("Reset Speed").rect();
     assert!(reset.right() <= section_right(&harness, "Bob") + 0.5, "Reset ends at {} past the section edge {}", reset.right(), section_right(&harness, "Bob"));
     let edit = harness.get_by_label("Edit material").rect();
@@ -3360,5 +3361,47 @@ fn the_mouse_back_and_forward_buttons_go_through_the_folders_opened_in_the_proje
     harness.run();
     assert_eq!(current(&harness), dir, "Alt+Right forward");
     assert_eq!(harness.state().session.scene().children(None).len(), roots, "the selected object did not move into the one before");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_script_cards_menu_opens_the_script_to_edit_or_says_why_not_and_removes_it() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-card-menu-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let graph = json!({ "format": "bayleaf.graph", "version": 6, "domain": "script", "nodes": [{ "id": 1, "kind": "start", "position": [0.0, 0.0] }] });
+    let visual = dir.join("follow.bscript");
+    std::fs::write(&visual, serde_json::to_string_pretty(&graph).unwrap()).unwrap();
+    // A built module with no Rust source beside it.
+    let built = dir.join("mover.wasm");
+    std::fs::write(&built, b"\0asm\x01\0\0\0").unwrap();
+    let mut harness = harness();
+    let module = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+    let params = json!({ "name": "Player", "components": { "scripts": [{ "module": module(&visual) }, { "module": module(&built) }] } });
+    harness.state_mut().dispatch("scene.object.create", &params, None);
+    harness.run();
+    let player = harness.state().selected.unwrap();
+
+    // Right-clicking the card's title opens its menu; Edit Script opens the graph.
+    let title = harness.get_by_label("Follow").rect().center();
+    harness.hover_at(title);
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton { pos: title, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    harness.run();
+    harness.get_by_label("Edit Script").click();
+    harness.run();
+    let open = harness.state().session.graph().and_then(|g| g.path.clone()).map(|p| p.canonicalize().unwrap());
+    assert_eq!(open, Some(visual.canonicalize().unwrap()), "the visual script opens in its graph tab");
+
+    // The same menu from its button: a script with nothing to edit has Edit Script turned off.
+    harness.get_by_label("More for Mover").click();
+    harness.run();
+    assert!(egui_kittest::kittest::NodeT::accesskit_node(&harness.get_by_label("Edit Script")).is_disabled(), "no source to open");
+    harness.get_by_label("Remove").click();
+    harness.run();
+    let scripts = harness.state().session.scene().get::<bayleaf_engine::scene::components::Scripts>(player).unwrap().0.clone();
+    assert_eq!(scripts.len(), 1, "Remove in the menu removes that script");
+    assert!(scripts[0].module.ends_with("follow.bscript"));
     std::fs::remove_dir_all(&dir).ok();
 }
