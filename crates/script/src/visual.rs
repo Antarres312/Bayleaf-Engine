@@ -962,6 +962,14 @@ pub const CATALOG: Catalog = Catalog {
             &[pin("length", "Length", Float)],
         ),
         node(
+            "normalize",
+            "Normalize",
+            "Math",
+            "The vector's direction at length 1: a move as fast diagonally as straight. A vector of length 0 stays 0, so a player standing still stays still.",
+            &[vector("vector", "Vector", [0.0, 0.0, 0.0])],
+            &[pin("vector", "Vector", Vec3)],
+        ),
+        node(
             "lerp",
             "Lerp",
             "Math",
@@ -2345,6 +2353,10 @@ impl Compiler<'_> {
                 Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
             },
             "power" | "squareRoot" | "vectorLength" => self.power_and_roots(node, &n.kind)?,
+            "normalize" => {
+                let [x, y, z] = self.input(node, "vector").and_then(|v| as_vec(node, v))?;
+                Val::V([&x, &y, &z].map(|c| format!("(call $unit {c} {x} {y} {z})")))
+            }
             "lerp" => {
                 let a = self.input(node, "a")?;
                 let b = self.input(node, "b")?;
@@ -2981,6 +2993,12 @@ const PRELUDE: &str = r#"(module
   ;; The length of the vector (x, y, z).
   (func $len3 (param $x f32) (param $y f32) (param $z f32) (result f32)
     (f32.sqrt (f32.add (f32.add (f32.mul (local.get $x) (local.get $x)) (f32.mul (local.get $y) (local.get $y))) (f32.mul (local.get $z) (local.get $z)))))
+  ;; Part $c of the vector ($x, $y, $z) at length 1; 0 when the vector has no length.
+  (func $unit (param $c f32) (param $x f32) (param $y f32) (param $z f32) (result f32) (local $l f32)
+    (local.set $l (call $len3 (local.get $x) (local.get $y) (local.get $z)))
+    (if (result f32) (f32.gt (local.get $l) (f32.const 1e-6))
+      (then (f32.div (local.get $c) (local.get $l)))
+      (else (f32.const 0))))
   ;; From a (t 0) to b (t 1) on a straight line.
   (func $lerp (param $a f32) (param $b f32) (param $t f32) (result f32)
     (f32.add (local.get $a) (f32.mul (f32.sub (local.get $b) (local.get $a)) (local.get $t))))

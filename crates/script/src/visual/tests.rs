@@ -200,6 +200,12 @@ fn every_node_kind_compiles_and_runs() {
     b.link(length, "length", total, "b");
     // Lerp from the total to itself is the total, whatever Inverse Lerp gives as the factor.
     let unlerp = b.node("inverseLerp", json!({}));
+    // Normalize feeds the factor, which the total does not depend on.
+    let unit = b.node("normalize", json!({}));
+    b.link(make, "vector", unit, "vector");
+    let unit_length = b.node("vectorLength", json!({}));
+    b.link(unit, "vector", unit_length, "vector");
+    b.link(unit_length, "length", unlerp, "value");
     let lerp = b.node("lerp", json!({}));
     b.link(total, "result", lerp, "a");
     b.link(total, "result", lerp, "b");
@@ -1645,7 +1651,7 @@ fn lerp_goes_between_and_past_its_ends_and_inverse_lerp_undoes_it() {
 }
 
 #[test]
-fn power_root_and_length_give_their_values_and_math_outputs_take_their_inputs_type() {
+fn power_root_length_and_normalize_give_their_values_and_math_outputs_take_their_inputs_type() {
     use bayleaf_graph::PinType;
     let mut b = Builder::new();
     let start = b.node("start", json!({}));
@@ -1664,6 +1670,13 @@ fn power_root_and_length_give_their_values_and_math_outputs_take_their_inputs_ty
     let root = b.node("squareRoot", json!({ "value": 16.0 }));
     let below_zero = b.node("squareRoot", json!({ "value": -4.0 }));
     let length = b.node("vectorLength", json!({ "vector": [3.0, 4.0, 0.0] }));
+    // Normalize keeps the direction at length 1, and leaves a vector of no length at 0 (not NaN).
+    let unit = b.node("normalize", json!({ "vector": [3.0, 4.0, 0.0] }));
+    let unit_x = b.node("split", json!({}));
+    b.link(unit, "vector", unit_x, "vector");
+    let zero = b.node("normalize", json!({}));
+    let zero_length = b.node("vectorLength", json!({}));
+    b.link(zero, "vector", zero_length, "vector");
     let mut previous = (start, "then");
     for (message, node, pin) in [
         ("whole", whole_power, "result"),
@@ -1672,6 +1685,8 @@ fn power_root_and_length_give_their_values_and_math_outputs_take_their_inputs_ty
         ("root", root, "result"),
         ("below", below_zero, "result"),
         ("length", length, "length"),
+        ("unit", unit_x, "x"),
+        ("still", zero_length, "length"),
     ] {
         let log = b.node("log", json!({ "message": message }));
         b.link(previous.0, previous.1, log, "run");
@@ -1701,5 +1716,5 @@ fn power_root_and_length_give_their_values_and_math_outputs_take_their_inputs_ty
     let (mut scene, _, mut host) = run(&b.bytes(), &[]);
     host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
     let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
-    assert_eq!(logs, ["whole 81", "negative 0", "half 1.414", "root 4", "below 0", "length 5"]);
+    assert_eq!(logs, ["whole 81", "negative 0", "half 1.414", "root 4", "below 0", "length 5", "unit 0.6", "still 0"]);
 }

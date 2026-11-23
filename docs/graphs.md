@@ -127,9 +127,11 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   **Set Property** node sets it on this object for the rest of play.
 - **Negate** turns the sign of a number, a whole number or a vector. **Power** raises a number, a whole
   number (staying whole) or each part of a vector; **Square Root** takes the root of a number or of each
-  part (0 below 0); **Vector Length** says how long a vector is. **Lerp** goes from A (factor 0) to B
-  (factor 1) on a straight line, for numbers or each part of vectors, and **Inverse Lerp** says where a
-  value lies from A to B (0 when they are equal). Get and Set Component read and set another script's number,
+  part (0 below 0); **Vector Length** says how long a vector is, and **Normalize** gives its
+  direction at length 1 (a vector of length 0 stays 0), so a move made of two keys is as fast
+  diagonally as straight. **Lerp** goes from A (factor 0) to B (factor 1) on a straight line, for
+  numbers or each part of vectors, and **Inverse Lerp** says where a value lies from A to B (0 when
+  they are equal). Get and Set Component read and set another script's number,
   whole-number, true/false, vector and colour properties as pins of those types.
 - **Set Variable** keeps a number under a name and **Variable** reads it; **Set Vector Variable**
   and **Vector Variable** do the same for vectors, **Set True/False Variable** and **True/False
