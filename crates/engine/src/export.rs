@@ -1,7 +1,8 @@
 //! Game export (`project.export`): the open project as a game people run without the editor. The
-//! folder holds the player program under the game's name and, beside it, a `game` folder with the
-//! project's scenes, assets and scripts. Visual scripts are compiled now, so the game starts
-//! without compiling them; Rust script sources, build output and saved values stay behind.
+//! folder holds the player program under the game's name and, beside it, `game.pack`: the project's
+//! scenes, assets and scripts in one file (`crate::pack`), which native mode builds into the program.
+//! Visual scripts are compiled now, so the game starts without compiling them; Rust script sources,
+//! build output and saved values stay behind.
 //!
 //! `project.export.check` tells, without writing anything, whether the project can be exported for
 //! a platform with its scripts run in a mode, and why not. Today a game is exported for the system
@@ -17,7 +18,8 @@ use serde_json::{Value, json};
 use crate::confine::Access;
 use crate::{CommandError, CommandSpec, Mutates, Prompt, Session, not_playing, parse};
 
-/// The folder beside the player program that holds the game.
+/// The folder beside the player program the game's pack is read into (in memory), and where its saved
+/// values are written.
 pub const GAME_FOLDER: &str = "game";
 
 /// File extensions a game uses: projects, scenes, prefabs, materials, scripts, input maps, models,
@@ -61,7 +63,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Export Game…",
             menu: "File/Export Game…",
             shortcut: "",
-            params: "{folder, platform?, mode?, player?}: writes the open project as a game into a new folder named after it inside folder: the player program under the game's name, and its scenes, assets and scripts in a game folder beside it (visual scripts compiled; Rust sources, build output and saved values left out). platform is windows, linux, mac or web (default: this computer's); mode is how scripts run: interpreted, compiled or native (default: the project's choice for the platform); player is the program built on another system, or for the web the folder of the web player (default: the one cargo xtask web-player built). For the web the folder holds index.html, the web player and game.pack (the game's files in one file) instead. Refused, with the reasons, when project.export.check finds an error; returns {path, program, files, compiled, skipped}",
+            params: "{folder, platform?, mode?, player?}: writes the open project as a game into a new folder named after it inside folder: the player program under the game's name, and its scenes, assets and scripts in one file, game.pack, beside it (visual scripts compiled; Rust sources, build output and saved values left out; in native mode the pack is built into the program). platform is windows, linux, mac or web (default: this computer's); mode is how scripts run: interpreted, compiled or native (default: the project's choice for the platform); player is the program built on another system, or for the web the folder of the web player (default: the one cargo xtask web-player built). For the web the folder holds index.html, the web player and game.pack (the game's files in one file) instead. Refused, with the reasons, when project.export.check finds an error; returns {path, program, files, compiled, skipped}",
             prompt: Prompt::Dialog,
             mutates: Mutates::No,
             enabled: exportable,
@@ -198,33 +200,25 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
             &WebExport { out: &out, name: &name, project: &project, files: &files, left: &left, compiled: &compiled, mode, player: p.player.as_deref() },
         );
     }
-    let game = out.join(GAME_FOLDER);
-    let made = |dir: &Path| std::fs::create_dir_all(dir).map_err(|e| CommandError::Failed(format!("cannot make {}: {e}", dir.display())));
-    made(&game)?;
-    for relative in &files {
-        let target = game.join(relative);
-        if let Some(parent) = target.parent() {
-            made(parent)?;
-        }
-        match compiled.iter().find(|(f, _)| f == relative) {
-            Some((_, bytes)) => std::fs::write(&target, bytes),
-            None => std::fs::copy(project.join(relative), &target).map(|_| ()),
-        }
-        .map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", target.display())))?;
-    }
-    record_mode(&game, platform, mode)?;
+    // The game's files in one pack: beside the program, or (native mode) built into it, where the
+    // modules of the scripts built in are not needed.
+    let natives = crate::native_export::sources(&project, &files);
+    let left_out: Vec<PathBuf> = if mode == ScriptMode::Native { natives.iter().map(|s| PathBuf::from(&s.module)).collect() } else { Vec::new() };
+    let game = crate::pack::pack(&packed_files(&project, &files, &compiled, platform, mode, &left_out)?);
+    std::fs::create_dir_all(&out).map_err(|e| CommandError::Failed(format!("cannot make {}: {e}", out.display())))?;
     let program = out.join(format!("{name}{}", if platform == Platform::Windows { ".exe" } else { "" }));
     // The plain player, or (native mode) one built with the game's Rust scripts in it.
     let mut pending = None;
-    let natives = crate::native_export::sources(&project, &files);
     match &player {
         Some(player) => {
             std::fs::copy(player, &program).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", program.display())))?;
+            let pack = out.join(crate::pack::PACK_FILE);
+            std::fs::write(&pack, &game).map_err(|e| CommandError::Failed(format!("cannot write {}: {e}", pack.display())))?;
         }
         None => {
             let engine = crate::native_export::engine_source().ok_or_else(|| CommandError::Failed("the engine's source is not found".to_owned()))?;
             let folder = session.allowed(&project.join(".build").join("native").join(platform.code()), Access::Write)?;
-            let plan = crate::native_export::prepare(&engine, &project, &natives, &folder, &program).map_err(CommandError::Failed)?;
+            let plan = crate::native_export::prepare(&engine, &project, &natives, &folder, &program, &game).map_err(CommandError::Failed)?;
             if p.wait {
                 crate::native_export::build(&plan).map_err(CommandError::Failed)?;
             } else {
@@ -250,6 +244,32 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
     }))
 }
 
+/// The game's files for its pack: visual scripts compiled, the project file saying how scripts run
+/// on `platform`, and the modules in `left_out` (scripts built into a native player) left out.
+fn packed_files(
+    project: &Path,
+    files: &[PathBuf],
+    compiled: &[(PathBuf, Vec<u8>)],
+    platform: Platform,
+    mode: ScriptMode,
+    left_out: &[PathBuf],
+) -> Result<Vec<(String, Vec<u8>)>, CommandError> {
+    let mut packed = Vec::with_capacity(files.len());
+    for relative in files.iter().filter(|f| !left_out.contains(f)) {
+        let full = project.join(relative);
+        let mut bytes = match compiled.iter().find(|(f, _)| f == relative) {
+            Some((_, bytes)) => bytes.clone(),
+            None => std::fs::read(&full).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", full.display())))?,
+        };
+        if relative.extension().is_some_and(|e| e == crate::project_cmds::PROJECT_EXTENSION) && relative.parent() == Some(Path::new("")) {
+            let text = String::from_utf8(bytes).map_err(|e| CommandError::Failed(format!("{} is not text: {e}", full.display())))?;
+            bytes = with_mode(&text, platform, mode).map_err(|e| CommandError::Failed(format!("{}: {e}", full.display())))?.into_bytes();
+        }
+        packed.push((relative.to_string_lossy().replace('\\', "/"), bytes));
+    }
+    Ok(packed)
+}
+
 /// What a web export writes from.
 struct WebExport<'a> {
     out: &'a Path,
@@ -267,27 +287,14 @@ fn export_web(session: &mut Session, web: &WebExport<'_>) -> Result<Value, Comma
     let failed = |what: &Path, e: std::io::Error| CommandError::Failed(format!("cannot write {}: {e}", what.display()));
     let folder = crate::web_export::player_folder(web.player).ok_or_else(|| CommandError::Failed(WEB_PLAYER_MISSING.to_owned()))?;
     let folder = session.allowed(&folder, Access::Read)?;
-    let mut packed = Vec::with_capacity(web.files.len());
-    for relative in web.files {
-        let full = web.project.join(relative);
-        let mut bytes = match web.compiled.iter().find(|(f, _)| f == relative) {
-            Some((_, bytes)) => bytes.clone(),
-            None => std::fs::read(&full).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", full.display())))?,
-        };
-        // The project file says how the game's scripts run on the web.
-        if relative.extension().is_some_and(|e| e == crate::project_cmds::PROJECT_EXTENSION) && relative.parent() == Some(Path::new("")) {
-            let text = String::from_utf8(bytes).map_err(|e| CommandError::Failed(format!("{} is not text: {e}", full.display())))?;
-            bytes = with_mode(&text, Platform::Web, web.mode).map_err(|e| CommandError::Failed(format!("{}: {e}", full.display())))?.into_bytes();
-        }
-        packed.push((relative.to_string_lossy().replace('\\', "/"), bytes));
-    }
+    let packed = packed_files(web.project, web.files, web.compiled, Platform::Web, web.mode, &[])?;
     std::fs::create_dir_all(web.out).map_err(|e| failed(web.out, e))?;
     let page = web.out.join("index.html");
     std::fs::write(&page, crate::web_export::index_html(web.name)).map_err(|e| failed(&page, e))?;
     // The player with what wasm-bindgen wrote beside it (its `snippets` folder).
     crate::web_export::copy_player(&folder, web.out).map_err(CommandError::Failed)?;
     let pack = web.out.join(crate::web_export::PACK_FILE);
-    std::fs::write(&pack, crate::web_export::pack(&packed)).map_err(|e| failed(&pack, e))?;
+    std::fs::write(&pack, crate::pack::pack(&packed)).map_err(|e| failed(&pack, e))?;
 
     let shown = |list: &[PathBuf]| list.iter().map(|p| p.to_string_lossy().replace('\\', "/")).collect::<Vec<_>>();
     session.log(
@@ -462,15 +469,6 @@ pub struct Report {
 /// The script mode Project Settings choose for `platform`.
 pub fn chosen_mode(session: &Session, platform: Platform) -> ScriptMode {
     crate::project_cmds::settings_of(session).game.script_modes.get(&platform).copied().unwrap_or_default()
-}
-
-/// Writes into the exported game's project file the mode its scripts were exported in, so the
-/// player runs them that way.
-fn record_mode(game: &Path, platform: Platform, mode: ScriptMode) -> Result<(), CommandError> {
-    let Some(file) = crate::project_cmds::project_file_in(game) else { return Ok(()) };
-    let failed = |e: String| CommandError::Failed(format!("cannot write {}: {e}", file.display()));
-    let text = std::fs::read_to_string(&file).map_err(|e| failed(e.to_string()))?;
-    std::fs::write(&file, with_mode(&text, platform, mode).map_err(failed)?).map_err(|e| failed(e.to_string()))
 }
 
 /// A project file's text with the script mode for `platform` set to `mode`.
@@ -838,7 +836,18 @@ fn check_command(session: &mut Session, params: &Value) -> Result<Value, Command
     serde_json::to_value(report).map_err(|e| CommandError::Failed(e.to_string()))
 }
 
-/// The project of a game exported beside `program`: the project file in its `game` folder.
-pub fn packaged_game(program: &Path) -> Option<PathBuf> {
-    crate::project_cmds::project_file_in(&program.parent()?.join(GAME_FOLDER))
+/// The project of the game exported with `program`: its pack (`embedded` in a native player, else
+/// `game.pack` beside the program) read into memory as a `game` folder beside it; else a `game`
+/// folder there, as older exports wrote.
+pub fn packaged_game(program: &Path, embedded: Option<&[u8]>) -> Result<PathBuf, String> {
+    let dir = program.parent().ok_or("the program has no folder")?;
+    let game = dir.join(GAME_FOLDER);
+    let beside = dir.join(crate::pack::PACK_FILE);
+    if let Some(bytes) = embedded {
+        crate::pack::mount(&game, bytes)?;
+    } else if beside.is_file() {
+        let bytes = std::fs::read(&beside).map_err(|e| format!("cannot read {}: {e}", beside.display()))?;
+        crate::pack::mount(&game, &bytes).map_err(|e| format!("{}: {e}", beside.display()))?;
+    }
+    crate::project_cmds::project_file_in(&game).ok_or_else(|| "no game was exported beside this program".to_owned())
 }

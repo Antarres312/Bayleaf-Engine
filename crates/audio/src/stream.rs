@@ -38,10 +38,17 @@ pub fn can_stream(path: &Path) -> Result<Streamed, String> {
     })
 }
 
+/// The file on the disk is read as it plays; one in an exported game's pack is decoded from memory.
 fn open(path: &Path, extension: &str) -> Result<craft_audio::Decoder<'static>, String> {
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let source = craft_audio::ReadSeekSource::new(file).map_err(|e| e.to_string())?;
-    craft_audio::Decoder::open(source, Some(extension), &craft_audio::DecodeOptions::default()).map_err(|e| e.to_string())
+    let options = craft_audio::DecodeOptions::default();
+    if path.is_file() {
+        let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let source = craft_audio::ReadSeekSource::new(file).map_err(|e| e.to_string())?;
+        return craft_audio::Decoder::open(source, Some(extension), &options).map_err(|e| e.to_string());
+    }
+    let bytes = bayleaf_core::files::read(path).map_err(|e| e.to_string())?;
+    let source = craft_audio::ReadSeekSource::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    craft_audio::Decoder::open(source, Some(extension), &options).map_err(|e| e.to_string())
 }
 
 /// A stereo block for the mixer.

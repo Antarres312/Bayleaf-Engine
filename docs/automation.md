@@ -134,8 +134,10 @@ Rust script, which `script.build` refuses for agents because it runs the crate's
 (an object property's object name); `null` goes back to the script's default.
 
 `project.export` (`{folder, platform?, mode?, player?}`) writes the open project as a game into a new
-folder inside `folder`, named after the game: the player program under the game's name, and a `game`
-folder of its scenes, assets and scripts (visual scripts compiled). The folder must be inside the
+folder inside `folder`, named after the game: the player program under the game's name, and `game.pack`,
+its scenes, assets and scripts in one file (visual scripts compiled), which the player reads into
+memory; in native mode the pack is built into the program, with no module of the scripts built in,
+so the folder holds the program alone. Saved values are written in a `game` folder beside it. The folder must be inside the
 write roots; `player` (default: `bayleaf-player` beside the running program) must be readable.
 `platform` is `windows`, `linux`, `mac` or `web` (default: this computer's) and `mode` how scripts
 run: `interpreted`, `compiled` or `native` (default: the project's choice for the platform,

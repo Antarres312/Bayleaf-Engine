@@ -1760,19 +1760,22 @@ fn a_project_exports_as_a_game_folder_that_runs_without_the_editor() {
     let game = out.join("Space Race");
     let program = game.join(format!("Space Race{}", std::env::consts::EXE_SUFFIX));
     assert_eq!(std::fs::read(&program).unwrap(), b"the player", "the player under the game's name");
-    let packed = game.join(crate::export::GAME_FOLDER);
-    assert!(std::fs::read(packed.join("scripts/spin.bscript")).unwrap().starts_with(bayleaf_script::WASM_MAGIC), "visual scripts are compiled");
-    assert!(packed.join("scripts/mover.wasm").is_file(), "built modules go along");
-    assert!(packed.join("scenes/daylight.blight").is_file(), "the lighting asset the scene names goes along");
+    // The game's files are in one pack beside the program, not readable one by one.
+    assert!(!game.join(crate::export::GAME_FOLDER).exists(), "no folder of the game's files");
+    let packed = crate::pack::unpack(&std::fs::read(game.join(crate::pack::PACK_FILE)).unwrap()).unwrap();
+    let file = |name: &str| packed.iter().find(|(p, _)| p == name).map(|(_, b)| b.clone());
+    assert!(file("scripts/spin.bscript").unwrap().starts_with(bayleaf_script::WASM_MAGIC), "visual scripts are compiled");
+    assert!(file("scripts/mover.wasm").is_some(), "built modules go along");
+    assert!(file("scenes/daylight.blight").is_some(), "the lighting asset the scene names goes along");
     for left in ["scripts/mover/src/lib.rs", "scripts/mover/Cargo.toml", "saves/progress.json", "notes.txt"] {
-        assert!(!packed.join(left).exists(), "{left} stays behind");
+        assert!(file(left).is_none(), "{left} stays behind");
     }
     let skipped: Vec<&str> = result["skipped"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
     assert!(skipped.contains(&"notes.txt") && skipped.contains(&"saves"), "and is listed: {skipped:?}");
     assert!(registry.execute(&mut session, "project.export", &json!({"folder": out, "player": player})).is_err(), "not over an earlier export");
 
     // The player finds the game beside it, and it plays from the compiled scripts.
-    let found = crate::export::packaged_game(&program).expect("the game beside the program");
+    let found = crate::export::packaged_game(&program, None).expect("the game beside the program");
     let mut game_session = Session::default();
     registry.execute(&mut game_session, "project.open", &json!({"path": found})).unwrap();
     let started = registry.execute(&mut game_session, "play.start", &Value::Null).unwrap();
@@ -1785,7 +1788,7 @@ fn a_project_exports_as_a_game_folder_that_runs_without_the_editor() {
     // says why it interprets them).
     let fast = base.join("fast");
     registry.execute(&mut session, "project.export", &json!({"folder": fast, "player": player, "mode": "compiled"})).unwrap();
-    let found = crate::export::packaged_game(&fast.join("Space Race").join(format!("Space Race{}", std::env::consts::EXE_SUFFIX))).unwrap();
+    let found = crate::export::packaged_game(&fast.join("Space Race").join(format!("Space Race{}", std::env::consts::EXE_SUFFIX)), None).unwrap();
     let mut game_session = Session::default();
     registry.execute(&mut game_session, "project.open", &json!({"path": found})).unwrap();
     let mode = crate::export::chosen_mode(&game_session, crate::export::Platform::current());
@@ -1966,8 +1969,16 @@ fn a_native_export_writes_a_workspace_that_builds_the_player_with_the_rust_scrip
 
     assert_cargo_reads(&build.folder);
 
+    // The game's files are built into the program: nothing is beside it but the program itself.
+    assert!(main.contains("include_bytes!") && main.contains("run_game(natives, Some(GAME))"), "{main}");
+    let pack = std::fs::read(build.folder.join(crate::pack::PACK_FILE)).unwrap();
+    let packed = crate::pack::unpack(&pack).unwrap();
+    assert!(packed.iter().all(|(p, _)| p != "scripts/mover.wasm"), "a script built in leaves its module out");
+    let out_game = build.program.parent().unwrap();
+    assert!(!out_game.join(crate::pack::PACK_FILE).exists() && !out_game.join(crate::export::GAME_FOLDER).exists());
+
     // The game is exported as native, so its player runs it that way.
-    let found = crate::export::packaged_game(&build.program).unwrap();
+    let found = crate::export::packaged_game(&build.program, Some(&pack)).unwrap();
     let mut game = Session::default();
     registry.execute(&mut game, "project.open", &json!({"path": found})).unwrap();
     assert_eq!(crate::export::chosen_mode(&game, Platform::current()), ScriptMode::Native);
@@ -2543,7 +2554,7 @@ fn a_game_exports_for_the_web_as_a_page_with_its_files_in_one_pack_that_plays() 
 
     // The pack holds the game, visual scripts compiled and saved values left behind, and the
     // game plays from it.
-    let files = crate::web_export::unpack(&std::fs::read(site.join(crate::web_export::PACK_FILE)).unwrap()).unwrap();
+    let files = crate::pack::unpack(&std::fs::read(site.join(crate::web_export::PACK_FILE)).unwrap()).unwrap();
     let file = |name: &str| files.iter().find(|(p, _)| p == name).map(|(_, b)| b.clone());
     assert!(file("scripts/spin.bscript").unwrap().starts_with(bayleaf_script::WASM_MAGIC), "visual scripts are compiled");
     assert!(file("saves/progress.json").is_none(), "saved values stay behind");

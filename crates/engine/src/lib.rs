@@ -17,6 +17,7 @@ pub mod input_cmds;
 pub mod interface;
 mod lighting_cmds;
 pub mod native_export;
+pub mod pack;
 mod play;
 pub mod prefab_cmds;
 pub mod profiler;

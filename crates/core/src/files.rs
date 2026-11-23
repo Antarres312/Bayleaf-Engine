@@ -7,57 +7,77 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// A desktop system: the file system, under a game's pack when the player mounted one (an exported
+/// game's files, read from memory). Writes (saved values) go to the disk.
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
+    use std::sync::{PoisonError, RwLock, RwLockReadGuard};
+
+    use super::memory::Store;
     use super::{Path, PathBuf, SystemTime, io};
 
-    pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
-        let path = path.as_ref();
-        std::fs::read(path)
+    static PACK: RwLock<Store> = RwLock::new(Store::new());
+
+    fn pack() -> RwLockReadGuard<'static, Store> {
+        PACK.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Puts a file of a game's pack in memory, where reads find it before the disk.
+    pub fn mount(path: &Path, bytes: Vec<u8>) {
+        PACK.write().unwrap_or_else(PoisonError::into_inner).mount(path, bytes);
+    }
+
+    pub fn read(path: &Path) -> io::Result<Vec<u8>> {
+        pack().read(path).or_else(|_| std::fs::read(path))
     }
 
     pub fn write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::write(path, bytes)
     }
 
-    pub fn len(path: impl AsRef<Path>) -> io::Result<u64> {
-        let path = path.as_ref();
-        std::fs::metadata(path).map(|m| m.len())
+    pub fn len(path: &Path) -> io::Result<u64> {
+        pack().len(path).or_else(|_| std::fs::metadata(path).map(|m| m.len()))
     }
 
-    pub fn modified(path: impl AsRef<Path>) -> Option<SystemTime> {
-        let path = path.as_ref();
+    /// A packed file never changes while the game runs.
+    pub fn modified(path: &Path) -> Option<SystemTime> {
+        if pack().is_file(path) {
+            return None;
+        }
         std::fs::metadata(path).and_then(|m| m.modified()).ok()
     }
 
-    pub fn is_file(path: impl AsRef<Path>) -> bool {
-        let path = path.as_ref();
-        path.is_file()
+    pub fn is_file(path: &Path) -> bool {
+        pack().is_file(path) || path.is_file()
     }
 
-    pub fn is_dir(path: impl AsRef<Path>) -> bool {
-        let path = path.as_ref();
-        path.is_dir()
+    pub fn is_dir(path: &Path) -> bool {
+        pack().is_dir(path) || path.is_dir()
     }
 
-    pub fn read_dir(path: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
-        let path = path.as_ref();
-        std::fs::read_dir(path)?.map(|entry| entry.map(|e| e.path())).collect()
+    pub fn read_dir(path: &Path) -> io::Result<Vec<PathBuf>> {
+        let packed = pack().read_dir(path);
+        let disk: io::Result<Vec<PathBuf>> = std::fs::read_dir(path).and_then(|d| d.map(|entry| entry.map(|e| e.path())).collect());
+        match (packed, disk) {
+            (Ok(mut packed), Ok(disk)) => {
+                packed.extend(disk.into_iter().filter(|p| !pack().is_file(p) && !pack().is_dir(p)));
+                Ok(packed)
+            }
+            (Ok(packed), Err(_)) => Ok(packed),
+            (Err(_), disk) => disk,
+        }
     }
 
-    pub fn create_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
-        let path = path.as_ref();
+    pub fn create_dir_all(path: &Path) -> io::Result<()> {
         std::fs::create_dir_all(path)
     }
 
-    pub fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
-        let path = path.as_ref();
+    pub fn remove_file(path: &Path) -> io::Result<()> {
         std::fs::remove_file(path)
     }
 }
 
-/// The browser's store: what the game's pack holds, and what the game wrote since.
-#[cfg(any(target_arch = "wasm32", test))]
+/// A store in memory: what a game's pack holds, and (in a browser) what the game wrote since.
 mod memory {
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -68,6 +88,7 @@ mod memory {
     pub struct Store {
         files: BTreeMap<PathBuf, Arc<[u8]>>,
         /// Files written since [`Store::take_written`] was last asked.
+        #[cfg(any(target_arch = "wasm32", test))]
         written: Vec<PathBuf>,
     }
 
@@ -77,13 +98,18 @@ mod memory {
 
     impl Store {
         pub const fn new() -> Self {
-            Self { files: BTreeMap::new(), written: Vec::new() }
+            Self {
+                files: BTreeMap::new(),
+                #[cfg(any(target_arch = "wasm32", test))]
+                written: Vec::new(),
+            }
         }
 
         pub fn mount(&mut self, path: &Path, bytes: Vec<u8>) {
             self.files.insert(plain(path), bytes.into());
         }
 
+        #[cfg(any(target_arch = "wasm32", test))]
         pub fn take_written(&mut self) -> Vec<PathBuf> {
             std::mem::take(&mut self.written)
         }
@@ -92,6 +118,7 @@ mod memory {
             self.files.get(&plain(path)).map(|b| b.to_vec()).ok_or_else(|| missing(path))
         }
 
+        #[cfg(any(target_arch = "wasm32", test))]
         pub fn write(&mut self, path: &Path, bytes: &[u8]) {
             let path = plain(path);
             self.files.insert(path.clone(), bytes.into());
@@ -126,6 +153,7 @@ mod memory {
             if entries.is_empty() { Err(missing(path)) } else { Ok(entries) }
         }
 
+        #[cfg(any(target_arch = "wasm32", test))]
         pub fn remove_file(&mut self, path: &Path) -> io::Result<()> {
             self.files.remove(&plain(path)).map(|_| ()).ok_or_else(|| missing(path))
         }
@@ -201,8 +229,9 @@ mod imp {
     }
 }
 
+pub use imp::mount;
 #[cfg(target_arch = "wasm32")]
-pub use imp::{mount, take_written};
+pub use imp::take_written;
 
 /// The whole file.
 pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
@@ -281,6 +310,24 @@ pub fn plain(path: &Path) -> PathBuf {
 mod tests {
     use super::memory::Store;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn on_a_desktop_a_mounted_pack_comes_before_the_disk_and_writes_go_to_the_disk() {
+        let dir = std::env::temp_dir().join(format!("bayleaf-files-pack-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(dir.join("saves")).unwrap();
+        std::fs::write(dir.join("saves").join("progress.json"), "on disk").unwrap();
+        super::mount(&dir.join("game.bproject"), b"packed".to_vec());
+        assert_eq!(super::read(dir.join("game.bproject")).unwrap(), b"packed", "the pack is read from memory");
+        assert!(!dir.join("game.bproject").exists() && super::is_file(dir.join("game.bproject")));
+        assert_eq!(super::read(dir.join("saves").join("progress.json")).unwrap(), b"on disk", "what the pack lacks comes from the disk");
+        let mut listed = super::read_dir(&dir).unwrap();
+        listed.sort();
+        assert_eq!(listed, [dir.join("game.bproject"), dir.join("saves")], "a folder lists both");
+        super::write(dir.join("saves").join("new.json"), "kept").unwrap();
+        assert!(dir.join("saves").join("new.json").is_file(), "saved values go to the disk");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn the_browser_store_finds_a_file_by_any_spelling_of_its_path_and_lists_its_folders() {

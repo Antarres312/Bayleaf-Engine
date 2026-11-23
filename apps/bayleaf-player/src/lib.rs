@@ -275,16 +275,23 @@ fn game_icon(session: &Session) -> Option<egui::IconData> {
 /// the game (`scripts/mover.wasm`); the plain player has none.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Result<()> {
+    run_game(natives, None)
+}
+
+/// [`run`] for a game whose files (`game.pack`) are `embedded` in the program: a native player
+/// built for it.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_game(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>, embedded: Option<&'static [u8]>) -> anyhow::Result<()> {
     use anyhow::Context;
     use clap::Parser;
 
     let args = Args::parse();
     let game = match args.game.clone() {
         Some(game) => game,
-        None => std::env::current_exe()
-            .ok()
-            .and_then(|program| bayleaf_engine::export::packaged_game(&program))
-            .context("give a project or scene to run; no game was exported beside this program")?,
+        None => {
+            let program = std::env::current_exe().context("cannot find this program")?;
+            bayleaf_engine::export::packaged_game(&program, embedded).map_err(|e| anyhow::anyhow!("give a project or scene to run; {e}"))?
+        }
     };
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();

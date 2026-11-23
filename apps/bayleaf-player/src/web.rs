@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use bayleaf_engine::web_export::{PACK_FILE, unpack};
+use bayleaf_engine::pack::{PACK_FILE, mount};
 use bayleaf_engine::{CommandRegistry, Session};
 use eframe::egui;
 use wasm_bindgen::JsCast;
@@ -85,11 +85,8 @@ async fn begin() -> Result<(), String> {
         return Err(format!("The game could not be loaded: {PACK_FILE} answered {} {}.", response.status(), response.status_text()));
     }
     let buffer = JsFuture::from(response.array_buffer().map_err(said)?).await.map_err(|e| format!("The game could not be loaded: {}", said(e)))?;
-    let files = unpack(&js_sys::Uint8Array::new(&buffer).to_vec()).map_err(|e| format!("The game could not be loaded: {e}."))?;
-    log::info!("game pack read: {} files", files.len());
-    for (path, bytes) in files {
-        bayleaf_core::files::mount(&Path::new(GAME_ROOT).join(path), bytes);
-    }
+    let count = mount(Path::new(GAME_ROOT), &js_sys::Uint8Array::new(&buffer).to_vec()).map_err(|e| format!("The game could not be loaded: {e}."))?;
+    log::info!("game pack read: {count} files");
 
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();

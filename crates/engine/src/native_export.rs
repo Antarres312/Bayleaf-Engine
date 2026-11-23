@@ -66,9 +66,9 @@ pub struct NativeBuild {
 /// The player crate's binary.
 const BINARY: &str = "game";
 
-/// Writes the workspace that builds `program` with `scripts` built in, in `folder` (made if
-/// needed; its earlier build output is kept, so building again is quicker).
-pub fn prepare(engine: &Path, project: &Path, scripts: &[NativeSource], folder: &Path, program: &Path) -> Result<NativeBuild, String> {
+/// Writes the workspace that builds `program` with `scripts` built in, and the game's pack `game`
+/// in it, in `folder` (made if needed; its earlier build output is kept, so building again is quicker).
+pub fn prepare(engine: &Path, project: &Path, scripts: &[NativeSource], folder: &Path, program: &Path, game: &[u8]) -> Result<NativeBuild, String> {
     let fail = |what: &Path, e: std::io::Error| format!("cannot write {}: {e}", what.display());
     std::fs::create_dir_all(folder.join("player").join("src")).map_err(|e| fail(folder, e))?;
     let copies = folder.join("scripts");
@@ -95,6 +95,9 @@ pub fn prepare(engine: &Path, project: &Path, scripts: &[NativeSource], folder: 
     std::fs::write(&player, player_manifest(engine, &names)).map_err(|e| fail(&player, e))?;
     let main = folder.join("player").join("src").join("main.rs");
     std::fs::write(&main, player_main(scripts, &names)).map_err(|e| fail(&main, e))?;
+    // The game's files, built into the program (main.rs includes them).
+    let pack = folder.join(crate::pack::PACK_FILE);
+    std::fs::write(&pack, game).map_err(|e| fail(&pack, e))?;
     Ok(NativeBuild { folder: folder.to_path_buf(), program: program.to_path_buf() })
 }
 
@@ -307,8 +310,9 @@ fn player_main(scripts: &[NativeSource], names: &[String]) -> String {
         .enumerate()
         .map(|(i, (script, name))| format!("        // {name}\n        (PathBuf::from({:?}), script_{i}::bayleaf_native()),\n", script.module))
         .collect();
+    let pack = crate::pack::PACK_FILE;
     format!(
-        "//! The game's player with its Rust scripts built in (native mode). Written by the export; do not edit.\n\nuse std::path::PathBuf;\n\nfn main() -> std::process::ExitCode {{\n    let natives = vec![\n{entries}    ];\n    match bayleaf_player::run(natives) {{\n        Ok(()) => std::process::ExitCode::SUCCESS,\n        Err(error) => {{\n            eprintln!(\"{{error:#}}\");\n            std::process::ExitCode::FAILURE\n        }}\n    }}\n}}\n"
+        "//! The game's player with its Rust scripts and its files built in (native mode). Written by the export; do not edit.\n\nuse std::path::PathBuf;\n\n/// The game's files (`game.pack`, in the workspace).\nstatic GAME: &[u8] = include_bytes!(\"../../{pack}\");\n\nfn main() -> std::process::ExitCode {{\n    let natives = vec![\n{entries}    ];\n    match bayleaf_player::run_game(natives, Some(GAME)) {{\n        Ok(()) => std::process::ExitCode::SUCCESS,\n        Err(error) => {{\n            eprintln!(\"{{error:#}}\");\n            std::process::ExitCode::FAILURE\n        }}\n    }}\n}}\n"
     )
 }
 

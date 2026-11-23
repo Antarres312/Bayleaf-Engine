@@ -125,7 +125,8 @@ cargo run -p bayleaf-cli -- commands                    # every command, as JSON
 ```
 
 File > Export Game in the editor (or `project.export`) writes a project as a game folder: the
-player program under the game's name and its files beside it. Build the player first
+player program under the game's name, and its files in one pack (`game.pack`) beside it, or, in
+native mode, built into the program. Build the player first
 (`cargo build --release -p bayleaf-player` for a smaller, faster game).
 
 For the web (to put a game on a site, or on a game site as a game played in the browser), build

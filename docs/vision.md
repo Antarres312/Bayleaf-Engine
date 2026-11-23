@@ -258,7 +258,9 @@ No crate below L6 may use egui, eframe, winit or rfd.
    player program under that name and a `game` folder of the project's scenes, assets and scripts
    (visual scripts compiled at export; Rust sources, build output and saved values left behind),
    which the player runs when started without a path; Project Settings > Game chooses the window
-   icon (project format 5). Then: the Export Game window (platform, script mode per platform in
+   icon (project format 5). The files are now one pack (`game.pack`) beside the program, read into
+   memory, and built into the program in native mode, so a game's files are not left to read one
+   by one. Then: the Export Game window (platform, script mode per platform in
    Project Settings, project format 6, folder) shows `project.export.check`: whether this platform
    and mode can export, the main scene, visual scripts that compile, Rust scripts built from their
    latest sources, files scenes name that are missing, and how each script would run; the export
