@@ -566,6 +566,17 @@ fn every_node_kind_compiles_and_runs() {
     let found_gate = b.node("branch", json!({}));
     b.link(stop, "then", found_gate, "run");
     b.link(read_value, "found", found_gate, "condition");
+    // An event this script declares: triggered on every object, and heard here.
+    b.0.add_event("Hit").unwrap();
+    let hit = vec![bayleaf_graph::Param { name: "power".to_owned(), ty: VariableType::Number }];
+    b.0.set_event(&CATALOG, "Hit", None, Some(hit.clone()), &super::EVENT_KINDS).unwrap();
+    let hit_pins = bayleaf_graph::param_pins(&hit);
+    let trigger_hit = b.node("triggerEvent", json!({ "event": "Hit", "params": hit_pins }));
+    b.link(found_gate, "true", trigger_hit, "run");
+    let on_hit = b.node("eventStart", json!({ "event": "Hit", "params": hit_pins }));
+    let heard = b.node("log", json!({ "message": "hit" }));
+    b.link(on_hit, "then", heard, "run");
+    b.link(on_hit, "power", heard, "value");
     // Physics contacts: each names the other object (none arrive here).
     for kind in ["triggerEntered", "triggerLeft", "collisionStarted", "collisionEnded"] {
         let contact = b.node(kind, json!({}));
@@ -1750,4 +1761,105 @@ fn contact_events_run_for_their_own_contact_with_the_other_object() {
     }
     let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(logs, ["Coin", "hit", "left", "parted"], "each event once, for its own contact, naming the other object");
+}
+
+#[test]
+fn an_event_triggered_with_its_values_runs_on_event_which_reads_each_of_them() {
+    use bayleaf_graph::Param;
+    let mut b = Builder::new();
+    b.0.add_event("Damaged").unwrap();
+    let declared: Vec<Param> = [
+        ("amount", VariableType::Number),
+        ("by", VariableType::Object),
+        ("note", VariableType::Text),
+        ("at", VariableType::Vector),
+        ("crit", VariableType::TrueFalse),
+        ("count", VariableType::WholeNumber),
+    ]
+    .into_iter()
+    .map(|(name, ty)| Param { name: name.to_owned(), ty })
+    .collect();
+    b.0.set_event(&CATALOG, "Damaged", None, Some(declared.clone()), &super::EVENT_KINDS).unwrap();
+    let pins = bayleaf_graph::param_pins(&declared);
+    // On start the object triggers the event on itself, with a value of each kind.
+    let start = b.node("start", json!({}));
+    let trigger = b.node("triggerEvent", json!({ "event": "Damaged", "params": pins }));
+    for (name, value) in [("amount", json!(2.5)), ("note", json!("ouch")), ("at", json!([1.0, 2.0, 3.0])), ("crit", json!(true)), ("count", json!(7))] {
+        b.0.set_value(&CATALOG, trigger, name, value).unwrap();
+    }
+    b.link(start, "then", trigger, "run");
+    let me = b.node("thisObject", json!({}));
+    b.link(me, "object", trigger, "target");
+    b.link(me, "object", trigger, "by");
+    // On Event logs what it brought.
+    let on = b.node("eventStart", json!({ "event": "Damaged", "params": pins }));
+    let by = b.node("nameOf", json!({}));
+    b.link(on, "by", by, "target");
+    let at = b.node("split", json!({}));
+    b.link(on, "at", at, "vector");
+    let mut previous = (on, "then");
+    for (message, value, text) in [
+        ("amount", Some((on, "amount")), None),
+        ("by", None, Some((by, "result"))),
+        ("note", None, Some((on, "note"))),
+        ("at", Some((at, "y")), None),
+        ("count", Some((on, "count")), None),
+    ] {
+        let log = b.node("log", json!({ "message": message }));
+        b.link(previous.0, previous.1, log, "run");
+        if let Some((node, pin)) = value {
+            b.link(node, pin, log, "value");
+        }
+        if let Some((node, pin)) = text {
+            b.link(node, pin, log, "text");
+        }
+        previous = (log, "then");
+    }
+    let crit = b.node("branch", json!({}));
+    b.link(previous.0, previous.1, crit, "run");
+    b.link(on, "crit", crit, "condition");
+    let critical = b.node("log", json!({ "message": "critical" }));
+    b.link(crit, "true", critical, "run");
+
+    let (mut scene, _, mut host) = run(&b.bytes(), &[]);
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["amount 2.5", "by Scripted", "note ouch", "at 2", "count 7", "critical"], "each value arrives as it was sent");
+    // The script says which events it declares, so the editor can offer them.
+    let declared = ScriptHost::new().describe_all("events.bscript", &b.bytes()).unwrap().events;
+    assert_eq!(declared.len(), 1);
+    assert_eq!((declared[0].name.as_str(), declared[0].params.len()), ("Damaged", 6));
+}
+
+#[test]
+fn an_on_events_values_are_read_only_on_its_own_actions() {
+    let mut b = Builder::new();
+    b.0.add_event("Ping").unwrap();
+    let declared = vec![bayleaf_graph::Param { name: "n".to_owned(), ty: VariableType::Number }];
+    b.0.set_event(&CATALOG, "Ping", None, Some(declared.clone()), &super::EVENT_KINDS).unwrap();
+    let on = b.node("eventStart", json!({ "event": "Ping", "params": bayleaf_graph::param_pins(&declared) }));
+    let update = b.node("update", json!({}));
+    let log = b.node("log", json!({}));
+    b.link(update, "then", log, "run");
+    b.link(on, "n", log, "value");
+    let problems = compile(&b.0).unwrap_err();
+    assert!(problems.iter().any(|p| p.message.contains("read only on its own actions")), "{problems:?}");
+}
+
+#[test]
+fn a_plain_message_such_as_an_interface_click_runs_on_event_with_its_values_at_zero() {
+    let mut b = Builder::new();
+    b.0.add_event("OpenDoor").unwrap();
+    let declared = vec![bayleaf_graph::Param { name: "speed".to_owned(), ty: VariableType::Number }];
+    b.0.set_event(&CATALOG, "OpenDoor", None, Some(declared.clone()), &super::EVENT_KINDS).unwrap();
+    let on = b.node("eventStart", json!({ "event": "OpenDoor", "params": bayleaf_graph::param_pins(&declared) }));
+    let log = b.node("log", json!({ "message": "open" }));
+    b.link(on, "then", log, "run");
+    b.link(on, "speed", log, "value");
+    let (mut scene, id, mut host) = run(&b.bytes(), &[]);
+    // What an element's On Click sends: the event's name, with no values.
+    host.send(&mut scene, id, "OpenDoor", 0.0, 0.0, &Arc::new(Input::default()));
+    host.send(&mut scene, id, "SomethingElse", 0.0, 0.0, &Arc::new(Input::default()));
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["open 0"], "the event runs once, for its own name, its value read as zero");
 }

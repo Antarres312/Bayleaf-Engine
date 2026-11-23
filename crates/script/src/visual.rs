@@ -45,7 +45,7 @@ const fn contact(kind: &'static str, label: &'static str, description: &'static 
 
 /// Whether an event node runs on a message: On Message, the interface's events and contacts.
 fn takes_messages(kind: &str) -> bool {
-    matches!(kind, "message" | "interfacePressed" | "interfaceChanged") || contact_message(kind).is_some()
+    matches!(kind, "message" | "interfacePressed" | "interfaceChanged" | "eventStart") || contact_message(kind).is_some()
 }
 
 /// The message the physics step sends for a contact event node.
@@ -78,7 +78,7 @@ const WHOLE_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kin
 pub const TEXT_VARIABLE_BYTES: u32 = 1024;
 /// The object an action works on or a value is read from, from a search or This Object; when it is not
 /// linked, the node uses the object named in Object Name (or its own default).
-const TARGET: PinDef = pin("target", "Object", PinType::Object);
+pub(crate) const TARGET: PinDef = pin("target", "Object", PinType::Object);
 /// The property a Property or Set Property node names, declared in the script's panel.
 const PROPERTY_NAME: SettingDef = SettingDef { name: "name", label: "Property", kind: SettingKind::Name("") };
 
@@ -123,6 +123,12 @@ pub(crate) const FUNCTION_SETTINGS: [SettingDef; 3] = [
 
 /// The node kinds that name a function in their `function` setting.
 pub const FUNCTION_KINDS: [&str; 3] = ["functionStart", "functionReturn", "callFunction"];
+/// The event an On Event or Trigger Event node names, and its values' pins (`name:type`), kept in
+/// step with the graph's declaration by `graph.event.set`.
+pub(crate) const EVENT_SETTINGS: [SettingDef; 2] =
+    [SettingDef { name: "event", label: "Event", kind: SettingKind::Name("") }, SettingDef { name: "params", label: "Values", kind: SettingKind::Names }];
+/// The node kinds that name an event in their `event` setting.
+pub const EVENT_KINDS: [&str; 2] = ["eventStart", "triggerEvent"];
 const OBJECT_NAME: SettingDef = SettingDef { name: "object", label: "Object Name", kind: SettingKind::Text("") };
 /// The interface element a node works on, by its name.
 const ELEMENT: SettingDef = SettingDef { name: "element", label: "Element", kind: SettingKind::Text("Start") };
@@ -509,6 +515,26 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[RUN],
             outputs: &[THEN],
             settings: &FUNCTION_SETTINGS,
+            unique: false,
+        },
+        NodeDef {
+            kind: "eventStart",
+            label: "On Event",
+            category: "Events",
+            description: "Runs when the event is triggered on this object (by a script's Trigger Event, by the interface, or by every object's); its outputs are the values the event brings.",
+            inputs: &[],
+            outputs: &[THEN],
+            settings: &EVENT_SETTINGS,
+            unique: false,
+        },
+        NodeDef {
+            kind: "triggerEvent",
+            label: "Trigger Event",
+            category: "Actions",
+            description: "Triggers an event with its values on the linked object, else the first object named in Object Name, else every object; their On Event nodes run after this step.",
+            inputs: &[RUN, TARGET],
+            outputs: &[THEN],
+            settings: &[EVENT_SETTINGS[0], EVENT_SETTINGS[1], OBJECT_NAME],
             unique: false,
         },
         node("position", "Position", "Object", "The object's position, relative to its parent.", &[], &[pin("position", "Position", Vec3)]),
@@ -1315,7 +1341,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     let mut events: Vec<&bayleaf_graph::Node> = graph.nodes.iter().filter(|n| is_event(&n.kind)).collect();
     events.sort_by_key(|n| n.id);
     for event in events {
-        match c.chain(event.id, "then", 1) {
+        match event_chain(&mut c, graph, event) {
             Ok(code) if event.kind == "init" => init.push_str(&code),
             Ok(code) if event.kind == "start" => start.push_str(&code),
             Ok(code) if event.kind == "update" => update.push_str(&code),
@@ -1353,6 +1379,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
                 let name = match event.kind.as_str() {
                     "interfacePressed" => format!("pressed:{}", c.setting_text(event.id, "element", "Start")),
                     "interfaceChanged" => format!("changed:{}", c.setting_text(event.id, "element", "Start")),
+                    "eventStart" => c.setting_text(event.id, "event", ""),
                     kind => contact_message(kind).map_or_else(|| c.setting_text(event.id, "message", "hit"), str::to_owned),
                 };
                 let (at, len) = c.text(name.as_bytes());
@@ -1374,17 +1401,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     if !problems.is_empty() {
         return Err(problems);
     }
-    let mut description = serde_json::json!({ "properties": c.properties.iter().map(|(n, ty, v)| serde_json::json!([n, v, ty.code()])).collect::<Vec<_>>() });
-    if !graph.menu.trim().is_empty() {
-        match crate::menu_path(&graph.menu) {
-            Ok(path) => description["menu"] = serde_json::json!(path),
-            Err(problem) => return Err(vec![Problem::graph(format!("menu path: {problem}"))]),
-        }
-    }
-    if let Some(layout) = inspector_layout(graph) {
-        description["inspector"] = layout;
-    }
-    let description = description.to_string();
+    let description = description(graph, &c.properties).map_err(|p| vec![p])?;
     let (describe_at, describe_len) = c.text(description.as_bytes());
     let pages = c.next.div_ceil(65536).max(1);
     // Text made while a call runs goes after the module's own data; each call starts it empty.
@@ -1567,6 +1584,96 @@ impl Compiler<'_> {
 
     /// The handle of the object a node works on: its linked Object, else the first object named in
     /// its Object Name, else `otherwise` (WebAssembly), or the problem `otherwise` holds.
+    /// An On Event's value `pin`, read from the event being delivered; only on its own actions.
+    fn event_value(&self, node: u32, pin: &str) -> Result<Val, Problem> {
+        if self.scope.as_deref() != Some(event_scope(node).as_str()) {
+            return Err(Problem::on(node, "the values of an On Event are read only on its own actions"));
+        }
+        let params = self.event_params(node);
+        let (k, (_, ty)) =
+            params.iter().enumerate().find(|(_, (name, _))| name == pin).ok_or_else(|| Problem::on(node, format!("this event brings no {pin}")))?;
+        let at = format!("(i32.const {k})");
+        Ok(match ty {
+            VariableType::Number => Val::F(format!("(call $event_number {at})")),
+            VariableType::WholeNumber => Val::I(format!("(call $event_whole {at})")),
+            VariableType::TrueFalse => Val::B(format!("(call $event_flag {at})")),
+            VariableType::Text => Val::T(format!("(call $event_string {at})")),
+            VariableType::Object => Val::O(format!("(call $event_object {at})")),
+            VariableType::Vector | VariableType::Color => Val::V([0, 1, 2].map(|j| format!("(call $event_vector {at} (i32.const {j}))"))),
+        })
+    }
+
+    /// The values an On Event or Trigger Event node keeps (`params`, each `name:type`), in order.
+    fn event_params(&self, node: u32) -> Vec<(String, VariableType)> {
+        let listed = self.graph.value(node, "params").and_then(serde_json::Value::as_array);
+        listed
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let (name, code) = entry.as_str()?.split_once(':')?;
+                Some((name.to_owned(), VariableType::from_code(code)?))
+            })
+            .collect()
+    }
+
+    /// Trigger Event: its values listed for `event_send` (per value a kind and three words, in
+    /// memory taken for this call), then the event sent.
+    fn trigger_event(&mut self, node: u32, indent: &str, code: &mut String) -> Result<(), Problem> {
+        let name = self.setting_text(node, "event", "");
+        if name.is_empty() {
+            return Err(Problem::on(node, "choose the event to trigger"));
+        }
+        let (at, len) = self.text(name.as_bytes());
+        let handle = self.target(node, Ok("(i32.const -1)"))?;
+        let params = self.event_params(node);
+        let list = format!("$events_{node}");
+        self.global(format!("(global {list} (mut i32) (i32.const 0))"));
+        let _ = writeln!(code, "{indent}(global.set {list} (call $alloc (i32.const {})))", params.len().max(1) * 16);
+        for (k, (param, ty)) in params.iter().enumerate() {
+            let value = self.input(node, param)?;
+            let place = |offset: usize| format!("(i32.add (global.get {list}) (i32.const {}))", k * 16 + offset);
+            let kind = match ty {
+                VariableType::Number => 0,
+                VariableType::WholeNumber => 1,
+                VariableType::TrueFalse => 2,
+                VariableType::Vector | VariableType::Color => 3,
+                VariableType::Text => 4,
+                VariableType::Object => 5,
+            };
+            let _ = writeln!(code, "{indent}(i32.store {} (i32.const {kind}))", place(0));
+            match ty {
+                VariableType::Number => {
+                    let _ = writeln!(code, "{indent}(f32.store {} {})", place(4), as_float(node, value)?);
+                }
+                VariableType::WholeNumber => {
+                    let _ = writeln!(code, "{indent}(i32.store {} {})", place(4), as_int(node, value)?);
+                }
+                VariableType::TrueFalse => {
+                    let _ = writeln!(code, "{indent}(i32.store {} {})", place(4), as_bool(node, value)?);
+                }
+                VariableType::Object => {
+                    let _ = writeln!(code, "{indent}(i32.store {} {})", place(4), as_object(node, value)?);
+                }
+                VariableType::Vector | VariableType::Color => {
+                    for (j, part) in as_vec(node, value)?.iter().enumerate() {
+                        let _ = writeln!(code, "{indent}(f32.store {} {part})", place(4 + j * 4));
+                    }
+                }
+                VariableType::Text => {
+                    // The text once, then where it is and how long.
+                    let kept = format!("$event_text_{node}_{k}");
+                    self.global(format!("(global {kept} (mut i64) (i64.const 0))"));
+                    let _ = writeln!(code, "{indent}(global.set {kept} {})", as_text(node, value)?);
+                    let _ = writeln!(code, "{indent}(i32.store {} (call $tp (global.get {kept})))", place(4));
+                    let _ = writeln!(code, "{indent}(i32.store {} (call $tl (global.get {kept})))", place(8));
+                }
+            }
+        }
+        let _ =
+            writeln!(code, "{indent}(drop (call $event_send {handle} (i32.const {at}) (i32.const {len}) (global.get {list}) (i32.const {})))", params.len());
+        Ok(())
+    }
+
     fn target(&mut self, node: u32, otherwise: Result<&str, &str>) -> Result<String, Problem> {
         if self.graph.link_into(node, "target").is_some() {
             return self.input(node, "target").and_then(|v| as_object(node, v));
@@ -1870,6 +1977,7 @@ impl Compiler<'_> {
                 let [x, y, z] = vec3(self, input)?;
                 let _ = writeln!(code, "{indent}(drop (call {call} {handle} {x} {y} {z}))");
             }
+            "triggerEvent" => self.trigger_event(next, &indent, &mut code)?,
             "sendMessage" => {
                 let name = self.setting_text(next, "message", "hit");
                 let (at, len) = self.text(name.as_bytes());
@@ -2072,6 +2180,7 @@ impl Compiler<'_> {
         let (n, def) = graph.node_def(&CATALOG, node).map_err(|e| Problem::on(node, e.to_string()))?;
         let transform = |base: u32| Val::V([0, 1, 2].map(|i| format!("(call $t (i32.const {}))", base + i)));
         Ok(match n.kind.as_str() {
+            "eventStart" => self.event_value(node, pin)?,
             "functionStart" => {
                 let function = self.function_of(node)?;
                 if self.scope.as_deref() != Some(function.name.as_str()) {
@@ -2546,10 +2655,48 @@ fn parts_of(node: u32, ty: VariableType, value: Val) -> Result<Vec<String>, Prob
     })
 }
 
+/// What `bayleaf_describe` says, as JSON: the properties, the menu path, how the Inspector lays the
+/// properties out, and the events.
+fn description(graph: &Graph, properties: &[(String, PropertyType, serde_json::Value)]) -> Result<String, Problem> {
+    let mut description = serde_json::json!({ "properties": properties.iter().map(|(n, ty, v)| serde_json::json!([n, v, ty.code()])).collect::<Vec<_>>() });
+    if !graph.menu.trim().is_empty() {
+        let path = crate::menu_path(&graph.menu).map_err(|problem| Problem::graph(format!("menu path: {problem}")))?;
+        description["menu"] = serde_json::json!(path);
+    }
+    if let Some(layout) = inspector_layout(graph) {
+        description["inspector"] = layout;
+    }
+    if !graph.events.is_empty() {
+        description["events"] = graph.events.iter().map(|e| serde_json::json!({ "name": e.name, "params": bayleaf_graph::param_pins(&e.params) })).collect();
+    }
+    Ok(description.to_string())
+}
+
+/// An event node's chain. An On Event's compiles in its own scope, where its values are read, once
+/// it names an event the script declares.
+fn event_chain(c: &mut Compiler<'_>, graph: &Graph, event: &bayleaf_graph::Node) -> Result<String, Problem> {
+    if event.kind != "eventStart" {
+        return c.chain(event.id, "then", 1);
+    }
+    if graph.event(&c.setting_text(event.id, "event", "")).is_none() {
+        return Err(Problem::on(event.id, "this On Event names no event this script declares; add it under Events"));
+    }
+    c.scope = Some(event_scope(event.id));
+    let chained = c.chain(event.id, "then", 1);
+    c.scope = None;
+    chained
+}
+
+/// The scope an On Event's chain compiles in, which its values are read in.
+fn event_scope(node: u32) -> String {
+    format!("on event {node}")
+}
+
 /// Node kinds that start a chain on their own.
 fn is_event(kind: &str) -> bool {
     matches!(kind, "init" | "start" | "update" | "message" | "keyPressed" | "actionPressed" | "timer" | "interfacePressed" | "interfaceChanged")
         || contact_message(kind).is_some()
+        || kind == "eventStart"
 }
 
 fn as_float(node: u32, value: Val) -> Result<String, Problem> {
@@ -2654,6 +2801,13 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "destroy" (func $destroy (param i32) (result i32)))
   (import "bayleaf" "send" (func $send (param i32 i32 i32 f32) (result i32)))
   (import "bayleaf" "message_is" (func $message_is (param i32 i32) (result i32)))
+  (import "bayleaf" "event_send" (func $event_send (param i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "event_number" (func $event_number (param i32) (result f32)))
+  (import "bayleaf" "event_whole" (func $event_whole (param i32) (result i32)))
+  (import "bayleaf" "event_flag" (func $event_flag (param i32) (result i32)))
+  (import "bayleaf" "event_vector" (func $event_vector (param i32 i32) (result f32)))
+  (import "bayleaf" "event_object" (func $event_object (param i32) (result i32)))
+  (import "bayleaf" "event_text" (func $event_text (param i32 i32 i32) (result i32)))
   (import "bayleaf" "state_get" (func $state_get (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "state_set" (func $state_set (param i32 i32 i32 i32 f64) (result i32)))
   (import "bayleaf" "game_end" (func $game_end (param i32) (result i32)))
@@ -2973,6 +3127,12 @@ const PRELUDE: &str = r#"(module
     (drop (call $property_text (local.get $a) (local.get $l) (local.get $p) (local.get $n)))
     (call $mk (local.get $p) (local.get $n)))
   ;; The name of the object with handle $h.
+  ;; Text value $k of the event being delivered.
+  (func $event_string (param $k i32) (result i64) (local $n i32) (local $p i32)
+    (local.set $n (call $event_text (local.get $k) (i32.const 0) (i32.const 0)))
+    (local.set $p (call $alloc (local.get $n)))
+    (drop (call $event_text (local.get $k) (local.get $p) (local.get $n)))
+    (call $mk (local.get $p) (local.get $n)))
   (func $name (param $h i32) (result i64) (local $n i32) (local $p i32)
     (local.set $n (call $name_of (local.get $h) (i32.const 0) (i32.const 0)))
     (local.set $p (call $alloc (local.get $n)))

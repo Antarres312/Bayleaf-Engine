@@ -174,6 +174,21 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         ),
         spec("graph.function.remove", "Remove Function", "{name}: its nodes stay, and say they name no function", Mutates::Graph, function_remove),
         spec(
+            "graph.event.add",
+            "Add Event",
+            "{name}: declares an event of a visual script, bringing no values yet; its On Event nodes run when a script or the interface triggers it on the object, and Trigger Event nodes trigger it",
+            Mutates::Graph,
+            event_add,
+        ),
+        spec(
+            "graph.event.set",
+            "Change Event",
+            "{name, rename?, params?}: a new name, or new values ([{name, type}], type as for variables); the event's nodes follow, and links to pins that went away go",
+            Mutates::Graph,
+            event_set,
+        ),
+        spec("graph.event.remove", "Remove Event", "{name}: its nodes stay (a Trigger Event may name another script's event)", Mutates::Graph, event_remove),
+        spec(
             "graph.menu.set",
             "Set Menu Path",
             "{path}: where Add Component lists the visual script (Light/Flicker); empty for under Scripts",
@@ -323,6 +338,35 @@ fn function_set(session: &mut Session, params: &Value) -> Result<Value, CommandE
 fn function_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: FunctionAddParams = parse(params)?;
     open_script(session)?.remove_function(&p.name).map_err(failed)?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EventSetParams {
+    name: String,
+    #[serde(default)]
+    rename: Option<String>,
+    #[serde(default)]
+    params: Option<Vec<bayleaf_graph::Param>>,
+}
+
+fn event_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: FunctionAddParams = parse(params)?;
+    open_script(session)?.add_event(&p.name).map_err(failed)?;
+    Ok(json!({}))
+}
+
+fn event_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: EventSetParams = parse(params)?;
+    let catalog = &bayleaf_script::visual::CATALOG;
+    open_script(session)?.set_event(catalog, &p.name, p.rename.as_deref(), p.params, &bayleaf_script::visual::EVENT_KINDS).map_err(failed)?;
+    Ok(json!({}))
+}
+
+fn event_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: FunctionAddParams = parse(params)?;
+    open_script(session)?.remove_event(&p.name).map_err(failed)?;
     Ok(json!({}))
 }
 

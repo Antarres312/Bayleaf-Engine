@@ -70,6 +70,13 @@ mod raw {
         pub fn state_set(scope: i32, handle: i32, name_ptr: *const u8, name_len: usize, value: f64) -> i32;
         pub fn game_end(won: i32) -> i32;
         pub fn input_map_set(handle: i32, name_ptr: *const u8, name_len: usize) -> i32;
+        pub fn event_send(handle: i32, name_ptr: *const u8, name_len: usize, values: *const u8, count: i32) -> i32;
+        pub fn event_number(index: i32) -> f32;
+        pub fn event_whole(index: i32) -> i32;
+        pub fn event_flag(index: i32) -> i32;
+        pub fn event_vector(index: i32, part: i32) -> f32;
+        pub fn event_object(index: i32) -> i32;
+        pub fn event_text(index: i32, out: *mut u8, cap: usize) -> i32;
     }
 }
 
@@ -586,6 +593,53 @@ mod raw {
         // SAFETY: the safe wrappers pass a live slice.
         text_call("input_map_set", unsafe { bytes(ptr, n) }, &[I32(handle)])
     }
+    /// Texts go into the exchange memory first, and the values list where they went.
+    pub fn event_send(handle: i32, name: &[u8], values: &[super::EventSlot<'_>]) -> i32 {
+        run(|x| {
+            let at = x.put(name)?;
+            let mut places = Vec::new();
+            for value in values {
+                if let super::EventSlot::Text(text) = value {
+                    let crate::native::Value::I32(place) = x.put(text.as_bytes())? else { return None };
+                    places.push(u32::try_from(place).ok()?);
+                }
+            }
+            let mut places = places.into_iter();
+            let listed = super::encode_event(values, |_| places.next())?;
+            let list = x.put(&listed)?;
+            x.call("event_send", &[I32(handle), at, len(name.len()), list, len(values.len())])?.i32()
+        })
+        .unwrap_or(0)
+    }
+    pub unsafe fn event_number(index: i32) -> f32 {
+        run(|x| x.call("event_number", &[I32(index)])?.f32()).unwrap_or(0.0)
+    }
+    pub unsafe fn event_whole(index: i32) -> i32 {
+        plain("event_whole", &[I32(index)])
+    }
+    pub unsafe fn event_flag(index: i32) -> i32 {
+        plain("event_flag", &[I32(index)])
+    }
+    pub unsafe fn event_vector(index: i32, part: i32) -> f32 {
+        run(|x| x.call("event_vector", &[I32(index), I32(part)])?.f32()).unwrap_or(0.0)
+    }
+    pub unsafe fn event_object(index: i32) -> i32 {
+        plain("event_object", &[I32(index)])
+    }
+    pub unsafe fn event_text(index: i32, out: *mut u8, cap: usize) -> i32 {
+        let (full, data) = run(|x| {
+            let room = x.room(cap)?;
+            let full = x.call("event_text", &[I32(index), room, len(cap)])?.i32()?;
+            let got = usize::try_from(full).unwrap_or(0).min(cap);
+            Some((full, x.get(room, got)?))
+        })
+        .unwrap_or((0, Vec::new()));
+        if !out.is_null() {
+            // SAFETY: the safe wrapper passes `cap` writable bytes at `out`; `data` is at most `cap` long.
+            unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), out, data.len()) };
+        }
+        full
+    }
 }
 
 /// The bridge to the host while a native script runs: set by [`with_bridge`] around each call.
@@ -1019,4 +1073,81 @@ pub(crate) fn input_map_set(handle: i32, map: &str) -> bool {
 pub(crate) fn game_end(won: bool) -> bool {
     // SAFETY: a plain number in and out.
     unsafe { raw::game_end(i32::from(won)) != 0 }
+}
+
+/// One value of an event as `event_send` lists it.
+pub(crate) enum EventSlot<'a> {
+    Number(f32),
+    Whole(i32),
+    Flag(bool),
+    Vector([f32; 3]),
+    Text(&'a str),
+    Object(i32),
+}
+
+/// The list `event_send` reads: per value a kind and three words; `text_at` gives where each
+/// text is in the memory the host reads.
+fn encode_event(values: &[EventSlot<'_>], mut text_at: impl FnMut(&str) -> Option<u32>) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(values.len() * 16);
+    for value in values {
+        let words: [u32; 4] = match value {
+            EventSlot::Number(v) => [0, v.to_bits(), 0, 0],
+            EventSlot::Whole(v) => [1, *v as u32, 0, 0],
+            EventSlot::Flag(v) => [2, u32::from(*v), 0, 0],
+            EventSlot::Vector([x, y, z]) => [3, x.to_bits(), y.to_bits(), z.to_bits()],
+            EventSlot::Text(text) => [4, text_at(text)?, u32::try_from(text.len()).ok()?, 0],
+            EventSlot::Object(handle) => [5, *handle as u32, 0, 0],
+        };
+        words.iter().for_each(|w| out.extend_from_slice(&w.to_le_bytes()));
+    }
+    Some(out)
+}
+
+pub(crate) fn event_send(handle: i32, name: &str, values: &[EventSlot<'_>]) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // In WebAssembly a text's place is its address in the script's memory.
+        let Some(listed) = encode_event(values, |text| u32::try_from(text.as_ptr() as usize).ok()) else { return false };
+        // SAFETY: the pointers and lengths describe `name` and `listed`, and each text in the list
+        // lives for this call; the host only reads.
+        unsafe { raw::event_send(handle, name.as_ptr(), name.len(), listed.as_ptr(), values.len() as i32) != 0 }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        raw::event_send(handle, name.as_bytes(), values) != 0
+    }
+}
+
+pub(crate) fn event_number(index: i32) -> f32 {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::event_number(index) }
+}
+
+pub(crate) fn event_whole(index: i32) -> i32 {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::event_whole(index) }
+}
+
+pub(crate) fn event_flag(index: i32) -> bool {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::event_flag(index) != 0 }
+}
+
+pub(crate) fn event_vector(index: i32) -> [f32; 3] {
+    // SAFETY: plain numbers in and out.
+    [0, 1, 2].map(|part| unsafe { raw::event_vector(index, part) })
+}
+
+pub(crate) fn event_object(index: i32) -> i32 {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::event_object(index) }
+}
+
+pub(crate) fn event_text(index: i32) -> String {
+    // SAFETY: a null pointer with no room only asks for the length.
+    let len = unsafe { raw::event_text(index, std::ptr::null_mut(), 0) };
+    let mut bytes = vec![0u8; usize::try_from(len).unwrap_or(0)];
+    // SAFETY: `bytes` has exactly `len` writable bytes, at most what the host writes.
+    unsafe { raw::event_text(index, bytes.as_mut_ptr(), bytes.len()) };
+    String::from_utf8_lossy(&bytes).into_owned()
 }

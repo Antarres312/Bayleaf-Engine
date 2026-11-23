@@ -50,4 +50,9 @@ impl ScriptInfo {
     pub(crate) fn menu(&mut self, path: &Path) -> Option<String> {
         self.description(path).ok().and_then(|d| d.menu)
     }
+
+    /// The events the module declares, which other scripts and the interface can trigger.
+    pub(crate) fn events(&mut self, path: &Path) -> Vec<bayleaf_engine::script::DeclaredEvent> {
+        self.description(path).map(|d| d.events).unwrap_or_default()
+    }
 }

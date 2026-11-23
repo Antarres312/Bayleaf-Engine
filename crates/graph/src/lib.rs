@@ -17,10 +17,11 @@ use serde_json::Value;
 pub const FORMAT: &str = "bayleaf.graph";
 /// Current graph file version. Version 2 added declared `variables`; version 3 moved a visual script's
 /// Menu Path node into `menu`; version 4 added `functions`; version 5 added declared `properties`;
-/// version 6 added how each property shows in the Inspector (`properties[].inspector`).
+/// version 6 added how each property shows in the Inspector (`properties[].inspector`); version 7
+/// added declared `events`.
 /// Older files still read: a Menu Path node becomes `menu`, and a catalog's `upgrade` moves what its
 /// own nodes kept (a visual script's Property nodes' defaults become `properties`).
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 /// The node kind versions before 3 kept a visual script's menu path in, as its `path` value.
 const OLD_MENU_NODE: &str = "menuPath";
 /// Longest `menu`, in characters.
@@ -365,6 +366,9 @@ pub struct Graph {
     /// Functions a visual script declares: what each takes and gives back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub functions: Vec<Function>,
+    /// Events a visual script declares: what each brings. Any script may trigger them on an object.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<Event>,
     /// Properties a visual script declares: values the Inspector sets per object, with defaults.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<Property>,
@@ -524,6 +528,20 @@ pub struct Function {
     #[serde(default)]
     pub outputs: Vec<Param>,
 }
+
+/// An event a visual script declares: its name and what it brings. Its On Event nodes run when a
+/// script, the interface or the engine triggers it on the script's object; Trigger Event nodes
+/// trigger it, here or on another object.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Event {
+    pub name: String,
+    #[serde(default)]
+    pub params: Vec<Param>,
+}
+
+/// Most events a graph declares.
+pub const MAX_EVENTS: usize = 64;
 
 /// Most functions a graph declares, and most inputs or outputs one has.
 pub const MAX_FUNCTIONS: usize = 64;
@@ -690,6 +708,66 @@ impl Graph {
         Ok(())
     }
 
+    pub fn event(&self, name: &str) -> Option<&Event> {
+        self.events.iter().find(|e| e.name == name)
+    }
+
+    /// Declares an event that brings nothing.
+    pub fn add_event(&mut self, name: &str) -> Result<(), GraphError> {
+        check_variable_name(name).map_err(|_| GraphError::Refused(format!("event name {name:?} must be 1 to 64 letters, digits or _")))?;
+        if self.event(name).is_some() {
+            return Err(GraphError::Refused(format!("there is already an event {name}")));
+        }
+        if self.events.len() >= MAX_EVENTS {
+            return Err(GraphError::Refused(format!("a graph declares at most {MAX_EVENTS} events")));
+        }
+        self.events.push(Event { name: name.to_owned(), params: Vec::new() });
+        Ok(())
+    }
+
+    /// Renames an event or changes what it brings. Nodes of `kinds` that name it (their `event`
+    /// setting) follow: the new name, and their `params` pins; links to pins that went away go too.
+    pub fn set_event(&mut self, catalog: &Catalog, name: &str, rename: Option<&str>, params: Option<Vec<Param>>, kinds: &[&str]) -> Result<(), GraphError> {
+        let mut event = self.event(name).cloned().ok_or_else(|| GraphError::Refused(format!("there is no event {name}")))?;
+        if let Some(new) = rename.filter(|n| *n != name) {
+            check_variable_name(new).map_err(|_| GraphError::Refused(format!("event name {new:?} must be 1 to 64 letters, digits or _")))?;
+            if self.event(new).is_some() {
+                return Err(GraphError::Refused(format!("there is already an event {new}")));
+            }
+            event.name = new.to_owned();
+        }
+        if let Some(params) = params {
+            check_params(name, &params).map_err(GraphError::Refused)?;
+            event.params = params;
+        }
+        let mut trial = self.clone();
+        if let Some(slot) = trial.events.iter_mut().find(|e| e.name == name) {
+            *slot = event.clone();
+        }
+        let named: Vec<u32> = trial
+            .nodes
+            .iter()
+            .filter(|n| kinds.contains(&n.kind.as_str()) && n.values.get("event").and_then(Value::as_str) == Some(name))
+            .map(|n| n.id)
+            .collect();
+        for id in named {
+            trial.set_value(catalog, id, "params", param_pins(&event.params))?;
+            trial.set_value(catalog, id, "event", Value::from(event.name.as_str()))?;
+        }
+        *self = trial;
+        Ok(())
+    }
+
+    /// Takes an event away; nodes naming it stay (a Trigger Event may name another script's event).
+    pub fn remove_event(&mut self, name: &str) -> Result<(), GraphError> {
+        let before = self.events.len();
+        self.events.retain(|e| e.name != name);
+        if self.events.len() == before {
+            return Err(GraphError::Refused(format!("there is no event {name}")));
+        }
+        Ok(())
+    }
+
     /// Takes a function away; nodes naming it stay, and the compiler says they name no function.
     pub fn remove_function(&mut self, name: &str) -> Result<(), GraphError> {
         let before = self.functions.len();
@@ -788,6 +866,7 @@ impl Graph {
             variables: Vec::new(),
             menu: String::new(),
             functions: Vec::new(),
+            events: Vec::new(),
             properties: Vec::new(),
         }
     }
@@ -924,6 +1003,16 @@ impl Graph {
             check_params(&function.name, &function.outputs).map_err(GraphError::Format)?;
             if self.functions[..index].iter().any(|f| f.name == function.name) {
                 return Err(GraphError::Format(format!("function {} is declared twice", function.name)));
+            }
+        }
+        if self.events.len() > MAX_EVENTS {
+            return Err(GraphError::Format(format!("a graph declares at most {MAX_EVENTS} events")));
+        }
+        for (index, event) in self.events.iter().enumerate() {
+            check_variable_name(&event.name).map_err(GraphError::Format)?;
+            check_params(&event.name, &event.params).map_err(GraphError::Format)?;
+            if self.events[..index].iter().any(|e| e.name == event.name) {
+                return Err(GraphError::Format(format!("event {} is declared twice", event.name)));
             }
         }
         if self.domain != catalog.domain {

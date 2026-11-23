@@ -216,7 +216,15 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     } else {
                         Vec::new()
                     };
-                    if let Some(set) = element_fields(ui, t, draft, at.is_empty(), &inside) {
+                    // Events the project's scripts declare, which On Click can trigger.
+                    let mut events: Vec<String> = Vec::new();
+                    let base = editor.session.script_dir();
+                    for module in editor.project.script_files() {
+                        events.extend(editor.script_info.events(&base.join(module)).into_iter().map(|e| e.name));
+                    }
+                    events.sort();
+                    events.dedup();
+                    if let Some(set) = element_fields(ui, t, draft, at.is_empty(), &inside, &events) {
                         change = Some(Change::Set(at.clone(), set));
                     }
                 } else {
@@ -411,6 +419,7 @@ fn element_fields(
     draft: &mut Element,
     is_root: bool,
     inside: &[(String, String)],
+    events: &[String],
 ) -> Option<serde_json::Map<String, Value>> {
     let mut done = false;
     let finished = |r: &egui::Response| r.lost_focus() || r.drag_stopped() || (r.changed() && !r.dragged() && !r.has_focus());
@@ -476,7 +485,29 @@ fn element_fields(
             done |= text_row(ui, t, "Bind", &mut draft.bind, "game:score or player:health");
         }
         if draft.kind != Kind::TextField {
-            done |= text_row(ui, t, "On Click", &mut draft.on_click, "A message for the scripts, such as openMenu");
+            // Typed, or one of the events the project's scripts declare.
+            crate::value_editor::row(ui, t, "On Click", |ui, label, width| {
+                ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let pick = ui.add_enabled_ui(!events.is_empty(), |ui| {
+                        egui::containers::menu::MenuButton::new("…")
+                            .ui(ui, |ui| {
+                                for event in events {
+                                    if ui.button(event).clicked() {
+                                        draft.on_click = event.clone();
+                                        done = true;
+                                        ui.close();
+                                    }
+                                }
+                            })
+                            .0
+                    });
+                    let pick = pick.inner;
+                    pick.ctx.accesskit_node_builder(pick.id, |node| node.set_label(tl("Events for On Click")));
+                    pick.on_hover_text(tl("An event the project's scripts declare")).on_disabled_hover_text(tl("No script of the project declares an event"));
+                    let field = egui::TextEdit::singleline(&mut draft.on_click).hint_text(tl("A message or event for the scripts, such as openMenu"));
+                    done |= ui.add_sized([ui.available_width(), ROW_HEIGHT], field).labelled_by(label).lost_focus();
+                });
+            });
         }
         let mut classes = draft.classes.join(" ");
         crate::value_editor::row(ui, t, "Classes", |ui, label, width| {

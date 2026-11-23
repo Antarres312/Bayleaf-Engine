@@ -91,6 +91,10 @@ this: there is no list property type yet.
 | `send` | `(handle: i32, name_ptr: i32, name_len: i32, value: f32) -> i32` | sends a message (a name of 1 to 64 bytes and a finite number) to the scripts of the object, or of every object when `handle` is `-1`; `1` when sent, `0` when this call already sent 64 |
 | `message_is` | `(name_ptr: i32, name_len: i32) -> i32` | during `bayleaf_message`, `1` when the message has this name, else `0` |
 | `message_name` | `(out: i32, cap: i32) -> i32` | during `bayleaf_message`, writes up to `cap` bytes of the message's name and returns its full length; `0` outside it |
+| `event_send` | `(handle, name_ptr, name_len, values_ptr, count: i32) -> i32` | triggers an event: a message named `name` with values, to the object with `handle` (`-1` every object), after this step; `values_ptr` lists `count` values of 16 bytes each, a kind then three words: `0` number (`f32`), `1` whole number (`i32`), `2` true/false (`i32`), `3` vector (three `f32`), `4` text (pointer and length), `5` object (handle, `0` none). At most 16 values and 4096 bytes of text each. `1` when sent, `0` when this call sent too many |
+| `event_number`, `event_whole`, `event_flag`, `event_object` | `(index: i32) -> f32 / i32` | during `bayleaf_message`, value `index` of the event being delivered: a number (a whole number converts), a whole number, `1` for true, an object's handle (`0` once it is gone); zero for a value of another kind or none |
+| `event_vector` | `(index, part: i32) -> f32` | part `0`, `1` or `2` of vector value `index` |
+| `event_text` | `(index, out, cap: i32) -> i32` | writes up to `cap` bytes of text value `index` and returns its full length |
 | `math_pow` | `(base: f32, exponent: f32) -> f32` | `base` to the power of `exponent`, for visual scripts' Power (WebAssembly has no instruction for it); Rust scripts use `f32::powf` |
 | `pointer_over_interface` | `() -> i32` | `1` while the pointer is over an interface element that takes it (its mouse buttons then read `0` here); Rust: `pointer_over_interface()` |
 | `apply_impulse` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | pushes the object's dynamic physics body by an impulse in world space, after the step; `1` when asked, `0` when this call already asked 64 times |
@@ -110,6 +114,11 @@ this: there is no list property type yet.
 | `game_end` | `(won: i32) -> i32` | ends the game, won (`1`) or lost (`0`); `1` when this ended it, `0` when it had already ended. Every script then gets the message `gameWon` or `gameLost` |
 
 ### Messages
+
+A script declares its events in `bayleaf_describe` as `"events": [{"name": "Damaged", "params":
+["amount:number", "by:object"]}]`, so the editor offers them to other scripts and the interface; an
+event arrives in `bayleaf_message` under its name like any message (value `0`), its values read with
+`event_*`. In the Rust SDK `trigger_event` sends one and `event::number(0)` and the others read it.
 
 In a build with physics, contacts arrive as messages to both objects' scripts after the physics
 step: `collision` and `collisionEnd` when colliders start and stop touching, `triggerEnter` and

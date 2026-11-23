@@ -75,6 +75,13 @@ const HOST_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("state_set", "i32 i32 i32 i32 f64", "i32"),
     ("game_end", "i32", "i32"),
     ("input_map_set", "i32 i32 i32", "i32"),
+    ("event_send", "i32 i32 i32 i32 i32", "i32"),
+    ("event_number", "i32", "f32"),
+    ("event_whole", "i32", "i32"),
+    ("event_flag", "i32", "i32"),
+    ("event_vector", "i32 i32", "f32"),
+    ("event_object", "i32", "i32"),
+    ("event_text", "i32 i32 i32", "i32"),
 ];
 
 /// Pages of exchange memory (64 KiB each) a native script's calls copy their texts and numbers through.

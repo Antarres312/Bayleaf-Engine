@@ -3428,3 +3428,29 @@ fn a_native_build_shows_how_far_it_is_in_the_status_bar_and_says_how_it_went() {
     assert!(harness.state().native_build.is_none(), "a finished build is over");
     assert!(harness.state().status.contains("out/My Game"), "the status says where it went: {}", harness.state().status);
 }
+
+#[test]
+fn events_are_declared_given_values_and_placed_from_the_script_panel() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label("Add Event").click();
+    harness.run();
+    let g = graph(&harness);
+    assert_eq!(g.events.len(), 1, "Add Event declares one");
+    let name = g.events[0].name.clone();
+    let on = g.nodes.iter().find(|n| n.kind == "eventStart").map(|n| n.id).expect("and places its On Event node");
+
+    harness.get_by_label("Add Value").click();
+    harness.run();
+    harness.get_by_label("Number").click();
+    harness.run();
+    let g = graph(&harness);
+    assert_eq!(g.event(&name).unwrap().params.len(), 1);
+    assert_eq!(g.value(on, "params"), Some(&json!(["value:number"])), "the On Event node follows");
+
+    harness.get_by_label(&format!("Trigger {name}")).click();
+    harness.run();
+    let trigger = graph(&harness).nodes.iter().find(|n| n.kind == "triggerEvent").map(|n| n.id).expect("Trigger places a Trigger Event node");
+    assert_eq!(graph(&harness).value(trigger, "params"), Some(&json!(["value:number"])));
+    assert_eq!(graph(&harness).value(trigger, "event"), Some(&json!(name)));
+    assert!(harness.query_by_label_contains("this visual script compiles").is_some(), "{}", harness.state().status);
+}

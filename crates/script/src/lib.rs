@@ -293,6 +293,22 @@ pub const MAX_OBJECT_REFS: usize = 4096;
 /// `send`'s handle for every object.
 pub const EVERY_OBJECT: i32 = -1;
 
+/// One value an event brings (`event_send`; a visual script's Trigger Event). An object is kept by
+/// its id, so it outlasts the step it was sent in; it reads as none once it is gone.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EventArg {
+    Number(f32),
+    Whole(i32),
+    Flag(bool),
+    Vector([f32; 3]),
+    Text(String),
+    Object(Option<StableId>),
+}
+
+/// Most values one event brings, and the longest text among them, in bytes.
+pub const MAX_EVENT_ARGS: usize = 16;
+pub const MAX_EVENT_TEXT: usize = 4096;
+
 /// A message one script sent, delivered after the step to the scripts of `to` (`None`: every
 /// object) that export `bayleaf_message`.
 #[derive(Clone, Debug, PartialEq)]
@@ -300,6 +316,8 @@ struct Message {
     to: Option<StableId>,
     name: String,
     value: f32,
+    /// What an event brings; empty for a plain message.
+    args: Arc<[EventArg]>,
 }
 
 /// The objects scripts can see during one step: names and local transforms as the step began.
@@ -493,6 +511,8 @@ struct HostState<L> {
     refs: Vec<StableId>,
     /// The name of the message being delivered, during `bayleaf_message`.
     message: Option<String>,
+    /// What the message being delivered brings, when it is an event.
+    message_args: Arc<[EventArg]>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
     /// Interface elements as they show, for `ui_value` and `ui_text`.
@@ -525,6 +545,7 @@ impl<L> HostState<L> {
             property_writes: Vec::new(),
             refs: Vec::new(),
             message: None,
+            message_args: Arc::from([]),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
             interface: Arc::new(InterfaceValues::new()),
@@ -579,7 +600,19 @@ pub struct Description {
     pub menu: Option<String>,
     /// How its properties show in the Inspector; empty for one row each, in declaration order.
     pub inspector: Vec<bayleaf_scene::inspector::InspectorItem>,
+    /// Events it declares, which other scripts and the interface can trigger on its object.
+    pub events: Vec<DeclaredEvent>,
 }
+
+/// An event a script declares: its name and its values, each `name:type` (`amount:number`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DeclaredEvent {
+    pub name: String,
+    pub params: Vec<String>,
+}
+
+/// Most events a description lists.
+pub const MAX_DECLARED_EVENTS: usize = 64;
 
 /// Most folders in a menu path, and longest part.
 const MAX_MENU_DEPTH: usize = 4;

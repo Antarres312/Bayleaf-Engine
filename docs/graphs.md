@@ -238,6 +238,15 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   gives back its outputs (a function that ends without one gives back zeros). **Call Function** runs
   it with its inputs and then goes on, with what it gave back as outputs. A function may call
   itself. The nodes' pins follow the function when its inputs or outputs change (graph version 4).
+- **Events** are named happenings an object's scripts answer, triggered by other scripts, by the
+  interface or by the script itself. An event has a name and typed values (the types of variables)
+  and is declared in the script that answers it (graph version 7, `events`). Its **On Event** node
+  runs when the event is triggered on the script's object and gives the values, which are read only
+  on its own actions. **Trigger Event** triggers it, with its values, on the linked object, else the
+  first object named in Object Name, else every object; the On Event nodes run after the step. Under
+  the hood an event is a message with values, so an interface element's **On Click** naming an event
+  triggers it (its values read as zero), and On Message hears it too. `graph.event.add`, `.set` and
+  `.remove` change the declaration; the nodes' pins follow it.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a
 graph with every node kind and runs it.
@@ -315,7 +324,10 @@ shows it** give it a label, a hint, a group, read-only, a range or slider (numbe
 numbers and text) and a property it shows only for (graph version 6, `properties[].inspector`;
 `graph.property.set` takes them as `inspector` and refuses what a script's layout may not say); **Functions** lists the
 functions with their inputs and outputs (**Add Function** declares one and places its Function and
-Return nodes; **Add Input** and **Add Output** of a type; **Call** places a Call Function node), and
+Return nodes; **Add Input** and **Add Output** of a type; **Call** places a Call Function node),
+**Events** lists the events with their values (**Add Event** declares one and places its On Event
+node; **Add Value** of a type; **On Event** and **Trigger** place their nodes; **Trigger Another
+Script's Event** places a Trigger Event for an event another script of the project declares), and
 **Script** has the **Menu path** field,
 which keeps what is typed and says why while it does not read right yet. On a variable node, Name is a list of the script's variables of that type (and names
 other nodes use without declaring them); **New Variable…** declares a new one and picks it.

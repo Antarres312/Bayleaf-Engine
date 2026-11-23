@@ -2858,3 +2858,31 @@ fn the_showcase_example_opens_and_everything_it_names_reads() {
         assert!(objects.contains(name), "{name} is in the scene");
     }
 }
+
+#[test]
+fn an_events_nodes_follow_its_new_name_and_values() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
+    registry.execute(&mut session, "graph.event.add", &json!({"name": "Open"})).unwrap();
+    assert!(registry.execute(&mut session, "graph.event.add", &json!({"name": "Open"})).is_err(), "one event of a name");
+    let on = registry.execute(&mut session, "graph.node.add", &json!({"kind": "eventStart", "position": [0, 0]})).unwrap()["node"].clone();
+    let trigger = registry.execute(&mut session, "graph.node.add", &json!({"kind": "triggerEvent", "position": [0, 200]})).unwrap()["node"].clone();
+    for node in [&on, &trigger] {
+        registry.execute(&mut session, "graph.node.set", &json!({"node": node, "name": "event", "value": "Open"})).unwrap();
+    }
+    let speed = json!([{"name": "speed", "type": "number"}]);
+    registry.execute(&mut session, "graph.event.set", &json!({"name": "Open", "rename": "OpenDoor", "params": speed})).unwrap();
+    let graph = &session.graph().unwrap().graph;
+    for node in [&on, &trigger] {
+        let id = u32::try_from(node.as_u64().unwrap()).unwrap();
+        assert_eq!(graph.value(id, "event"), Some(&json!("OpenDoor")), "the node follows the new name");
+        assert_eq!(graph.value(id, "params"), Some(&json!(["speed:number"])), "and its values");
+    }
+    assert!(
+        registry.execute(&mut session, "graph.event.set", &json!({"name": "OpenDoor", "params": [{"name": "run", "type": "number"}]})).is_err(),
+        "a flow pin's name"
+    );
+    registry.execute(&mut session, "graph.event.remove", &json!({"name": "OpenDoor"})).unwrap();
+    assert!(session.graph().unwrap().graph.events.is_empty());
+}

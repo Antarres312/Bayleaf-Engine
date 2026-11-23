@@ -425,6 +425,70 @@ pub mod contact {
     pub const COLLISION_END: &str = "collisionEnd";
 }
 
+/// A value an event brings: what a visual script's Trigger Event sends and On Event gives.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EventValue<'a> {
+    Number(f32),
+    Whole(i32),
+    Flag(bool),
+    Vector([f32; 3]),
+    Text(&'a str),
+    Object(Option<Object>),
+}
+
+/// Triggers the event `name` with `values` on the scripts of `to`, or of every object with
+/// `None`, after this step. Visual scripts hear it with On Event; Rust scripts in
+/// [`Script::message`] under the event's name, reading its values with [`event`]. False when this
+/// call already sent too many.
+pub fn trigger_event(to: Option<Object>, name: &str, values: &[EventValue<'_>]) -> bool {
+    let slots: Vec<abi::EventSlot<'_>> = values
+        .iter()
+        .map(|value| match *value {
+            EventValue::Number(v) => abi::EventSlot::Number(v),
+            EventValue::Whole(v) => abi::EventSlot::Whole(v),
+            EventValue::Flag(v) => abi::EventSlot::Flag(v),
+            EventValue::Vector(v) => abi::EventSlot::Vector(v),
+            EventValue::Text(t) => abi::EventSlot::Text(t),
+            EventValue::Object(o) => abi::EventSlot::Object(o.map_or(0, |o| o.0)),
+        })
+        .collect();
+    abi::event_send(to.map_or(-1, |o| o.0), name, &slots)
+}
+
+/// The values of the event being delivered, by position, read in [`Script::message`]. A value of
+/// another kind, or past the last, reads as zero, false, empty or none.
+pub mod event {
+    use super::{Object, abi};
+
+    fn at(index: usize) -> i32 {
+        i32::try_from(index).unwrap_or(i32::MAX)
+    }
+
+    pub fn number(index: usize) -> f32 {
+        abi::event_number(at(index))
+    }
+
+    pub fn whole(index: usize) -> i32 {
+        abi::event_whole(at(index))
+    }
+
+    pub fn flag(index: usize) -> bool {
+        abi::event_flag(at(index))
+    }
+
+    pub fn vector(index: usize) -> [f32; 3] {
+        abi::event_vector(at(index))
+    }
+
+    pub fn text(index: usize) -> String {
+        abi::event_text(at(index))
+    }
+
+    pub fn object(index: usize) -> Option<Object> {
+        Some(abi::event_object(at(index))).filter(|h| *h != 0).map(Object)
+    }
+}
+
 /// Sends a message and a number to the scripts of every object, after this step. False when
 /// this call already sent too many.
 pub fn send_to_all(message: &str, value: f32) -> bool {

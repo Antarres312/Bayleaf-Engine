@@ -1,7 +1,8 @@
 //! The visual script's own panel, left of its graph: its variables (name, type, starting value,
 //! buttons that place their nodes), its properties (the Property nodes the Inspector shows per
-//! object), its functions (inputs and outputs, and buttons that place their nodes) and where Add
-//! Component lists it. Everything changes through `graph.*` commands, so
+//! object), its functions (inputs and outputs, and buttons that place their nodes), its events (the
+//! values each brings, and buttons that place On Event and Trigger Event) and where Add Component
+//! lists it. Everything changes through `graph.*` commands, so
 //! it undoes like any other graph edit.
 
 use crate::i18n::tl;
@@ -31,6 +32,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, at: [f
         properties(editor, ui, t, graph, at, panel);
         ui.add_space(theme::SECTION_GAP);
         functions(editor, ui, t, graph, at, panel);
+        ui.add_space(theme::SECTION_GAP);
+        events(editor, ui, t, graph, at, panel);
         ui.add_space(theme::SECTION_GAP);
         script(editor, ui, t, graph, panel);
     });
@@ -376,6 +379,148 @@ fn functions(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                 place_function(editor, "functionReturn", [at[0] + 240.0, at[1]], &function);
             }
         }
+    });
+}
+
+/// Places an On Event or Trigger Event node of the event `name` bringing `params` (`name:type`).
+fn place_event(editor: &mut Editor, kind: &str, at: [f32; 2], name: &str, params: &Value) {
+    if let Some(added) = editor.dispatch("graph.node.add", &json!({ "kind": kind, "position": at }), None) {
+        let node = added["node"].clone();
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "params", "value": params }), None);
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "event", "value": name }), None);
+    }
+}
+
+/// The events other scripts of the project declare, by script: what a Trigger Event here can name.
+fn project_events(editor: &mut Editor, graph: &Graph) -> Vec<(String, bayleaf_engine::script::DeclaredEvent)> {
+    let base = editor.session.script_dir();
+    let own = editor.session.graph().and_then(|g| g.path.clone());
+    let mut found = Vec::new();
+    for module in editor.project.script_files() {
+        let path = base.join(&module);
+        if own.as_deref().is_some_and(|own| own.ends_with(&module) || own == path) {
+            continue;
+        }
+        for event in editor.script_info.events(&path) {
+            if graph.event(&event.name).is_none() {
+                found.push((module.clone(), event));
+            }
+        }
+    }
+    found
+}
+
+/// The script's events: each one's name, the values it brings, and buttons that place an On Event
+/// (what runs when it is triggered here) or a Trigger Event node, or remove it. Events other scripts
+/// of the project declare can be triggered from here too.
+fn events(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at: [f32; 2], panel: &mut ScriptPanel) {
+    use bayleaf_engine::graph::Param;
+    theme::headed(t, "Events").show(ui, |ui| {
+        if graph.events.is_empty() {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(tl("Named happenings with values that other scripts, the interface or this script trigger on an object."))
+                        .small()
+                        .color(t.text_muted),
+                )
+                .wrap(),
+            );
+        }
+        for event in &graph.events {
+            ui.push_id(("event", &event.name), |ui| {
+                egui::Frame::new().fill(t.panel).corner_radius(theme::SECTION_RADIUS).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let key = format!("event {}", event.name);
+                    if let Some(typed) = name_field(ui, panel, &key, &event.name, &crate::i18n::tf("Name of event {name}", &[("name", &event.name)])) {
+                        editor.dispatch("graph.event.set", &json!({ "name": event.name, "rename": typed }), None);
+                    }
+                    ui.label(egui::RichText::new(tl("Values")).small().color(t.text_muted));
+                    let mut changed: Option<Vec<Param>> = None;
+                    for (index, param) in event.params.iter().enumerate() {
+                        ui.push_id(("value", index), |ui| {
+                            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let remove = ui.small_button("×").on_hover_text(tl("Remove"));
+                                ui.ctx().accesskit_node_builder(remove.id, |node| {
+                                    node.set_label(crate::i18n::tf("Remove {name} from {event}", &[("name", &param.name), ("event", &event.name)]))
+                                });
+                                if remove.clicked() {
+                                    let mut kept = event.params.clone();
+                                    kept.remove(index);
+                                    changed = Some(kept);
+                                }
+                                ui.label(egui::RichText::new(tl(param.ty.label())).small().color(t.text_muted));
+                                let key = format!("event {} value {index}", event.name);
+                                let label = crate::i18n::tf("Name of {name} of {event}", &[("name", &param.name), ("event", &event.name)]);
+                                if let Some(typed) = name_field(ui, panel, &key, &param.name, &label) {
+                                    let mut renamed = event.params.clone();
+                                    renamed[index].name = typed;
+                                    changed = Some(renamed);
+                                }
+                            });
+                        });
+                    }
+                    ui.menu_button(tl("Add Value"), |ui| {
+                        for ty in VariableType::ALL {
+                            if ui.button(tl(ty.label())).clicked() {
+                                let mut more = event.params.clone();
+                                more.push(Param { name: free_name("value", |n| event.params.iter().any(|p| p.name == n)), ty });
+                                changed = Some(more);
+                                ui.close();
+                            }
+                        }
+                    });
+                    if let Some(list) = changed {
+                        editor.dispatch("graph.event.set", &json!({ "name": event.name, "params": list }), None);
+                    }
+                    ui.horizontal(|ui| {
+                        let pins = bayleaf_engine::graph::param_pins(&event.params);
+                        let on = ui.small_button(tl("On Event")).on_hover_text(tl("Place the node that runs when it is triggered on this object"));
+                        ui.ctx().accesskit_node_builder(on.id, |node| node.set_label(crate::i18n::tf("On {name}", &[("name", &event.name)])));
+                        if on.clicked() {
+                            place_event(editor, "eventStart", at, &event.name, &pins);
+                        }
+                        let trigger = ui.small_button(tl("Trigger")).on_hover_text(tl("Place a node that triggers it"));
+                        ui.ctx().accesskit_node_builder(trigger.id, |node| node.set_label(crate::i18n::tf("Trigger {name}", &[("name", &event.name)])));
+                        if trigger.clicked() {
+                            place_event(editor, "triggerEvent", at, &event.name, &pins);
+                        }
+                        let remove = ui.small_button(tl("Remove")).on_hover_text(tl("Its nodes stay, and say which event they name"));
+                        ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(crate::i18n::tf("Remove event {name}", &[("name", &event.name)])));
+                        if remove.clicked() {
+                            editor.dispatch("graph.event.remove", &json!({ "name": event.name }), None);
+                        }
+                    });
+                });
+            });
+            ui.add_space(theme::SECTION_GAP);
+        }
+        ui.horizontal_wrapped(|ui| {
+            if ui.button(tl("Add Event")).on_hover_text(tl("Declare an event and place its On Event node")).clicked() {
+                let name = free_name("Event", |n| graph.event(n).is_some());
+                if editor.dispatch("graph.event.add", &json!({ "name": name }), None).is_some() {
+                    place_event(editor, "eventStart", at, &name, &json!([]));
+                }
+            }
+            // Events other scripts declare, to trigger on their objects.
+            let others = project_events(editor, graph);
+            ui.add_enabled_ui(!others.is_empty(), |ui| {
+                ui.menu_button(tl("Trigger Another Script's Event"), |ui| {
+                    for (module, event) in &others {
+                        let label = format!(
+                            "{} · {}",
+                            event.name,
+                            bayleaf_engine::scene::components::ScriptRef { module: module.clone(), properties: Default::default() }.display_name()
+                        );
+                        if ui.button(label).on_hover_text(module).clicked() {
+                            place_event(editor, "triggerEvent", at, &event.name, &json!(event.params));
+                            ui.close();
+                        }
+                    }
+                })
+                .response
+                .on_disabled_hover_text(tl("No other script of the project declares an event"));
+            });
+        });
     });
 }
 

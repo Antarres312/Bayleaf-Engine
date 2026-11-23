@@ -17,10 +17,10 @@ use super::{Error, LinkError, error, instantiate, limits, out_of_fuel, trap_mess
 #[cfg(not(target_arch = "wasm32"))]
 use super::{from_val, to_val};
 use crate::{
-    ABI_VERSION, Description, EVERY_OBJECT, FUEL_PER_CALL, GameState, Input, LogLine, MAX_DESCRIPTION_BYTES, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME,
-    MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS, MAX_REQUESTS_PER_CALL, Message, Properties, PropertyWrite, Request, Scope, ScriptError, ScriptFault, ScriptValues,
-    SharedState, Velocities, WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position, module_bytes, read_position, read_transform,
-    readable_component, script_keys, transform_from, visual,
+    ABI_VERSION, DeclaredEvent, Description, EVERY_OBJECT, EventArg, FUEL_PER_CALL, GameState, Input, LogLine, MAX_DECLARED_EVENTS, MAX_DESCRIPTION_BYTES,
+    MAX_EVENT_ARGS, MAX_EVENT_TEXT, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME, MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS, MAX_REQUESTS_PER_CALL, Message,
+    Properties, PropertyWrite, Request, Scope, ScriptError, ScriptFault, ScriptValues, SharedState, Velocities, WorldView, actions, field_numbers, kind_key,
+    lock, menu_path, merged_position, module_bytes, read_position, read_transform, readable_component, script_keys, transform_from, visual,
 };
 use bayleaf_script_sdk::native::NativeObject;
 #[cfg(not(target_arch = "wasm32"))]
@@ -78,7 +78,33 @@ fn describe_instance(store: &mut Store<HostState>, instance: &rt::Instance, name
         Some(layout) => bayleaf_scene::inspector::parse(layout, &out).map_err(|e| invalid(format!("inspector: {e}")))?,
         None => Vec::new(),
     };
-    Ok(Description { properties: out, menu, inspector })
+    let events = described_events(value.get("events")).map_err(invalid)?;
+    Ok(Description { properties: out, menu, inspector, events })
+}
+
+/// The events a description lists: `[{"name": "Damaged", "params": ["amount:number"]}]`.
+fn described_events(value: Option<&serde_json::Value>) -> Result<Vec<DeclaredEvent>, String> {
+    let Some(list) = value else { return Ok(Vec::new()) };
+    let list = list.as_array().ok_or("events must be a list")?;
+    if list.len() > MAX_DECLARED_EVENTS {
+        return Err(format!("at most {MAX_DECLARED_EVENTS} events"));
+    }
+    let mut events: Vec<DeclaredEvent> = Vec::new();
+    for entry in list {
+        let name = entry.get("name").and_then(serde_json::Value::as_str).unwrap_or_default();
+        if name.is_empty() || name.len() > MAX_MESSAGE_NAME || events.iter().any(|e| e.name == name) {
+            return Err(format!("event {name:?} needs a name of 1 to {MAX_MESSAGE_NAME} bytes, once"));
+        }
+        let params: Vec<String> =
+            entry.get("params").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(|p| p.as_str().map(str::to_owned)).collect();
+        if params.len() > MAX_EVENT_ARGS
+            || params.iter().any(|p| p.split_once(':').is_none_or(|(n, t)| n.is_empty() || bayleaf_graph::VariableType::from_code(t).is_none()))
+        {
+            return Err(format!("event {name}: at most {MAX_EVENT_ARGS} values, each name:type"));
+        }
+        events.push(DeclaredEvent { name: name.to_owned(), params });
+    }
+    Ok(events)
 }
 
 struct Instance {
@@ -518,9 +544,11 @@ impl ScriptHost {
                     state.input_maps = Arc::clone(&self.input_maps);
                     state.state = Arc::clone(&self.state);
                     state.message = Some(message.name.clone());
+                    state.message_args = Arc::clone(&message.args);
                 }
                 let result = call(entry, |store| on_message.call(store, message.value));
                 entry.store.data_mut().message = None;
+                entry.store.data_mut().message_args = Arc::from([]);
                 let script = entry.script_name.clone();
                 logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
                 match result {
@@ -589,13 +617,13 @@ impl ScriptHost {
 
     /// Sends the scripts of `to` a message now (a button of the Inspector, `play.message`).
     pub fn send(&mut self, scene: &mut Scene, to: StableId, name: &str, value: f32, time: f64, input: &Arc<Input>) {
-        self.messages.push(Message { to: Some(to), name: name.to_owned(), value });
+        self.messages.push(Message { to: Some(to), name: name.to_owned(), value, args: Arc::from([]) });
         self.deliver(scene, time, input);
     }
 
     /// Sends a message to every script now, as `notify` does for one object.
     pub fn broadcast(&mut self, scene: &mut Scene, name: &str, value: f32, time: f64, input: &Arc<Input>) {
-        self.messages.push(Message { to: None, name: name.to_owned(), value });
+        self.messages.push(Message { to: None, name: name.to_owned(), value, args: Arc::from([]) });
         self.deliver(scene, time, input);
     }
 
@@ -623,7 +651,7 @@ impl ScriptHost {
         }
         let world = WorldView::of(scene, self.script_values());
         for (object, name, other) in contacts {
-            self.messages.push(Message { to: Some(*object), name: (*name).to_owned(), value: world.handle_of(*other) as f32 });
+            self.messages.push(Message { to: Some(*object), name: (*name).to_owned(), value: world.handle_of(*other) as f32, args: Arc::from([]) });
         }
         self.deliver(scene, time, input);
     }
@@ -704,6 +732,109 @@ fn write_transform(scene: &mut Scene, entry: &mut Instance) {
     let transform = transform_from(&state.transform, state.position);
     // `transform_set` already refused non-finite numbers, and the object exists (checked by the caller).
     let _ = scene.set(entry.object, transform);
+}
+
+/// Bytes each value takes in `event_send`'s list: a kind, then up to three words.
+const EVENT_SLOT: usize = 16;
+
+/// The values of an event as a script lists them for `event_send`: per value a kind (0 number,
+/// 1 whole number, 2 true/false, 3 vector, 4 text at a pointer and length, 5 object handle, 0 for
+/// none) and its words.
+fn read_event_args(caller: &mut Caller<'_, HostState>, ptr: i32, count: i32) -> Result<Vec<EventArg>, String> {
+    let count = usize::try_from(count).map_err(|_| "a negative number of values".to_owned())?;
+    if count > MAX_EVENT_ARGS {
+        return Err(format!("an event brings at most {MAX_EVENT_ARGS} values"));
+    }
+    let bytes = read_guest(caller, ptr, (count * EVENT_SLOT) as i32, MAX_EVENT_ARGS * EVENT_SLOT)?;
+    let mut args = Vec::with_capacity(count);
+    for slot in bytes.as_chunks::<EVENT_SLOT>().0 {
+        let word = |i: usize| u32::from_le_bytes([slot[i * 4], slot[i * 4 + 1], slot[i * 4 + 2], slot[i * 4 + 3]]);
+        let number = |i: usize| f32::from_bits(word(i));
+        args.push(match word(0) {
+            0 => EventArg::Number(number(1)),
+            1 => EventArg::Whole(word(1) as i32),
+            2 => EventArg::Flag(word(1) != 0),
+            3 => EventArg::Vector([number(1), number(2), number(3)]),
+            4 => EventArg::Text(read_text(caller, word(1) as i32, word(2) as i32, MAX_EVENT_TEXT)?),
+            5 => EventArg::Object(caller.data().world.get(word(1) as i32).map(|(id, _, _)| *id)),
+            kind => return Err(format!("{kind} is not a kind of event value")),
+        });
+        if let Some(EventArg::Number(v) | EventArg::Vector([v, ..])) = args.last()
+            && !v.is_finite()
+        {
+            return Err("event values must be finite numbers".to_owned());
+        }
+    }
+    Ok(args)
+}
+
+/// Triggering events (`event_send`) and reading the values of the one being delivered.
+fn link_events(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
+    linker.func_wrap(
+        "bayleaf",
+        "event_send",
+        |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32, len: i32, args: i32, count: i32| -> Result<i32, Error> {
+            let name = read_text(&mut caller, ptr, len, MAX_MESSAGE_NAME).map_err(|m| fault(&mut caller, format!("event_send: {m}")))?;
+            if name.is_empty() {
+                return Err(fault(&mut caller, "event_send: give the event's name".to_owned()));
+            }
+            let values = read_event_args(&mut caller, args, count).map_err(|m| fault(&mut caller, format!("event_send: {m}")))?;
+            let to = if handle == EVERY_OBJECT {
+                None
+            } else {
+                let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                    return Err(fault(&mut caller, format!("event_send: there is no object with handle {handle}")));
+                };
+                Some(object)
+            };
+            let state = caller.data_mut();
+            if state.outbox.len() >= MAX_MESSAGES_PER_CALL {
+                return Ok(0);
+            }
+            state.outbox.push(Message { to, name, value: 0.0, args: Arc::from(values) });
+            Ok(1)
+        },
+    )?;
+    let arg = |caller: &Caller<'_, HostState>, index: i32| usize::try_from(index).ok().and_then(|i| caller.data().message_args.get(i).cloned());
+    linker.func_wrap("bayleaf", "event_number", move |caller: Caller<'_, HostState>, index: i32| -> f32 {
+        match arg(&caller, index) {
+            Some(EventArg::Number(v)) => v,
+            Some(EventArg::Whole(v)) => v as f32,
+            _ => 0.0,
+        }
+    })?;
+    linker.func_wrap("bayleaf", "event_whole", move |caller: Caller<'_, HostState>, index: i32| -> i32 {
+        match arg(&caller, index) {
+            Some(EventArg::Whole(v)) => v,
+            Some(EventArg::Number(v)) => v as i32,
+            Some(EventArg::Flag(b)) => i32::from(b),
+            _ => 0,
+        }
+    })?;
+    linker.func_wrap("bayleaf", "event_flag", move |caller: Caller<'_, HostState>, index: i32| -> i32 {
+        i32::from(matches!(arg(&caller, index), Some(EventArg::Flag(true))))
+    })?;
+    linker.func_wrap("bayleaf", "event_vector", move |caller: Caller<'_, HostState>, index: i32, part: i32| -> f32 {
+        match (arg(&caller, index), usize::try_from(part)) {
+            (Some(EventArg::Vector(v)), Ok(part)) => v.get(part).copied().unwrap_or(0.0),
+            _ => 0.0,
+        }
+    })?;
+    linker.func_wrap("bayleaf", "event_object", move |caller: Caller<'_, HostState>, index: i32| -> i32 {
+        match arg(&caller, index) {
+            Some(EventArg::Object(Some(id))) => caller.data().world.handle_of(id),
+            _ => 0,
+        }
+    })?;
+    linker.func_wrap("bayleaf", "event_text", move |mut caller: Caller<'_, HostState>, index: i32, out: i32, cap: i32| -> Result<i32, Error> {
+        let Some(EventArg::Text(text)) = arg(&caller, index) else { return Ok(0) };
+        let room = usize::try_from(cap).map_err(|_| fault(&mut caller, "event_text: negative length".to_owned()))?;
+        if room > 0 {
+            write_guest(&mut caller, out, &text.as_bytes()[..text.len().min(room)], "event_text")?;
+        }
+        Ok(text.len() as i32)
+    })?;
+    Ok(())
 }
 
 /// Reads `len` bytes at `ptr` from the guest's memory.
@@ -1468,7 +1599,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             if state.outbox.len() >= MAX_MESSAGES_PER_CALL {
                 return Ok(0);
             }
-            state.outbox.push(Message { to, name, value });
+            state.outbox.push(Message { to, name, value, args: Arc::from([]) });
             Ok(1)
         })?;
         linker.func_wrap("bayleaf", "message_is", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, Error> {
@@ -1482,6 +1613,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             write_guest(&mut caller, out, bytes, "message_name")?;
             Ok(name.len() as i32)
         })?;
+        link_events(&mut linker)?;
         link_native(&mut linker)?;
         Ok(())
     })();

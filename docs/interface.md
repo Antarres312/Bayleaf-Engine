@@ -168,7 +168,8 @@ object that has the Interface:
 
 - `pressed:<name>` when a button, or any named element with `onClick`, is pressed (value 0);
 - the `onClick` message of the element clicked, as written (value 0), so several elements can
-  share one handler: On Message in a visual script, `Script::message` in Rust;
+  share one handler: On Message or On Event (when it names an event a script declares; the Interface
+  panel's On Click offers them) in a visual script, `Script::message` in Rust;
 - `changed:<name>` when a toggle, slider or text field changes, with the new value (a text field's
   value is its length in characters).
 

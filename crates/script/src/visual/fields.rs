@@ -263,6 +263,9 @@ pub fn variant(node: &Node) -> Option<&'static NodeDef> {
     if super::FUNCTION_KINDS.contains(&node.kind.as_str()) {
         return function_variant(node);
     }
+    if super::EVENT_KINDS.contains(&node.kind.as_str()) {
+        return function_variant(node);
+    }
     if !matches!(node.kind.as_str(), "getComponent" | "tryGetComponent" | "setComponent") {
         return None;
     }
@@ -308,7 +311,9 @@ pub(super) fn function_variant(node: &Node) -> Option<&'static NodeDef> {
     let list = |key: &str| -> Vec<String> {
         node.values.get(key).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|n| n.as_str().map(str::to_owned)).collect()).unwrap_or_default()
     };
-    let (inputs, outputs) = (list("inputs"), list("outputs"));
+    // An event node keeps its values as `params`: the inputs of a Trigger Event, the outputs of an
+    // On Event.
+    let (inputs, outputs) = if super::EVENT_KINDS.contains(&node.kind.as_str()) { (list("params"), Vec::new()) } else { (list("inputs"), list("outputs")) };
     let mut made = FUNCTION_VARIANTS.lock().ok()?;
     if let Some((_, _, _, def)) = made.iter().find(|(kind, i, o, _)| *kind == node.kind && *i == inputs && *o == outputs) {
         return Some(def);
@@ -335,6 +340,16 @@ pub(super) fn function_variant(node: &Node) -> Option<&'static NodeDef> {
             let mut outs = vec![THEN];
             outs.extend(typed_pins(&outputs, false));
             NodeDef { inputs: leak_pins(ins), outputs: leak_pins(outs), ..*base }
+        }
+        "eventStart" => {
+            let mut outs = vec![THEN];
+            outs.extend(typed_pins(&inputs, false));
+            NodeDef { outputs: leak_pins(outs), ..*base }
+        }
+        "triggerEvent" => {
+            let mut ins = vec![RUN, super::TARGET];
+            ins.extend(typed_pins(&inputs, true));
+            NodeDef { inputs: leak_pins(ins), ..*base }
         }
         _ => return None,
     };
