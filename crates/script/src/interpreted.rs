@@ -44,6 +44,7 @@ pub(crate) fn trap_message(error: &Error) -> String {
 }
 
 /// A number for a host function, from a native script.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn to_val(value: bayleaf_script_sdk::native::Value) -> rt::Val {
     use bayleaf_script_sdk::native::Value::{F32, F64, I32, I64};
     match value {
@@ -55,6 +56,7 @@ pub(crate) fn to_val(value: bayleaf_script_sdk::native::Value) -> rt::Val {
 }
 
 /// A host function's result, for a native script.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn from_val(value: &rt::Val) -> bayleaf_script_sdk::native::Value {
     use bayleaf_script_sdk::native::Value::{F32, F64, I32, I64};
     match value {

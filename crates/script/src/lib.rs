@@ -34,7 +34,7 @@ pub fn module_bytes(path: &Path) -> Result<Vec<u8>, ScriptError> {
     let read_error = |e: std::io::Error| ScriptError::Read { path: path.display().to_string(), message: e.to_string() };
     if path.extension().is_some_and(|e| e == VISUAL_EXTENSION) {
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-        let bytes = std::fs::read(path).map_err(read_error)?;
+        let bytes = bayleaf_core::files::read(path).map_err(read_error)?;
         // An exported game keeps its visual scripts already compiled.
         if bytes.starts_with(WASM_MAGIC) {
             return Ok(bytes);
@@ -43,7 +43,7 @@ pub fn module_bytes(path: &Path) -> Result<Vec<u8>, ScriptError> {
         let graph = bayleaf_graph::Graph::from_json(&text, &visual::CATALOG).map_err(|e| ScriptError::Invalid(name.clone(), e.to_string()))?;
         return visual::compile(&graph).map_err(|p| ScriptError::Invalid(name, bayleaf_graph::summary(&p)));
     }
-    std::fs::read(path).map_err(read_error)
+    bayleaf_core::files::read(path).map_err(read_error)
 }
 
 /// ABI version the host implements.

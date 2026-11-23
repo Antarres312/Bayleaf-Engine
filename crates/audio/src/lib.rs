@@ -12,9 +12,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread::JoinHandle;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use bayleaf_core::StableId;
@@ -289,9 +292,16 @@ fn gains(voice: &Voice, listener: &Listener) -> [f32; 2] {
 }
 
 /// The output thread: it owns the device's stream until told to stop.
+#[cfg(not(target_arch = "wasm32"))]
 struct Output {
     stop: Sender<()>,
     thread: Option<JoinHandle<()>>,
+}
+
+/// In a browser the page's audio runs the stream, with no thread of ours.
+#[cfg(target_arch = "wasm32")]
+struct Output {
+    stream: cpal::Stream,
 }
 
 /// Sound for one play session: clips read once, the mixer, and the output.
@@ -352,20 +362,21 @@ impl Audio {
         if !EXTENSIONS.contains(&extension.as_str()) {
             return Err(format!("{} is not a sound file ({})", path.display(), EXTENSIONS.join(", ")));
         }
-        let size = std::fs::metadata(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?.len();
+        let size = bayleaf_core::files::len(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         if size > MAX_FILE_BYTES {
             return Err(format!("{} is larger than {} MiB", path.display(), MAX_FILE_BYTES >> 20));
         }
-        let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let bytes = bayleaf_core::files::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let clip = Arc::new(Clip::decode(&bytes, &extension, self.rate).map_err(|e| format!("{}: {e}", path.display()))?);
         self.clips.insert(path.to_path_buf(), Arc::clone(&clip));
         Ok(clip)
     }
 
     /// The sound in the file at `path`: decoded whole the first time, or, with `stream`, checked
-    /// once and read from the file each time it plays.
+    /// once and read from the file each time it plays. A browser has no threads to read a file as it
+    /// plays, so there every sound is loaded whole.
     pub fn sound(&mut self, path: &Path, stream: bool) -> Result<Sound, String> {
-        if !stream {
+        if !stream || cfg!(target_arch = "wasm32") {
             return self.clip(path).map(Sound::Loaded);
         }
         if let Some(file) = self.streams.get(path) {
@@ -390,8 +401,19 @@ impl Audio {
         let (mut left, mut right) = (vec![0.0; frames], vec![0.0; frames]);
         lock(&self.mixer).mix(&mut left, &mut right);
     }
+
+    /// Starts the sound again where the system held it back: a browser lets a page play sound only
+    /// after a click or a key, so the web player asks on each until it plays.
+    pub fn resume(&self) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(output) = &self.output {
+            use cpal::traits::StreamTrait;
+            let _ = output.stream.play();
+        }
+    }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Drop for Audio {
     fn drop(&mut self) {
         if let Some(mut output) = self.output.take() {
@@ -404,6 +426,7 @@ impl Drop for Audio {
 }
 
 /// Starts the default output device on a thread of its own; returns it and the device's rate.
+#[cfg(not(target_arch = "wasm32"))]
 fn start_output(mixer: Arc<Mutex<Mixer>>) -> Result<(Output, u32), String> {
     let (ready_send, ready) = channel::<Result<u32, String>>();
     let (stop, stopped) = channel::<()>();
@@ -422,6 +445,13 @@ fn start_output(mixer: Arc<Mutex<Mixer>>) -> Result<(Output, u32), String> {
         .map_err(|e| e.to_string())?;
     let rate = ready.recv_timeout(Duration::from_secs(5)).map_err(|_| "the sound device did not answer".to_owned())??;
     Ok((Output { stop, thread: Some(thread) }, rate))
+}
+
+/// Starts the page's sound; it stays quiet until the browser allows it ([`Audio::resume`]).
+#[cfg(target_arch = "wasm32")]
+fn start_output(mixer: Arc<Mutex<Mixer>>) -> Result<(Output, u32), String> {
+    let (stream, rate) = device_stream(mixer)?;
+    Ok((Output { stream }, rate))
 }
 
 fn device_stream(mixer: Arc<Mutex<Mixer>>) -> Result<(cpal::Stream, u32), String> {

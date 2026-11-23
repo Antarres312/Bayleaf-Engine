@@ -251,7 +251,7 @@ impl PostProcessing {
     }
 
     pub fn load(path: &Path) -> Result<Self, SceneError> {
-        let text = std::fs::read_to_string(path).map_err(|e| SceneError::Io(format!("cannot read {}: {e}", path.display())))?;
+        let text = bayleaf_core::files::read_to_string(path).map_err(|e| SceneError::Io(format!("cannot read {}: {e}", path.display())))?;
         Self::from_text(&text)
     }
 

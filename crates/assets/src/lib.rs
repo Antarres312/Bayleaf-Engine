@@ -136,7 +136,7 @@ pub struct ModelMaterial {
 
 /// When the import settings beside `path` last changed, if it has them.
 fn settings_modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(import::settings_path(path)).and_then(|m| m.modified()).ok()
+    bayleaf_core::files::modified(import::settings_path(path))
 }
 
 fn file_id(path: &Path, modified: Option<SystemTime>) -> u64 {
@@ -149,12 +149,12 @@ fn file_id(path: &Path, modified: Option<SystemTime>) -> u64 {
 }
 
 fn read_limited(path: &Path) -> Result<(Vec<u8>, Option<SystemTime>), String> {
-    let meta = std::fs::metadata(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    if meta.len() > MAX_FILE_BYTES {
+    let size = bayleaf_core::files::len(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    if size > MAX_FILE_BYTES {
         return Err(format!("{} is larger than {} MiB", path.display(), MAX_FILE_BYTES >> 20));
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    Ok((bytes, meta.modified().ok()))
+    let bytes = bayleaf_core::files::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    Ok((bytes, bayleaf_core::files::modified(path)))
 }
 
 /// File extensions of the images this crate reads.
@@ -807,7 +807,7 @@ impl AssetCache {
 
 fn cached<T: Clone>(map: &mut Cached<T>, path: &Path, load: impl Fn(&Path) -> Result<T, String>) -> Result<T, String> {
     // The file and its import settings: either changing loads it again.
-    let modified = (std::fs::metadata(path).and_then(|m| m.modified()).ok(), settings_modified(path));
+    let modified = (bayleaf_core::files::modified(path), settings_modified(path));
     if let Some((seen, result)) = map.get(path)
         && *seen == modified
         && modified.0.is_some()

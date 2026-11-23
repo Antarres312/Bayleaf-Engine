@@ -449,7 +449,7 @@ fn empty_state(editor: &mut Editor, ui: &mut egui::Ui) {
                 editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
             }
             if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new(tl("Open Graph…"))).clicked()
-                && let Some(path) = rfd::FileDialog::new().add_filter("Graphs", &["bmaterial", "bscript"]).pick_file()
+                && let Some(path) = crate::dialog::FileDialog::new().add_filter("Graphs", &["bmaterial", "bscript"]).pick_file()
             {
                 editor.open_graph(&path);
             }
@@ -560,7 +560,9 @@ pub(crate) fn save_open(editor: &mut Editor) {
 }
 
 fn save_as(editor: &mut Editor, catalog: &Catalog) {
-    if let Some(path) = rfd::FileDialog::new().add_filter(catalog.label, &[catalog.extension]).set_file_name(format!("new.{}", catalog.extension)).save_file() {
+    if let Some(path) =
+        crate::dialog::FileDialog::new().add_filter(catalog.label, &[catalog.extension]).set_file_name(format!("new.{}", catalog.extension)).save_file()
+    {
         let path = if path.extension().is_none() { path.with_extension(catalog.extension) } else { path };
         editor.dispatch("graph.save", &json!({ "path": path }), None);
     }

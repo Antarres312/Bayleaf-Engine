@@ -128,6 +128,19 @@ File > Export Game in the editor (or `project.export`) writes a project as a gam
 player program under the game's name and its files beside it. Build the player first
 (`cargo build --release -p bayleaf-player` for a smaller, faster game).
 
+For the web (to put a game on a site, or on a game site as a game played in the browser), build
+the web player once, then choose Web in Export Game:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.130 --locked   # the version Cargo.lock holds
+cargo xtask web-player                  # into target/web-player
+cargo xtask serve "out/My Game"         # try the exported folder at http://127.0.0.1:8000/
+```
+
+The exported folder holds `index.html` at its top; zip it as it is to upload it. Browsers do not
+run it opened from a file, so try it through a web server.
+
 Two optional build inputs come from sibling Craft repositories:
 
 - `CRAFT_FONTS_DIR` (a craft-fonts checkout) embeds the interface faces.

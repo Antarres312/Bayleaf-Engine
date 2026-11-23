@@ -1328,6 +1328,8 @@ fn system_open(path: &Path, reveal: bool) -> std::io::Result<()> {
     #[cfg(any(target_os = "windows", unix))]
     return command.spawn().map(|_| ());
     #[cfg(not(any(target_os = "windows", unix)))]
+    let _ = (path, reveal);
+    #[cfg(not(any(target_os = "windows", unix)))]
     return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "opening files with other programs is not supported here"));
 }
 

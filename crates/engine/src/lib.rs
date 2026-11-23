@@ -25,6 +25,7 @@ pub mod saved;
 mod scene_cmds;
 mod sound;
 mod stream;
+pub mod web_export;
 
 /// Optional world streaming, present only with the `streaming` feature.
 #[cfg(feature = "streaming")]
@@ -218,6 +219,15 @@ impl Session {
     /// player turn it on; the CLI, agents and tests leave it off, and sounds play silently, in time.
     pub fn set_sound(&mut self, on: bool) {
         self.sound = on;
+    }
+
+    /// Lets sound play where the system holds it back until the game is used: a browser plays a
+    /// page's sound only after a click or a key, so the web player calls this on each.
+    pub fn resume_sound(&mut self) {
+        #[cfg(feature = "audio")]
+        if let Some(audio) = self.play.as_ref().and_then(|p| p.audio.as_ref()) {
+            audio.resume();
+        }
     }
 
     /// Scripts built into this program (a game exported in native mode), each standing for the

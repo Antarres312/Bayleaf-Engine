@@ -677,7 +677,7 @@ fn status(session: &mut Session, params: &Value) -> Result<Value, CommandError> 
 
 /// Advances play mode by `dt` seconds, split into steps of at most [`MAX_STEP`].
 pub(crate) fn step(session: &mut Session, dt: f32) {
-    let started = std::time::Instant::now();
+    let started = bayleaf_core::time::Instant::now();
     step_parts(session, dt);
     // Each script's time, and the whole step, for the profiler.
     let timings = session.play.as_mut().map(|p| p.host.take_timings()).unwrap_or_default();
@@ -688,7 +688,7 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
 
 /// Times one part of the step for the profiler.
 fn timed<T>(session: &mut Session, part: crate::profiler::Part, run: impl FnOnce(&mut Session) -> T) -> T {
-    let started = std::time::Instant::now();
+    let started = bayleaf_core::time::Instant::now();
     let out = run(session);
     session.profiler.add(part, started.elapsed());
     out
@@ -726,7 +726,7 @@ fn step_parts(session: &mut Session, dt: f32) {
         // Scripts read the interfaces as they show at the step's start.
         crate::interface::refresh_values(session);
         let Some(play) = session.play.as_mut() else { return };
-        let scripts = std::time::Instant::now();
+        let scripts = bayleaf_core::time::Instant::now();
         play.host.update(&mut session.scene, dt, play.time, &input);
         session.profiler.add(Part::Scripts, scripts.elapsed());
         apply_requests(session);
@@ -735,7 +735,7 @@ fn step_parts(session: &mut Session, dt: f32) {
                 play.particles.step(&session.scene, dt);
             }
         });
-        let physics = std::time::Instant::now();
+        let physics = bayleaf_core::time::Instant::now();
         #[cfg(feature = "physics")]
         if let Some(play) = session.play.as_mut()
             && let Some(physics) = play.physics.as_mut()
@@ -1155,6 +1155,12 @@ impl Session {
     /// the game ended. `None` outside play mode.
     pub fn game_state(&self) -> Option<bayleaf_script::GameState> {
         self.play.as_ref().map(|play| play.host.state())
+    }
+
+    /// Writes the saved values now when scripts changed them, as stopping does: for a player that
+    /// may be closed without stopping the game (a browser tab).
+    pub fn keep_saved_values(&mut self) {
+        keep_saved(self);
     }
 }
 

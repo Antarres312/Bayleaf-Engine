@@ -51,7 +51,7 @@ fn refresh(editor: &mut Editor, window: &mut ExportWindow) {
 /// The platform and mode, and a player for another system when one is chosen.
 fn check_params(window: &ExportWindow) -> Value {
     let mut params = json!({ "platform": window.platform, "mode": window.mode });
-    if needs_player(window.platform) && !window.player.trim().is_empty() {
+    if (needs_player(window.platform) || window.platform == Platform::Web) && !window.player.trim().is_empty() {
         params["player"] = json!(window.player.trim());
     }
     params
@@ -92,7 +92,7 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
                 if p == Platform::current() {
                     tl(p.label()).to_owned()
                 } else if p == Platform::Web {
-                    tf("{platform} (not yet)", &[("platform", tl(p.label()))])
+                    tf("{platform} (in a browser)", &[("platform", tl(p.label()))])
                 } else {
                     tf("{platform} (with a player built there)", &[("platform", tl(p.label()))])
                 }
@@ -104,6 +104,8 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
                     for platform in Platform::ALL {
                         if ui.selectable_label(window.platform == platform, shown(platform)).clicked() && window.platform != platform {
                             window.platform = platform;
+                            // A player chosen for one platform is not the one for another.
+                            window.player.clear();
                             window.mode = bayleaf_engine::export::chosen_mode(&editor.session, platform);
                         }
                     }
@@ -116,13 +118,31 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
             crate::value_editor::row(ui, t, "Player", |ui, label, width| {
                 ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(tl("Choose…")).clicked()
-                        && let Some(path) = rfd::FileDialog::new().set_title(tl("Choose the player built for that system")).pick_file()
+                        && let Some(path) = crate::dialog::FileDialog::new().set_title(tl("Choose the player built for that system")).pick_file()
                     {
                         window.player = path.display().to_string();
                     }
                     ui.add_sized(
                         [ui.available_width(), ROW_HEIGHT],
                         egui::TextEdit::singleline(&mut window.player).hint_text(tl("bayleaf-player built on that system")),
+                    )
+                    .labelled_by(label);
+                });
+            });
+        }
+        // The player for browsers: the one built with cargo xtask web-player, or a folder chosen here.
+        if window.platform == Platform::Web {
+            crate::value_editor::row(ui, t, "Player for browsers", |ui, label, width| {
+                ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(tl("Choose…")).clicked()
+                        && let Some(path) =
+                            crate::dialog::FileDialog::new().set_title(tl("Choose the folder the player for browsers was built into")).pick_folder()
+                    {
+                        window.player = path.display().to_string();
+                    }
+                    ui.add_sized(
+                        [ui.available_width(), ROW_HEIGHT],
+                        egui::TextEdit::singleline(&mut window.player).hint_text(tl("the one built with cargo xtask web-player")),
                     )
                     .labelled_by(label);
                 });
@@ -184,7 +204,7 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
         crate::value_editor::row(ui, t, "Folder", |ui, label, width| {
             ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(tl("Choose…")).clicked()
-                    && let Some(path) = rfd::FileDialog::new().set_title(tl("Choose the folder to export the game into")).pick_folder()
+                    && let Some(path) = crate::dialog::FileDialog::new().set_title(tl("Choose the folder to export the game into")).pick_folder()
                 {
                     window.folder = path.display().to_string();
                 }

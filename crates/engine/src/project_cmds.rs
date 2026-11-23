@@ -306,7 +306,7 @@ pub fn settings_of(session: &Session) -> ProjectSettings {
 
 impl ProjectFile {
     fn read(path: &Path) -> Result<Self, CommandError> {
-        let text = std::fs::read_to_string(path).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", path.display())))?;
+        let text = bayleaf_core::files::read_to_string(path).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", path.display())))?;
         let file: ProjectFile = serde_json::from_str(&text).map_err(|e| CommandError::Failed(format!("{} is not a project file: {e}", path.display())))?;
         if file.format != PROJECT_FORMAT || !(1..=PROJECT_VERSION).contains(&file.version) {
             return Err(CommandError::Failed(format!("{} is not a version {PROJECT_VERSION} Bayleaf project", path.display())));
@@ -322,7 +322,7 @@ fn inside(dir: &Path, relative: &str) -> PathBuf {
 
 /// The project file in `dir`, if it has one.
 pub fn project_file_in(dir: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| p.is_file() && p.extension().is_some_and(|e| e == PROJECT_EXTENSION))
+    bayleaf_core::files::read_dir(dir).ok()?.into_iter().find(|p| bayleaf_core::files::is_file(p) && p.extension().is_some_and(|e| e == PROJECT_EXTENSION))
 }
 
 /// The project folder a scene file belongs to: the nearest folder above it with a project file.
@@ -483,7 +483,7 @@ fn project_open(session: &mut Session, params: &Value) -> Result<Value, CommandE
     session.no_prefab_open("opening a project")?;
     let p: PathParams = parse(params)?;
     let path = session.allowed(&p.path, Access::Read)?;
-    let file = if path.is_dir() {
+    let file = if bayleaf_core::files::is_dir(&path) {
         project_file_in(&path).ok_or_else(|| CommandError::Failed(format!("{} has no .{PROJECT_EXTENSION} file", path.display())))?
     } else {
         path

@@ -2,21 +2,21 @@
 //! its game in a window, with no editor around it. The game sees the keyboard and the mouse; F11 switches full screen.
 //!
 //! A library as well as the program: a game exported in native mode builds its own player that
-//! calls [`run`] with the Rust scripts built into it.
+//! calls [`run`] with the Rust scripts built into it, and built for the web (`cargo xtask
+//! web-player`) it is the web player, which starts in a page from [`web`].
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use bayleaf_engine::render::{self, FrameOptions, RenderTarget, Renderer};
 use bayleaf_engine::{CommandRegistry, Level, Session};
-use clap::Parser;
 use eframe::egui;
 use eframe::egui_wgpu;
 use serde_json::json;
 
-#[derive(Parser)]
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(clap::Parser)]
 #[command(name = "bayleaf-player", version, about = "Runs a Bayleaf Engine game")]
 struct Args {
     /// A project (.bproject file or its folder) or a scene (.bscene) to run. Without it, the game
@@ -53,6 +53,7 @@ struct Player {
     /// The game's interfaces standing in the world.
     world: bayleaf_ui_egui::world_interface::WorldInterfaces,
     /// Where the profile goes when the game closes, if one is recorded.
+    #[cfg(not(target_arch = "wasm32"))]
     profile: Option<PathBuf>,
     /// How shadows are drawn, from the project's graphics settings.
     shadows: render::ShadowSettings,
@@ -134,7 +135,7 @@ impl Player {
         // The game camera's own post-processing, else the scene's, as the project allows.
         let effects = render::Effects { show: true, allowed: self.effects, camera: render::camera_object(scene) };
         let options = FrameOptions { show_grid: false, selected: None, time: self.session.play_time() as f32, shadows: self.shadows, effects };
-        let gathering = std::time::Instant::now();
+        let gathering = bayleaf_core::time::Instant::now();
         let mut frame = render::extract_with(scene, camera, options, &mut assets);
         if let Some(particles) = self.session.particles() {
             frame.items.extend(particles.draw_items(scene, &frame.camera, &mut assets));
@@ -146,7 +147,7 @@ impl Player {
         let parts =
             bayleaf_ui_egui::world_interface::View { gpu, renderer: &mut view.renderer, camera: &frame.camera, pointer: &pointer, interactive: true, rect };
         let over_world_panel = self.world.prepare(parts, &mut self.session, &mut self.interfaces, &mut frame.items);
-        let drawing = std::time::Instant::now();
+        let drawing = bayleaf_core::time::Instant::now();
         view.renderer.render(&gpu.device, &gpu.queue, &view.target, &frame);
         let stats = view.renderer.stats();
         self.session.profile_drawn(bayleaf_engine::profiler::DrawnStats {
@@ -202,9 +203,22 @@ impl eframe::App for Player {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let gpu = frame.wgpu_render_state();
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| self.frame(ui, gpu));
+        #[cfg(target_arch = "wasm32")]
+        {
+            web::wake_sound(&mut self.session, ui.ctx());
+            web::keep_saved(&mut self.session, ui.ctx());
+            web::frame_done();
+        }
+    }
+
+    /// The player keeps nothing of its own between runs: a game site serves many games from one
+    /// address, whose browser storage holds only each game's saved values.
+    fn persist_egui_memory(&self) -> bool {
+        false
     }
 
     /// Writes the recorded profile, if one was asked for.
+    #[cfg(not(target_arch = "wasm32"))]
     fn on_exit(&mut self) {
         let Some(path) = &self.profile else { return };
         let registry = CommandRegistry::with_builtins();
@@ -219,7 +233,34 @@ impl eframe::App for Player {
     }
 }
 
+impl Player {
+    /// The player for an opened game, drawn as the project's graphics settings say.
+    fn new(session: Session, failure: Option<String>, fullscreen: bool, profile: Option<PathBuf>) -> Self {
+        #[cfg(target_arch = "wasm32")]
+        let _ = profile;
+        let graphics = bayleaf_engine::project_cmds::settings_of(&session).graphics;
+        let (shadows, effects, samples) = (graphics.shadows(), graphics.effects.render(), graphics.samples());
+        Player {
+            session,
+            materials: render::MaterialLibrary::default(),
+            assets: render::assets::AssetCache::default(),
+            gpu: None,
+            gamepads: bayleaf_ui_egui::gamepad::Gamepads::default(),
+            interfaces: bayleaf_ui_egui::game_interface::GameInterfaces::default(),
+            world: bayleaf_ui_egui::world_interface::WorldInterfaces::default(),
+            shadows,
+            samples,
+            effects,
+            failure,
+            fullscreen,
+            #[cfg(not(target_arch = "wasm32"))]
+            profile,
+        }
+    }
+}
+
 /// The window icon the project chooses (`settings.game.icon`), if it reads as an image.
+#[cfg(not(target_arch = "wasm32"))]
 fn game_icon(session: &Session) -> Option<egui::IconData> {
     let icon = bayleaf_engine::project_cmds::settings_of(session).game.icon;
     if icon.is_empty() {
@@ -232,7 +273,11 @@ fn game_icon(session: &Session) -> Option<egui::IconData> {
 /// Runs the game given on the command line, or the one exported beside this program. `natives` are
 /// the scripts built into this program (native mode), each by the module path it stands for in
 /// the game (`scripts/mover.wasm`); the plain player has none.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use clap::Parser;
+
     let args = Args::parse();
     let game = match args.game.clone() {
         Some(game) => game,
@@ -264,24 +309,11 @@ pub fn run(natives: Vec<(PathBuf, bayleaf_engine::NativeScript)>) -> anyhow::Res
         viewport = viewport.with_icon(egui::IconData { rgba: icon.rgba, width: icon.size, height: icon.size });
     }
     let options = eframe::NativeOptions { viewport, persist_window: false, wgpu_options: bayleaf_ui_egui::wgpu_configuration(), ..Default::default() };
-    let graphics = bayleaf_engine::project_cmds::settings_of(&session).graphics;
-    let (shadows, effects, samples) = (graphics.shadows(), graphics.effects.render(), graphics.samples());
-    let player = Player {
-        session,
-        materials: render::MaterialLibrary::default(),
-        assets: render::assets::AssetCache::default(),
-        gpu: None,
-        gamepads: bayleaf_ui_egui::gamepad::Gamepads::default(),
-        interfaces: bayleaf_ui_egui::game_interface::GameInterfaces::default(),
-        world: bayleaf_ui_egui::world_interface::WorldInterfaces::default(),
-        shadows,
-        samples,
-        effects,
-        failure,
-        fullscreen: args.fullscreen,
-        profile: args.profile.clone(),
-    };
+    let player = Player::new(session, failure, args.fullscreen, args.profile.clone());
     eframe::run_native("Bayleaf Player", options, Box::new(move |_| Ok(Box::new(player) as Box<dyn eframe::App>)))
         .map_err(|e| anyhow::anyhow!("could not open the game window: {e}"))
         .context(title)
 }
+
+#[cfg(target_arch = "wasm32")]
+pub mod web;

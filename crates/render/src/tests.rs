@@ -1154,3 +1154,20 @@ fn a_world_position_pattern_stays_on_its_surface_wherever_the_view_s_origin_is()
     let shifted = from_eye.pixels.chunks(4).zip(moved.pixels.chunks(4)).filter(|(a, b)| a.iter().zip(*b).any(|(x, y)| x.abs_diff(*y) > 8)).count();
     assert!(shifted < 40, "a unit along, the checker repeats: {shifted} pixels differ");
 }
+
+#[test]
+fn a_material_shader_the_gpu_refuses_is_reported_without_waiting_on_the_gpu() {
+    let Some(gpu) = gpu() else { return };
+    // The GPU answers whether it takes a shader without the renderer waiting for it (a browser
+    // answers only after the frame); a refused one is still reported and drawn plainly.
+    let mut broken = compile(&Graph::new(&CATALOG)).unwrap();
+    broken.surface = "fn surface(s: SurfaceIn) -> Surface { return not_a_function(); }".to_owned();
+    broken.key ^= 1;
+    let mut scene = Scene::new();
+    let id = mesh(&mut scene, "sphere", [0.0, 0.0, 0.0]);
+    scene.set_component(id, "mesh", json!({"shape": "sphere", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.5, "material": "m.bmaterial"})).unwrap();
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO, 50.0, 1.0);
+    let frame = extract_with(&scene, camera, OPTIONS, &mut Materials(None, Arc::new(broken)));
+    let refused = gpu.render(&frame, 32, 32);
+    assert!(matches!(&refused, Err(RenderError::Gpu(m)) if m.contains("refused")), "{:?}", refused.err());
+}

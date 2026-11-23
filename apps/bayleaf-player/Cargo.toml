@@ -9,12 +9,25 @@ publish = false
 
 [dependencies]
 bayleaf-core = { workspace = true }
-bayleaf-engine = { workspace = true, features = ["physics", "gameplay", "audio", "streaming", "compiled-scripts"] }
+bayleaf-engine = { workspace = true, features = ["physics", "gameplay", "audio"] }
 bayleaf-ui-egui = { workspace = true }
-anyhow = { workspace = true }
-clap = { workspace = true }
 eframe = { workspace = true }
 serde_json = { workspace = true }
+
+# Desktop systems: world streaming (worker threads) and scripts compiled to machine code.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bayleaf-engine = { workspace = true, features = ["streaming", "compiled-scripts"] }
+anyhow = { workspace = true }
+clap = { workspace = true }
+
+# The web player (`cargo xtask web-player`): WebGPU, with WebGL 2 where a browser has no WebGPU.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { workspace = true, features = ["webgl", "fragile-send-sync-non-atomic-wasm"] }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+log = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlCanvasElement", "Response", "Storage", "console"] }
 
 [lints]
 workspace = true

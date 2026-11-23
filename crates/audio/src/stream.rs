@@ -4,17 +4,23 @@
 //! few blocks ready for the mixer. Long music then takes neither the time to decode it all nor the
 //! memory to hold it. Ogg Vorbis and FLAC have no such decoder here and are loaded whole.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
+use std::sync::mpsc::{Receiver, TryRecvError};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::{SyncSender, sync_channel};
 
+#[cfg(not(target_arch = "wasm32"))]
 use craft_audio_dsp::resample::StreamResampler;
 
 /// Frames in each block the thread hands the mixer.
+#[cfg(not(target_arch = "wasm32"))]
 const BLOCK_FRAMES: usize = 4096;
 /// Blocks kept ready: about two thirds of a second at 48 kHz.
+#[cfg(not(target_arch = "wasm32"))]
 const READY_BLOCKS: usize = 8;
 
 /// A sound file to play as it is read.
@@ -54,6 +60,7 @@ pub(crate) struct StreamVoice {
 
 impl StreamVoice {
     /// Starts reading `sound` on a thread of its own, for output at `rate`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn start(sound: &Streamed, rate: u32, looping: bool) -> Result<Self, String> {
         let decoder = open(&sound.path, &sound.extension).map_err(|e| format!("{}: {e}", sound.path.display()))?;
         let (send, blocks) = sync_channel(READY_BLOCKS);
@@ -64,6 +71,12 @@ impl StreamVoice {
             .spawn(move || feed(decoder, rate, looping, &send, &stopped))
             .map_err(|e| format!("cannot start reading {}: {e}", sound.path.display()))?;
         Ok(Self { blocks, current: (Vec::new(), Vec::new()), at: 0, ended: false, stop })
+    }
+
+    /// A browser has no threads to read a sound on; [`crate::Audio::sound`] loads it whole there.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn start(sound: &Streamed, _rate: u32, _looping: bool) -> Result<Self, String> {
+        Err(format!("{} cannot be read as it plays in a browser; a browser loads {} sounds whole", sound.path.display(), sound.extension))
     }
 
     /// Adds up to `left.len()` frames into `left` and `right`, times the gains; returns how many
@@ -111,6 +124,7 @@ impl Drop for StreamVoice {
 
 /// The thread's work: decode, resample and send blocks until the sound ends (or, looping, until
 /// stopped), the voice is dropped, or the file cannot be read further.
+#[cfg(not(target_arch = "wasm32"))]
 fn feed(mut decoder: craft_audio::Decoder<'static>, rate: u32, looping: bool, send: &SyncSender<Block>, stop: &AtomicBool) {
     let from = decoder.info().sample_rate.max(1);
     let mut resampler = StreamResampler::new(from, rate);

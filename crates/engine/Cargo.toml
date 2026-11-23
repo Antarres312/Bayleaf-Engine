@@ -36,6 +36,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 toml_edit = { workspace = true }
+
+# The Recycle Bin, for deleting assets; a browser has none.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 trash = { workspace = true }
 
 [lints]

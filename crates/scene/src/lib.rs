@@ -419,7 +419,7 @@ impl Scene {
     }
 
     pub fn load(path: &Path) -> Result<Self, SceneError> {
-        let text = std::fs::read_to_string(path).map_err(|e| SceneError::Io(format!("cannot read {}: {e}", path.display())))?;
+        let text = bayleaf_core::files::read_to_string(path).map_err(|e| SceneError::Io(format!("cannot read {}: {e}", path.display())))?;
         let scene_doc: SceneDoc = serde_json::from_str(&text).map_err(|e| SceneError::Format(e.to_string()))?;
         Self::from_doc(&scene_doc)
     }

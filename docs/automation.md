@@ -143,8 +143,10 @@ run: `interpreted`, `compiled` or `native` (default: the project's choice for th
 and returns `{ready, findings, scripts, files}`: each finding an `error`, `warning` or `note` with
 its message and file, and how each script would run. The export refuses while the check finds an
 error. For another desktop system, `player` must be a player built there (the check reads its first
-bytes to tell which system a program is for), since this computer cannot build one; the web is not
-there yet. A Linux game also gets `<game>.desktop`, its icon as `icon.png`, and `install.sh`, which
+bytes to tell which system a program is for), since this computer cannot build one. For `web` the folder holds `index.html`, the web player
+(`bayleaf_player.js` and `bayleaf_player_bg.wasm`, copied from `player`, a folder, by default the
+one `cargo xtask web-player` built) and `game.pack`, the game's files in one file, which the web
+player reads into memory when the page loads; saved values are kept in the browser's storage. A Linux game also gets `<game>.desktop`, its icon as `icon.png`, and `install.sh`, which
 makes the program runnable (a copy made on Windows loses that) and adds the game to the applications
 menu. `compiled` needs a desktop system and `native` the engine's source and cargo (and this
 computer's system), and the check says when they are missing. In native mode

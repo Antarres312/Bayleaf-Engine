@@ -246,6 +246,9 @@ impl RenderTarget {
 }
 
 /// Draws [`Frame`]s into [`RenderTarget`]s.
+/// The GPU's answer on whether it takes a material's shader: no error, or why not.
+type ShaderCheck = std::pin::Pin<Box<dyn std::future::Future<Output = Option<wgpu::Error>>>>;
+
 pub struct Renderer {
     /// Samples per pixel the pipelines draw with; a target of another count makes them again.
     samples: u32,
@@ -262,6 +265,9 @@ pub struct Renderer {
     post: crate::post::Post,
     /// Why the last refused material shader was refused.
     material_error: Option<String>,
+    /// Materials whose shader the GPU has not yet said it takes or refuses (a browser answers a
+    /// frame or more later); their pipelines draw meanwhile.
+    checks: Vec<(u64, ShaderCheck)>,
     grid: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
     meshes: Vec<(Shape, GpuMesh)>,
@@ -468,6 +474,7 @@ impl Renderer {
             additive,
             post,
             material_error: None,
+            checks: Vec::new(),
             grid,
             sky,
             meshes,
@@ -545,20 +552,37 @@ impl Renderer {
         let pipelines = (mesh_pipeline(device, &self.layout, &shader, false, samples), mesh_pipeline(device, &self.layout, &shader, true, samples));
         let outline = material.outline.is_some().then(|| outline_mesh_pipeline(device, &self.layout, &shader, samples));
         let additive = additive_mesh_pipeline(device, &self.layout, &shader, samples);
-        let entry = match pollster::block_on(scope.pop()) {
-            None => {
-                if let Some(outline) = outline {
-                    self.outlines.insert(material.key, outline);
+        if let Some(outline) = outline {
+            self.outlines.insert(material.key, outline);
+        }
+        self.additive.insert(material.key, additive);
+        self.pipelines.insert(material.key, Some(pipelines));
+        // Never waits for the answer: a browser gives it only after this frame, and waiting here
+        // would stop the page.
+        self.checks.push((material.key, Box::pin(scope.pop())));
+        self.settle_checks();
+    }
+
+    /// Takes the GPU's answers that have come: a refused shader's material goes back to the
+    /// built-in surface.
+    fn settle_checks(&mut self) {
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut refused = Vec::new();
+        self.checks.retain_mut(|(key, check)| match check.as_mut().poll(&mut context) {
+            std::task::Poll::Pending => true,
+            std::task::Poll::Ready(answer) => {
+                if let Some(error) = answer {
+                    refused.push((*key, error_chain(&error)));
                 }
-                self.additive.insert(material.key, additive);
-                Some(pipelines)
+                false
             }
-            Some(error) => {
-                self.material_error = Some(error_chain(&error));
-                None
-            }
-        };
-        self.pipelines.insert(material.key, entry);
+        });
+        for (key, why) in refused {
+            self.pipelines.insert(key, None);
+            self.outlines.remove(&key);
+            self.additive.remove(&key);
+            self.material_error = Some(why);
+        }
     }
 
     /// Draws the texture `id` for items whose image has that id, instead of uploading their
@@ -660,6 +684,7 @@ impl Renderer {
         for material in frame.items.iter().filter_map(|i| i.material.as_deref()) {
             self.prepare(device, material);
         }
+        self.settle_checks();
         self.upload_assets(device, queue, frame);
 
         // Opaque items grouped by material, mesh and images, then transparent items back to front.

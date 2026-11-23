@@ -3,6 +3,10 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub use glam as math;
+/// Clocks that also work in a browser, where `std::time::Instant::now` is not available.
+pub use web_time as time;
+
+pub mod files;
 
 use std::fmt;
 

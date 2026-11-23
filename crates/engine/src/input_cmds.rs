@@ -154,11 +154,11 @@ impl InputAsset {
 /// Reads an Input Map asset; `path` is relative to the project folder or absolute.
 pub fn read_asset(session: &Session, path: &Path) -> Result<InputAsset, String> {
     let path = session.allowed(&session.script_dir().join(path), Access::Read).map_err(|e| e.to_string())?;
-    let size = std::fs::metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?.len();
+    let size = bayleaf_core::files::len(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     if size > MAX_FILE_BYTES {
         return Err(format!("{} is larger than {} KiB", path.display(), MAX_FILE_BYTES / 1024));
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = bayleaf_core::files::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     InputAsset::from_text(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 

@@ -190,11 +190,11 @@ impl ImportSettings {
     /// settings file is there but broken, so a mistake there is not silently ignored.
     pub fn read_for(file: &Path) -> Result<Option<Self>, String> {
         let path = settings_path(file);
-        let Ok(meta) = std::fs::metadata(&path) else { return Ok(Self::defaults_for(file)) };
-        if meta.len() > MAX_SETTINGS_BYTES {
+        let Ok(size) = bayleaf_core::files::len(&path) else { return Ok(Self::defaults_for(file)) };
+        if size > MAX_SETTINGS_BYTES {
             return Err(format!("{} is too large for import settings", path.display()));
         }
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let text = bayleaf_core::files::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         Self::from_text(&text).map(Some).map_err(|e| format!("{}: {e}", path.display()))
     }
 }

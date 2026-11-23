@@ -61,7 +61,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Export Game…",
             menu: "File/Export Game…",
             shortcut: "",
-            params: "{folder, platform?, mode?, player?}: writes the open project as a game into a new folder named after it inside folder: the player program under the game's name, and its scenes, assets and scripts in a game folder beside it (visual scripts compiled; Rust sources, build output and saved values left out). platform is windows, linux, mac or web (default: this computer's); mode is how scripts run: interpreted, compiled or native (default: the project's choice for the platform). Refused, with the reasons, when project.export.check finds an error; returns {path, program, files, compiled, skipped}",
+            params: "{folder, platform?, mode?, player?}: writes the open project as a game into a new folder named after it inside folder: the player program under the game's name, and its scenes, assets and scripts in a game folder beside it (visual scripts compiled; Rust sources, build output and saved values left out). platform is windows, linux, mac or web (default: this computer's); mode is how scripts run: interpreted, compiled or native (default: the project's choice for the platform); player is the program built on another system, or for the web the folder of the web player (default: the one cargo xtask web-player built). For the web the folder holds index.html, the web player and game.pack (the game's files in one file) instead. Refused, with the reasons, when project.export.check finds an error; returns {path, program, files, compiled, skipped}",
             prompt: Prompt::Dialog,
             mutates: Mutates::No,
             enabled: exportable,
@@ -173,7 +173,7 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
         let errors: Vec<&str> = report.findings.iter().filter(|f| f.severity == Severity::Error).map(|f| f.message.as_str()).collect();
         return Err(CommandError::Failed(format!("the game cannot be exported yet: {}", errors.join(" "))));
     }
-    let player = if mode == ScriptMode::Native { None } else { Some(player_program(session, p.player.as_deref())?) };
+    let player = if mode == ScriptMode::Native || platform == Platform::Web { None } else { Some(player_program(session, p.player.as_deref())?) };
 
     let out = session.allowed(&p.folder.join(&name), Access::Write)?;
     if out.starts_with(&project) {
@@ -192,6 +192,12 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
         compiled.push((relative.clone(), bytes));
     }
 
+    if platform == Platform::Web {
+        return export_web(
+            session,
+            &WebExport { out: &out, name: &name, project: &project, files: &files, left: &left, compiled: &compiled, mode, player: p.player.as_deref() },
+        );
+    }
     let game = out.join(GAME_FOLDER);
     let made = |dir: &Path| std::fs::create_dir_all(dir).map_err(|e| CommandError::Failed(format!("cannot make {}: {e}", dir.display())));
     made(&game)?;
@@ -243,6 +249,64 @@ fn export_command(session: &mut Session, params: &Value) -> Result<Value, Comman
         "build": pending,
     }))
 }
+
+/// What a web export writes from.
+struct WebExport<'a> {
+    out: &'a Path,
+    name: &'a str,
+    project: &'a Path,
+    files: &'a [PathBuf],
+    left: &'a [PathBuf],
+    compiled: &'a [(PathBuf, Vec<u8>)],
+    mode: ScriptMode,
+    player: Option<&'a Path>,
+}
+
+/// Writes a game for the web: `index.html`, the web player and the game's files in one pack.
+fn export_web(session: &mut Session, web: &WebExport<'_>) -> Result<Value, CommandError> {
+    let failed = |what: &Path, e: std::io::Error| CommandError::Failed(format!("cannot write {}: {e}", what.display()));
+    let folder = crate::web_export::player_folder(web.player).ok_or_else(|| CommandError::Failed(WEB_PLAYER_MISSING.to_owned()))?;
+    let folder = session.allowed(&folder, Access::Read)?;
+    let mut packed = Vec::with_capacity(web.files.len());
+    for relative in web.files {
+        let full = web.project.join(relative);
+        let mut bytes = match web.compiled.iter().find(|(f, _)| f == relative) {
+            Some((_, bytes)) => bytes.clone(),
+            None => std::fs::read(&full).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", full.display())))?,
+        };
+        // The project file says how the game's scripts run on the web.
+        if relative.extension().is_some_and(|e| e == crate::project_cmds::PROJECT_EXTENSION) && relative.parent() == Some(Path::new("")) {
+            let text = String::from_utf8(bytes).map_err(|e| CommandError::Failed(format!("{} is not text: {e}", full.display())))?;
+            bytes = with_mode(&text, Platform::Web, web.mode).map_err(|e| CommandError::Failed(format!("{}: {e}", full.display())))?.into_bytes();
+        }
+        packed.push((relative.to_string_lossy().replace('\\', "/"), bytes));
+    }
+    std::fs::create_dir_all(web.out).map_err(|e| failed(web.out, e))?;
+    let page = web.out.join("index.html");
+    std::fs::write(&page, crate::web_export::index_html(web.name)).map_err(|e| failed(&page, e))?;
+    // The player with what wasm-bindgen wrote beside it (its `snippets` folder).
+    crate::web_export::copy_player(&folder, web.out).map_err(CommandError::Failed)?;
+    let pack = web.out.join(crate::web_export::PACK_FILE);
+    std::fs::write(&pack, crate::web_export::pack(&packed)).map_err(|e| failed(&pack, e))?;
+
+    let shown = |list: &[PathBuf]| list.iter().map(|p| p.to_string_lossy().replace('\\', "/")).collect::<Vec<_>>();
+    session.log(
+        crate::Level::Info,
+        format!("Exported {} for the web to {}: {} files, {} visual scripts compiled.", web.name, web.out.display(), web.files.len(), web.compiled.len()),
+    );
+    Ok(json!({
+        "path": web.out,
+        "program": page,
+        "files": web.files.len(),
+        "compiled": shown(&web.compiled.iter().map(|(f, _)| f.clone()).collect::<Vec<_>>()),
+        "skipped": shown(web.left),
+        "native": Vec::<String>::new(),
+        "build": Value::Null,
+    }))
+}
+
+/// Why a web export cannot start without the web player.
+const WEB_PLAYER_MISSING: &str = "Export for the web needs the web player: build it with cargo xtask web-player (it needs rustup target add wasm32-unknown-unknown and wasm-bindgen-cli), or choose the folder it was built into.";
 
 /// A system a game can be exported for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -406,19 +470,45 @@ fn record_mode(game: &Path, platform: Platform, mode: ScriptMode) -> Result<(), 
     let Some(file) = crate::project_cmds::project_file_in(game) else { return Ok(()) };
     let failed = |e: String| CommandError::Failed(format!("cannot write {}: {e}", file.display()));
     let text = std::fs::read_to_string(&file).map_err(|e| failed(e.to_string()))?;
-    let mut project: crate::project_cmds::ProjectFile = serde_json::from_str(&text).map_err(|e| failed(e.to_string()))?;
-    project.settings.game.script_modes.insert(platform, mode);
-    let text = serde_json::to_string_pretty(&project).map_err(|e| failed(e.to_string()))?;
-    std::fs::write(&file, text).map_err(|e| failed(e.to_string()))
+    std::fs::write(&file, with_mode(&text, platform, mode).map_err(failed)?).map_err(|e| failed(e.to_string()))
 }
 
-/// What exporting for `platform` from this computer needs: the web is not there yet, and another
-/// desktop system takes a player built there, since this computer cannot build one.
+/// A project file's text with the script mode for `platform` set to `mode`.
+fn with_mode(text: &str, platform: Platform, mode: ScriptMode) -> Result<String, String> {
+    let mut project: crate::project_cmds::ProjectFile = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    project.settings.game.script_modes.insert(platform, mode);
+    serde_json::to_string_pretty(&project).map_err(|e| e.to_string())
+}
+
+/// What exporting for `platform` from this computer needs: the web takes the web player, and another
+/// desktop system a player built there, since this computer cannot build one.
 fn system_findings(session: &Session, platform: Platform, player: Option<&Path>) -> Vec<(Severity, String)> {
     let mut findings = Vec::new();
     let mut push = |severity: Severity, message: String| findings.push((severity, message));
     if platform == Platform::Web {
-        push(Severity::Error, "Export for the web is not available yet: browsers need a player built for them, which is still to come.".to_owned());
+        match crate::web_export::player_folder(player).map(|p| session.allowed(&p, Access::Read)) {
+            None => push(Severity::Error, WEB_PLAYER_MISSING.to_owned()),
+            Some(Err(e)) => push(Severity::Error, e.to_string()),
+            Some(Ok(folder)) if !crate::web_export::has_player(&folder) => push(
+                Severity::Error,
+                format!(
+                    "{} holds no web player ({} and {}); build it with cargo xtask web-player.",
+                    folder.display(),
+                    crate::web_export::PLAYER_SCRIPT,
+                    crate::web_export::PLAYER_MODULE
+                ),
+            ),
+            Some(Ok(folder)) => push(Severity::Note, format!("The game uses the web player in {}.", folder.display())),
+        }
+        push(
+            Severity::Note,
+            "The export is a folder with index.html: put it on a web server, or zip it with index.html at the top and upload it to a game site as a game played in the browser. A browser does not run it opened from a file on this computer; try it with cargo xtask serve <folder>.".to_owned(),
+        );
+        push(
+            Severity::Note,
+            "In a browser, scripts run interpreted, sound plays from the first click or key (as browsers require) with every sound loaded whole, and saved values are kept in the browser's storage for the site.".to_owned(),
+        );
+        push(Severity::Note, "In a browser, screen readers do not read the game's interface yet, as they do in the desktop player.".to_owned());
     } else if platform != Platform::current() {
         // This computer cannot build a player for another system: the export copies one built there.
         match player.map(|p| session.allowed(p, Access::Read)) {
@@ -551,6 +641,39 @@ fn referenced_files(value: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// What a scene or prefab file of the project needs: the files it names that are not there, and, for
+/// the web, what does not work in a browser.
+fn scene_findings(project: &Path, path: &Path, shown: &str, platform: Platform) -> Vec<(Severity, String)> {
+    let Some(value) = std::fs::read_to_string(project.join(path)).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else {
+        return vec![(Severity::Error, format!("{shown} cannot be read."))];
+    };
+    let mut named = Vec::new();
+    referenced_files(&value["objects"], &mut named);
+    // A scene's settings name its lighting asset.
+    referenced_files(&value["settings"], &mut named);
+    named.sort();
+    named.dedup();
+    let mut findings: Vec<(Severity, String)> = named
+        .into_iter()
+        .filter(|n| !project.join(n).is_file())
+        .map(|missing| (Severity::Error, format!("{shown} uses {missing}, which is not in the project.")))
+        .collect();
+    let streamed = <bayleaf_scene::components::StreamedArea as bayleaf_scene::components::SceneComponent>::NAME;
+    if platform == Platform::Web && names_key(&value["objects"], streamed) {
+        findings.push((Severity::Warning, format!("{shown} has Streamed Areas, which do not load in a browser yet: they are read on worker threads.")));
+    }
+    findings
+}
+
+/// Whether any object in a scene file's JSON has a member named `key` (a component).
+fn names_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Array(items) => items.iter().any(|v| names_key(v, key)),
+        Value::Object(map) => map.contains_key(key) || map.values().any(|v| names_key(v, key)),
+        _ => false,
+    }
+}
+
 /// The newest change to a Rust script crate's sources (`src`, `Cargo.toml`).
 fn newest_source(dir: &Path) -> Option<std::time::SystemTime> {
     let mut newest = std::fs::metadata(dir.join("Cargo.toml")).and_then(|m| m.modified()).ok();
@@ -679,18 +802,8 @@ pub fn check(session: &Session, platform: Platform, mode: ScriptMode, player: Op
     // Files the scenes and prefabs name that are not in the project.
     for path in files.iter().filter(|f| f.extension().is_some_and(|e| e == bayleaf_scene::doc::EXTENSION || e == crate::prefab_cmds::PREFAB_EXTENSION)) {
         let shown = relative(&project.join(path));
-        let Some(value) = std::fs::read_to_string(project.join(path)).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else {
-            found(Severity::Error, format!("{shown} cannot be read."), Some(shown));
-            continue;
-        };
-        let mut named = Vec::new();
-        referenced_files(&value["objects"], &mut named);
-        // A scene's settings name its lighting asset.
-        referenced_files(&value["settings"], &mut named);
-        named.sort();
-        named.dedup();
-        for missing in named.into_iter().filter(|n| !project.join(n).is_file()) {
-            found(Severity::Error, format!("{shown} uses {missing}, which is not in the project."), Some(shown.clone()));
+        for (severity, message) in scene_findings(&project, path, &shown, platform) {
+            found(severity, message, Some(shown.clone()));
         }
     }
     if mode == ScriptMode::Native && !scripts.iter().any(|s| s.runs == ScriptMode::Native) {

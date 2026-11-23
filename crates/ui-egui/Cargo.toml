@@ -29,8 +29,11 @@ png = { workspace = true }
 # Assembles small script modules for Inspector tests.
 wat = { workspace = true }
 serde = { workspace = true }
-rfd = { workspace = true }
 serde_json = { workspace = true }
+
+# The system's file dialogs, for the editor (see src/dialog.rs).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = { workspace = true }
 
 [build-dependencies]
 # Embeds craft-fonts faces when CRAFT_FONTS_DIR names a craft-fonts checkout.

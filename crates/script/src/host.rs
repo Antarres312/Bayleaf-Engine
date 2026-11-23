@@ -13,14 +13,18 @@ use bayleaf_scene::Scene;
 use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue, ScriptRef, Scripts};
 
 use super::rt::{self, Caller, Engine, Linker, Module, Store, TypedFunc};
-use super::{Error, LinkError, error, from_val, instantiate, limits, out_of_fuel, to_val, trap_message};
+use super::{Error, LinkError, error, instantiate, limits, out_of_fuel, trap_message};
+#[cfg(not(target_arch = "wasm32"))]
+use super::{from_val, to_val};
 use crate::{
     ABI_VERSION, Description, EVERY_OBJECT, FUEL_PER_CALL, GameState, Input, LogLine, MAX_DESCRIPTION_BYTES, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME,
     MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS, MAX_REQUESTS_PER_CALL, Message, Properties, PropertyWrite, Request, Scope, ScriptError, ScriptFault, ScriptValues,
     SharedState, Velocities, WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position, module_bytes, read_position, read_transform,
     readable_component, script_keys, transform_from, visual,
 };
-use bayleaf_script_sdk::native::{Bridge, NativeObject, Value};
+use bayleaf_script_sdk::native::NativeObject;
+#[cfg(not(target_arch = "wasm32"))]
+use bayleaf_script_sdk::native::{Bridge, Value};
 
 /// What one instance's host functions see, with this runtime's store limits.
 type HostState = crate::HostState<rt::StoreLimits>;
@@ -208,7 +212,7 @@ impl ScriptHost {
         input: &Arc<Input>,
     ) -> Result<(), ScriptError> {
         let bytes = module_bytes(path)?;
-        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let modified = bayleaf_core::files::modified(path);
         self.load_bytes(object, index, path, modified, &bytes, script, scene, time, input)
     }
 
@@ -225,7 +229,7 @@ impl ScriptHost {
         input: &Arc<Input>,
     ) -> Result<(), ScriptError> {
         let bytes = module_bytes(path)?;
-        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let modified = bayleaf_core::files::modified(path);
         self.instantiate(object, index, path, modified, &bytes, script, scene, time, input)
     }
 
@@ -436,7 +440,7 @@ impl ScriptHost {
                 state.input_maps = Arc::clone(&self.input_maps);
                 state.state = Arc::clone(&self.state);
             }
-            let started = std::time::Instant::now();
+            let started = bayleaf_core::time::Instant::now();
             let result = call(entry, |store| update.call(store, dt));
             self.timings.push((entry.script_name.clone(), started.elapsed()));
             let script = entry.script_name.clone();
@@ -539,7 +543,7 @@ impl ScriptHost {
             .instances
             .iter()
             .filter(|i| {
-                let now = std::fs::metadata(&i.path).and_then(|m| m.modified()).ok();
+                let now = bayleaf_core::files::modified(&i.path);
                 now.is_some() && now != i.modified
             })
             .map(|i| (i.object, i.index, i.path.clone()))
@@ -552,7 +556,7 @@ impl ScriptHost {
                 Err(error) => {
                     // Keep the old module's timestamp current so a broken file is reported once.
                     if let Some(entry) = self.instances.iter_mut().find(|i| i.object == object && i.index == index) {
-                        entry.modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+                        entry.modified = bayleaf_core::files::modified(&path);
                     }
                     self.faults.push(ScriptFault { object, script: script.display_name(), error });
                 }
@@ -812,12 +816,14 @@ fn state_scope(caller: &mut Caller<'_, HostState>, what: &str, scope: i32, handl
 
 /// The SDK's way to the host for a native script: each call goes through the trampoline's
 /// `call_<name>` export, so the host function runs as for a WebAssembly script.
+#[cfg(not(target_arch = "wasm32"))]
 struct NativeBridge<'a, 'c> {
     caller: &'a mut Caller<'c, HostState>,
     /// The first call that failed; later calls do nothing.
     failed: Option<Error>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Bridge for NativeBridge<'_, '_> {
     fn call(&mut self, name: &str, args: &[Value]) -> Option<Value> {
         if self.failed.is_some() {
@@ -851,6 +857,7 @@ impl Bridge for NativeBridge<'_, '_> {
 
 /// Runs one of a native script's functions with the bridge set. A failed host call, or a panic,
 /// stops the script with its reason.
+#[cfg(not(target_arch = "wasm32"))]
 fn run_native(caller: &mut Caller<'_, HostState>, run: impl FnOnce(&mut dyn NativeObject)) -> Result<(), Error> {
     let Some(mut object) = caller.data_mut().native.take() else { return Ok(()) };
     let mut bridge = NativeBridge { caller: &mut *caller, failed: None };
@@ -868,6 +875,16 @@ fn run_native(caller: &mut Caller<'_, HostState>, run: impl FnOnce(&mut dyn Nati
         return Err(fault(caller, format!("the script panicked: {message}")));
     }
     failed.map_or(Ok(()), Err)
+}
+
+/// In a browser the SDK is a guest's, with no bridge to the host: the web player builds no script
+/// in, so no native script gets here, and one that did would stop with this reason.
+#[cfg(target_arch = "wasm32")]
+fn run_native(caller: &mut Caller<'_, HostState>, _run: impl FnOnce(&mut dyn NativeObject)) -> Result<(), Error> {
+    if caller.data().native.is_none() {
+        return Ok(());
+    }
+    Err(fault(caller, "native scripts do not run in a browser".to_owned()))
 }
 
 /// The functions the trampoline module calls for a native script.

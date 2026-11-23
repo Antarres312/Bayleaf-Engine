@@ -8,6 +8,7 @@
 
 pub mod brand;
 mod console;
+mod dialog;
 mod dock;
 mod export_window;
 mod file_drop;
@@ -808,7 +809,7 @@ impl Editor {
         let base = self.session.script_dir();
         let folder = base.join("prefabs");
         let name = self.session.scene().name(id).unwrap_or("Prefab").to_owned();
-        let dialog = rfd::FileDialog::new()
+        let dialog = crate::dialog::FileDialog::new()
             .add_filter("Bayleaf prefab", &[extension])
             .set_directory(if folder.is_dir() { &folder } else { &base })
             .set_file_name(format!("{name}.{extension}"));
@@ -969,7 +970,7 @@ impl Editor {
             let saved = if self.session.scene_path().is_some() {
                 self.dispatch("scene.save", &Value::Null, None)
             } else {
-                match rfd::FileDialog::new().add_filter("Bayleaf scene", &[EXTENSION]).set_file_name(format!("scene.{EXTENSION}")).save_file() {
+                match crate::dialog::FileDialog::new().add_filter("Bayleaf scene", &[EXTENSION]).set_file_name(format!("scene.{EXTENSION}")).save_file() {
                     Some(path) => self.dispatch("scene.saveAs", &json!({ "path": path }), None),
                     None => None,
                 }
@@ -985,7 +986,7 @@ impl Editor {
             let Some(graph) = self.session.graph().cloned() else { continue };
             let saved = match (&graph.path, graph.catalog()) {
                 (Some(_), _) => self.dispatch("graph.save", &Value::Null, None),
-                (None, Some(catalog)) => match rfd::FileDialog::new().add_filter(catalog.label, &[catalog.extension]).save_file() {
+                (None, Some(catalog)) => match crate::dialog::FileDialog::new().add_filter(catalog.label, &[catalog.extension]).save_file() {
                     Some(path) => self.dispatch("graph.save", &json!({ "path": path.with_extension(catalog.extension) }), None),
                     None => None,
                 },
@@ -1077,19 +1078,22 @@ impl Editor {
         }
         let params = match info.prompt {
             Prompt::None => Value::Null,
-            Prompt::OpenScene => match rfd::FileDialog::new().add_filter("Bayleaf scene", &[EXTENSION]).pick_file() {
+            Prompt::OpenScene => match crate::dialog::FileDialog::new().add_filter("Bayleaf scene", &[EXTENSION]).pick_file() {
                 Some(path) => json!({ "path": path }),
                 None => return,
             },
-            Prompt::SaveScene => match rfd::FileDialog::new().add_filter("Bayleaf scene", &[EXTENSION]).set_file_name(format!("scene.{EXTENSION}")).save_file()
-            {
-                Some(path) => json!({ "path": path }),
-                None => return,
-            },
-            Prompt::NewProject => match rfd::FileDialog::new().set_title("Name and place the new project folder").set_file_name("My Game").save_file() {
-                Some(path) => json!({ "path": path }),
-                None => return,
-            },
+            Prompt::SaveScene => {
+                match crate::dialog::FileDialog::new().add_filter("Bayleaf scene", &[EXTENSION]).set_file_name(format!("scene.{EXTENSION}")).save_file() {
+                    Some(path) => json!({ "path": path }),
+                    None => return,
+                }
+            }
+            Prompt::NewProject => {
+                match crate::dialog::FileDialog::new().set_title("Name and place the new project folder").set_file_name("My Game").save_file() {
+                    Some(path) => json!({ "path": path }),
+                    None => return,
+                }
+            }
             // Export Game has a window of its own for its choices.
             Prompt::Dialog => {
                 if id == "project.export" {
@@ -1097,14 +1101,16 @@ impl Editor {
                 }
                 return;
             }
-            Prompt::Folder => match rfd::FileDialog::new().set_title(tl("Choose the folder to export the game into")).pick_folder() {
+            Prompt::Folder => match crate::dialog::FileDialog::new().set_title(tl("Choose the folder to export the game into")).pick_folder() {
                 Some(path) => json!({ "folder": path }),
                 None => return,
             },
-            Prompt::OpenProject => match rfd::FileDialog::new().add_filter("Bayleaf project", &[bayleaf_engine::project_cmds::PROJECT_EXTENSION]).pick_file() {
-                Some(path) => json!({ "path": path }),
-                None => return,
-            },
+            Prompt::OpenProject => {
+                match crate::dialog::FileDialog::new().add_filter("Bayleaf project", &[bayleaf_engine::project_cmds::PROJECT_EXTENSION]).pick_file() {
+                    Some(path) => json!({ "path": path }),
+                    None => return,
+                }
+            }
             // Deleting and duplicating act on every selected object, as one undo step.
             Prompt::SelectedObject if !self.also_selected.is_empty() && matches!(id, "scene.object.delete" | "scene.object.duplicate") => {
                 let results = self.for_each_selected(id);
@@ -1202,21 +1208,21 @@ impl Editor {
 
 /// Asks before closing a graph with unsaved changes.
 pub(crate) fn confirm_discard_graph() -> bool {
-    let answer = rfd::MessageDialog::new()
+    let answer = crate::dialog::MessageDialog::new()
         .set_title("Unsaved changes")
         .set_description("The graph has unsaved changes. Discard them?")
-        .set_buttons(rfd::MessageButtons::YesNo)
+        .set_buttons(crate::dialog::MessageButtons::YesNo)
         .show();
-    answer == rfd::MessageDialogResult::Yes
+    answer == crate::dialog::MessageDialogResult::Yes
 }
 
 fn confirm_discard() -> bool {
-    let answer = rfd::MessageDialog::new()
+    let answer = crate::dialog::MessageDialog::new()
         .set_title("Unsaved changes")
         .set_description("The scene has unsaved changes. Discard them?")
-        .set_buttons(rfd::MessageButtons::YesNo)
+        .set_buttons(crate::dialog::MessageButtons::YesNo)
         .show();
-    answer == rfd::MessageDialogResult::Yes
+    answer == crate::dialog::MessageDialogResult::Yes
 }
 
 /// Parses shortcuts such as `Ctrl+Shift+S` or `Delete`. `Ctrl` means Cmd on macOS.

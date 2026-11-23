@@ -13,6 +13,10 @@ craft-audio = { workspace = true, features = ["decode-native", "vorbis-decode", 
 craft-audio-dsp = { workspace = true }
 cpal = { workspace = true }
 
+# In a browser, sound goes out through the page's Web Audio.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpal = { workspace = true, features = ["wasm-bindgen"] }
+
 [lints]
 workspace = true
 

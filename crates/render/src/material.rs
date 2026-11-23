@@ -792,7 +792,7 @@ impl MaterialLibrary {
     /// A lighting file (`.blight`), read again when it changes on disk.
     pub fn lighting(&mut self, path: &Path) -> Result<Arc<bayleaf_scene::lighting::Lighting>, String> {
         let key = normalize(path);
-        let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
+        let modified = bayleaf_core::files::modified(&key);
         if let Some((seen, result)) = self.lightings.get(&key)
             && *seen == modified
             && modified.is_some()
@@ -807,7 +807,7 @@ impl MaterialLibrary {
     /// A post-processing file (`.bpost`), read again when it changes on disk.
     pub fn post(&mut self, path: &Path) -> Result<Arc<bayleaf_scene::post::PostProcessing>, String> {
         let key = normalize(path);
-        let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
+        let modified = bayleaf_core::files::modified(&key);
         if let Some((seen, result)) = self.posts.get(&key)
             && *seen == modified
             && modified.is_some()
@@ -843,14 +843,14 @@ impl MaterialLibrary {
         if let Some((_, result)) = self.live.get(&key) {
             return result.clone();
         }
-        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let modified = bayleaf_core::files::modified(path);
         if let Some(entry) = self.entries.get(&key)
             && entry.modified == modified
             && modified.is_some()
         {
             return entry.result.clone();
         }
-        let result = std::fs::read_to_string(path)
+        let result = bayleaf_core::files::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))
             .and_then(|text| Graph::from_json(&text, &CATALOG).map_err(|e| format!("{}: {e}", path.display())))
             .and_then(|graph| compile(&graph).map(Arc::new).map_err(|p| format!("{}: {}", path.display(), summary(&p))));

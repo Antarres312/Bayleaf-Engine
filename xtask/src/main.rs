@@ -5,11 +5,14 @@
 //!   `examples/demo/scripts/`.
 //! - `cargo xtask licences [--write]`: checks every dependency's licence against the craft-contrib
 //!   list and that NOTICE lists them all; `--write` writes NOTICE.
+//! - `cargo xtask web-player [--dev]`: builds the web player into `target/web-player` (see `web.rs`).
+//! - `cargo xtask serve <folder> [port]`: serves a game exported for the web, to try it.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod layers;
 mod licences;
+mod web;
 
 use std::path::{Path, PathBuf};
 
@@ -23,7 +26,13 @@ fn main() -> anyhow::Result<()> {
         Some("layers") => check_layers(&workspace_root()?),
         Some("scripts") => build_scripts(&workspace_root()?),
         Some("licences") => licences::check(&workspace_root()?, std::env::args().any(|a| a == "--write")),
-        _ => bail!("usage: cargo xtask layers | scripts | licences [--write]"),
+        Some("web-player") => web::build_player(&workspace_root()?, std::env::args().any(|a| a == "--dev")),
+        Some("serve") => {
+            let folder = std::env::args().nth(2).context("usage: cargo xtask serve <folder> [port]")?;
+            let port = std::env::args().nth(3).map(|p| p.parse()).transpose().context("the port is a number")?.unwrap_or(8000);
+            web::serve(Path::new(&folder), port)
+        }
+        _ => bail!("usage: cargo xtask layers | scripts | licences [--write] | web-player | serve <folder> [port]"),
     }
 }
 

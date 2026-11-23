@@ -78,7 +78,7 @@ struct Cached {
 }
 
 fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+    bayleaf_core::files::modified(path)
 }
 
 impl GameInterfaces {

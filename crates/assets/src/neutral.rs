@@ -27,11 +27,11 @@ fn limits() -> craft_mesh::Limits {
 /// there, its file name beside the model.
 fn named_file(folder: &Path, name: &str) -> Option<PathBuf> {
     let name = name.trim().replace('\\', "/");
-    if let Some(path) = buffer_path(folder, &name).filter(|p| p.is_file()) {
+    if let Some(path) = buffer_path(folder, &name).filter(|p| bayleaf_core::files::is_file(p)) {
         return Some(path);
     }
     let file = name.rsplit('/').next().filter(|f| !f.is_empty() && *f != ".." && *f != ".")?;
-    Some(folder.join(file)).filter(|p| p.is_file())
+    Some(folder.join(file)).filter(|p| bayleaf_core::files::is_file(p))
 }
 
 /// Reads the model's own scene, asking for the files it names beside it.

@@ -2478,10 +2478,6 @@ fn a_game_exports_for_another_system_with_a_player_built_there() {
     std::fs::write(&wrong, if other == "linux" { b"MZ\x90\x00rest".to_vec() } else { b"\x7fELFrest".to_vec() }).unwrap();
     let check = registry.execute(&mut session, "project.export.check", &json!({"platform": other, "mode": "interpreted", "player": wrong})).unwrap();
     assert!(errors(&check) > 0 && check.to_string().contains("is a program for"), "{check}");
-    // The web is not there yet, whatever is given.
-    let web = registry.execute(&mut session, "project.export.check", &json!({"platform": "web", "mode": "interpreted"})).unwrap();
-    assert!(web.to_string().contains("not available yet"), "{web}");
-
     let player = base.join("bayleaf-player-other");
     std::fs::write(&player, if other == "linux" { b"\x7fELF\x02\x01\x01rest".to_vec() } else { b"MZ\x90\x00rest".to_vec() }).unwrap();
     let check = registry.execute(&mut session, "project.export.check", &json!({"platform": other, "mode": "interpreted", "player": player})).unwrap();
@@ -2501,6 +2497,68 @@ fn a_game_exports_for_another_system_with_a_player_built_there() {
     } else {
         assert!(program.extension().is_some_and(|e| e == "exe"));
     }
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn a_game_exports_for_the_web_as_a_page_with_its_files_in_one_pack_that_plays() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let base = std::env::temp_dir().join(format!("bayleaf-export-web-{}", std::process::id()));
+    std::fs::remove_dir_all(&base).ok();
+    let project = base.join("Space Game");
+    registry.execute(&mut session, "project.new", &json!({"path": project})).unwrap();
+    std::fs::create_dir_all(project.join("saves")).unwrap();
+    std::fs::write(project.join("saves/progress.json"), "{}").unwrap();
+    let errors = |report: &Value| report["findings"].as_array().unwrap().iter().filter(|f| f["severity"] == "error").count();
+
+    // Without the web player the check says how to build it; a folder without one is refused.
+    let empty = base.join("no-player");
+    std::fs::create_dir_all(&empty).unwrap();
+    let check = registry.execute(&mut session, "project.export.check", &json!({"platform": "web", "mode": "interpreted", "player": empty})).unwrap();
+    assert!(errors(&check) > 0 && check.to_string().contains("cargo xtask web-player"), "{check}");
+    assert!(
+        errors(&registry.execute(&mut session, "project.export.check", &json!({"platform": "web", "mode": "compiled"})).unwrap()) > 0,
+        "browsers interpret"
+    );
+
+    let player = base.join("web-player");
+    std::fs::create_dir_all(&player).unwrap();
+    std::fs::write(player.join(crate::web_export::PLAYER_SCRIPT), "// loader").unwrap();
+    std::fs::write(player.join(crate::web_export::PLAYER_MODULE), b"\0asm\x01\0\0\0").unwrap();
+    std::fs::create_dir_all(player.join("snippets/eframe-1")).unwrap();
+    std::fs::write(player.join("snippets/eframe-1/inline0.js"), "// kept by wasm-bindgen").unwrap();
+    let check = registry.execute(&mut session, "project.export.check", &json!({"platform": "web", "mode": "interpreted", "player": player})).unwrap();
+    assert_eq!(errors(&check), 0, "{check}");
+    let out = base.join("out");
+    let done = registry.execute(&mut session, "project.export", &json!({"folder": out, "platform": "web", "mode": "interpreted", "player": player})).unwrap();
+    let site = out.join("Space Game");
+    assert_eq!(std::path::PathBuf::from(done["program"].as_str().unwrap()), site.join("index.html"));
+    let page = std::fs::read_to_string(site.join("index.html")).unwrap();
+    assert!(page.contains(crate::web_export::PLAYER_SCRIPT) && page.contains("Space Game"), "the page loads the player: {page}");
+    assert_eq!(std::fs::read(site.join(crate::web_export::PLAYER_MODULE)).unwrap(), b"\0asm\x01\0\0\0", "the web player goes along");
+    assert!(site.join("snippets/eframe-1/inline0.js").is_file(), "with the scripts wasm-bindgen keeps beside it");
+    assert!(page.contains("[hidden]"), "the status line hides once the game runs");
+    assert!(!site.join(crate::export::GAME_FOLDER).exists(), "the game's files are in the pack, not beside it");
+
+    // The pack holds the game, visual scripts compiled and saved values left behind, and the
+    // game plays from it.
+    let files = crate::web_export::unpack(&std::fs::read(site.join(crate::web_export::PACK_FILE)).unwrap()).unwrap();
+    let file = |name: &str| files.iter().find(|(p, _)| p == name).map(|(_, b)| b.clone());
+    assert!(file("scripts/spin.bscript").unwrap().starts_with(bayleaf_script::WASM_MAGIC), "visual scripts are compiled");
+    assert!(file("saves/progress.json").is_none(), "saved values stay behind");
+    let unpacked = base.join("unpacked");
+    for (path, bytes) in &files {
+        let target = unpacked.join(path);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, bytes).unwrap();
+    }
+    let mut game = Session::default();
+    registry.execute(&mut game, "project.open", &json!({"path": unpacked})).unwrap();
+    assert_eq!(crate::export::chosen_mode(&game, crate::export::Platform::Web), crate::export::ScriptMode::Interpreted, "the pack says how scripts run");
+    let started = registry.execute(&mut game, "play.start", &Value::Null).unwrap();
+    assert!(started["running"].as_u64().unwrap() > 0, "its scripts run: {started}");
+    assert!(game.console().iter().all(|l| l.level != crate::Level::Error), "{:?}", game.console());
     std::fs::remove_dir_all(&base).ok();
 }
 

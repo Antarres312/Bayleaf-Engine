@@ -193,7 +193,7 @@ fn link_path(session: &Session, path: &Path) -> String {
 
 pub(crate) fn read_prefab(session: &Session, source: &str) -> Result<Vec<ObjectDoc>, CommandError> {
     let path = session.allowed(&session.script_dir().join(source), Access::Read)?;
-    let text = std::fs::read_to_string(&path).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", path.display())))?;
+    let text = bayleaf_core::files::read_to_string(&path).map_err(|e| CommandError::Failed(format!("cannot read {}: {e}", path.display())))?;
     let file: PrefabFile = serde_json::from_str(&text).map_err(|e| CommandError::Failed(format!("{} is not a prefab: {e}", path.display())))?;
     if file.format != PREFAB_FORMAT || !(1..=bayleaf_scene::doc::VERSION).contains(&file.version) {
         return Err(CommandError::Failed(format!("{} is not a prefab this engine can read", path.display())));

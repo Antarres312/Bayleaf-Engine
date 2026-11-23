@@ -369,8 +369,13 @@ No crate below L6 may use egui, eframe, winit or rfd.
      Windows for Linux once the player can be built there (or pick a prebuilt Linux player), with
      a `.desktop` file and the game's icon, Wayland and X11 both, and an option for an AppImage.
      (Done: export for another desktop system with a player built there, chosen in the Export
-     window; a Linux game gets a `.desktop` file, its icon and `install.sh`. Still to do: the web
-     player and its packing, building a Linux player from Windows, and AppImages.)
+     window; a Linux game gets a `.desktop` file, its icon and `install.sh`. The web player:
+     `cargo xtask web-player` builds it, and Export Game for the web writes `index.html`, the
+     player and `game.pack`, the game's files in one file read into memory in the browser (through
+     `bayleaf_core::files`, which every file a game reads goes through); sound after the first click
+     or key, every sound loaded whole, saved values in the browser's storage, and `cargo xtask
+     serve` to try it. Still to do: Streamed Areas on the web, screen readers reading the game's
+     interface there, building a Linux player from Windows, and AppImages.)
    - **Post-processing.** A Post-processing asset named by the camera or the scene's settings: tone
      mapping (with exposure), bloom, colour adjustment (contrast, saturation, a lookup texture),
      vignette, fog by depth, ambient occlusion in screen space, and an antialiasing choice beyond

@@ -240,11 +240,11 @@ impl Layout {
     }
 
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
-        let meta = std::fs::metadata(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        if meta.len() > 4 << 20 {
+        let size = bayleaf_core::files::len(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        if size > 4 << 20 {
             return Err(format!("{} is larger than 4 MiB", path.display()));
         }
-        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let text = bayleaf_core::files::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         Self::from_text(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 

@@ -238,15 +238,27 @@ fn asset_delete(session: &mut Session, params: &Value) -> Result<Value, CommandE
     let removed = if p.permanent {
         if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) }.map_err(|e| e.to_string())
     } else {
-        trash::delete(&path).map_err(|e| format!("{e}; with no Recycle Bin, delete with permanent: true"))
+        to_bin(&path).map_err(|e| format!("{e}; with no Recycle Bin, delete with permanent: true"))
     };
     removed.map_err(|e| CommandError::Failed(format!("cannot delete {}: {e}", path.display())))?;
     // Its import settings go with it.
     let settings = bayleaf_render::assets::import::settings_path(&path);
     if settings.is_file() && session.allowed(&settings, Access::Write).is_ok() {
-        let _ = if p.permanent { std::fs::remove_file(&settings).map_err(|e| e.to_string()) } else { trash::delete(&settings).map_err(|e| e.to_string()) };
+        let _ = if p.permanent { std::fs::remove_file(&settings).map_err(|e| e.to_string()) } else { to_bin(&settings) };
     }
     Ok(json!({ "path": path, "recycled": !p.permanent }))
+}
+
+/// Moves a file or folder to the system's Recycle Bin (or Trash).
+#[cfg(not(target_arch = "wasm32"))]
+fn to_bin(path: &Path) -> Result<(), String> {
+    trash::delete(path).map_err(|e| e.to_string())
+}
+
+/// A browser has no Recycle Bin.
+#[cfg(target_arch = "wasm32")]
+fn to_bin(_path: &Path) -> Result<(), String> {
+    Err("a browser has no Recycle Bin".to_owned())
 }
 
 /// What `asset.create` makes.
