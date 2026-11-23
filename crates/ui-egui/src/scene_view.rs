@@ -308,7 +308,13 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
         }
         ui.separator();
         // Shortened with an ellipsis when the view is narrow; hovering shows all of it.
-        ui.add(egui::Label::new(egui::RichText::new(tl("Drag: orbit · Shift+drag: pan · Scroll: zoom · Click: select")).weak()).truncate());
+        // While a handle is dragged: how to move it in steps.
+        let hint = if view.gizmo_drag.is_some() {
+            "Hold Ctrl to go in steps: whole units, 15°, tenths of a size"
+        } else {
+            "Drag: orbit · Shift+drag: pan · Scroll: zoom · Click: select"
+        };
+        ui.add(egui::Label::new(egui::RichText::new(tl(hint)).weak()).truncate());
     });
     command
 }
@@ -493,7 +499,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         if let Some(pointer) = response.interact_pointer_pos().or_else(|| response.hover_pos()) {
             // Every changed object, under one merge key: the whole drag is one undo step.
             let key = format!("gizmo {}", editor.gesture);
-            for (object, moved) in gizmo::drag_to(&projector, &drag, pointer) {
+            for (object, moved) in gizmo::drag_to(&projector, &drag, pointer, ui.input(|i| i.modifiers.command)) {
                 let current = editor.session.scene().get::<bayleaf_engine::scene::components::Transform>(object).cloned();
                 if current.as_ref() != Some(&moved) {
                     editor.dispatch("scene.component.set", &serde_json::json!({ "id": object, "component": "transform", "value": moved }), Some(&key));

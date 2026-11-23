@@ -3,7 +3,8 @@
 //! Move arrows follow the world axes, with a square between each two that moves in their plane;
 //! turn rings circle the world axes, and resize handles follow
 //! the object's own axes. Dragging a handle changes the object's transform through
-//! `scene.component.set`, as one undo step per drag. The same values can be typed in the
+//! `scene.component.set`, as one undo step per drag; with Ctrl held it goes in steps (whole units,
+//! 15 degrees, tenths of a size). The same values can be typed in the
 //! Inspector, which is the keyboard path.
 
 use bayleaf_core::math::{DMat4, DVec3, EulerRot, Mat4, Quat, Vec3};
@@ -226,15 +227,25 @@ pub(crate) struct Drag {
 /// What a drag does, the same for every dragged object.
 #[derive(Clone, Copy, Debug)]
 enum Change {
-    Move(Vec3),
+    Move(DVec3),
     Turn(Vec3, f32),
     Resize(usize, f32),
 }
 
+/// Steps a drag with Ctrl held moves in: whole units, turns of 15 degrees, sizes of a tenth.
+pub(crate) const MOVE_STEP: f64 = 1.0;
+pub(crate) const TURN_STEP: f32 = 15.0;
+pub(crate) const SIZE_STEP: f32 = 0.1;
+
 /// The new local transform of every dragged object after dragging from `drag.start` to `pointer`.
-pub(crate) fn drag_to(projector: &Projector, drag: &Drag, pointer: Pos2) -> Vec<(bayleaf_core::StableId, Transform)> {
+/// With `snap` (Ctrl held) the change goes in steps: the first object lands on whole units, turns
+/// by 15 degrees and takes sizes in tenths, and the others move with it.
+pub(crate) fn drag_to(projector: &Projector, drag: &Drag, pointer: Pos2, snap: bool) -> Vec<(bayleaf_core::StableId, Transform)> {
     let Some(primary) = drag.objects.first() else { return Vec::new() };
-    let change = change(projector, drag.handle, primary, drag.start, pointer);
+    let mut change = change(projector, drag.handle, primary, drag.start, pointer);
+    if snap {
+        change = snapped(change, primary);
+    }
     drag.objects.iter().map(|start| (start.object, apply(change, start))).collect()
 }
 
@@ -256,10 +267,10 @@ fn change(projector: &Projector, handle: Handle, primary: &Start, from: Pos2, po
         // Where the pointer's ray meets the plane through the object, then and now.
         let normal = Vec3::AXES[handle.axis % 3];
         let meet = |p: Pos2| projector.on_plane(p, origin, normal);
-        return Change::Move(meet(from).zip(meet(pointer)).map_or(Vec3::ZERO, |(a, b)| (b - a) - normal * (b - a).dot(normal)));
+        return Change::Move(meet(from).zip(meet(pointer)).map_or(DVec3::ZERO, |(a, b)| ((b - a) - normal * (b - a).dot(normal)).as_dvec3()));
     }
     match handle.tool {
-        Tool::Move => Change::Move(dir * along() * len),
+        Tool::Move => Change::Move((dir * along() * len).as_dvec3()),
         Tool::Scale => Change::Resize(handle.axis, (1.0 + along()).max(0.01)),
         Tool::Rotate => {
             let Some(center) = projector.project(origin) else { return Change::Turn(dir, 0.0) };
@@ -273,12 +284,33 @@ fn change(projector: &Projector, handle: Handle, primary: &Start, from: Pos2, po
     }
 }
 
+/// `change` in steps, measured on the first dragged object.
+fn snapped(change: Change, primary: &Start) -> Change {
+    match change {
+        Change::Move(offset) => {
+            // Each axis the drag moves along lands on a whole unit; the others stay as they are.
+            let at = primary.world.w_axis.truncate();
+            let snap = |from: f64, by: f64| if by.abs() > 1e-9 { (((from + by) / MOVE_STEP).round() * MOVE_STEP) - from } else { 0.0 };
+            Change::Move(DVec3::new(snap(at.x, offset.x), snap(at.y, offset.y), snap(at.z, offset.z)))
+        }
+        Change::Turn(axis, angle) => Change::Turn(axis, (angle.to_degrees() / TURN_STEP).round() * TURN_STEP.to_radians()),
+        Change::Resize(axis, factor) => {
+            let from = primary.local.scale[axis];
+            if from.abs() < 1e-6 {
+                return change;
+            }
+            let size = ((from * factor) / SIZE_STEP).round().max(1.0) * SIZE_STEP;
+            Change::Resize(axis, size / from)
+        }
+    }
+}
+
 /// `change` applied to one object, about its own origin.
 fn apply(change: Change, start: &Start) -> Transform {
     let mut local = start.local.clone();
     match change {
         Change::Move(offset) => {
-            let world_target = start.world.w_axis.truncate() + offset.as_dvec3();
+            let world_target = start.world.w_axis.truncate() + offset;
             local.position = start.parent.inverse().transform_point3(world_target).to_array();
         }
         Change::Resize(axis, factor) => {
@@ -320,7 +352,7 @@ mod tests {
     }
 
     fn first(p: &Projector, d: &Drag, to: egui::Pos2) -> Transform {
-        drag_to(p, d, to).remove(0).1
+        drag_to(p, d, to, false).remove(0).1
     }
 
     #[test]
@@ -415,9 +447,37 @@ mod tests {
         let other = Transform { position: [3.0, -1.0, 0.0], ..Transform::default() };
         let mut d = drag(Tool::Move, 0, Transform::default(), Mat4::IDENTITY);
         d.objects.push(start(2, other, Mat4::IDENTITY));
-        let moved = drag_to(&p, &d, pos2(260.0, 200.0));
+        let moved = drag_to(&p, &d, pos2(260.0, 200.0), false);
         let dx = moved[0].1.position[0];
         assert!(dx > 0.1);
         assert!((moved[1].1.position[0] - (3.0 + dx)).abs() < 1e-4 && moved[1].1.position[1] == -1.0);
+    }
+
+    #[test]
+    fn with_ctrl_the_first_object_lands_on_whole_units_and_the_others_keep_their_distance() {
+        let p = front_view();
+        let off_grid = Transform { position: [0.3, 0.7, 0.0], ..Transform::default() };
+        let mut d = drag(Tool::Move, 0, off_grid.clone(), Mat4::IDENTITY);
+        d.objects.push(start(2, Transform { position: [3.25, 0.7, 0.0], ..Transform::default() }, Mat4::IDENTITY));
+        let moved = drag_to(&p, &d, pos2(262.0, 231.0), true);
+        let x = moved[0].1.position[0];
+        assert!(x >= 1.0 && (x - x.round()).abs() < 1e-9, "a whole unit along X: {x}");
+        assert_eq!(moved[0].1.position[1], 0.7, "the axes not dragged stay as they were");
+        assert!((moved[1].1.position[0] - (x + 2.95)).abs() < 1e-6, "the other keeps its distance: {:?}", moved[1].1.position);
+        let free = first(&p, &drag(Tool::Move, 0, off_grid, Mat4::IDENTITY), pos2(262.0, 231.0));
+        assert!((free.position[0] - free.position[0].round()).abs() > 1e-3, "without Ctrl the move is free");
+    }
+
+    #[test]
+    fn with_ctrl_turns_go_by_15_degrees_and_sizes_by_tenths() {
+        let p = front_view();
+        let mut turn = drag(Tool::Rotate, 2, Transform::default(), Mat4::IDENTITY);
+        turn.start = pos2(260.0, 200.0);
+        let turned = drag_to(&p, &turn, pos2(240.0, 150.0), true).remove(0).1;
+        let degrees = turned.rotation[2];
+        assert!(degrees.abs() > 1.0 && ((degrees / 15.0) - (degrees / 15.0).round()).abs() < 1e-3, "{degrees}");
+        let resized = drag_to(&p, &drag(Tool::Scale, 0, Transform::default(), Mat4::IDENTITY), pos2(283.0, 200.0), true).remove(0).1;
+        let size = resized.scale[0];
+        assert!(size > 1.0 && ((size * 10.0) - (size * 10.0).round()).abs() < 1e-4, "{size}");
     }
 }
