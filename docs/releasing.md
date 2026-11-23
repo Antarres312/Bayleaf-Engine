@@ -37,6 +37,21 @@ released as a patch version the same way, and then merged into `develop`.
 
 ## History
 
+- `v0.3.0`: game interfaces: `.bui` layouts and `.bstyle` style files drawn over the game or standing in
+  the world, edited in the Interface panel, with parts, keyboard and gamepad focus, elements that block
+  the pointer, and script and visual-script nodes; particle systems (the Particle Emitter, from a mesh's
+  surface, with size and colour curves); post-processing (bloom, tone mapping, colour adjustment with a
+  lookup image, vignette, depth fog, ambient occlusion, and antialiasing Off, Fast or Fine with
+  multisampling on or off); material nodes for a stylised look (lights, view direction, Step, Posterize,
+  Remap, custom lighting, outlines) and patterns (Fractal Noise, Voronoi, Waves, Gradient, Random);
+  Power, Square Root, Vector Length, Lerp and Inverse Lerp, with math outputs taking their inputs' type;
+  lighting assets and scene settings; prefabs edited on their own; graphs in tabs of their own; a
+  profiler with the GPU's time; files brought in by dropping them (OBJ, OpenEXR, FLAC; glTF animations
+  played by Model Animation; images as colour or data with BC1/BC3 compression; sounds streamed from
+  their file); Export Game with a script mode per platform (interpreted, compiled, native) and export
+  for another desktop system; a showcase example. Raycast is now Cast Ray, after the feature-name check.
+  Formats: scene 23, graph 6, project 9, interface layout 2, post-processing 3, import settings 1;
+  older files still open.
 - `v0.2.0`: visual scripts gain functions (Function, Return, Call Function), typed properties declared in
   the script's panel with Set Property nodes, and a Negate node; script properties have types
   (number, whole number, true/false, vector, colour, text, object) in the Inspector and the Rust SDK
