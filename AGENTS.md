@@ -130,6 +130,8 @@ The editor uses craft-ui (storytold/craft-libs at one pinned `rev`) for widget-s
 combo boxes and the font stack (`crates/ui-egui/src/fonts.rs`; set `CRAFT_FONTS_DIR` to a craft-fonts checkout to
 embed its faces). craft-ui needs the suite's egui and winit forks: the root `Cargo.toml` patches them at the commits
 craft-libs uses, and a craft-libs `rev` move updates those patches in the same change.
+`self_cell` (through egui's epaint) offers Apache-2.0 or GPL-2.0-only; it is used under Apache-2.0, as the other
+Craft apps do, and `cargo xtask licences` records that choice (`ELECTED` in `xtask/src/licences.rs`, and NOTICE).
 
 **Branches and versions** (`docs/releasing.md`). Work goes to `develop`, on a `feature/<what>` or `fix/<what>` branch
 merged back into it; PRs target `develop`. `main` holds only releases, each tagged `vX.Y.Z` (Semantic Versioning, the

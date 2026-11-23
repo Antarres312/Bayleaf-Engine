@@ -35,6 +35,11 @@ const ALLOWED: &[&str] = &[
     "MPL-2.0",
 ];
 
+/// Crates offered under a choice of licences where one choice is not on the list, used under the one
+/// that is: (crate, the licence it declares, the licence we use it under), as the other Craft apps do
+/// (craft-anything, anicraft). A crate that declares another licence later needs a new decision.
+const ELECTED: &[(&str, &str, &str)] = &[("self_cell", "Apache-2.0 OR GPL-2.0-only", "Apache-2.0")];
+
 /// The targets the apps are built for; dependencies only other targets use (UEFI, for example)
 /// are not shipped.
 const SHIPPED_TARGETS: &[&str] = &["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "wasm32-unknown-unknown"];
@@ -57,6 +62,21 @@ pub fn identifiers(expression: &str) -> Vec<String> {
 pub fn allowed(expression: &str) -> bool {
     let ids = identifiers(expression);
     !ids.is_empty() && ids.iter().all(|id| ALLOWED.contains(&id.as_str()))
+}
+
+/// The licence a crate is used under when it is in [`ELECTED`] with the licence it declares: one of
+/// its choices, and allowed.
+pub fn elected(name: &str, expression: &str) -> Option<&'static str> {
+    ELECTED
+        .iter()
+        .find(|(crate_name, declared, _)| *crate_name == name && *declared == expression)
+        .map(|(_, _, chosen)| *chosen)
+        .filter(|chosen| allowed(chosen) && expression.split(" OR ").any(|choice| choice.trim() == *chosen))
+}
+
+/// Whether a package's licence passes: allowed as declared, or by a recorded choice.
+fn passes(p: &Package) -> bool {
+    p.licence.as_deref().is_some_and(|l| allowed(l) || elected(&p.name, l).is_some())
 }
 
 struct Package {
@@ -104,7 +124,13 @@ fn notice(packages: &[Package]) -> String {
          Written by `cargo xtask licences --write`; do not edit by hand.\n\n",
     );
     for p in packages {
-        let licence = p.licence.as_deref().unwrap_or("(no licence field; see the crate)");
+        let licence = match p.licence.as_deref() {
+            Some(l) => match elected(&p.name, l) {
+                Some(chosen) => format!("{l}, used under {chosen}"),
+                None => l.to_owned(),
+            },
+            None => "(no licence field; see the crate)".to_owned(),
+        };
         let source = if p.repository.is_empty() { String::new() } else { format!(" <{}>", p.repository) };
         text.push_str(&format!("{} {}: {licence}{source}\n", p.name, p.version));
     }
@@ -113,11 +139,8 @@ fn notice(packages: &[Package]) -> String {
 
 pub fn check(root: &Path, write: bool) -> anyhow::Result<()> {
     let packages = dependencies(root)?;
-    let refused: Vec<String> = packages
-        .iter()
-        .filter(|p| !p.licence.as_deref().is_some_and(allowed))
-        .map(|p| format!("{} {}: {}", p.name, p.version, p.licence.as_deref().unwrap_or("no licence field")))
-        .collect();
+    let refused: Vec<String> =
+        packages.iter().filter(|p| !passes(p)).map(|p| format!("{} {}: {}", p.name, p.version, p.licence.as_deref().unwrap_or("no licence field"))).collect();
     let path = root.join("NOTICE");
     let wanted = notice(&packages);
     if write {
@@ -138,7 +161,7 @@ pub fn check(root: &Path, write: bool) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed, identifiers};
+    use super::{allowed, elected, identifiers};
 
     #[test]
     fn expressions_are_allowed_only_when_every_identifier_is() {
@@ -150,5 +173,12 @@ mod tests {
         assert!(!allowed("LGPL-2.1"));
         assert!(!allowed(""));
         assert_eq!(identifiers("MPL-2.0+"), ["MPL-2.0"]);
+    }
+
+    #[test]
+    fn a_recorded_choice_passes_only_for_its_crate_and_the_licence_it_declared() {
+        assert_eq!(elected("self_cell", "Apache-2.0 OR GPL-2.0-only"), Some("Apache-2.0"));
+        assert_eq!(elected("other", "Apache-2.0 OR GPL-2.0-only"), None, "the choice is per crate");
+        assert_eq!(elected("self_cell", "GPL-2.0-only"), None, "a changed licence needs a new decision");
     }
 }
