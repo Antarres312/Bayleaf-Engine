@@ -659,8 +659,8 @@ fn scene_icons(editor: &Editor, projector: &gizmo::Projector) -> Vec<Icon> {
 
 /// Cameras as a body with a lens, lights as a sun; the selected one in the accent colour with a
 /// line toward where it looks or shines.
-/// Physics shapes drawn as lines: boxes as their edges, spheres and capsules as rings. Triggers
-/// are drawn in the warning colour and dashed, so colour is not the only difference.
+/// Physics shapes drawn as lines: boxes as their edges, spheres and capsules as rings; triggers in
+/// the warning colour (the Inspector's Trigger switch says which they are without colour).
 fn paint_colliders(ui: &egui::Ui, editor: &Editor, projector: &gizmo::Projector, all: bool, clip: egui::Rect) {
     use bayleaf_engine::scene::components::{CharacterBody, Collider, ColliderShape};
     let t = crate::theme::tokens(ui);
@@ -717,11 +717,7 @@ fn paint_colliders(ui: &egui::Ui, editor: &Editor, projector: &gizmo::Projector,
             }
         }
         let color = if trigger { t.warning } else { t.axis_y };
-        for (index, (a, b)) in lines.into_iter().enumerate() {
-            // Triggers are dashed: every other segment of their rings and edges is left out.
-            if trigger && index % 2 == 1 {
-                continue;
-            }
+        for (a, b) in lines {
             if let (Some(a), Some(b)) = (projector.project(m.transform_point3(a)), projector.project(m.transform_point3(b))) {
                 painter.line_segment([a, b], egui::Stroke::new(1.5, color));
             }
