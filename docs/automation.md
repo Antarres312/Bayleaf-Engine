@@ -87,7 +87,7 @@ bayleaf examples/demo/demo.bscene --control 7878 --automation-read-root examples
 ```
 
 It listens on `127.0.0.1` only and prints the address and the token file. The status bar shows
-**Agent control** with the address while the channel is open, and each agent request shows its result
+**Open to agents** with the address while the channel is open, and each agent request shows its result
 there. The token file is `bayleaf-control.token` in the system temp folder unless
 `--control-token-file` names another; it is created with a new random token when missing.
 

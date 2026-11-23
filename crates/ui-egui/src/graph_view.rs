@@ -110,6 +110,10 @@ const COMPONENT_KINDS: [&str; 3] = ["getComponent", "tryGetComponent", "setCompo
 /// The node kinds that search by a component, a tag or a script, in their `kind` setting.
 const SEARCH_KINDS: [&str; 3] = ["findWith", "countWith", "forEachWith"];
 
+/// Renamed nodes' earlier labels, by kind: the Add Node search still finds a node by them, but they
+/// are never shown (docs/feature-names.md).
+const FORMER_LABELS: [(&str, &str); 3] = [("blend", "Blend"), ("numberToText", "Number to Text"), ("raycast", "Raycast")];
+
 /// Keeps the property names of nodes that name a script in step with what the script declares now:
 /// one edit per node that changed, so it undoes, and links to properties the script dropped go away.
 fn refresh_script_fields(editor: &mut Editor, graph: &Graph, search: &SearchChoices) {
@@ -1906,7 +1910,12 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
                 .nodes
                 .iter()
                 .filter(|d| fits(d) && !unique_taken(d))
-                .filter(|d| needle.is_empty() || tl(d.label).to_lowercase().contains(&needle) || tl(d.category).to_lowercase().contains(&needle))
+                .filter(|d| {
+                    needle.is_empty()
+                        || tl(d.label).to_lowercase().contains(&needle)
+                        || tl(d.category).to_lowercase().contains(&needle)
+                        || FORMER_LABELS.iter().any(|(kind, old)| *kind == d.kind && old.to_lowercase().contains(&needle))
+                })
                 .collect();
             // Enter takes the first match. A one-line field gives up focus on Enter in the same frame.
             if (search.has_focus() || search.lost_focus())

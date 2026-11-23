@@ -348,6 +348,19 @@ fn the_add_node_menu_searches_and_adds_and_undo_removes() {
 }
 
 #[test]
+fn a_renamed_node_is_found_by_its_former_label_which_is_not_shown() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label("Add Node").click();
+    harness.run();
+    harness.get_by_label("Search nodes").type_text("raycast");
+    harness.run();
+    assert!(harness.query_by_label("Raycast").is_none(), "the former label is not shown");
+    harness.get_by_label("Cast Ray").click();
+    harness.run();
+    assert!(graph(&harness).nodes.iter().any(|n| n.kind == "raycast"));
+}
+
+#[test]
 fn pins_link_from_the_keyboard_and_the_link_is_announced_on_both_pins() {
     let mut harness = graph_harness("material");
     harness.state_mut().dispatch("graph.node.add", &json!({ "kind": "color", "position": [0, 0] }), None);

@@ -174,7 +174,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         },
         CommandSpec {
             id: "physics.raycast",
-            label: "Physics Raycast",
+            label: "Cast Physics Ray",
             menu: "",
             shortcut: "",
             params: "{origin: [x, y, z], direction: [x, y, z], distance? = 1000}; the first collider or character hit (triggers left out), in play mode or in the scene as it is: {hit, object?, name?, distance?, point?, normal?}",

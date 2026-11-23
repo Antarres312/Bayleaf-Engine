@@ -160,7 +160,7 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   yet as 0. **End Game** ends the game won or lost;
   only the first ending counts, and every script then gets the message `gameWon` or `gameLost`.
 - **Play Particles**, **Stop Particles** and **Burst Particles** (Count) drive a Particle Emitter.
-- **Raycast** sends a ray and gives whether it hit another object's shape or sprite, how far, and where.
+- **Cast Ray** sends a ray and gives whether it hit another object's shape or sprite, how far, and where.
 - **Interface** nodes work on an object's Interface (`docs/interface.md`): **On Interface Pressed**
   and **On Interface Changed** run when the player presses a button (or any element with On Click)
   or changes a toggle, slider or text field named in Element; **On Message** hears an element's own

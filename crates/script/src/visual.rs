@@ -876,7 +876,7 @@ pub const CATALOG: Catalog = Catalog {
         ),
         NodeDef {
             kind: "raycast",
-            label: "Raycast",
+            label: "Cast Ray",
             category: "Object",
             description: "Sends a ray from Origin along Direction, up to Distance, and says whether it hits another object's shape or sprite, how far, and where.",
             inputs: &[vector("origin", "Origin", [0.0; 3]), vector("direction", "Direction", [0.0, -1.0, 0.0]), number("distance", "Distance", Float, 100.0)],

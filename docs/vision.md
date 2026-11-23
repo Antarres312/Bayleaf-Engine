@@ -135,7 +135,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
    and destroying objects, in the ABI, the Rust SDK and visual scripts; messages between scripts
    (`send`, delivered after the step to one object or every object); gamepads (the first connected
    one, read with gilrs in the editor and the player); raycasts against mesh shapes and sprites
-   (`raycast`, the Raycast node). Physics: see M7. Still open: raycasts against a model's exact shape.
+   (`raycast`, the Cast Ray node). Physics: see M7. Still open: raycasts against a model's exact shape.
    Scripts in Rust can be made from the Project panel (`script.new`: a crate from a template; in a
    project every script crate joins one Cargo workspace in the project folder, so scripts share a
    Cargo.lock, a build folder and their dependencies, while each still builds to its own module;

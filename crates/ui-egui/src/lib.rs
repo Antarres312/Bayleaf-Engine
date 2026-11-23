@@ -247,7 +247,7 @@ impl Editor {
                 }
                 if let Some(note) = &self.automation_note {
                     // A visible sign that an agent can change the scene.
-                    theme::tag(ui, &crate::i18n::tf("Agent control: {note}", &[("note", &note.to_string())]), t.accent, t.on_accent);
+                    theme::tag(ui, &crate::i18n::tf("Open to agents: {note}", &[("note", &note.to_string())]), t.accent, t.on_accent);
                 }
                 ui.label(egui::RichText::new(&self.status).color(t.text_muted));
             });
