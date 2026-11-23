@@ -3304,3 +3304,61 @@ fn the_interface_panels_keep_their_widths_while_the_mouse_moves_and_leave_the_pr
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+#[test]
+fn the_mouse_back_and_forward_buttons_go_through_the_folders_opened_in_the_project_panel() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-folder-history-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    std::fs::create_dir_all(dir.join("art").join("trees")).unwrap();
+    std::fs::create_dir_all(dir.join("sounds")).unwrap();
+    harness.state_mut().project.rescan_soon();
+    harness.run_steps(2);
+    let root = harness.state().project.current.clone();
+    // However a folder opens, the panel remembers the one it left.
+    for folder in [dir.join("art"), dir.join("art").join("trees")] {
+        harness.state_mut().project.current = folder;
+        harness.run();
+    }
+    let at = harness.get_by_label("Folder contents").rect().center();
+    let press = |harness: &mut Harness<'static, Editor>, button: egui::PointerButton| {
+        harness.event(egui::Event::PointerMoved(at));
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton { pos: at, button, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        harness.run();
+    };
+    let current = |harness: &Harness<'static, Editor>| harness.state().project.current.clone();
+    press(&mut harness, egui::PointerButton::Extra1);
+    assert_eq!(current(&harness), dir.join("art"), "back goes to the folder before");
+    press(&mut harness, egui::PointerButton::Extra1);
+    assert_eq!(current(&harness), root, "and on to the first");
+    press(&mut harness, egui::PointerButton::Extra1);
+    assert_eq!(current(&harness), root, "with nothing before it, back stays");
+    press(&mut harness, egui::PointerButton::Extra2);
+    assert_eq!(current(&harness), dir.join("art"), "forward goes the way back came");
+
+    // Opening another folder forgets the way forward.
+    harness.state_mut().project.current = dir.join("sounds");
+    harness.run();
+    press(&mut harness, egui::PointerButton::Extra2);
+    assert_eq!(current(&harness), dir.join("sounds"));
+
+    // From the keyboard: Alt+Left while a file or folder has it, without moving objects.
+    harness.state_mut().project.current = dir.clone();
+    harness.run();
+    create_named(&mut harness, "First");
+    create_named(&mut harness, "Second");
+    harness.get_by_label("art, Folder").focus();
+    harness.run();
+    let roots = harness.state().session.scene().children(None).len();
+    harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowLeft);
+    harness.run();
+    assert_eq!(current(&harness), dir.join("sounds"), "Alt+Left goes back");
+    harness.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowRight);
+    harness.run();
+    assert_eq!(current(&harness), dir, "Alt+Right forward");
+    assert_eq!(harness.state().session.scene().children(None).len(), roots, "the selected object did not move into the one before");
+    std::fs::remove_dir_all(&dir).ok();
+}

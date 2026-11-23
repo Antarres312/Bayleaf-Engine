@@ -1060,6 +1060,11 @@ impl Editor {
             .filter(|c| c.enabled)
             .filter_map(|c| parse_shortcut(c.shortcut).map(|s| (c.id, s)))
             .filter(|(_, s)| !(panel_keys && s.modifiers.is_none()))
+            // A file in the Project panel takes Alt+Left and Alt+Right to go back and forth
+            // through its folders, not to move the selected object.
+            .filter(|(_, s)| {
+                !(self.project.focused && s.modifiers == egui::Modifiers::ALT && matches!(s.logical_key, egui::Key::ArrowLeft | egui::Key::ArrowRight))
+            })
             .collect();
         for (id, shortcut) in shortcuts {
             if ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {

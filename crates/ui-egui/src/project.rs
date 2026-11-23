@@ -152,6 +152,9 @@ enum ViewMode {
     List,
 }
 
+/// Most folders kept to go back to.
+const HISTORY: usize = 64;
+
 /// The scanned folder and the panel's own state, kept between frames.
 #[derive(Default)]
 pub(crate) struct ProjectView {
@@ -167,6 +170,13 @@ pub(crate) struct ProjectView {
     filter: String,
     /// The folder whose files are shown on the right.
     pub(crate) current: PathBuf,
+    /// Folders shown before, the newest last, for going back; and the ones gone back from.
+    back: Vec<PathBuf>,
+    forward: Vec<PathBuf>,
+    /// The folder shown in the last frame, to tell when another one opened.
+    shown: PathBuf,
+    /// The folder's contents take the keyboard next frame: a folder opened from the keyboard keeps it.
+    focus_contents: bool,
     mode: ViewMode,
     pub(crate) selected: Option<PathBuf>,
     /// Icon size in points; 0 means the default.
@@ -185,6 +195,43 @@ pub(crate) struct ProjectView {
 }
 
 impl ProjectView {
+    /// Remembers the folder left when another opened (by a click, a path crumb or a new file),
+    /// so going back returns to it; a new way forward forgets the old one.
+    fn remember(&mut self) {
+        if self.current == self.shown {
+            return;
+        }
+        let left = std::mem::replace(&mut self.shown, self.current.clone());
+        if !left.as_os_str().is_empty() {
+            self.back.push(left);
+            if self.back.len() > HISTORY {
+                self.back.remove(0);
+            }
+        }
+        self.forward.clear();
+    }
+
+    /// Opens the folder shown before (`back`) or the one gone back from; folders that are gone are
+    /// skipped.
+    fn go(&mut self, back: bool) {
+        loop {
+            let next = if back { self.back.pop() } else { self.forward.pop() };
+            let Some(folder) = next else { return };
+            if folder == self.current || !self.tree.contains_key(&folder) {
+                continue;
+            }
+            let left = std::mem::replace(&mut self.current, folder);
+            if back {
+                self.forward.push(left)
+            } else {
+                self.back.push(left)
+            }
+            self.shown = self.current.clone();
+            self.filter.clear();
+            return;
+        }
+    }
+
     /// Every script (`.wasm` and `.bscript`) in the project, as paths relative to the project folder.
     pub(crate) fn script_files(&self) -> Vec<String> {
         self.files_of(&[Kind::Script, Kind::VisualScript])
@@ -418,6 +465,22 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     if !view.tree.contains_key(&view.current) {
         view.current = view.root.clone().unwrap_or_default();
     }
+    view.remember();
+    // The mouse's back and forward buttons over the panel, or Alt+Left and Alt+Right while a file
+    // or folder has the keyboard, go back and forth through the folders opened.
+    let (back, forward) = ui.input_mut(|i| {
+        let over = i.pointer.hover_pos().is_some_and(|p| ui.max_rect().contains(p));
+        let keys = view.focused;
+        (
+            over && i.pointer.button_pressed(egui::PointerButton::Extra1) || keys && i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowLeft),
+            over && i.pointer.button_pressed(egui::PointerButton::Extra2) || keys && i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowRight),
+        )
+    });
+    if back || forward {
+        view.go(back);
+        // The tile that had the keyboard may not be in this folder: the folder's contents take it.
+        view.focus_contents = view.focused;
+    }
 
     let mut outcome = Outcome::default();
     toolbar(ui, &mut view, &mut outcome);
@@ -457,6 +520,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         view.filter.clear();
     }
     view.focused = outcome.focused;
+    view.focus_contents = false;
     if let Some(file) = outcome.select {
         view.selected = Some(file);
     }
@@ -926,6 +990,10 @@ fn files(ui: &mut egui::Ui, view: &ProjectView, naming: &mut Option<Naming>, sel
     // Sensed before the files, so a file under the pointer takes the click instead.
     let background = ui.interact(ui.max_rect(), egui::Id::unique("project files background"), egui::Sense::click());
     background.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Group, true, "Folder contents"));
+    if view.focus_contents {
+        background.request_focus();
+    }
+    outcome.focused |= background.has_focus();
     file_entries(ui, view, naming, selected_object, thumbnails, outcome);
     // After the folder tiles, which take a drop onto them first.
     if !view.current.as_os_str().is_empty() {
