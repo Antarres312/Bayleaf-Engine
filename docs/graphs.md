@@ -151,8 +151,11 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   seconds of play.
 - **Walk**, **Jump** and **On Ground** steer an object with a Character: it walks at the given velocity
   until changed, climbs steps and gentle slopes, slides along walls, and jumps from the ground.
-- **Add Impulse**, **Set Velocity** and **Velocity** move physics bodies. **On Message** with `collision`,
-  `collisionEnd`, `triggerEnter` or `triggerExit` runs when the object touches another collider.
+- **Add Impulse**, **Set Velocity** and **Velocity** move physics bodies. **On Trigger Entered** and
+  **On Trigger Left** run when another collider comes into or leaves a trigger (this object's, or one
+  this object moves through), and **On Collision Started** and **On Collision Ended** when colliders
+  start and stop touching; each gives the Other Object. (They are the `triggerEnter`,
+  `triggerExit`, `collision` and `collisionEnd` messages, which On Message also takes.)
 - **Game Value** reads a number the game keeps under a name; **Set Game Value** and **Change Game
   Value** write it, and every script sees it. Scope picks whose: Game, Player (the object named in
   Player, else the first player; a name that finds no player reads nothing and writes nowhere), This

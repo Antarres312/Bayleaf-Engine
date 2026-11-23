@@ -209,6 +209,13 @@ impl Kept {
 pub struct Object(i32);
 
 impl Object {
+    /// The other object of a physics contact, from the number its message brings: `name` is one
+    /// of the [`contact`] messages and `value` the number that came with it ([`Script::message`]).
+    pub fn from_message(value: f32) -> Option<Self> {
+        let handle = value as i32;
+        (handle != 0 && handle as f32 == value).then_some(Self(handle))
+    }
+
     /// The object this script is on.
     pub fn this() -> Option<Self> {
         Some(abi::self_handle()).filter(|h| *h != 0).map(Self)
@@ -403,6 +410,19 @@ impl Object {
     pub fn set_input_map(self, map: &str) -> bool {
         abi::input_map_set(self.0, map)
     }
+}
+
+/// The messages a physics step sends both objects of a contact, after the step; the number is the
+/// other object ([`Object::from_message`]).
+pub mod contact {
+    /// Another collider came into this object's trigger, or this object into another's.
+    pub const TRIGGER_ENTER: &str = "triggerEnter";
+    /// It left the trigger.
+    pub const TRIGGER_EXIT: &str = "triggerExit";
+    /// The colliders started touching.
+    pub const COLLISION: &str = "collision";
+    /// They stopped touching.
+    pub const COLLISION_END: &str = "collisionEnd";
 }
 
 /// Sends a message and a number to the scripts of every object, after this step. False when

@@ -566,6 +566,15 @@ fn every_node_kind_compiles_and_runs() {
     let found_gate = b.node("branch", json!({}));
     b.link(stop, "then", found_gate, "run");
     b.link(read_value, "found", found_gate, "condition");
+    // Physics contacts: each names the other object (none arrive here).
+    for kind in ["triggerEntered", "triggerLeft", "collisionStarted", "collisionEnded"] {
+        let contact = b.node(kind, json!({}));
+        let other = b.node("nameOf", json!({}));
+        b.link(contact, "other", other, "target");
+        let said = b.node("log", json!({ "message": "" }));
+        b.link(contact, "then", said, "run");
+        b.link(other, "result", said, "text");
+    }
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -1717,4 +1726,28 @@ fn power_root_length_and_normalize_give_their_values_and_math_outputs_take_their
     host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
     let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(logs, ["whole 81", "negative 0", "half 1.414", "root 4", "below 0", "length 5", "unit 0.6", "still 0"]);
+}
+
+#[test]
+fn contact_events_run_for_their_own_contact_with_the_other_object() {
+    let mut b = Builder::new();
+    let entered = b.node("triggerEntered", json!({}));
+    let name = b.node("nameOf", json!({}));
+    b.link(entered, "other", name, "target");
+    let log = b.node("log", json!({ "message": "" }));
+    b.link(entered, "then", log, "run");
+    b.link(name, "result", log, "text");
+    for (kind, message) in [("triggerLeft", "left"), ("collisionStarted", "hit"), ("collisionEnded", "parted")] {
+        let event = b.node(kind, json!({}));
+        let log = b.node("log", json!({ "message": message }));
+        b.link(event, "then", log, "run");
+    }
+    let (mut scene, id, mut host) = run(&b.bytes(), &[]);
+    let coin = scene.create_object(None, "Coin").unwrap();
+    let input = Arc::new(Input::default());
+    for contact in ["triggerEnter", "collision", "triggerExit", "collisionEnd"] {
+        host.notify(&mut scene, &[(id, contact, coin)], 0.0, &input);
+    }
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["Coin", "hit", "left", "parted"], "each event once, for its own contact, naming the other object");
 }

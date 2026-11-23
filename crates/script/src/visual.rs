@@ -37,6 +37,27 @@ const RUN: PinDef = pin("run", "Run", Flow);
 const THEN: PinDef = pin("then", "Then", Flow);
 const MATH_OUT: &[PinDef] = &[pin("result", "Result", Any)];
 const MESSAGE: SettingDef = SettingDef { name: "message", label: "Message", kind: SettingKind::Name("hit") };
+const CONTACT_OUT: &[PinDef] = &[THEN, pin("other", "Other Object", PinType::Object)];
+/// An event node for a physics contact: what it runs after, and the other object.
+const fn contact(kind: &'static str, label: &'static str, description: &'static str) -> NodeDef {
+    NodeDef { kind, label, category: "Physics", description, inputs: &[], outputs: CONTACT_OUT, settings: &[], unique: false }
+}
+
+/// Whether an event node runs on a message: On Message, the interface's events and contacts.
+fn takes_messages(kind: &str) -> bool {
+    matches!(kind, "message" | "interfacePressed" | "interfaceChanged") || contact_message(kind).is_some()
+}
+
+/// The message the physics step sends for a contact event node.
+fn contact_message(kind: &str) -> Option<&'static str> {
+    match kind {
+        "triggerEntered" => Some("triggerEnter"),
+        "triggerLeft" => Some("triggerExit"),
+        "collisionStarted" => Some("collision"),
+        "collisionEnded" => Some("collisionEnd"),
+        _ => None,
+    }
+}
 const VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("count") };
 const VECTOR_VARIABLE: SettingDef = SettingDef { name: "name", label: "Name", kind: SettingKind::Name("target") };
 /// An action of an Input Map: `Jump` in the active map, or `Player/Jump`, live only while Player is active.
@@ -153,6 +174,14 @@ pub const CATALOG: Catalog = Catalog {
             settings: &[MESSAGE],
             unique: false,
         },
+        contact(
+            "triggerEntered",
+            "On Trigger Entered",
+            "Runs when another collider comes into this object's trigger, or this object comes into another's (needs physics).",
+        ),
+        contact("triggerLeft", "On Trigger Left", "Runs when another collider leaves this object's trigger, or this object leaves another's (needs physics)."),
+        contact("collisionStarted", "On Collision Started", "Runs when this object's collider starts touching another (needs physics)."),
+        contact("collisionEnded", "On Collision Ended", "Runs when this object's collider stops touching another (needs physics)."),
         NodeDef {
             kind: "sendMessage",
             label: "Send Message",
@@ -1324,7 +1353,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
                 let name = match event.kind.as_str() {
                     "interfacePressed" => format!("pressed:{}", c.setting_text(event.id, "element", "Start")),
                     "interfaceChanged" => format!("changed:{}", c.setting_text(event.id, "element", "Start")),
-                    _ => c.setting_text(event.id, "message", "hit"),
+                    kind => contact_message(kind).map_or_else(|| c.setting_text(event.id, "message", "hit"), str::to_owned),
                 };
                 let (at, len) = c.text(name.as_bytes());
                 let _ = writeln!(message, "    (if (call $message_is (i32.const {at}) (i32.const {len}))\n      (then\n{code}      ))");
@@ -1420,7 +1449,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     }
     let _ = writeln!(out, "  (func (export \"bayleaf_start\")\n{fresh}{start}  )");
     let _ = writeln!(out, "  (func (export \"bayleaf_update\") (param $dt f32)\n{fresh}    (global.set $dt (local.get $dt))\n{update}  )");
-    if graph.nodes.iter().any(|n| matches!(n.kind.as_str(), "message" | "interfacePressed" | "interfaceChanged")) {
+    if graph.nodes.iter().any(|n| takes_messages(&n.kind)) {
         let _ = writeln!(out, "  (func (export \"bayleaf_message\") (param $value f32)\n{fresh}    (global.set $message (local.get $value))\n{message}  )");
     }
     out.push_str(&functions);
@@ -2077,6 +2106,8 @@ impl Compiler<'_> {
             }
             "update" if pin == "dt" => Val::F("(global.get $dt)".to_owned()),
             "message" | "interfaceChanged" if pin == "value" => Val::F("(global.get $message)".to_owned()),
+            // The other object comes as its handle in the message's number.
+            "triggerEntered" | "triggerLeft" | "collisionStarted" | "collisionEnded" => Val::O("(i32.trunc_sat_f32_s (global.get $message))".to_owned()),
             "vectorVariable" => {
                 let name = self.setting_text(node, "name", "target");
                 Val::V(["x", "y", "z"].map(|axis| format!("(global.get $vec_{name}_{axis})")))
@@ -2518,6 +2549,7 @@ fn parts_of(node: u32, ty: VariableType, value: Val) -> Result<Vec<String>, Prob
 /// Node kinds that start a chain on their own.
 fn is_event(kind: &str) -> bool {
     matches!(kind, "init" | "start" | "update" | "message" | "keyPressed" | "actionPressed" | "timer" | "interfacePressed" | "interfaceChanged")
+        || contact_message(kind).is_some()
 }
 
 fn as_float(node: u32, value: Val) -> Result<String, Problem> {

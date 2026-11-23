@@ -113,7 +113,8 @@ this: there is no list property type yet.
 
 In a build with physics, contacts arrive as messages to both objects' scripts after the physics
 step: `collision` and `collisionEnd` when colliders start and stop touching, `triggerEnter` and
-`triggerExit` when one of them is a trigger. The value is the other object's handle. When the game ends (`game_end`, or
+`triggerExit` when one of them is a trigger. The value is the other object's handle. In the Rust SDK the names are
+`contact::TRIGGER_ENTER` and the others, and `Object::from_message(value)` gives the other object. When the game ends (`game_end`, or
 the time limit of the scene's Game Rules), every object's scripts get `gameWon` or `gameLost` once,
 with the value 0.
 
