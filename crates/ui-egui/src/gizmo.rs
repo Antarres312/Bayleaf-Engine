@@ -1,6 +1,7 @@
 //! Handles drawn over the scene view for moving, turning and resizing the selected object.
 //!
-//! Move arrows follow the world axes, turn rings circle the world axes, and resize handles follow
+//! Move arrows follow the world axes, with a square between each two that moves in their plane;
+//! turn rings circle the world axes, and resize handles follow
 //! the object's own axes. Dragging a handle changes the object's transform through
 //! `scene.component.set`, as one undo step per drag. The same values can be typed in the
 //! Inspector, which is the keyboard path.
@@ -44,7 +45,26 @@ impl Tool {
 pub(crate) struct Handle {
     pub tool: Tool,
     pub axis: usize,
+    /// A square that moves in the plane across `axis` (the YZ plane for X), with the Move tool.
+    pub plane: bool,
 }
+
+impl Handle {
+    pub fn new(tool: Tool, axis: usize) -> Self {
+        Self { tool, axis, plane: false }
+    }
+
+    pub fn plane(axis: usize) -> Self {
+        Self { tool: Tool::Move, axis, plane: true }
+    }
+}
+
+/// Planes seen closer to edge-on than this (the cosine between the plane's normal and the view)
+/// hide their square: moving in them would jump with the smallest move of the pointer.
+const EDGE_ON: f32 = 0.2;
+/// Where a plane square starts and ends along its two axes, in handle lengths.
+const PLANE_FROM: f32 = 0.22;
+const PLANE_TO: f32 = 0.45;
 
 /// World to screen for one frame of the scene view.
 #[derive(Clone, Copy, Debug)]
@@ -62,6 +82,22 @@ impl Projector {
         let mut m = world;
         m.w_axis -= self.origin.extend(0.0);
         m.as_mat4()
+    }
+
+    /// Where the ray through screen point `p` meets the plane through `origin` across `normal`;
+    /// `None` when the ray runs along the plane or meets it behind the camera.
+    pub fn on_plane(&self, p: Pos2, origin: Vec3, normal: Vec3) -> Option<Vec3> {
+        let x = (p.x - self.rect.left()) / self.rect.width() * 2.0 - 1.0;
+        let y = 1.0 - (p.y - self.rect.top()) / self.rect.height() * 2.0;
+        let back = self.view_proj.inverse();
+        let near = back.project_point3(Vec3::new(x, y, 0.0));
+        let ray = back.project_point3(Vec3::new(x, y, 1.0)) - near;
+        let facing = ray.dot(normal);
+        if facing.abs() < 1e-6 {
+            return None;
+        }
+        let t = (origin - near).dot(normal) / facing;
+        (t >= 0.0 && t.is_finite()).then(|| near + ray * t)
     }
 
     /// Where a world point appears in the view; `None` behind the camera.
@@ -117,10 +153,42 @@ pub(crate) fn handle_points(projector: &Projector, world: Mat4, handle: Handle) 
     }
 }
 
+/// The screen corners of the square that moves in the plane across `axis`, in the corner between
+/// the other two axes that faces the camera; `None` while the plane is seen edge-on or behind.
+pub(crate) fn plane_points(projector: &Projector, world: Mat4, axis: usize) -> Option<Vec<Pos2>> {
+    let origin = world.w_axis.truncate();
+    let len = handle_length(projector, origin);
+    let to_eye = (projector.eye - origin).normalize_or_zero();
+    if Vec3::AXES[axis % 3].dot(to_eye).abs() < EDGE_ON {
+        return None;
+    }
+    let toward = |a: Vec3| if a.dot(to_eye) < 0.0 { -a } else { a };
+    let (u, v) = (toward(Vec3::AXES[(axis + 1) % 3]), toward(Vec3::AXES[(axis + 2) % 3]));
+    let (a, b) = (PLANE_FROM * len, PLANE_TO * len);
+    [u * a + v * a, u * b + v * a, u * b + v * b, u * a + v * b].iter().map(|c| projector.project(origin + *c)).collect()
+}
+
+/// Whether `p` is inside the convex polygon `corners`.
+fn inside(corners: &[Pos2], p: Pos2) -> bool {
+    let sides = corners.iter().zip(corners.iter().cycle().skip(1)).map(|(a, b)| (*b - *a).x * (p - *a).y - (*b - *a).y * (p - *a).x);
+    let (mut left, mut right) = (false, false);
+    for side in sides {
+        left |= side > 0.0;
+        right |= side < 0.0;
+    }
+    !(left && right)
+}
+
 /// The handle of `tool` nearest to `pointer`, if one is within `reach` points.
 pub(crate) fn hit(projector: &Projector, world: Mat4, tool: Tool, pointer: Pos2, reach: f32) -> Option<Handle> {
+    // A plane square under the pointer comes first: it lies between the arrows, never on one.
+    if tool == Tool::Move
+        && let Some(axis) = (0..3).find(|axis| plane_points(projector, world, *axis).is_some_and(|q| inside(&q, pointer)))
+    {
+        return Some(Handle::plane(axis));
+    }
     (0..3)
-        .map(|axis| Handle { tool, axis })
+        .map(|axis| Handle::new(tool, axis))
         .filter_map(|handle| {
             let points = handle_points(projector, world, handle);
             let distance = points.windows(2).map(|s| distance_to_segment(pointer, s[0], s[1])).fold(f32::INFINITY, f32::min);
@@ -184,6 +252,12 @@ fn change(projector: &Projector, handle: Handle, primary: &Start, from: Pos2, po
         }
         (pointer - from).dot(axis) / axis.length_sq()
     };
+    if handle.plane {
+        // Where the pointer's ray meets the plane through the object, then and now.
+        let normal = Vec3::AXES[handle.axis % 3];
+        let meet = |p: Pos2| projector.on_plane(p, origin, normal);
+        return Change::Move(meet(from).zip(meet(pointer)).map_or(Vec3::ZERO, |(a, b)| (b - a) - normal * (b - a).dot(normal)));
+    }
     match handle.tool {
         Tool::Move => Change::Move(dir * along() * len),
         Tool::Scale => Change::Resize(handle.axis, (1.0 + along()).max(0.01)),
@@ -223,7 +297,7 @@ fn apply(change: Change, start: &Start) -> Transform {
 
 #[cfg(test)]
 mod tests {
-    use super::{Drag, Handle, Projector, Start, Tool, drag_to, hit};
+    use super::{Drag, Handle, Projector, Start, Tool, drag_to, hit, plane_points};
     use bayleaf_core::math::{Mat4, Vec3};
     use bayleaf_engine::scene::components::Transform;
     use egui::{Rect, pos2, vec2};
@@ -242,7 +316,7 @@ mod tests {
     }
 
     fn drag(tool: Tool, axis: usize, local: Transform, parent: Mat4) -> Drag {
-        Drag { handle: Handle { tool, axis }, objects: vec![start(1, local, parent)], start: pos2(200.0, 200.0) }
+        Drag { handle: Handle::new(tool, axis), objects: vec![start(1, local, parent)], start: pos2(200.0, 200.0) }
     }
 
     fn first(p: &Projector, d: &Drag, to: egui::Pos2) -> Transform {
@@ -261,6 +335,49 @@ mod tests {
         let moved = first(&p, &drag(Tool::Move, 0, Transform::default(), Mat4::IDENTITY), pos2(260.0, 230.0));
         assert!(moved.position[0] > 0.1, "dragging right moves +X");
         assert!(moved.position[1].abs() < 1e-5 && moved.position[2].abs() < 1e-5, "and only along X: {:?}", moved.position);
+    }
+
+    #[test]
+    fn a_plane_square_moves_in_its_plane_and_keeps_the_point_under_the_pointer() {
+        let p = front_view();
+        let world = Mat4::IDENTITY;
+        // Looking along Z, only the XY square shows; the other two planes are edge-on.
+        assert!(plane_points(&p, world, 0).is_none() && plane_points(&p, world, 1).is_none());
+        let corners = plane_points(&p, world, 2).expect("the XY square faces the camera");
+        let center = corners.iter().fold(egui::Vec2::ZERO, |s, c| s + c.to_vec2()) / 4.0;
+        let center = center.to_pos2();
+        assert_eq!(hit(&p, world, Tool::Move, center, 6.0), Some(Handle::plane(2)), "the square takes the pointer");
+        assert!(hit(&p, world, Tool::Rotate, center, 6.0).is_none_or(|h| !h.plane), "only the Move tool has squares");
+
+        let mut d = drag(Tool::Move, 2, Transform::default(), Mat4::IDENTITY);
+        d.handle = Handle::plane(2);
+        d.start = center;
+        let to = center + vec2(40.0, -30.0);
+        let moved = first(&p, &d, to);
+        assert!(moved.position[0] > 0.1 && moved.position[1] > 0.1, "right and up move +X and +Y: {:?}", moved.position);
+        assert!(moved.position[2].abs() < 1e-5, "and never across the plane");
+        // The point of the plane that was under the pointer is under it still.
+        let grabbed = p.on_plane(center, Vec3::ZERO, Vec3::Z).unwrap();
+        let now = p.project(grabbed + bayleaf_core::math::DVec3::from_array(moved.position).as_vec3()).unwrap();
+        assert!(now.distance(to) < 0.5, "{now:?} vs {to:?}");
+    }
+
+    #[test]
+    fn the_ground_square_moves_on_the_ground_seen_from_above_at_an_angle() {
+        let eye = Vec3::new(6.0, 8.0, 6.0);
+        let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+        let proj = Mat4::perspective_rh(50f32.to_radians(), 1.0, 0.1, 100.0);
+        let p =
+            Projector { view_proj: proj * view, rect: Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 400.0)), eye, origin: bayleaf_core::math::DVec3::ZERO };
+        let corners = plane_points(&p, Mat4::IDENTITY, 1).expect("the XZ square shows from above");
+        let center = (corners.iter().fold(egui::Vec2::ZERO, |s, c| s + c.to_vec2()) / 4.0).to_pos2();
+        assert_eq!(hit(&p, Mat4::IDENTITY, Tool::Move, center, 6.0), Some(Handle::plane(1)));
+        let mut d = drag(Tool::Move, 1, Transform::default(), Mat4::IDENTITY);
+        d.handle = Handle::plane(1);
+        d.start = center;
+        let moved = first(&p, &d, center + vec2(30.0, 20.0));
+        assert!(moved.position[1].abs() < 1e-5, "the height stays: {:?}", moved.position);
+        assert!(moved.position[0].abs() + moved.position[2].abs() > 0.05, "it moves on the ground");
     }
 
     #[test]

@@ -771,8 +771,22 @@ fn paint_handles(
 ) {
     let t = crate::theme::tokens(ui);
     let painter = ui.painter_at(clip);
+    // Squares that move in a plane, in the colour of the axis across it, under the arrows.
+    if tool == gizmo::Tool::Move {
+        for (axis, color) in [t.axis_x, t.axis_y, t.axis_z].into_iter().enumerate() {
+            let Some(corners) = gizmo::plane_points(projector, world, axis) else { continue };
+            let hot = active == Some(gizmo::Handle::plane(axis));
+            painter.add(egui::Shape::convex_polygon(corners.clone(), color.gamma_multiply(if hot { 0.8 } else { 0.35 }), egui::Stroke::NONE));
+            let mut outline = corners;
+            if let Some(&first) = outline.first() {
+                outline.push(first);
+            }
+            painter.add(egui::Shape::line(outline.clone(), egui::Stroke::new(if hot { 3.5 } else { 2.5 }, t.backdrop.gamma_multiply(0.7))));
+            painter.add(egui::Shape::line(outline, egui::Stroke::new(if hot { 2.0 } else { 1.0 }, color)));
+        }
+    }
     for (axis, color) in [t.axis_x, t.axis_y, t.axis_z].into_iter().enumerate() {
-        let handle = gizmo::Handle { tool, axis };
+        let handle = gizmo::Handle::new(tool, axis);
         let points = gizmo::handle_points(projector, world, handle);
         if points.len() < 2 {
             continue;
