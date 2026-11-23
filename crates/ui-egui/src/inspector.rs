@@ -378,8 +378,8 @@ fn edit_script(editor: &mut Editor, module: &std::path::Path) {
 }
 
 /// A collapsible card with a title, an optional muted subtitle, and a menu (its title right-clicked,
-/// or the … button) with Edit Script on a script's card and Remove; a removable card also shows a
-/// Remove button. Returns what was chosen.
+/// or the … button) with Edit Script on a script's card and Remove. Returns what
+/// was chosen.
 fn card(
     ui: &mut egui::Ui,
     t: &theme::Tokens,
@@ -418,14 +418,6 @@ fn card(
                     let named = crate::i18n::tf("More for {title}", &[("title", title)]);
                     more.ctx.accesskit_node_builder(more.id, |node| node.set_label(named.clone()));
                     more.on_hover_text(named);
-                    if menu.removable {
-                        let button = ui.small_button(tl("Remove"));
-                        // Several cards have a Remove button; the accessible name says which.
-                        button.ctx.accesskit_node_builder(button.id, |node| node.set_label(crate::i18n::tf("Remove {title}", &[("title", title)])));
-                        if button.on_hover_text(crate::i18n::tf("Remove {title}", &[("title", title)])).clicked() {
-                            chosen.removed = true;
-                        }
-                    }
                     // The free space between the title and the buttons opens the menu as well.
                     let rest = ui.available_rect_before_wrap();
                     ui.interact(rest, state_id.with("header space"), egui::Sense::click()).context_menu(|ui| card_menu(ui, menu, &mut chosen));

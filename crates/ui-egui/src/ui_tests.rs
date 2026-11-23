@@ -237,7 +237,10 @@ fn each_script_is_its_own_card_named_after_its_module() {
     assert!(harness.query_by_label("Other").is_some());
     assert!(harness.query_all_by_label_contains("Script file not found").next().is_some(), "a missing module says so");
     assert!(harness.query_by_label("Scripts").is_none(), "there is no wrapper card");
-    harness.get_by_label("Remove Missing Thing").click();
+    // Removed from the card's menu.
+    harness.get_by_label("More for Missing Thing").click();
+    harness.run();
+    harness.get_by_label("Remove").click();
     harness.run();
     let id = harness.state().selected.unwrap();
     let scripts = harness.state().session.scene().component(id, "scripts").unwrap();
