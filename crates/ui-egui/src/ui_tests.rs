@@ -3405,3 +3405,23 @@ fn a_script_cards_menu_opens_the_script_to_edit_or_says_why_not_and_removes_it()
     assert!(scripts[0].module.ends_with("follow.bscript"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_native_build_shows_how_far_it_is_in_the_status_bar_and_says_how_it_went() {
+    let mut harness = harness();
+    let progress = std::sync::Arc::new(std::sync::Mutex::new(bayleaf_engine::native_export::Progress { done: 3, total: 10, doing: "serde".to_owned() }));
+    let (sender, answer) = std::sync::mpsc::channel();
+    harness.state_mut().native_build =
+        Some(crate::export_window::Building { path: "out/My Game".to_owned(), progress: std::sync::Arc::clone(&progress), answer });
+    harness.run();
+    assert!(harness.query_by_label_contains("3 of 10 parts").is_some(), "the status bar shows the parts built, with the Export window closed");
+    if let Ok(mut now) = progress.lock() {
+        now.done = 7;
+    }
+    harness.run();
+    assert!(harness.query_by_label_contains("7 of 10 parts").is_some(), "and follows the build");
+    sender.send(Ok(())).unwrap();
+    harness.run();
+    assert!(harness.state().native_build.is_none(), "a finished build is over");
+    assert!(harness.state().status.contains("out/My Game"), "the status says where it went: {}", harness.state().status);
+}

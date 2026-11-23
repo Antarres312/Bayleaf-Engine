@@ -139,6 +139,8 @@ pub struct Editor {
     pub(crate) scene_selected: bool,
     /// The Export Game window, while it is open.
     export_window: Option<export_window::ExportWindow>,
+    /// A native player building in the background, from Export Game.
+    native_build: Option<export_window::Building>,
     /// The interface language setting (Window > Language).
     language: String,
     /// The language the fonts were last installed for.
@@ -201,6 +203,7 @@ impl Default for Editor {
             form: None,
             scene_selected: false,
             export_window: None,
+            native_build: None,
             language: "en".to_owned(),
             fonts_language: "en",
             close_confirmed: false,
@@ -250,6 +253,9 @@ impl Editor {
                     // A visible sign that an agent can change the scene.
                     theme::tag(ui, &crate::i18n::tf("Open to agents: {note}", &[("note", &note.to_string())]), t.accent, t.on_accent);
                 }
+                if let Some(build) = &self.native_build {
+                    export_window::progress_bar(ui, build, 260.0);
+                }
                 ui.label(egui::RichText::new(&self.status).color(t.text_muted));
             });
         });
@@ -294,6 +300,7 @@ impl Editor {
             ui.ctx().copy_text(text);
         }
         self.show_form(ui.ctx());
+        export_window::poll_build(self, ui.ctx());
         export_window::show(self, ui.ctx());
         self.guard_close(ui.ctx());
         // Before objects that left with a level are pruned from the selection, it waits for that level.

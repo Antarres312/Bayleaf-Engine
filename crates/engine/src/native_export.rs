@@ -98,25 +98,90 @@ pub fn prepare(engine: &Path, project: &Path, scripts: &[NativeSource], folder: 
     Ok(NativeBuild { folder: folder.to_path_buf(), program: program.to_path_buf() })
 }
 
+/// How far a native build has got: the parts of the build done and in all (0 until cargo has
+/// counted them), and what it works on.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Progress {
+    pub done: usize,
+    pub total: usize,
+    pub doing: String,
+}
+
+/// Lines of cargo's output kept to say why a build failed.
+const KEPT_LINES: usize = 40;
+
 /// Builds the player and writes it as the game's program. Runs cargo: minutes the first time.
 pub fn build(plan: &NativeBuild) -> Result<(), String> {
+    build_reporting(plan, &mut |_| {})
+}
+
+/// [`build`], telling `report` how far it has got as cargo goes.
+pub fn build_reporting(plan: &NativeBuild, report: &mut dyn FnMut(&Progress)) -> Result<(), String> {
+    use std::io::Read;
     // Half the processors, so the computer stays usable meanwhile.
     let jobs = std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(1));
-    let output = Command::new(cargo())
+    let mut child = Command::new(cargo())
         .args(["build", "--release", "--manifest-path"])
         .arg(plan.folder.join("Cargo.toml"))
         .args(["-p", "bayleaf-native-player", "-j", &jobs.to_string()])
         .env("CARGO_TARGET_DIR", plan.folder.join("target"))
-        .output()
+        // Cargo's progress line also when its output is not a terminal, wide enough to read.
+        .env("CARGO_TERM_PROGRESS_WHEN", "always")
+        .env("CARGO_TERM_PROGRESS_WIDTH", "200")
+        .env("CARGO_TERM_COLOR", "never")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| format!("building the native player needs Rust (cargo): {e}"))?;
-    if !output.status.success() {
-        let log = String::from_utf8_lossy(&output.stderr);
-        let lines: Vec<&str> = log.lines().collect();
-        return Err(format!("the native player did not build:\n{}", lines[lines.len().saturating_sub(40)..].join("\n")));
+    let mut progress = Progress::default();
+    let mut kept: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let (mut line, mut chunk) = (Vec::new(), [0u8; 4096]);
+        while let Ok(read) = stderr.read(&mut chunk) {
+            if read == 0 {
+                break;
+            }
+            for &byte in &chunk[..read] {
+                // The progress line is redrawn after a carriage return; other lines end with a newline.
+                if byte != b'\r' && byte != b'\n' {
+                    line.push(byte);
+                    continue;
+                }
+                let text = String::from_utf8_lossy(&line).into_owned();
+                line.clear();
+                if let Some((done, total, doing)) = progress_line(&text) {
+                    progress = Progress { done, total, doing };
+                    report(&progress);
+                } else if !text.trim().is_empty() {
+                    if let Some(name) = text.trim_start().strip_prefix("Compiling ") {
+                        progress.doing = name.to_owned();
+                        report(&progress);
+                    }
+                    kept.push_back(text);
+                    if kept.len() > KEPT_LINES {
+                        kept.pop_front();
+                    }
+                }
+            }
+        }
+    }
+    let status = child.wait().map_err(|e| format!("the native player's build did not finish: {e}"))?;
+    if !status.success() {
+        return Err(format!("the native player did not build:\n{}", Vec::from(kept).join("\n")));
     }
     let built = plan.folder.join("target").join("release").join(format!("{BINARY}{}", std::env::consts::EXE_SUFFIX));
     std::fs::copy(&built, &plan.program).map_err(|e| format!("cannot write {}: {e}", plan.program.display()))?;
     Ok(())
+}
+
+/// Reads cargo's progress line, `Building [=====>    ] 67/290: serde, syn(build)`: the parts done,
+/// in all, and what it works on.
+pub fn progress_line(line: &str) -> Option<(usize, usize, String)> {
+    let rest = line.trim_start().strip_prefix("Building [")?;
+    let (_, rest) = rest.split_once("] ")?;
+    let (count, doing) = rest.split_once(':').map_or((rest, ""), |(count, doing)| (count, doing.trim()));
+    let (done, total) = count.trim().split_once('/')?;
+    Some((done.parse().ok()?, total.parse().ok()?, doing.to_owned()))
 }
 
 fn package_name(crate_dir: &Path) -> Result<String, String> {
@@ -245,4 +310,20 @@ fn player_main(scripts: &[NativeSource], names: &[String]) -> String {
     format!(
         "//! The game's player with its Rust scripts built in (native mode). Written by the export; do not edit.\n\nuse std::path::PathBuf;\n\nfn main() -> std::process::ExitCode {{\n    let natives = vec![\n{entries}    ];\n    match bayleaf_player::run(natives) {{\n        Ok(()) => std::process::ExitCode::SUCCESS,\n        Err(error) => {{\n            eprintln!(\"{{error:#}}\");\n            std::process::ExitCode::FAILURE\n        }}\n    }}\n}}\n"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::progress_line;
+
+    #[test]
+    fn cargo_progress_lines_give_the_parts_done_in_all_and_what_is_built() {
+        let (done, total, doing) = progress_line("    Building [>                           ] 1/16: proc-macro2(build.rs), unicode-ident   ").unwrap();
+        assert_eq!((done, total), (1, 16));
+        assert_eq!(doing, "proc-macro2(build.rs), unicode-ident");
+        assert_eq!(progress_line("    Building [=====>      ] 290/290").map(|p| (p.0, p.1)), Some((290, 290)), "the last line names nothing");
+        for other in ["   Compiling serde v1.0.0", "    Finished `release` profile", "Building [oops"] {
+            assert!(progress_line(other).is_none(), "{other}");
+        }
+    }
 }

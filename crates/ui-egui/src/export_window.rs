@@ -21,8 +21,51 @@ pub(crate) struct ExportWindow {
     report: Option<(CheckedFor, Result<Value, String>)>,
     /// What the last export said: where it went, or why not.
     outcome: Option<Result<String, String>>,
-    /// A native player being built in the background: the game's folder, and the build's answer.
-    building: Option<(String, std::sync::mpsc::Receiver<Result<(), String>>)>,
+}
+
+/// A native player building in the background: the game's folder, how far the build is, and its
+/// answer. The editor keeps it, so closing the Export window leaves the build going and its
+/// progress in the status bar.
+pub(crate) struct Building {
+    pub(crate) path: String,
+    pub(crate) progress: std::sync::Arc<std::sync::Mutex<bayleaf_engine::native_export::Progress>>,
+    pub(crate) answer: std::sync::mpsc::Receiver<Result<(), String>>,
+}
+
+/// Takes the build's answer once it came: the status bar says how it went, and an open Export
+/// window too.
+pub(crate) fn poll_build(editor: &mut Editor, ctx: &egui::Context) {
+    let Some(build) = &editor.native_build else { return };
+    let outcome = match build.answer.try_recv() {
+        Ok(result) => result.map(|()| build.path.clone()),
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(tl("the build stopped without an answer").to_owned()),
+        Err(std::sync::mpsc::TryRecvError::Empty) => {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+            return;
+        }
+    };
+    editor.status = match &outcome {
+        Ok(path) => tf("Exported to {path}", &[("path", path)]),
+        Err(why) => tf("Not exported: {problem}", &[("problem", why.lines().next().unwrap_or_default())]),
+    };
+    if let Some(window) = editor.export_window.as_mut() {
+        window.outcome = Some(outcome);
+    }
+    editor.native_build = None;
+}
+
+/// How far the build is, as a bar `width` wide saying how many parts of how many are built.
+pub(crate) fn progress_bar(ui: &mut egui::Ui, build: &Building, width: f32) -> bayleaf_engine::native_export::Progress {
+    let progress = build.progress.lock().map(|p| p.clone()).unwrap_or_default();
+    let (fraction, text) = if progress.total == 0 {
+        (0.0, tl("Building the game's player: getting ready…").to_owned())
+    } else {
+        let shown = [("done", progress.done.to_string()), ("total", progress.total.to_string())];
+        let shown: Vec<(&str, &str)> = shown.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        (progress.done as f32 / progress.total as f32, tf("Building the game's player: {done} of {total} parts", &shown))
+    };
+    ui.add(egui::ProgressBar::new(fraction).desired_width(width).text(text).animate(progress.total == 0));
+    progress
 }
 
 impl ExportWindow {
@@ -30,7 +73,7 @@ impl ExportWindow {
     pub(crate) fn new(editor: &Editor) -> Self {
         let platform = Platform::current();
         let mode = bayleaf_engine::export::chosen_mode(&editor.session, platform);
-        Self { platform, mode, folder: String::new(), player: String::new(), report: None, outcome: None, building: None }
+        Self { platform, mode, folder: String::new(), player: String::new(), report: None, outcome: None }
     }
 }
 
@@ -184,22 +227,8 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
     }
     ui.add_space(theme::SECTION_GAP);
 
-    // A native build that finished says how it went.
-    if let Some((path, answer)) = &window.building {
-        match answer.try_recv() {
-            Ok(result) => {
-                window.outcome = Some(result.map(|()| path.clone()));
-                window.building = None;
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                window.outcome = Some(Err(tl("the build stopped without an answer").to_owned()));
-                window.building = None;
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => ui.ctx().request_repaint_after(std::time::Duration::from_millis(250)),
-        }
-    }
     // Where to, and the export itself.
-    let ready = matches!(&window.report, Some((_, Ok(report))) if report["ready"] == true) && window.building.is_none();
+    let ready = matches!(&window.report, Some((_, Ok(report))) if report["ready"] == true) && editor.native_build.is_none();
     theme::headed(t, "Export").show(ui, |ui| {
         crate::value_editor::row(ui, t, "Folder", |ui, label, width| {
             ui.allocate_ui_with_layout(egui::vec2(width, ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -233,11 +262,18 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
                         // Native mode: the player still to build (`build` is null otherwise).
                         match serde_json::from_value::<bayleaf_engine::native_export::NativeBuild>(result["build"].clone()) {
                             Ok(plan) => {
-                                let (sender, receiver) = std::sync::mpsc::channel();
+                                let (sender, answer) = std::sync::mpsc::channel();
+                                let progress = std::sync::Arc::new(std::sync::Mutex::new(bayleaf_engine::native_export::Progress::default()));
+                                let told = std::sync::Arc::clone(&progress);
                                 std::thread::spawn(move || {
-                                    let _ = sender.send(bayleaf_engine::native_export::build(&plan));
+                                    let mut report = |now: &bayleaf_engine::native_export::Progress| {
+                                        if let Ok(mut shared) = told.lock() {
+                                            *shared = now.clone();
+                                        }
+                                    };
+                                    let _ = sender.send(bayleaf_engine::native_export::build_reporting(&plan, &mut report));
                                 });
-                                window.building = Some((path, receiver));
+                                editor.native_build = Some(Building { path, progress, answer });
                                 window.outcome = None;
                             }
                             Err(_) => window.outcome = Some(Ok(path)),
@@ -252,16 +288,19 @@ fn body(editor: &mut Editor, ui: &mut egui::Ui, window: &mut ExportWindow, keep:
                 *keep = false;
             }
         });
-        if window.building.is_some() {
-            ui.horizontal(|ui| {
-                ui.add(egui::Spinner::new());
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(tl("Building the game's player with its Rust scripts. The first build takes several minutes.")).color(t.text),
-                    )
-                    .wrap(),
-                );
-            });
+        if let Some(build) = &editor.native_build {
+            ui.add_space(theme::GAP);
+            let progress = progress_bar(ui, build, ui.available_width());
+            if !progress.doing.is_empty() {
+                ui.add(egui::Label::new(egui::RichText::new(tf("Now: {what}", &[("what", &progress.doing)])).color(t.text_muted)).truncate());
+            }
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(tl("The game's player builds with its Rust scripts; the first build takes several minutes. You can close this window: the status bar shows how far it is."))
+                        .color(t.text),
+                )
+                .wrap(),
+            );
         }
         match &window.outcome {
             Some(Ok(path)) => {
