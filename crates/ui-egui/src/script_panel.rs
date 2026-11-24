@@ -1,8 +1,8 @@
 //! The visual script's own panel, left of its graph: its variables (name, type, starting value,
 //! buttons that place their nodes), its properties (the Property nodes the Inspector shows per
 //! object), its functions (inputs and outputs, and buttons that place their nodes), its events (the
-//! values each brings, and buttons that place On Event and Trigger Event) and where Add Component
-//! lists it. Everything changes through `graph.*` commands, so
+//! values each brings, and buttons that place On Event and Trigger Event), its lists and maps (what
+//! each holds, and a menu of the nodes that work on it) and where Add Component lists it. Everything changes through `graph.*` commands, so
 //! it undoes like any other graph edit.
 
 use crate::i18n::tl;
@@ -34,6 +34,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, graph: &Graph, at: [f
         functions(editor, ui, t, graph, at, panel);
         ui.add_space(theme::SECTION_GAP);
         events(editor, ui, t, graph, at, panel);
+        ui.add_space(theme::SECTION_GAP);
+        collections(editor, ui, t, graph, at, panel);
         ui.add_space(theme::SECTION_GAP);
         script(editor, ui, t, graph, panel);
     });
@@ -559,6 +561,99 @@ fn events(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at:
                 .response
                 .on_disabled_hover_text(tl("No other script of the project declares an event"));
             });
+        });
+    });
+}
+
+/// Places a list or map node of `kind` naming `name`, which holds `item`.
+fn place_collection_node(editor: &mut Editor, kind: &str, at: [f32; 2], name: &str, item: VariableType) {
+    if let Some(added) = editor.dispatch("graph.node.add", &json!({ "kind": kind, "position": at }), None) {
+        let node = added["node"].clone();
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "item", "value": [item.code()] }), None);
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "name", "value": name }), None);
+    }
+}
+
+/// The script's lists and maps: each one's name, what it holds, a menu of the nodes that work on
+/// it, and a button that removes it; and menus that add a list or a map of a type.
+fn collections(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at: [f32; 2], panel: &mut ScriptPanel) {
+    use bayleaf_engine::graph::CollectionKind;
+    use bayleaf_engine::script::visual::{CATALOG, LIST_KINDS, MAP_KINDS};
+    theme::headed(t, "Lists and Maps").show(ui, |ui| {
+        if graph.collections.is_empty() {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(tl("Lists keep values in order; maps keep values under text keys. Each object keeps its own, empty when play starts."))
+                        .small()
+                        .color(t.text_muted),
+                )
+                .wrap(),
+            );
+        }
+        for collection in &graph.collections {
+            ui.push_id(("collection", &collection.name), |ui| {
+                egui::Frame::new().fill(t.panel).corner_radius(theme::SECTION_RADIUS).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(tl(collection.kind.label())).small().color(t.text_muted));
+                        let key = format!("collection {}", collection.name);
+                        let label = crate::i18n::tf("Name of {name}", &[("name", &collection.name)]);
+                        if let Some(typed) = name_field(ui, panel, &key, &collection.name, &label) {
+                            editor.dispatch("graph.collection.set", &json!({ "name": collection.name, "rename": typed }), None);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(egui::RichText::new(tl("Holds")).color(t.text_muted));
+                        let holds = ui.menu_button(tl(collection.item.label()), |ui| {
+                            for ty in VariableType::ALL {
+                                if ui.selectable_label(ty == collection.item, tl(ty.label())).clicked() {
+                                    if ty != collection.item {
+                                        editor.dispatch("graph.collection.set", &json!({ "name": collection.name, "item": ty }), None);
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        });
+                        let current = tl(collection.item.label()).to_owned();
+                        ui.ctx().accesskit_node_builder(holds.response.id, |node| {
+                            node.set_label(crate::i18n::tf("What {name} holds: {type}", &[("name", &collection.name), ("type", &current)]))
+                        });
+                    });
+                    ui.horizontal(|ui| {
+                        let kinds: &[&str] = if collection.kind == CollectionKind::Map { &MAP_KINDS } else { &LIST_KINDS };
+                        let nodes = ui.menu_button(tl("Place Node"), |ui| {
+                            for def in CATALOG.nodes.iter().filter(|d| kinds.contains(&d.kind)) {
+                                if ui.button(tl(def.label)).on_hover_text(tl(def.description)).clicked() {
+                                    place_collection_node(editor, def.kind, at, &collection.name, collection.item);
+                                    ui.close();
+                                }
+                            }
+                        });
+                        ui.ctx().accesskit_node_builder(nodes.response.id, |node| {
+                            node.set_label(crate::i18n::tf("Place a node for {name}", &[("name", &collection.name)]))
+                        });
+                        let remove = ui.small_button(tl("Remove")).on_hover_text(tl("Its nodes stay, and say which list or map they name"));
+                        ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(crate::i18n::tf("Remove {name}", &[("name", &collection.name)])));
+                        if remove.clicked() {
+                            editor.dispatch("graph.collection.remove", &json!({ "name": collection.name }), None);
+                        }
+                    });
+                });
+            });
+            ui.add_space(theme::SECTION_GAP);
+        }
+        ui.horizontal_wrapped(|ui| {
+            for (kind, label, stem) in [(CollectionKind::List, "Add List", "List"), (CollectionKind::Map, "Add Map", "Map")] {
+                ui.menu_button(tl(label), |ui| {
+                    for ty in VariableType::ALL {
+                        if ui.button(tl(ty.label())).clicked() {
+                            let name = free_name(stem, |n| graph.collection(n).is_some());
+                            editor.dispatch("graph.collection.add", &json!({ "name": name, "kind": kind, "item": ty }), None);
+                            ui.close();
+                        }
+                    }
+                });
+            }
         });
     });
 }

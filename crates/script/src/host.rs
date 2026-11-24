@@ -17,11 +17,11 @@ use super::{Error, LinkError, error, instantiate, limits, out_of_fuel, trap_mess
 #[cfg(not(target_arch = "wasm32"))]
 use super::{from_val, to_val};
 use crate::{
-    ABI_VERSION, DeclaredEvent, Description, EVERY_OBJECT, EventArg, FUEL_PER_CALL, GameState, Input, LogLine, MAX_DECLARED_EVENTS, MAX_DESCRIPTION_BYTES,
-    MAX_EVENT_ARGS, MAX_EVENT_TEXT, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME, MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS, MAX_REQUESTS_PER_CALL,
-    MAX_SUBSCRIPTIONS, Message, Properties, PropertyWrite, Request, Scope, ScriptError, ScriptFault, ScriptValues, SharedState, Subscription, Velocities,
-    WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position, module_bytes, read_position, read_transform, readable_component,
-    script_keys, transform_from, visual,
+    ABI_VERSION, DeclaredEvent, Description, EVERY_OBJECT, EventArg, FUEL_PER_CALL, GameState, Input, LogLine, MAX_COLLECTION_ITEMS, MAX_DECLARED_EVENTS,
+    MAX_DESCRIPTION_BYTES, MAX_EVENT_ARGS, MAX_EVENT_TEXT, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME, MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS,
+    MAX_REQUESTS_PER_CALL, MAX_STORED_COLLECTIONS, MAX_SUBSCRIPTIONS, Message, Properties, PropertyWrite, Request, Scope, ScriptError, ScriptFault,
+    ScriptValues, SharedState, Stored, Subscription, Velocities, WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position, module_bytes,
+    read_position, read_transform, readable_component, script_keys, transform_from, visual,
 };
 use bayleaf_script_sdk::native::NativeObject;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1728,10 +1728,223 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             Ok(name.len() as i32)
         })?;
         link_events(&mut linker)?;
+        link_collections(&mut linker)?;
         link_native(&mut linker)?;
         Ok(())
     })();
     // The names are fixed and unique, so defining them cannot fail.
     debug_assert!(result.is_ok());
     linker
+}
+
+/// The words of one value as `event_send` lists them, written at `out` in the script's memory; a
+/// text gives its length (its bytes come from `list_text` and `map_text`), an object its handle.
+fn write_value(caller: &mut Caller<'_, HostState>, out: i32, value: &EventArg, what: &str) -> Result<(), Error> {
+    let words: [u32; 4] = match value {
+        EventArg::Number(v) => [0, v.to_bits(), 0, 0],
+        EventArg::Whole(v) => [1, *v as u32, 0, 0],
+        EventArg::Flag(v) => [2, u32::from(*v), 0, 0],
+        EventArg::Vector([x, y, z]) => [3, x.to_bits(), y.to_bits(), z.to_bits()],
+        EventArg::Text(text) => [4, text.len() as u32, 0, 0],
+        EventArg::Object(id) => [5, id.map_or(0, |id| caller.data().world.handle_of(id)) as u32, 0, 0],
+    };
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    write_guest(caller, out, &bytes, what)
+}
+
+/// The one value at `ptr`, as `event_send` lists values.
+fn read_value(caller: &mut Caller<'_, HostState>, ptr: i32, what: &str) -> Result<EventArg, Error> {
+    let mut values = read_event_args(caller, ptr, 1).map_err(|m| fault(caller, format!("{what}: {m}")))?;
+    values.pop().ok_or_else(|| fault(caller, format!("{what}: no value")))
+}
+
+/// Writes a text's bytes, up to `cap`, at `out`; its whole length, or 0 when it is not a text.
+fn write_text(caller: &mut Caller<'_, HostState>, value: Option<EventArg>, out: i32, cap: i32, what: &str) -> Result<i32, Error> {
+    let Some(EventArg::Text(text)) = value else { return Ok(0) };
+    let room = usize::try_from(cap).map_err(|_| fault(caller, format!("{what}: negative length")))?;
+    if room > 0 {
+        write_guest(caller, out, &text.as_bytes()[..text.len().min(room)], what)?;
+    }
+    Ok(text.len() as i32)
+}
+
+/// Runs `f` on the list (`list`) or map named at `ptr`, made empty the first time. A name that does
+/// not read, a script keeping too many, or a list named as a map (or the other way) stops the script.
+fn with_stored<R>(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, list: bool, what: &str, f: impl FnOnce(&mut Stored) -> R) -> Result<R, Error> {
+    let name = read_text(caller, ptr, len, MAX_MESSAGE_NAME).map_err(|m| fault(caller, format!("{what}: {m}")))?;
+    let known = caller.data().collections.contains_key(&name);
+    if !known && caller.data().collections.len() >= MAX_STORED_COLLECTIONS {
+        return Err(fault(caller, format!("{what}: a script keeps at most {MAX_STORED_COLLECTIONS} lists and maps")));
+    }
+    let other = caller.data().collections.get(&name).is_some_and(|s| matches!(s, Stored::List(_)) != list);
+    if other {
+        return Err(fault(caller, format!("{what}: {name} is a {}", if list { "map" } else { "list" })));
+    }
+    let stored = caller.data_mut().collections.entry(name).or_insert_with(|| if list { Stored::List(Vec::new()) } else { Stored::Map(Default::default()) });
+    Ok(f(stored))
+}
+
+/// Lists and maps a visual script keeps (`list_*`, `map_*`): each by its name, made empty the first
+/// time it is used. Values go and come as `event_send` lists them; an index past the end, or a key
+/// a map lacks, reads as nothing and changes nothing.
+fn link_collections(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
+    linker.func_wrap("bayleaf", "list_put", |mut caller: Caller<'_, HostState>, p: i32, l: i32, op: i32, index: i32, value: i32| -> Result<i32, Error> {
+        let value = read_value(&mut caller, value, "list_put")?;
+        let put = with_stored(&mut caller, p, l, true, "list_put", |s| {
+            let Stored::List(items) = s else { return Ok(0) };
+            let at = usize::try_from(index).ok();
+            if op != 2 && items.len() >= MAX_COLLECTION_ITEMS {
+                return Err(());
+            }
+            Ok(match op {
+                0 => {
+                    items.push(value);
+                    1
+                }
+                1 => match at.filter(|i| *i <= items.len()) {
+                    Some(i) => {
+                        items.insert(i, value);
+                        1
+                    }
+                    None => 0,
+                },
+                _ => match at.and_then(|i| items.get_mut(i)) {
+                    Some(slot) => {
+                        *slot = value;
+                        1
+                    }
+                    None => 0,
+                },
+            })
+        })?;
+        put.map_err(|()| fault(&mut caller, format!("list_put: a list holds at most {MAX_COLLECTION_ITEMS} items")))
+    })?;
+    linker.func_wrap("bayleaf", "list_remove", |mut caller: Caller<'_, HostState>, p: i32, l: i32, index: i32| -> Result<i32, Error> {
+        with_stored(&mut caller, p, l, true, "list_remove", |s| match (s, usize::try_from(index)) {
+            (Stored::List(items), Ok(i)) if i < items.len() => {
+                items.remove(i);
+                1
+            }
+            _ => 0,
+        })
+    })?;
+    linker.func_wrap("bayleaf", "list_clear", |mut caller: Caller<'_, HostState>, p: i32, l: i32| -> Result<(), Error> {
+        with_stored(&mut caller, p, l, true, "list_clear", |s| {
+            if let Stored::List(items) = s {
+                items.clear();
+            }
+        })
+    })?;
+    linker.func_wrap("bayleaf", "list_len", |mut caller: Caller<'_, HostState>, p: i32, l: i32| -> Result<i32, Error> {
+        with_stored(&mut caller, p, l, true, "list_len", |s| if let Stored::List(items) = s { items.len() as i32 } else { 0 })
+    })?;
+    linker.func_wrap("bayleaf", "list_get", |mut caller: Caller<'_, HostState>, p: i32, l: i32, index: i32, out: i32| -> Result<i32, Error> {
+        match list_item(&mut caller, p, l, index, "list_get")? {
+            Some(value) => write_value(&mut caller, out, &value, "list_get").map(|()| 1),
+            None => Ok(0),
+        }
+    })?;
+    linker.func_wrap("bayleaf", "list_text", |mut caller: Caller<'_, HostState>, p: i32, l: i32, index: i32, out: i32, cap: i32| -> Result<i32, Error> {
+        let value = list_item(&mut caller, p, l, index, "list_text")?;
+        write_text(&mut caller, value, out, cap, "list_text")
+    })?;
+    linker.func_wrap("bayleaf", "list_find", |mut caller: Caller<'_, HostState>, p: i32, l: i32, value: i32| -> Result<i32, Error> {
+        let value = read_value(&mut caller, value, "list_find")?;
+        with_stored(&mut caller, p, l, true, "list_find", |s| match s {
+            Stored::List(items) => items.iter().position(|item| *item == value).map_or(-1, |i| i as i32),
+            Stored::Map(_) => -1,
+        })
+    })?;
+    link_maps(linker)
+}
+
+/// A list's item at `index`, if it has one.
+fn list_item(caller: &mut Caller<'_, HostState>, p: i32, l: i32, index: i32, what: &str) -> Result<Option<EventArg>, Error> {
+    with_stored(caller, p, l, true, what, |s| match (s, usize::try_from(index)) {
+        (Stored::List(items), Ok(i)) => items.get(i).cloned(),
+        _ => None,
+    })
+}
+
+/// A map key read from the script's memory.
+fn map_key_at(caller: &mut Caller<'_, HostState>, p: i32, l: i32, what: &str) -> Result<String, Error> {
+    read_text(caller, p, l, MAX_EVENT_TEXT).map_err(|m| fault(caller, format!("{what}: {m}")))
+}
+
+/// A map's value under the key at `kp`, if it has one.
+fn map_value(caller: &mut Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, what: &str) -> Result<Option<EventArg>, Error> {
+    let key = map_key_at(caller, kp, kl, what)?;
+    with_stored(caller, p, l, false, what, |s| match s {
+        Stored::Map(entries) => entries.get(&key).cloned(),
+        Stored::List(_) => None,
+    })
+}
+
+/// The map half of [`link_collections`]: values by text keys, in key order.
+fn link_maps(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
+    linker.func_wrap("bayleaf", "map_put", |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, value: i32| -> Result<i32, Error> {
+        let key = map_key_at(&mut caller, kp, kl, "map_put")?;
+        let value = read_value(&mut caller, value, "map_put")?;
+        let put = with_stored(&mut caller, p, l, false, "map_put", |s| {
+            let Stored::Map(entries) = s else { return Ok(0) };
+            if !entries.contains_key(&key) && entries.len() >= MAX_COLLECTION_ITEMS {
+                return Err(());
+            }
+            entries.insert(key, value);
+            Ok(1)
+        })?;
+        put.map_err(|()| fault(&mut caller, format!("map_put: a map holds at most {MAX_COLLECTION_ITEMS} keys")))
+    })?;
+    linker.func_wrap("bayleaf", "map_remove", |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32| -> Result<i32, Error> {
+        let key = map_key_at(&mut caller, kp, kl, "map_remove")?;
+        with_stored(&mut caller, p, l, false, "map_remove", |s| match s {
+            Stored::Map(entries) => i32::from(entries.remove(&key).is_some()),
+            Stored::List(_) => 0,
+        })
+    })?;
+    linker.func_wrap("bayleaf", "map_clear", |mut caller: Caller<'_, HostState>, p: i32, l: i32| -> Result<(), Error> {
+        with_stored(&mut caller, p, l, false, "map_clear", |s| {
+            if let Stored::Map(entries) = s {
+                entries.clear();
+            }
+        })
+    })?;
+    linker.func_wrap("bayleaf", "map_count", |mut caller: Caller<'_, HostState>, p: i32, l: i32| -> Result<i32, Error> {
+        with_stored(&mut caller, p, l, false, "map_count", |s| if let Stored::Map(entries) = s { entries.len() as i32 } else { 0 })
+    })?;
+    linker.func_wrap("bayleaf", "map_get", |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, out: i32| -> Result<i32, Error> {
+        match map_value(&mut caller, p, l, kp, kl, "map_get")? {
+            Some(value) => write_value(&mut caller, out, &value, "map_get").map(|()| 1),
+            None => Ok(0),
+        }
+    })?;
+    linker.func_wrap(
+        "bayleaf",
+        "map_text",
+        |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, out: i32, cap: i32| -> Result<i32, Error> {
+            let value = map_value(&mut caller, p, l, kp, kl, "map_text")?;
+            write_text(&mut caller, value, out, cap, "map_text")
+        },
+    )?;
+    linker.func_wrap(
+        "bayleaf",
+        "map_next",
+        |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, out: i32, cap: i32| -> Result<i32, Error> {
+            // The first key, or the first after the key at `kp` (`kl` below 0 for the first): For Each
+            // in Map goes on from where it is, so keys added or removed on the way are no trouble.
+            let after = if kl < 0 { None } else { Some(map_key_at(&mut caller, kp, kl, "map_next")?) };
+            let key = with_stored(&mut caller, p, l, false, "map_next", |s| match s {
+                Stored::Map(entries) => match &after {
+                    None => entries.keys().next().cloned(),
+                    Some(after) => entries.range::<String, _>((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded)).next().map(|(k, _)| k.clone()),
+                },
+                Stored::List(_) => None,
+            })?;
+            match key {
+                Some(key) => write_text(&mut caller, Some(EventArg::Text(key)), out, cap, "map_next"),
+                None => Ok(-1),
+            }
+        },
+    )?;
+    Ok(())
 }

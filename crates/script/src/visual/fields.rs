@@ -263,6 +263,9 @@ fn script_variant(node: &Node, fields: Vec<String>) -> Option<&'static NodeDef> 
 /// Set Component node (its component's fields, or the properties of the script it names), or a
 /// Function, Return or Call Function node (its function's inputs and outputs).
 pub fn variant(node: &Node) -> Option<&'static NodeDef> {
+    if super::COLLECTION_KINDS.contains(&node.kind.as_str()) {
+        return super::collections::variant(node);
+    }
     if super::FUNCTION_KINDS.contains(&node.kind.as_str()) {
         return function_variant(node);
     }

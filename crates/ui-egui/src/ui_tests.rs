@@ -3484,3 +3484,32 @@ fn another_scripts_event_is_subscribed_to_from_the_script_panel_with_its_compone
     assert_eq!(of("componentEventStart").values.get("params"), Some(&json!(["amount:number"])), "On Component Event brings the event's values");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn lists_are_declared_retyped_and_their_nodes_placed_from_the_script_panel() {
+    let mut harness = graph_harness("script");
+    harness.get_by_label("Add List").click();
+    harness.run();
+    harness.get_by_label("Number").click();
+    harness.run();
+    let g = graph(&harness);
+    assert_eq!(g.collections.len(), 1, "Add List declares one");
+    let name = g.collections[0].name.clone();
+    assert_eq!(g.collections[0].kind, bayleaf_engine::graph::CollectionKind::List);
+
+    harness.get_by_label(&format!("Place a node for {name}")).click();
+    harness.run();
+    harness.get_by_label("Add to List").click();
+    harness.run();
+    let add = graph(&harness).nodes.iter().find(|n| n.kind == "listAdd").map(|n| n.id).expect("Place Node places the node");
+    assert_eq!(graph(&harness).value(add, "name"), Some(&json!(name)), "naming the list");
+    assert_eq!(graph(&harness).value(add, "item"), Some(&json!(["number"])), "and what it holds");
+
+    harness.get_by_label(&format!("What {name} holds: Number")).click();
+    harness.run();
+    harness.get_by_label("Text").click();
+    harness.run();
+    assert_eq!(graph(&harness).collections[0].item, bayleaf_engine::graph::VariableType::Text, "the list now holds text");
+    assert_eq!(graph(&harness).value(add, "item"), Some(&json!(["text"])), "and its node follows");
+    assert!(harness.query_by_label_contains("this visual script compiles").is_some(), "{}", harness.state().status);
+}

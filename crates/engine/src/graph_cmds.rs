@@ -189,6 +189,21 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         ),
         spec("graph.event.remove", "Remove Event", "{name}: its nodes stay (a Trigger Event may name another script's event)", Mutates::Graph, event_remove),
         spec(
+            "graph.collection.add",
+            "Add List or Map",
+            "{name, kind, item}: declares a list (kind \"list\": items in order, by index from 0) or a map (\"map\": values by text keys) of a visual script, holding item values (type as for variables); each object running the script keeps its own, empty when play starts",
+            Mutates::Graph,
+            collection_add,
+        ),
+        spec(
+            "graph.collection.set",
+            "Change List or Map",
+            "{name, rename?, item?}: a new name, or what it holds; its nodes follow, and links to their values go when the type changes",
+            Mutates::Graph,
+            collection_set,
+        ),
+        spec("graph.collection.remove", "Remove List or Map", "{name}: its nodes stay, and say they name no list or map", Mutates::Graph, collection_remove),
+        spec(
             "graph.menu.set",
             "Set Menu Path",
             "{path}: where Add Component lists the visual script (Light/Flicker); empty for under Scripts",
@@ -367,6 +382,43 @@ fn event_set(session: &mut Session, params: &Value) -> Result<Value, CommandErro
 fn event_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: FunctionAddParams = parse(params)?;
     open_script(session)?.remove_event(&p.name).map_err(failed)?;
+    Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CollectionAddParams {
+    name: String,
+    kind: bayleaf_graph::CollectionKind,
+    item: bayleaf_graph::VariableType,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CollectionSetParams {
+    name: String,
+    #[serde(default)]
+    rename: Option<String>,
+    #[serde(default)]
+    item: Option<bayleaf_graph::VariableType>,
+}
+
+fn collection_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: CollectionAddParams = parse(params)?;
+    open_script(session)?.add_collection(&p.name, p.kind, p.item).map_err(failed)?;
+    Ok(json!({}))
+}
+
+fn collection_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: CollectionSetParams = parse(params)?;
+    let catalog = &bayleaf_script::visual::CATALOG;
+    open_script(session)?.set_collection(catalog, &p.name, p.rename.as_deref(), p.item, &bayleaf_script::visual::COLLECTION_KINDS).map_err(failed)?;
+    Ok(json!({}))
+}
+
+fn collection_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: FunctionAddParams = parse(params)?;
+    open_script(session)?.remove_collection(&p.name).map_err(failed)?;
     Ok(json!({}))
 }
 

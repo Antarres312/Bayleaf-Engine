@@ -12,6 +12,7 @@ use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue};
 
 use PinType::{Any, Bool, Float, Flow, Vec3};
 
+mod collections;
 mod fields;
 pub use fields::{COMPONENTS, ComponentNodes, component_of, script_fields};
 
@@ -140,6 +141,47 @@ pub(crate) const COMPONENT_EVENT_SETTINGS: [SettingDef; 3] =
 pub const COMPONENT_EVENT_KINDS: [&str; 2] = ["triggerComponentEvent", "componentEventStart"];
 /// Every node kind that names another script's event (subscribing too).
 pub const SCRIPT_EVENT_KINDS: [&str; 4] = ["triggerComponentEvent", "componentEventStart", "subscribeEvent", "unsubscribeEvent"];
+/// The list a list node works on, one the script declares, and the type code of what it holds
+/// (`["number"]`), kept in step with the declaration by `graph.collection.set`.
+pub(crate) const LIST_SETTINGS: [SettingDef; 2] =
+    [SettingDef { name: "name", label: "List", kind: SettingKind::Name("") }, SettingDef { name: "item", label: "Holds", kind: SettingKind::Names }];
+/// The map a map node works on, and what it holds, as for a list.
+pub(crate) const MAP_SETTINGS: [SettingDef; 2] =
+    [SettingDef { name: "name", label: "Map", kind: SettingKind::Name("") }, SettingDef { name: "item", label: "Holds", kind: SettingKind::Names }];
+/// The node kinds that work on a declared list.
+pub const LIST_KINDS: [&str; 9] = ["listAdd", "listInsert", "listSet", "listRemove", "listClear", "listItem", "listLength", "listFind", "listForEach"];
+/// The node kinds that work on a declared map.
+pub const MAP_KINDS: [&str; 6] = ["mapSet", "mapRemove", "mapClear", "mapGet", "mapCount", "mapForEach"];
+/// Every node kind that names a declared list or map in its `name` setting.
+pub const COLLECTION_KINDS: [&str; 15] = [
+    "listAdd",
+    "listInsert",
+    "listSet",
+    "listRemove",
+    "listClear",
+    "listItem",
+    "listLength",
+    "listFind",
+    "listForEach",
+    "mapSet",
+    "mapRemove",
+    "mapClear",
+    "mapGet",
+    "mapCount",
+    "mapForEach",
+];
+/// A list index, from 0.
+const INDEX: PinDef = PinDef::with("index", "Index", PinType::Int, PinDefault::Int(0));
+/// A map key.
+const KEY: PinDef = text("key", "Key", "");
+/// A list node.
+const fn list_node(kind: &'static str, label: &'static str, description: &'static str, inputs: &'static [PinDef], outputs: &'static [PinDef]) -> NodeDef {
+    NodeDef { kind, label, category: "Lists", description, inputs, outputs, settings: &LIST_SETTINGS, unique: false }
+}
+/// A map node.
+const fn map_node(kind: &'static str, label: &'static str, description: &'static str, inputs: &'static [PinDef], outputs: &'static [PinDef]) -> NodeDef {
+    NodeDef { kind, label, category: "Maps", description, inputs, outputs, settings: &MAP_SETTINGS, unique: false }
+}
 const OBJECT_NAME: SettingDef = SettingDef { name: "object", label: "Object Name", kind: SettingKind::Text("") };
 /// The interface element a node works on, by its name.
 const ELEMENT: SettingDef = SettingDef { name: "element", label: "Element", kind: SettingKind::Text("Start") };
@@ -604,6 +646,63 @@ pub const CATALOG: Catalog = Catalog {
             settings: &COMPONENT_EVENT_SETTINGS,
             unique: false,
         },
+        list_node("listAdd", "Add to List", "Puts the value at the end of the list.", &[RUN], &[THEN]),
+        list_node(
+            "listInsert",
+            "Insert into List",
+            "Puts the value in the list at the index (from 0), moving the items from there on along; an index past the end does nothing.",
+            &[RUN, INDEX],
+            &[THEN],
+        ),
+        list_node("listSet", "Set List Item", "Replaces the list's item at the index (from 0); an index past the end does nothing.", &[RUN, INDEX], &[THEN]),
+        list_node(
+            "listRemove",
+            "Remove from List",
+            "Takes the item at the index (from 0) out of the list; the items after it move back.",
+            &[RUN, INDEX],
+            &[THEN],
+        ),
+        list_node("listClear", "Clear List", "Takes every item out of the list.", &[RUN], &[THEN]),
+        list_node(
+            "listItem",
+            "List Item",
+            "The list's item at the index (from 0). Past the end, Found is false and the value is empty.",
+            &[INDEX],
+            &[pin("found", "Found", Bool)],
+        ),
+        list_node("listLength", "List Length", "How many items the list holds.", &[], &[pin("length", "Length", PinType::Int)]),
+        list_node(
+            "listFind",
+            "Find in List",
+            "The index of the first item equal to the value, or -1 when there is none.",
+            &[],
+            &[pin("index", "Index", PinType::Int)],
+        ),
+        list_node(
+            "listForEach",
+            "For Each in List",
+            "Runs Each once for every item of the list, in order, with the item and its index (from 0); then runs Then. Items added or taken out on the way count.",
+            &[RUN],
+            &[pin("each", "Each", Flow), pin("index", "Index", PinType::Int), THEN],
+        ),
+        map_node("mapSet", "Set Map Value", "Keeps the value under the key, in place of what was there.", &[RUN, KEY], &[THEN]),
+        map_node("mapRemove", "Remove from Map", "Takes the key, and its value, out of the map.", &[RUN, KEY], &[THEN]),
+        map_node("mapClear", "Clear Map", "Takes every key out of the map.", &[RUN], &[THEN]),
+        map_node(
+            "mapGet",
+            "Map Value",
+            "The value under the key. When the map has no such key, Found is false and the value is empty.",
+            &[KEY],
+            &[pin("found", "Found", Bool)],
+        ),
+        map_node("mapCount", "Map Count", "How many keys the map holds.", &[], &[pin("count", "Count", PinType::Int)]),
+        map_node(
+            "mapForEach",
+            "For Each in Map",
+            "Runs Each once for every key of the map, in the keys' order (sorted by their characters), with the key and its value; then runs Then. Keys added or taken out on the way count.",
+            &[RUN],
+            &[pin("each", "Each", Flow), pin("key", "Key", PinType::Text), THEN],
+        ),
         node("position", "Position", "Object", "The object's position, relative to its parent.", &[], &[pin("position", "Position", Vec3)]),
         node("rotation", "Rotation", "Object", "The object's rotation in degrees.", &[], &[pin("rotation", "Rotation", Vec3)]),
         node("scale", "Scale", "Object", "The object's size along X, Y and Z.", &[], &[pin("scale", "Scale", Vec3)]),
@@ -1481,6 +1580,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
 
     let mut out = String::new();
     out.push_str(PRELUDE);
+    out.push_str(collections::HELPERS);
     // One global per variable name; names are letters, digits and _, so they are valid identifiers.
     // Declared variables start at their values; names nodes use without a declaration start at zero.
     let named = |ty: VariableType, default: &str| -> std::collections::BTreeMap<String, serde_json::Value> {
@@ -1954,6 +2054,8 @@ impl Compiler<'_> {
                 let handle = self.target(next, Ok("(call $self_handle)"))?;
                 let _ = writeln!(code, "{indent}(drop (call $destroy {handle}))");
             }
+            "listForEach" | "mapForEach" => self.collection_loop(next, &n.kind, depth, &indent, &mut code)?,
+            kind if COLLECTION_KINDS.contains(&kind) => self.collection_action(next, kind, &indent, &mut code)?,
             "forEachWith" => {
                 // The object and index live in globals, so the nodes in Each can read them.
                 let (at, len) = self.kind(next)?;
@@ -2659,6 +2761,7 @@ impl Compiler<'_> {
                 Val::B(format!("(i32.{} {a} {b})", n.kind))
             }
             "not" => Val::B(format!("(i32.eqz {})", self.input(node, "value").and_then(|v| as_bool(node, v))?)),
+            "listItem" | "listLength" | "listFind" | "listForEach" | "mapGet" | "mapCount" | "mapForEach" => self.collection_value(node, &n.kind, pin)?,
             _ => return Err(Problem::on(node, format!("{} gives no value here", def.label))),
         })
     }
@@ -2978,6 +3081,20 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "game_end" (func $game_end (param i32) (result i32)))
   (import "bayleaf" "action" (func $action (param i32 i32) (result f32)))
   (import "bayleaf" "input_map_set" (func $input_map_set (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "list_put" (func $list_put (param i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "list_remove" (func $list_remove (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "list_clear" (func $list_clear (param i32 i32)))
+  (import "bayleaf" "list_len" (func $list_len (param i32 i32) (result i32)))
+  (import "bayleaf" "list_get" (func $list_get (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "list_text" (func $list_text (param i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "list_find" (func $list_find (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_put" (func $map_put (param i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_remove" (func $map_remove (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_clear" (func $map_clear (param i32 i32)))
+  (import "bayleaf" "map_count" (func $map_count (param i32 i32) (result i32)))
+  (import "bayleaf" "map_get" (func $map_get (param i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_text" (func $map_text (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_next" (func $map_next (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "particles_play" (func $particles_play (param i32) (result i32)))
   (import "bayleaf" "particles_stop" (func $particles_stop (param i32) (result i32)))
   (import "bayleaf" "particles_burst" (func $particles_burst (param i32 i32) (result i32)))

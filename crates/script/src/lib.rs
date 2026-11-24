@@ -305,6 +305,18 @@ pub enum EventArg {
     Object(Option<StableId>),
 }
 
+/// A list or map a visual script keeps, by name, for the whole of play.
+#[derive(Clone, Debug, PartialEq)]
+enum Stored {
+    List(Vec<EventArg>),
+    /// In key order, so For Each in Map goes the same way every time.
+    Map(std::collections::BTreeMap<String, EventArg>),
+}
+
+/// Most items one list or map holds, and most lists and maps one script keeps.
+pub const MAX_COLLECTION_ITEMS: usize = 65_536;
+pub const MAX_STORED_COLLECTIONS: usize = 64;
+
 /// Most values one event brings, and the longest text among them, in bytes.
 pub const MAX_EVENT_ARGS: usize = 16;
 pub const MAX_EVENT_TEXT: usize = 4096;
@@ -555,6 +567,8 @@ struct HostState<L> {
     index: usize,
     /// Subscriptions this call asked for (true) or cancelled (false): the publisher and the event.
     subscribing: Vec<(bool, (StableId, usize), String)>,
+    /// The lists and maps this script keeps, by name.
+    collections: HashMap<String, Stored>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
     /// Interface elements as they show, for `ui_value` and `ui_text`.
@@ -591,6 +605,7 @@ impl<L> HostState<L> {
             message_from: None,
             index: 0,
             subscribing: Vec::new(),
+            collections: HashMap::new(),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
             interface: Arc::new(InterfaceValues::new()),

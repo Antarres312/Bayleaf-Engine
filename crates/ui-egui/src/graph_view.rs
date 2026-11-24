@@ -1513,6 +1513,11 @@ fn setting_row(
         variable_picker(ui, lists.graph, node, ty, setting, field, requests);
         return;
     }
+    // A list or map node picks one the script declares, of its kind; it keeps what that one holds.
+    if setting.name == "name" && bayleaf_engine::script::visual::COLLECTION_KINDS.contains(&node.kind.as_str()) {
+        collection_picker(ui, lists.graph, node, setting, field, requests);
+        return;
+    }
     // A node naming an event picks it from a list: this script's events, or (for another script's)
     // the events of the script its component input names, else every script's.
     if setting.name == "event" && bayleaf_engine::script::visual::EVENT_KINDS.contains(&node.kind.as_str()) {
@@ -1831,6 +1836,41 @@ fn function_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayl
 }
 
 /// On Event and Trigger Event pick one of this script's events; the node's pins follow it.
+/// A list or map node picks one the script declares, of its own kind (list or map); the node keeps
+/// its name and what it holds, as one undo step.
+fn collection_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayleaf_engine::graph::SettingDef, field: Rect, requests: &mut Requests) {
+    use bayleaf_engine::graph::CollectionKind;
+    let kind = if bayleaf_engine::script::visual::MAP_KINDS.contains(&node.kind.as_str()) { CollectionKind::Map } else { CollectionKind::List };
+    let current = node.values.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let shown = if current.is_empty() { tl(if kind == CollectionKind::Map { "Choose a map" } else { "Choose a list" }).to_owned() } else { current.clone() };
+    let response = ui.put(field, |ui: &mut egui::Ui| {
+        craft_ui::ComboBox::from_id_salt(("collection", node.id))
+            .width(field.width())
+            .truncate()
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                let mut offered = graph.collections.iter().filter(|c| c.kind == kind).peekable();
+                if offered.peek().is_none() {
+                    ui.label(egui::RichText::new(tl("None yet: add one in the panel beside the graph")).small());
+                }
+                for collection in offered {
+                    let label = crate::i18n::tf("{name} · {type}", &[("name", &collection.name), ("type", tl(collection.item.label()))]);
+                    if ui.selectable_label(collection.name == current, label).clicked() && collection.name != current {
+                        let key = format!("collection {} {}", node.id, collection.name);
+                        requests.merge("graph.node.set", json!({ "node": node.id, "name": "item", "value": [collection.item.code()] }), key.clone());
+                        requests.merge("graph.node.set", json!({ "node": node.id, "name": "name", "value": collection.name }), key);
+                    }
+                }
+            })
+            .response
+    });
+    labelled(
+        ui,
+        &response,
+        &crate::i18n::tf("{setting} of node {id}: {current}", &[("setting", tl(setting.label)), ("id", &node.id.to_string()), ("current", &current)]),
+    );
+}
+
 fn own_event_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayleaf_engine::graph::SettingDef, field: Rect, requests: &mut Requests) {
     let current = node.values.get("event").and_then(Value::as_str).unwrap_or_default().to_owned();
     let shown = if current.is_empty() { tl("Choose an event").to_owned() } else { current.clone() };

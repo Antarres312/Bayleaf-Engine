@@ -2886,3 +2886,25 @@ fn an_events_nodes_follow_its_new_name_and_values() {
     registry.execute(&mut session, "graph.event.remove", &json!({"name": "OpenDoor"})).unwrap();
     assert!(session.graph().unwrap().graph.events.is_empty());
 }
+
+#[test]
+fn a_lists_nodes_follow_its_new_name_and_type_and_lose_links_of_the_old_type() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
+    registry.execute(&mut session, "graph.collection.add", &json!({"name": "Scores", "kind": "list", "item": "number"})).unwrap();
+    assert!(registry.execute(&mut session, "graph.collection.add", &json!({"name": "Scores", "kind": "map", "item": "text"})).is_err(), "one of a name");
+    let add = registry.execute(&mut session, "graph.node.add", &json!({"kind": "listAdd", "position": [0, 0]})).unwrap()["node"].clone();
+    registry.execute(&mut session, "graph.node.set", &json!({"node": add, "name": "item", "value": ["number"]})).unwrap();
+    registry.execute(&mut session, "graph.node.set", &json!({"node": add, "name": "name", "value": "Scores"})).unwrap();
+    let time = registry.execute(&mut session, "graph.node.add", &json!({"kind": "time", "position": [0, 200]})).unwrap()["node"].clone();
+    registry.execute(&mut session, "graph.link.add", &json!({"from": {"node": time, "pin": "seconds"}, "to": {"node": add, "pin": "value"}})).unwrap();
+    registry.execute(&mut session, "graph.collection.set", &json!({"name": "Scores", "rename": "Names", "item": "text"})).unwrap();
+    let graph = &session.graph().unwrap().graph;
+    let id = u32::try_from(add.as_u64().unwrap()).unwrap();
+    assert_eq!(graph.value(id, "name"), Some(&json!("Names")), "the node follows the new name");
+    assert_eq!(graph.value(id, "item"), Some(&json!(["text"])), "and what the list now holds");
+    assert!(graph.links.iter().all(|l| l.to.node != id || l.to.pin != "value"), "a number no longer goes into a list of text");
+    registry.execute(&mut session, "graph.collection.remove", &json!({"name": "Names"})).unwrap();
+    assert!(session.graph().unwrap().graph.collections.is_empty());
+}

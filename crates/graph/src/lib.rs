@@ -18,10 +18,10 @@ pub const FORMAT: &str = "bayleaf.graph";
 /// Current graph file version. Version 2 added declared `variables`; version 3 moved a visual script's
 /// Menu Path node into `menu`; version 4 added `functions`; version 5 added declared `properties`;
 /// version 6 added how each property shows in the Inspector (`properties[].inspector`); version 7
-/// added declared `events`.
+/// added declared `events`; version 8 added declared lists and maps (`collections`).
 /// Older files still read: a Menu Path node becomes `menu`, and a catalog's `upgrade` moves what its
 /// own nodes kept (a visual script's Property nodes' defaults become `properties`).
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 /// The node kind versions before 3 kept a visual script's menu path in, as its `path` value.
 const OLD_MENU_NODE: &str = "menuPath";
 /// Longest `menu`, in characters.
@@ -373,6 +373,9 @@ pub struct Graph {
     /// Events a visual script declares: what each brings. Any script may trigger them on an object.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<Event>,
+    /// Lists and maps a visual script keeps, per object, for the whole of play.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collections: Vec<Collection>,
     /// Properties a visual script declares: values the Inspector sets per object, with defaults.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<Property>,
@@ -543,6 +546,35 @@ pub struct Event {
     #[serde(default)]
     pub params: Vec<Param>,
 }
+
+/// Whether a collection is a list (items in order, by index from 0) or a map (values by text keys).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CollectionKind {
+    List,
+    Map,
+}
+
+impl CollectionKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            CollectionKind::List => "List",
+            CollectionKind::Map => "Map",
+        }
+    }
+}
+
+/// A list or map a visual script keeps: its name, which it is, and the type of what it holds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Collection {
+    pub name: String,
+    pub kind: CollectionKind,
+    pub item: VariableType,
+}
+
+/// Most lists and maps a graph declares.
+pub const MAX_COLLECTIONS: usize = 64;
 
 /// Most events a graph declares.
 pub const MAX_EVENTS: usize = 64;
@@ -762,6 +794,77 @@ impl Graph {
         Ok(())
     }
 
+    pub fn collection(&self, name: &str) -> Option<&Collection> {
+        self.collections.iter().find(|c| c.name == name)
+    }
+
+    /// Declares a list or a map of `item`s.
+    pub fn add_collection(&mut self, name: &str, kind: CollectionKind, item: VariableType) -> Result<(), GraphError> {
+        check_variable_name(name).map_err(|_| GraphError::Refused(format!("list or map name {name:?} must be 1 to 64 letters, digits or _")))?;
+        if self.collection(name).is_some() {
+            return Err(GraphError::Refused(format!("there is already a list or map {name}")));
+        }
+        if self.collections.len() >= MAX_COLLECTIONS {
+            return Err(GraphError::Refused(format!("a graph declares at most {MAX_COLLECTIONS} lists and maps")));
+        }
+        self.collections.push(Collection { name: name.to_owned(), kind, item });
+        Ok(())
+    }
+
+    /// Renames a list or map, or changes what it holds; nodes of `kinds` that name it follow (their
+    /// `name` setting, and `item`, the type code of what it holds), and links to their values go when
+    /// the type changes.
+    pub fn set_collection(
+        &mut self,
+        catalog: &Catalog,
+        name: &str,
+        rename: Option<&str>,
+        item: Option<VariableType>,
+        kinds: &[&str],
+    ) -> Result<(), GraphError> {
+        let mut collection = self.collection(name).cloned().ok_or_else(|| GraphError::Refused(format!("there is no list or map {name}")))?;
+        if let Some(new) = rename.filter(|n| *n != name) {
+            check_variable_name(new).map_err(|_| GraphError::Refused(format!("list or map name {new:?} must be 1 to 64 letters, digits or _")))?;
+            if self.collection(new).is_some() {
+                return Err(GraphError::Refused(format!("there is already a list or map {new}")));
+            }
+            collection.name = new.to_owned();
+        }
+        let retyped = item.is_some_and(|ty| ty != collection.item);
+        if let Some(ty) = item {
+            collection.item = ty;
+        }
+        let mut trial = self.clone();
+        if let Some(slot) = trial.collections.iter_mut().find(|c| c.name == name) {
+            *slot = collection.clone();
+        }
+        let named: Vec<u32> = trial
+            .nodes
+            .iter()
+            .filter(|n| kinds.contains(&n.kind.as_str()) && n.values.get("name").and_then(Value::as_str) == Some(name))
+            .map(|n| n.id)
+            .collect();
+        for id in named {
+            if retyped {
+                trial.links.retain(|l| !((l.from.node == id && l.from.pin == "value") || (l.to.node == id && l.to.pin == "value")));
+            }
+            trial.set_value(catalog, id, "item", Value::from(vec![collection.item.code()]))?;
+            trial.set_value(catalog, id, "name", Value::from(collection.name.as_str()))?;
+        }
+        *self = trial;
+        Ok(())
+    }
+
+    /// Takes a list or map away; nodes naming it stay, and the compiler says they name none.
+    pub fn remove_collection(&mut self, name: &str) -> Result<(), GraphError> {
+        let before = self.collections.len();
+        self.collections.retain(|c| c.name != name);
+        if self.collections.len() == before {
+            return Err(GraphError::Refused(format!("there is no list or map {name}")));
+        }
+        Ok(())
+    }
+
     /// Takes an event away; nodes naming it stay (a Trigger Event may name another script's event).
     pub fn remove_event(&mut self, name: &str) -> Result<(), GraphError> {
         let before = self.events.len();
@@ -871,6 +974,7 @@ impl Graph {
             menu: String::new(),
             functions: Vec::new(),
             events: Vec::new(),
+            collections: Vec::new(),
             properties: Vec::new(),
         }
     }
@@ -1007,6 +1111,15 @@ impl Graph {
             check_params(&function.name, &function.outputs).map_err(GraphError::Format)?;
             if self.functions[..index].iter().any(|f| f.name == function.name) {
                 return Err(GraphError::Format(format!("function {} is declared twice", function.name)));
+            }
+        }
+        if self.collections.len() > MAX_COLLECTIONS {
+            return Err(GraphError::Format(format!("a graph declares at most {MAX_COLLECTIONS} lists and maps")));
+        }
+        for (index, collection) in self.collections.iter().enumerate() {
+            check_variable_name(&collection.name).map_err(GraphError::Format)?;
+            if self.collections[..index].iter().any(|c| c.name == collection.name) {
+                return Err(GraphError::Format(format!("list or map {} is declared twice", collection.name)));
             }
         }
         if self.events.len() > MAX_EVENTS {

@@ -598,6 +598,47 @@ fn every_node_kind_compiles_and_runs() {
     let heard_log = b.node("log", json!({ "message": "" }));
     b.link(heard_from, "then", heard_log, "run");
     b.link(named, "result", heard_log, "text");
+    // A list and a map the script declares: changed, read, and gone through.
+    b.0.add_collection("Seen", bayleaf_graph::CollectionKind::List, VariableType::Vector).unwrap();
+    b.0.add_collection("Names", bayleaf_graph::CollectionKind::Map, VariableType::Object).unwrap();
+    let list = json!({ "name": "Seen", "item": ["vector"] });
+    let map = json!({ "name": "Names", "item": ["object"] });
+    let mut previous = unsubscribe;
+    for kind in ["listAdd", "listInsert", "listSet", "listRemove", "listForEach", "listClear", "mapSet", "mapForEach", "mapRemove", "mapClear"] {
+        let action = b.node(kind, if kind.starts_with("list") { list.clone() } else { map.clone() });
+        b.link(previous, "then", action, "run");
+        previous = action;
+    }
+    let me_too = b.node("thisObject", json!({}));
+    let set_name = b.0.nodes.iter().find(|n| n.kind == "mapSet").map(|n| n.id).unwrap();
+    b.link(me_too, "object", set_name, "value");
+    let item = b.node("listItem", list.clone());
+    let item_at = b.node("split", json!({}));
+    b.link(item, "value", item_at, "vector");
+    let value = b.node("mapGet", map.clone());
+    let named_too = b.node("nameOf", json!({}));
+    b.link(value, "value", named_too, "target");
+    for (kind, settings, pin, text) in
+        [("listLength", list.clone(), "length", Some((named_too, "result"))), ("listFind", list, "index", None), ("mapCount", map, "count", None)]
+    {
+        let read = b.node(kind, settings);
+        let said = b.node("log", json!({ "message": kind }));
+        b.link(previous, "then", said, "run");
+        b.link(read, pin, said, "value");
+        if let Some((node, pin)) = text {
+            b.link(node, pin, said, "text");
+        }
+        previous = said;
+    }
+    let gate = b.node("branch", json!({}));
+    b.link(previous, "then", gate, "run");
+    let either = b.node("or", json!({}));
+    b.link(item, "found", either, "a");
+    b.link(value, "found", either, "b");
+    b.link(either, "result", gate, "condition");
+    let at = b.node("log", json!({ "message": "at" }));
+    b.link(gate, "true", at, "run");
+    b.link(item_at, "x", at, "value");
     // Physics contacts: each names the other object (none arrive here).
     for kind in ["triggerEntered", "triggerLeft", "collisionStarted", "collisionEnded"] {
         let contact = b.node(kind, json!({}));
@@ -1954,4 +1995,118 @@ fn a_script_subscribes_to_a_components_event_hears_it_with_its_source_and_values
     host.update(&mut scene, 0.1, 0.1, &input);
     let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(logs, ["died 4"], "after cancelling, the subscriber no longer hears it");
+}
+
+#[test]
+fn lists_keep_their_order_and_maps_their_keys_for_the_whole_of_play() {
+    let mut b = Builder::new();
+    b.0.add_collection("Scores", bayleaf_graph::CollectionKind::List, VariableType::Number).unwrap();
+    b.0.add_collection("Words", bayleaf_graph::CollectionKind::Map, VariableType::Text).unwrap();
+    let list = |extra: serde_json::Value| {
+        let mut values = json!({ "name": "Scores", "item": ["number"] });
+        values.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
+        values
+    };
+    let map = |extra: serde_json::Value| {
+        let mut values = json!({ "name": "Words", "item": ["text"] });
+        values.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
+        values
+    };
+    let start = b.node("start", json!({}));
+    // [3] → [3, 1] → [5, 3, 1] → [5, 3, 7] → [5, 7]; inserting past the end does nothing.
+    let steps = [
+        b.node("listAdd", list(json!({ "value": 3.0 }))),
+        b.node("listAdd", list(json!({ "value": 1.0 }))),
+        b.node("listInsert", list(json!({ "index": 0, "value": 5.0 }))),
+        b.node("listInsert", list(json!({ "index": 9, "value": 8.0 }))),
+        b.node("listSet", list(json!({ "index": 2, "value": 7.0 }))),
+        b.node("listRemove", list(json!({ "index": 1 }))),
+        b.node("mapSet", map(json!({ "key": "b", "value": "two" }))),
+        b.node("mapSet", map(json!({ "key": "c", "value": "three" }))),
+        b.node("mapSet", map(json!({ "key": "a", "value": "one" }))),
+        b.node("mapRemove", map(json!({ "key": "c" }))),
+    ];
+    let mut previous = (start, "then");
+    for step in steps {
+        b.link(previous.0, previous.1, step, "run");
+        previous = (step, "then");
+    }
+    // Every item in order, then every key in key order with its value.
+    let each = b.node("listForEach", list(json!({})));
+    b.link(previous.0, previous.1, each, "run");
+    let item = b.node("log", json!({ "message": "item" }));
+    b.link(each, "each", item, "run");
+    b.link(each, "value", item, "value");
+    let entries = b.node("mapForEach", map(json!({})));
+    b.link(each, "then", entries, "run");
+    let key = b.node("log", json!({ "message": "" }));
+    b.link(entries, "each", key, "run");
+    b.link(entries, "key", key, "text");
+    let word = b.node("log", json!({ "message": "" }));
+    b.link(key, "then", word, "run");
+    b.link(entries, "value", word, "text");
+    // What the list and map hold now, and what they do not.
+    let mut previous = (entries, "then");
+    let reads = [
+        ("listLength", list(json!({})), "length", "length"),
+        ("listFind", list(json!({ "value": 7.0 })), "index", "seven at"),
+        ("listFind", list(json!({ "value": 3.0 })), "index", "three at"),
+        ("mapCount", map(json!({})), "count", "count"),
+    ];
+    for (kind, settings, pin, message) in reads {
+        let read = b.node(kind, settings);
+        let said = b.node("log", json!({ "message": message }));
+        b.link(previous.0, previous.1, said, "run");
+        b.link(read, pin, said, "value");
+        previous = (said, "then");
+    }
+    let past = b.node("listItem", list(json!({ "index": 2 })));
+    let missing = b.node("mapGet", map(json!({ "key": "c" })));
+    let neither = b.node("or", json!({}));
+    b.link(past, "found", neither, "a");
+    b.link(missing, "found", neither, "b");
+    let gate = b.node("branch", json!({}));
+    b.link(previous.0, previous.1, gate, "run");
+    b.link(neither, "result", gate, "condition");
+    let none = b.node("log", json!({ "message": "none past the end" }));
+    b.link(gate, "false", none, "run");
+    let first = b.node("listItem", list(json!({ "index": 1 })));
+    let one = b.node("mapGet", map(json!({ "key": "a" })));
+    let found = b.node("log", json!({ "message": "second" }));
+    b.link(none, "then", found, "run");
+    b.link(first, "value", found, "value");
+    b.link(one, "value", found, "text");
+    // Each step adds to the list, which lasts from step to step.
+    let update = b.node("update", json!({}));
+    let grow = b.node("listAdd", list(json!({ "value": 2.0 })));
+    b.link(update, "then", grow, "run");
+    let length = b.node("listLength", list(json!({})));
+    let grown = b.node("log", json!({ "message": "now" }));
+    b.link(grow, "then", grown, "run");
+    b.link(length, "length", grown, "value");
+
+    let (mut scene, _, mut host) = run(&b.bytes(), &[]);
+    for _ in 0..2 {
+        host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    }
+    assert!(host.take_faults().is_empty());
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(
+        logs,
+        ["item 5", "item 7", "a", "one", "b", "two", "length 2", "seven at 1", "three at -1", "count 2", "none past the end", "second one 7", "now 3", "now 4"],
+        "lists keep their order, maps their keys, and both last from step to step"
+    );
+}
+
+#[test]
+fn a_list_node_naming_a_map_or_nothing_is_a_problem_on_that_node() {
+    let mut b = Builder::new();
+    b.0.add_collection("Words", bayleaf_graph::CollectionKind::Map, VariableType::Text).unwrap();
+    let start = b.node("start", json!({}));
+    let clear = b.node("listClear", json!({ "name": "Words", "item": ["text"] }));
+    b.link(start, "then", clear, "run");
+    let problem = compile(&b.0).unwrap_err();
+    assert!(problem.iter().any(|p| p.node == Some(clear)), "the node that names a map as a list is the one in trouble: {problem:?}");
+    b.0.remove_collection("Words").unwrap();
+    assert!(compile(&b.0).unwrap_err().iter().any(|p| p.node == Some(clear)), "and so is one naming a list or map the script lost");
 }

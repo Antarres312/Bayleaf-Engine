@@ -257,6 +257,18 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   whenever it happens on the component, until **Unsubscribe from Event**; it arrives at **On
   Component Event**, with **Source** (the component it happened on) and the event's values. A
   subscription lasts while both scripts run; subscribing twice keeps one.
+- **Lists and maps** hold many values of one type (the types of variables). A **list** keeps them in
+  order, by index from 0; a **map** keeps them under text keys, in the keys' order. Each is declared
+  in the script (graph version 8, `collections`: name, `list` or `map`, and what it holds), and each
+  object running the script keeps its own, empty when play starts and kept from step to step. List
+  nodes: **Add to List**, **Insert into List**, **Set List Item**, **Remove from List**, **Clear
+  List**, **List Item** (with **Found**), **List Length**, **Find in List** (`-1` when it is not
+  there) and **For Each in List**; map nodes: **Set Map Value**, **Remove from Map**, **Clear Map**,
+  **Map Value** (with Found), **Map Count** and **For Each in Map**. An index past the end, or a key
+  the map lacks, changes nothing and reads as empty. Each node keeps the name it works on and the
+  type code of what it holds (`item`), so its Value pin has that type. `graph.collection.add`, `.set`
+  and `.remove` change the declaration, and its nodes follow. At most 64 per script and 65,536
+  items each.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a
 graph with every node kind and runs it.
@@ -339,7 +351,8 @@ Return nodes; **Add Input** and **Add Output** of a type; **Call** places a Call
 node; **Add Value** of a type; **On Event** and **Trigger** place their nodes; **Other
 Scripts' Events** lists the events other scripts of the project declare: **Trigger** places a Get Component for the script
 and a Trigger Component Event, **Subscribe** a Get Component, Subscribe to Event and On Component
-Event), and
+Event), **Lists and Maps** lists them with what each holds (**Add List** and **Add Map** of a
+type; **Holds** changes the type; **Place Node** places any of its nodes), and
 **Script** has the **Menu path** field,
 which keeps what is typed and says why while it does not read right yet. On a variable node, Name is a list of the script's variables of that type (and names
 other nodes use without declaring them); **New Variable…** declares a new one and picks it.

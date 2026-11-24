@@ -555,3 +555,35 @@ fn a_message_sent_to_one_object_reaches_only_its_scripts() {
     let logs = host.take_logs();
     assert_eq!(logs.iter().map(|l| (l.object, l.text.as_str())).collect::<Vec<_>>(), [(second, "jump")]);
 }
+
+#[test]
+fn a_list_used_as_a_map_or_grown_past_its_limit_stops_the_script_with_a_reason() {
+    let input = Arc::new(Input::default());
+    // A number at 0 (a 16-byte value as event_send lists them); "speed" names the list.
+    let imports = r#"
+        (import "bayleaf" "list_put" (func $list_put (param i32 i32 i32 i32 i32) (result i32)))
+        (import "bayleaf" "map_count" (func $map_count (param i32 i32) (result i32)))
+        (import "bayleaf" "list_len" (func $list_len (param i32 i32) (result i32)))"#;
+    let put = "(drop (call $list_put (i32.const 100) (i32.const 5) (i32.const 0) (i32.const 0) (i32.const 0)))";
+    let as_map = format!(r#"(func (export "bayleaf_update") (param f32) {put} (drop (call $map_count (i32.const 100) (i32.const 5))))"#);
+    let grow = format!(
+        r#"(func (export "bayleaf_update") (param f32) (loop $more {put} (br_if $more (i32.le_u (call $list_len (i32.const 100) (i32.const 5)) (i32.const {})))))"#,
+        crate::MAX_COLLECTION_ITEMS
+    );
+    for (body, expected) in [(as_map, "is a list"), (grow, "at most")] {
+        let (mut scene, id, script) = setup(&[]);
+        let mut host = super::test_host();
+        let text = format!(
+            r#"(module {IMPORTS} {imports}
+                (memory (export "memory") 1)
+                (data (i32.const 100) "speed")
+                (func (export "bayleaf_abi") (result i32) i32.const 1)
+                {body})"#
+        );
+        load(&mut host, &mut scene, id, &script, &wat::parse_str(text).unwrap()).unwrap();
+        host.update(&mut scene, 0.1, 0.0, &input);
+        let faults = host.take_faults();
+        assert_eq!(faults.len(), 1, "{body}");
+        assert!(faults[0].error.to_string().contains(expected), "{} does not mention {expected}", faults[0].error);
+    }
+}
