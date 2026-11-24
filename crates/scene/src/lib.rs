@@ -67,6 +67,10 @@ pub struct Scene {
     /// hierarchy. Each scene starts at a number no other scene of the process starts at, so what is
     /// cached against it (the scripts' view of the world) never mixes two scenes.
     structure: u64,
+    /// The objects whose transforms were written, in order, for following changes from step to step
+    /// ([`Scene::transforms_written_since`]); the first one's place in every write so far.
+    transform_log: Vec<StableId>,
+    transform_log_start: u64,
 }
 
 /// Where the next scene's structure count starts: far apart, so no two scenes' counts meet.
@@ -86,6 +90,8 @@ impl Default for Scene {
             children: IdMap::default(),
             settings: lighting::SceneSettings::default(),
             structure: first_structure(),
+            transform_log: Vec::new(),
+            transform_log_start: 0,
         }
     }
 }
@@ -125,6 +131,30 @@ impl Scene {
         self.structure
     }
 
+    /// Where the log of transform writes stands now; give it to [`Scene::transforms_written_since`]
+    /// later to learn what moved in between.
+    pub fn transform_mark(&self) -> u64 {
+        self.transform_log_start + self.transform_log.len() as u64
+    }
+
+    /// The objects whose transforms were written since `mark`, in the order written (an object once
+    /// per write); `None` when the log no longer reaches back that far, so the caller looks at every
+    /// object.
+    pub fn transforms_written_since(&self, mark: u64) -> Option<&[StableId]> {
+        let from = usize::try_from(mark.checked_sub(self.transform_log_start)?).ok()?;
+        self.transform_log.get(from..)
+    }
+
+    fn transform_written(&mut self, id: StableId) {
+        // Past twice the objects (and a margin), looking at every object is cheaper than the log: it
+        // starts again, and marks from before say so.
+        if self.transform_log.len() >= 2 * self.entities.len() + 1024 {
+            self.transform_log_start += self.transform_log.len() as u64;
+            self.transform_log.clear();
+        }
+        self.transform_log.push(id);
+    }
+
     pub fn object_count(&self) -> usize {
         self.entities.len()
     }
@@ -161,7 +191,11 @@ impl Scene {
             self.structure += 1;
         }
         let entity = self.entity(id)?;
-        self.world.insert(entity, value).map_err(|e| SceneError::Internal(e.to_string()))
+        self.world.insert(entity, value).map_err(|e| SceneError::Internal(e.to_string()))?;
+        if T::NAME == <Transform as components::SceneComponent>::NAME {
+            self.transform_written(id);
+        }
+        Ok(())
     }
 
     /// Local-to-world matrix of every object, parents before children in hierarchy order.
@@ -268,6 +302,7 @@ impl Scene {
         let entity = self.entity(id)?;
         if transform.is_finite() {
             self.world.insert(entity, transform).map_err(|e| SceneError::Internal(e.to_string()))?;
+            self.transform_written(id);
         }
         Ok(())
     }
@@ -485,7 +520,11 @@ impl Scene {
         if kind.name != <Transform as components::SceneComponent>::NAME {
             self.structure += 1;
         }
-        kind.set(&mut self.world, entity, value).map_err(|message| SceneError::InvalidValue { component: component.to_owned(), message })
+        kind.set(&mut self.world, entity, value).map_err(|message| SceneError::InvalidValue { component: component.to_owned(), message })?;
+        if kind.name == <Transform as components::SceneComponent>::NAME {
+            self.transform_written(id);
+        }
+        Ok(())
     }
 
     /// `id` and all its descendants.

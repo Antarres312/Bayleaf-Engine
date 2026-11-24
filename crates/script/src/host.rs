@@ -176,6 +176,9 @@ struct Instance {
     pending_init: Option<Phase>,
     /// `bayleaf_start`, until it has run (after every script loaded with it has run its init).
     pending_start: Option<Phase>,
+    /// Its object's place in the view of the scene with this structure (`u64::MAX`: not found yet).
+    view_index: usize,
+    view_structure: u64,
 }
 
 impl Instance {
@@ -246,6 +249,12 @@ pub struct ScriptHost {
     reads_fields: bool,
     /// Script properties set during the step, applied when it ends.
     property_writes: Vec<PropertyWrite>,
+    /// The objects as scripts see them, kept from step to step; `view_mark` is where the scene's log
+    /// of transform writes stood when it last caught up.
+    view: Arc<WorldView>,
+    view_mark: u64,
+    /// The transforms scripts set during a step, until it ends.
+    poses: Poses,
 }
 
 impl ScriptHost {
@@ -273,6 +282,9 @@ impl ScriptHost {
             state: SharedState::default(),
             reads_fields: false,
             property_writes: Vec::new(),
+            view: Arc::default(),
+            view_mark: 0,
+            poses: Poses::default(),
         }
     }
 
@@ -524,6 +536,8 @@ impl ScriptHost {
             stopped: false,
             pending_init: init,
             pending_start: start,
+            view_index: 0,
+            view_structure: u64::MAX,
         });
         Ok(())
     }
@@ -587,10 +601,7 @@ impl ScriptHost {
         input: &Arc<Input>,
         take: impl Fn(&mut Instance) -> Option<Phase>,
     ) -> Vec<(StableId, usize, ScriptError)> {
-        let world = {
-            let values = self.script_values();
-            WorldView::of(scene, values, &mut self.layout)
-        };
+        let world = self.world_view(scene);
         let mut failed = Vec::new();
         let mut logs = Vec::new();
         for entry in self.instances.iter_mut().filter(|e| !e.stopped) {
@@ -611,6 +622,7 @@ impl ScriptHost {
             });
             drain_logs(&mut store, &entry.script_name, &mut logs);
             after_call(scene, &mut store, &mut self.requests, &mut self.messages, &mut self.property_writes);
+            release_view(store.data_mut());
             if let Err(error) = result {
                 store.data_mut().running = false;
                 drop(store);
@@ -629,11 +641,11 @@ impl ScriptHost {
     pub fn update(&mut self, scene: &mut Scene, dt: f32, time: f64, input: &Arc<Input>) {
         let mut faults = Vec::new();
         let mut logs = Vec::new();
-        // Every script sees the objects as the step began.
-        let world = {
-            let values = self.script_values();
-            WorldView::of(scene, values, &mut self.layout)
-        };
+        // Every script sees the objects as the step began; what scripts set during it goes to the
+        // poses, which later scripts of the step read, and reaches the scene once per object.
+        let world = self.world_view(scene);
+        let Some(layout) = world.layout.clone() else { return };
+        self.poses.fit(layout.ids.len());
         let shared = Shares {
             world: &world,
             time,
@@ -647,12 +659,17 @@ impl ScriptHost {
         // The batched modules, each once: the place of each of its objects' instances.
         let mut batches: Vec<(Shared, TypedFunc<f32, ()>, Vec<usize>)> = Vec::new();
         for (place, entry) in self.instances.iter_mut().enumerate().filter(|(_, i)| !i.stopped) {
-            if !scene.contains(entry.object) {
-                entry.stopped = true;
-                if entry.batched() {
-                    entry.store().data_mut().running = false;
-                }
-                continue;
+            // Where its object is in the view, found again only when the scene's structure changed.
+            if entry.view_structure != layout.structure {
+                let Some(index) = layout.index.get(&entry.object) else {
+                    entry.stopped = true;
+                    if entry.batched() {
+                        entry.store().data_mut().running = false;
+                    }
+                    continue;
+                };
+                entry.view_index = *index;
+                entry.view_structure = layout.structure;
             }
             let update = match &entry.calls {
                 Calls::Own { update: Some(update), .. } => handle_copy(update),
@@ -666,16 +683,30 @@ impl ScriptHost {
                 }
             };
             let mut store = entry.store();
-            shared.prepare(store.data_mut(), scene, entry.object);
+            {
+                let state = store.data_mut();
+                (state.transform, state.position) = self.poses.get(&world, entry.view_index);
+                state.transform_changed = false;
+                shared.prepare_shared(state);
+            }
             let started = self.timing.then(bayleaf_core::time::Instant::now);
             let result = call(&mut store, &entry.module_name, FUEL_PER_CALL, |store| update.call(store, dt));
             if let Some(started) = started {
                 add_timing(&mut self.timings, &entry.script_name, started.elapsed());
             }
             drain_logs(&mut store, &entry.script_name, &mut logs);
+            let state = store.data_mut();
             match result {
-                Ok(()) => after_call(scene, &mut store, &mut self.requests, &mut self.messages, &mut self.property_writes),
+                Ok(()) => {
+                    if std::mem::take(&mut state.transform_changed) {
+                        self.poses.put(entry.view_index, state.transform, state.position);
+                    }
+                    after_shared_posed(state, &layout, &mut self.poses, &mut self.requests, &mut self.messages, &mut self.property_writes);
+                    release_view(state);
+                }
                 Err(error) => {
+                    state.writes.clear();
+                    release_view(state);
                     drop(store);
                     entry.stopped = true;
                     faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
@@ -689,9 +720,7 @@ impl ScriptHost {
             for &place in &places {
                 let entry = &self.instances[place];
                 let Some(view) = store.data_mut().slot_view(entry.slot) else { continue };
-                let t = scene.get::<bayleaf_scene::components::Transform>(entry.object).cloned().unwrap_or_default();
-                *view.transform = crate::abi_transform(&t);
-                *view.position = t.position;
+                (*view.transform, *view.position) = self.poses.get(&world, entry.view_index);
                 *view.changed = false;
                 *view.running = true;
             }
@@ -708,20 +737,23 @@ impl ScriptHost {
             let failing = if result.is_err() { failing_object(&mut store, &first.module, &self.instances, &places) } else { store.data().object };
             // What the call did for all its objects, then for each: its transform and its logs.
             if result.is_ok() {
-                after_shared(scene, &mut store, &mut self.requests, &mut self.messages, &mut self.property_writes);
+                after_shared_posed(store.data_mut(), &layout, &mut self.poses, &mut self.requests, &mut self.messages, &mut self.property_writes);
+            } else {
+                store.data_mut().writes.clear();
             }
             for &place in &places {
                 let entry = &self.instances[place];
                 let Some(view) = store.data_mut().slot_view(entry.slot) else { continue };
                 if result.is_err() {
                     *view.running = false;
-                } else if std::mem::take(view.changed) && scene.contains(entry.object) {
-                    let _ = scene.set(entry.object, transform_from(view.transform, *view.position));
+                } else if std::mem::take(view.changed) {
+                    self.poses.put(entry.view_index, *view.transform, *view.position);
                 }
                 if !view.logs.is_empty() {
                     logs.extend(view.logs.drain(..).map(|text| LogLine { object: entry.object, script: entry.script_name.clone(), text }));
                 }
             }
+            release_view(store.data_mut());
             drop(store);
             if let Err(error) = result {
                 // An error stops the module, and with it every object it runs: the error is the one
@@ -734,11 +766,59 @@ impl ScriptHost {
                 faults.push(ScriptFault { object: failing, script: script_name, error });
             }
         }
+        drop(world);
+        self.write_poses(scene);
         self.faults.extend(faults);
         self.push_logs(logs);
         self.apply_property_writes();
         self.deliver(scene, time, input);
         self.apply_property_writes();
+    }
+
+    /// The view of the objects for a call: the one kept from the last, with what moved since read
+    /// again; a new one when the scene's structure changed, the scene no longer remembers that far
+    /// back, or scripts read component fields (which change with any component).
+    fn world_view(&mut self, scene: &Scene) -> Arc<WorldView> {
+        let values = self.script_values();
+        let same = self.view.layout.as_ref().is_some_and(|l| l.structure == scene.structure() && l.ids.len() == scene.object_count());
+        match (values, scene.transforms_written_since(self.view_mark)) {
+            (None, Some(moved)) if same => {
+                if !moved.is_empty() {
+                    let view = Arc::make_mut(&mut self.view);
+                    if let Some(layout) = view.layout.clone() {
+                        for id in moved {
+                            if let Some(index) = layout.index.get(id) {
+                                view.read(scene, *index);
+                            }
+                        }
+                    }
+                }
+            }
+            (values, _) => self.view = Arc::new(WorldView::of(scene, values, &mut self.layout)),
+        }
+        self.view_mark = scene.transform_mark();
+        Arc::clone(&self.view)
+    }
+
+    /// Writes the transforms scripts set this step to the scene, each object once, and keeps them in
+    /// the view for the next.
+    fn write_poses(&mut self, scene: &mut Scene) {
+        if self.poses.order.is_empty() {
+            return;
+        }
+        // Anything else that moved since the view was made comes first, so it is not lost.
+        drop(self.world_view(scene));
+        let view = Arc::make_mut(&mut self.view);
+        let Some(layout) = view.layout.clone() else { return };
+        for index in std::mem::take(&mut self.poses.order) {
+            let (values, position) = (self.poses.values[index], self.poses.positions[index]);
+            self.poses.set[index] = false;
+            // The host functions already refused non-finite numbers.
+            if scene.set(layout.ids[index], transform_from(&values, position)).is_ok() {
+                view.set(index, values, position);
+            }
+        }
+        self.view_mark = scene.transform_mark();
     }
 
     /// Each script's properties, by object, when scripts read or set component fields.
@@ -778,10 +858,7 @@ impl ScriptHost {
         if messages.is_empty() {
             return;
         }
-        let world = {
-            let values = self.script_values();
-            WorldView::of(scene, values, &mut self.layout)
-        };
+        let world = self.world_view(scene);
         let shared = Shares {
             world: &world,
             time,
@@ -845,6 +922,7 @@ impl ScriptHost {
                 }
                 take_subscribing_of(&mut store, &mut self.subscriptions);
                 drain_logs(&mut store, &entry.script_name, &mut logs);
+                release_view(store.data_mut());
                 match result {
                     Ok(()) => after_call(scene, &mut store, &mut self.requests, &mut later, &mut self.property_writes),
                     Err(error) => {
@@ -959,10 +1037,7 @@ impl ScriptHost {
         if contacts.is_empty() {
             return;
         }
-        let world = {
-            let values = self.script_values();
-            WorldView::of(scene, values, &mut self.layout)
-        };
+        let world = self.world_view(scene);
         for (object, name, other) in contacts {
             self.messages.push(Message {
                 to: Some(*object),
@@ -1143,6 +1218,72 @@ fn take_subscribing_of(store: &mut Store<HostState>, subscriptions: &mut Vec<Sub
     }
 }
 
+/// The transforms scripts set during a step, by their object's place in the view: what later
+/// scripts of the step read, written to the scene once per object as it ends.
+#[derive(Default)]
+struct Poses {
+    set: Vec<bool>,
+    values: Vec<[f32; 9]>,
+    positions: Vec<[f64; 3]>,
+    /// The places set, in the order first set.
+    order: Vec<usize>,
+}
+
+impl Poses {
+    /// Room for `n` objects; what was set is forgotten when the number changes.
+    fn fit(&mut self, n: usize) {
+        if self.set.len() != n {
+            *self = Self { set: vec![false; n], values: vec![[0.0; 9]; n], positions: vec![[0.0; 3]; n], order: Vec::new() };
+        }
+    }
+
+    /// The transform of the object at `index`: as set this step, else as the step began.
+    fn get(&self, view: &WorldView, index: usize) -> ([f32; 9], [f64; 3]) {
+        if self.set.get(index).copied().unwrap_or(false) {
+            (self.values[index], self.positions[index])
+        } else {
+            (view.transforms.get(index).copied().unwrap_or_default(), view.positions.get(index).copied().unwrap_or_default())
+        }
+    }
+
+    fn put(&mut self, index: usize, values: [f32; 9], position: [f64; 3]) {
+        let Some(set) = self.set.get_mut(index) else { return };
+        if !*set {
+            *set = true;
+            self.order.push(index);
+        }
+        self.values[index] = values;
+        self.positions[index] = position;
+    }
+}
+
+/// A view with nothing in it, which a store holds between calls so the host can change the kept one
+/// in place.
+static NO_VIEW: std::sync::LazyLock<Arc<WorldView>> = std::sync::LazyLock::new(Arc::default);
+
+fn release_view(state: &mut HostState) {
+    state.world = Arc::clone(&NO_VIEW);
+}
+
+/// As [`after_shared`], for a step: other objects' transforms go to the poses.
+fn after_shared_posed(
+    state: &mut HostState,
+    layout: &crate::Layout,
+    poses: &mut Poses,
+    requests: &mut Vec<Request>,
+    messages: &mut Vec<Message>,
+    properties: &mut Vec<PropertyWrite>,
+) {
+    for (object, values, position) in state.writes.drain(..) {
+        if let Some(index) = layout.index.get(&object) {
+            poses.put(*index, values, position);
+        }
+    }
+    requests.append(&mut state.requests);
+    messages.append(&mut state.outbox);
+    properties.append(&mut state.property_writes);
+}
+
 /// Applies what a call changed for the selected object: its own transform, other objects'
 /// transforms, and its requests.
 fn after_call(scene: &mut Scene, store: &mut Store<HostState>, requests: &mut Vec<Request>, messages: &mut Vec<Message>, properties: &mut Vec<PropertyWrite>) {
@@ -1197,7 +1338,7 @@ fn read_event_args(caller: &mut Caller<'_, HostState>, ptr: i32, count: i32) -> 
             2 => EventArg::Flag(word(1) != 0),
             3 => EventArg::Vector([number(1), number(2), number(3)]),
             4 => EventArg::Text(read_text(caller, word(1) as i32, word(2) as i32, MAX_EVENT_TEXT)?),
-            5 => EventArg::Object(caller.data().world.get(word(1) as i32).map(|(id, _, _)| *id)),
+            5 => EventArg::Object(caller.data().world.get(word(1) as i32).map(|(id, _)| id)),
             6 | 7 => {
                 let name = read_text(caller, word(1) as i32, word(2) as i32, MAX_EVENT_TEXT)?;
                 copied(caller, &name, word(0) == 6)?
@@ -1233,9 +1374,9 @@ fn copied(caller: &Caller<'_, HostState>, name: &str, list: bool) -> Result<Even
 /// The object a component handle's value names, and which of its scripts: `None` when the object is
 /// gone or the component is none.
 fn component_at(caller: &Caller<'_, HostState>, handle: i32, script: i32) -> Option<(StableId, usize)> {
-    let (object, _, _) = caller.data().world.get(handle)?;
+    let (object, _) = caller.data().world.get(handle)?;
     let script = usize::try_from(script).ok()?.checked_sub(1)?;
-    Some((*object, script))
+    Some((object, script))
 }
 
 /// A script's components: finding one on an object, triggering an event on it, subscribing to its
@@ -1300,7 +1441,7 @@ fn link_events(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
             let to = if handle == EVERY_OBJECT {
                 None
             } else {
-                let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
                     return Err(fault(&mut caller, format!("event_send: there is no object with handle {handle}")));
                 };
                 Some(object)
@@ -1408,7 +1549,7 @@ fn fault(caller: &mut Caller<'_, HostState>, message: String) -> Error {
 
 /// Records a request to the Particle Emitter of the object with `handle`, applied after the step.
 fn particles_request(caller: &mut Caller<'_, HostState>, what: &str, handle: i32, action: crate::ParticleAction) -> Result<i32, Error> {
-    let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+    let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
         return Err(fault(caller, format!("{what}: there is no object with handle {handle}")));
     };
     let state = caller.data_mut();
@@ -1426,7 +1567,7 @@ const MAX_INTERFACE_TEXT: usize = 4096;
 /// Records a change to an element of the Interface of the object with `handle`, applied after the step.
 fn interface_request(caller: &mut Caller<'_, HostState>, what: &str, handle: i32, name: (i32, i32), change: crate::InterfaceChange) -> Result<i32, Error> {
     let element = read_text(caller, name.0, name.1, 64).map_err(|m| fault(caller, format!("{what}: {m}")))?;
-    let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+    let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
         return Err(fault(caller, format!("{what}: there is no object with handle {handle}")));
     };
     let state = caller.data_mut();
@@ -1449,7 +1590,7 @@ fn physics_request(
     if !v.iter().all(|c| c.is_finite()) {
         return Err(fault(caller, format!("{what}: give finite numbers")));
     }
-    let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+    let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
         return Err(fault(caller, format!("{what}: there is no object with handle {handle}")));
     };
     let state = caller.data_mut();
@@ -1782,7 +1923,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             Ok(i32::from(caller.data().grounded.contains(&object)))
         })?;
         linker.func_wrap("bayleaf", "velocity_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32| -> Result<i32, Error> {
-            let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+            let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
                 return Err(fault(&mut caller, format!("velocity_of: there is no object with handle {handle}")));
             };
             let found = caller.data().velocities.get(&object).copied();
@@ -1940,7 +2081,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             usize::try_from(reference).ok().and_then(|r| r.checked_sub(1)).and_then(|i| state.refs.get(i)).map_or(0, |id| state.world.handle_of(*id))
         })?;
         linker.func_wrap("bayleaf", "name_of", |mut caller: Caller<'_, HostState>, handle: i32, out: i32, cap: i32| -> Result<i32, Error> {
-            let name = caller.data().world.get(handle).map(|(_, name, _)| name.clone()).unwrap_or_default();
+            let name = caller.data().world.get(handle).map(|(_, name)| name.clone()).unwrap_or_default();
             let cap = usize::try_from(cap).map_err(|_| fault(&mut caller, "name_of: the room must not be negative".to_owned()))?;
             let bytes = name.as_bytes();
             write_guest(&mut caller, out, &bytes[..bytes.len().min(cap)], "name_of")?;
@@ -2017,7 +2158,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         )?;
         linker.func_wrap("bayleaf", "ui_value", |mut caller: Caller<'_, HostState>, handle: i32, name_ptr: i32, name_len: i32| -> Result<f64, Error> {
             let name = read_text(&mut caller, name_ptr, name_len, 64).map_err(|m| fault(&mut caller, format!("ui_value: {m}")))?;
-            let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+            let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
                 return Err(fault(&mut caller, format!("ui_value: there is no object with handle {handle}")));
             };
             Ok(caller.data().interface.get(&(object, name)).map_or(f64::NAN, |(value, _)| *value))
@@ -2027,7 +2168,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             "ui_text",
             |mut caller: Caller<'_, HostState>, handle: i32, name_ptr: i32, name_len: i32, out: i32, cap: i32| -> Result<i32, Error> {
                 let name = read_text(&mut caller, name_ptr, name_len, 64).map_err(|m| fault(&mut caller, format!("ui_text: {m}")))?;
-                let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
                     return Err(fault(&mut caller, format!("ui_text: there is no object with handle {handle}")));
                 };
                 let Some(text) = caller.data().interface.get(&(object, name)).map(|(_, text)| text.clone()) else { return Ok(-1) };
@@ -2066,7 +2207,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         )?;
         for (name, stop) in [("sound_play", false), ("sound_stop", true)] {
             linker.func_wrap("bayleaf", name, move |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, Error> {
-                let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
                     return Err(fault(&mut caller, format!("{name}: there is no object with handle {handle}")));
                 };
                 let state = caller.data_mut();
@@ -2119,7 +2260,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             Ok(1)
         })?;
         linker.func_wrap("bayleaf", "destroy", |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, Error> {
-            let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+            let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
                 return Err(fault(&mut caller, format!("destroy: there is no object with handle {handle}")));
             };
             let state = caller.data_mut();
@@ -2137,7 +2278,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             let to = if handle == EVERY_OBJECT {
                 None
             } else {
-                let Some((object, _, _)) = caller.data().world.get(handle).cloned() else {
+                let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
                     return Err(fault(&mut caller, format!("send: there is no object with handle {handle}")));
                 };
                 Some(object)
@@ -2236,7 +2377,7 @@ fn seeded(caller: &Caller<'_, HostState>, seed: &DeclaredProperty) -> Stored {
     let arg = |value: &PropertyValue| -> EventArg {
         match (seed.ty, value) {
             (PropertyType::WholeNumber, PropertyValue::Number(n)) => EventArg::Whole(*n as i32),
-            (PropertyType::Object, PropertyValue::Text(name)) => EventArg::Object(world.get(world.find(name)).map(|(id, _, _)| *id)),
+            (PropertyType::Object, PropertyValue::Text(name)) => EventArg::Object(world.get(world.find(name)).map(|(id, _)| id)),
             (_, PropertyValue::Number(n)) => EventArg::Number(*n as f32),
             (_, PropertyValue::Flag(b)) => EventArg::Flag(*b),
             (_, PropertyValue::Triple(v)) => EventArg::Vector(*v),
@@ -2260,7 +2401,7 @@ fn seeded_key(world: &WorldView, ty: PropertyType, key: &str) -> Option<MapKey> 
     let number = |t: &str| t.trim().parse::<f32>().ok().filter(|v| v.is_finite());
     Some(match ty {
         PropertyType::Text => MapKey::Text(key.to_owned()),
-        PropertyType::Object => MapKey::Object(world.get(world.find(key)).map(|(id, _, _)| *id)?),
+        PropertyType::Object => MapKey::Object(world.get(world.find(key)).map(|(id, _)| id)?),
         PropertyType::Number => MapKey::Number(Ordered::new(number(key)?)),
         PropertyType::WholeNumber => MapKey::Whole(key.trim().parse().ok()?),
         PropertyType::TrueFalse => MapKey::Flag(key.parse().ok()?),

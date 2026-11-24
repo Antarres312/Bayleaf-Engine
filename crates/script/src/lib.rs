@@ -429,11 +429,15 @@ struct Subscription {
 pub const MAX_SUBSCRIPTIONS: usize = 65_536;
 
 /// What scripts see of the scene that changes only with its structure (`Scene::structure`): each
-/// object's name, what it is for searches, its scripts' names, whether it is a player and what rays
-/// can hit on it, by its place in hierarchy order. Kept from step to step while the structure stays.
+/// object's id, name, parent, what it is for searches, its scripts' names, whether it is a player
+/// and what rays can hit on it, by its place in hierarchy order. Kept from step to step while the
+/// structure stays.
 struct Layout {
     structure: u64,
+    ids: Vec<StableId>,
     names: Vec<Arc<str>>,
+    /// Each object's parent's place; parents come before their children.
+    parents: Vec<Option<usize>>,
     /// Each object's place, by id.
     index: bayleaf_core::hash::IdMap<StableId, usize>,
     /// The first object of each name, in hierarchy order.
@@ -445,42 +449,60 @@ struct Layout {
 }
 
 impl Layout {
-    fn of(scene: &Scene, all: &[(StableId, DMat4)]) -> Self {
-        let names: Vec<Arc<str>> = all.iter().map(|(id, _)| Arc::from(scene.name(*id).unwrap_or_default())).collect();
+    /// The layout `kept` holds while the scene's structure is the same, else a new one (kept too).
+    fn current(scene: &Scene, kept: &mut Option<Arc<Layout>>) -> Arc<Layout> {
+        match kept {
+            Some(layout) if layout.structure == scene.structure() && layout.ids.len() == scene.object_count() => Arc::clone(layout),
+            _ => {
+                let ids: Vec<StableId> = scene.world_matrices().into_iter().map(|(id, _)| id).collect();
+                let layout = Arc::new(Layout::of(scene, ids));
+                *kept = Some(Arc::clone(&layout));
+                layout
+            }
+        }
+    }
+
+    fn of(scene: &Scene, ids: Vec<StableId>) -> Self {
+        let names: Vec<Arc<str>> = ids.iter().map(|id| Arc::from(scene.name(*id).unwrap_or_default())).collect();
         let mut by_name = bayleaf_core::hash::IdMap::with_capacity_and_hasher(names.len(), Default::default());
         for (i, name) in names.iter().enumerate() {
             by_name.entry(Arc::clone(name)).or_insert(i);
         }
+        let index: bayleaf_core::hash::IdMap<StableId, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         Self {
             structure: scene.structure(),
-            index: all.iter().enumerate().map(|(i, (id, _))| (*id, i)).collect(),
+            parents: ids.iter().map(|id| scene.parent(*id).and_then(|p| index.get(&p).copied())).collect(),
+            index,
             by_name,
             names,
-            kinds: all.iter().map(|(id, _)| object_kinds(scene, *id)).collect(),
-            players: all.iter().map(|(id, _)| *id).filter(|id| scene.get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect(),
-            script_names: all
+            kinds: ids.iter().map(|id| object_kinds(scene, *id)).collect(),
+            players: ids.iter().copied().filter(|id| scene.get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect(),
+            script_names: ids
                 .iter()
-                .map(|(id, _)| {
+                .map(|id| {
                     scene
                         .get::<bayleaf_scene::components::Scripts>(*id)
                         .map(|s| s.0.iter().map(|script| kind_key(&script.display_name())).collect())
                         .unwrap_or_default()
                 })
                 .collect(),
-            shapes: all.iter().map(|(id, _)| shape_spec(scene, *id)).collect(),
+            shapes: ids.iter().map(|id| shape_spec(scene, *id)).collect(),
+            ids,
         }
     }
 }
 
-/// The objects scripts can see during one step: names and local transforms as the step began.
-/// A handle is an object's position in this list plus one; 0 means none.
-#[derive(Default)]
+/// The objects scripts can see during one step: their transforms as the step began, by their place
+/// in [`Layout`]. A handle is an object's place plus one; 0 means none. The host keeps one from step
+/// to step and changes only what moved.
+#[derive(Clone, Default)]
 struct WorldView {
-    objects: Vec<(StableId, Arc<str>, [f32; 9])>,
-    /// Each object's world matrix as the step began, by the same index: where its ray shape is.
-    worlds: Vec<DMat4>,
-    /// Each object's position in double precision, by the same index.
+    /// Each object's transform as scripts read it (`transform_get`).
+    transforms: Vec<[f32; 9]>,
+    /// Each object's position in double precision.
     positions: Vec<[f64; 3]>,
+    /// Each object's world matrix, worked out from the transforms the first time a ray needs one.
+    worlds: std::sync::OnceLock<Vec<DMat4>>,
     /// The fields of each object's readable components (`visual::COMPONENTS`), by the same index;
     /// empty unless a loaded script reads or sets component fields.
     fields: Vec<Vec<(&'static str, serde_json::Value)>>,
@@ -495,27 +517,49 @@ impl WorldView {
     /// `scripts` is `Some` when scripts read or set component fields: then their values come along.
     /// `kept` is the layout of an earlier step, used again while the scene's structure is the same,
     /// and replaced when it is not.
-    fn of(scene: &Scene, scripts: Option<HashMap<StableId, Vec<ScriptValues>>>, kept: &mut Option<Arc<Layout>>) -> Arc<Self> {
-        let with_fields = scripts.is_some();
-        let all = scene.world_matrices();
-        let layout = match kept {
-            Some(layout) if layout.structure == scene.structure() && layout.names.len() == all.len() => Arc::clone(layout),
-            _ => {
-                let layout = Arc::new(Layout::of(scene, &all));
-                *kept = Some(Arc::clone(&layout));
-                layout
-            }
+    fn of(scene: &Scene, scripts: Option<HashMap<StableId, Vec<ScriptValues>>>, kept: &mut Option<Arc<Layout>>) -> Self {
+        let layout = Layout::current(scene, kept);
+        let mut view = Self {
+            transforms: vec![[0.0; 9]; layout.ids.len()],
+            positions: vec![[0.0; 3]; layout.ids.len()],
+            fields: if scripts.is_some() { layout.ids.iter().map(|id| object_fields(scene, *id)).collect() } else { Vec::new() },
+            scripts: scripts.unwrap_or_default(),
+            layout: Some(layout),
+            ..Self::default()
         };
-        let mut objects = Vec::with_capacity(all.len());
-        let mut positions = Vec::with_capacity(all.len());
-        for (i, (id, _)) in all.iter().enumerate() {
-            let t = scene.get::<Transform>(*id).cloned().unwrap_or_default();
-            objects.push((*id, Arc::clone(&layout.names[i]), abi_transform(&t)));
-            positions.push(t.position);
+        for index in 0..view.transforms.len() {
+            view.read(scene, index);
         }
-        let worlds = all.iter().map(|(_, world)| *world).collect();
-        let fields = if with_fields { all.iter().map(|(id, _)| object_fields(scene, *id)).collect() } else { Vec::new() };
-        Arc::new(Self { objects, worlds, positions, fields, scripts: scripts.unwrap_or_default(), layout: Some(layout) })
+        view
+    }
+
+    /// Reads the transform of the object at `index` from the scene again.
+    fn read(&mut self, scene: &Scene, index: usize) {
+        let Some(id) = self.layout().and_then(|l| l.ids.get(index)).copied() else { return };
+        let t = scene.get::<Transform>(id).cloned().unwrap_or_default();
+        self.set(index, abi_transform(&t), t.position);
+    }
+
+    /// Gives the object at `index` this transform.
+    fn set(&mut self, index: usize, values: [f32; 9], position: [f64; 3]) {
+        if let (Some(v), Some(p)) = (self.transforms.get_mut(index), self.positions.get_mut(index)) {
+            (*v, *p) = (values, position);
+            self.worlds.take();
+        }
+    }
+
+    /// Each object's world matrix, by its place.
+    fn worlds(&self) -> &[DMat4] {
+        self.worlds.get_or_init(|| {
+            let parents = self.layout().map_or(&[][..], |l| l.parents.as_slice());
+            let mut out: Vec<DMat4> = Vec::with_capacity(self.transforms.len());
+            for (i, (values, position)) in self.transforms.iter().zip(&self.positions).enumerate() {
+                let local = transform_from(values, *position).matrix();
+                let parent = parents.get(i).copied().flatten().and_then(|p| out.get(p)).copied();
+                out.push(parent.map_or(local, |m| m * local));
+            }
+            out
+        })
     }
 
     fn layout(&self) -> Option<&Layout> {
@@ -536,9 +580,10 @@ impl WorldView {
     fn raycast(&self, origin: DVec3, direction: DVec3, max: f64, skip: StableId) -> Option<(usize, f64)> {
         let layout = self.layout()?;
         let mut best: Option<(usize, f64)> = None;
+        let worlds = self.worlds();
         for (index, spec) in layout.shapes.iter().enumerate() {
-            let (Some(spec), Some(world)) = (spec, self.worlds.get(index)) else { continue };
-            if self.objects[index].0 == skip {
+            let (Some(spec), Some(world)) = (spec, worlds.get(index)) else { continue };
+            if layout.ids[index] == skip {
                 continue;
             }
             let (pose, shape) = spec.placed(*world);
@@ -574,7 +619,7 @@ impl WorldView {
     /// The object a handle names and its index.
     fn object(&self, handle: i32) -> Option<(StableId, usize)> {
         let index = usize::try_from(handle).ok()?.checked_sub(1)?;
-        Some((self.objects.get(index)?.0, index))
+        Some((*self.layout()?.ids.get(index)?, index))
     }
 
     /// The place (plus one) of the first script named `name` on the object with `handle`; 0 for none.
@@ -585,8 +630,11 @@ impl WorldView {
             .map_or(0, |place| i32::try_from(place + 1).unwrap_or(0))
     }
 
-    fn get(&self, handle: i32) -> Option<&(StableId, Arc<str>, [f32; 9])> {
-        usize::try_from(handle).ok().and_then(|h| h.checked_sub(1)).and_then(|i| self.objects.get(i))
+    /// The id and name of the object a handle names.
+    fn get(&self, handle: i32) -> Option<(StableId, &Arc<str>)> {
+        let index = usize::try_from(handle).ok()?.checked_sub(1)?;
+        let layout = self.layout()?;
+        Some((*layout.ids.get(index)?, layout.names.get(index)?))
     }
 }
 
@@ -918,7 +966,7 @@ impl<L> HostState<L> {
             .rev()
             .find(|(o, _, _)| *o == object)
             .map(|(_, v, p)| (*v, *p))
-            .unwrap_or_else(|| (self.world.objects[index].2, self.world.positions[index]))
+            .unwrap_or_else(|| (self.world.transforms[index], self.world.positions[index]))
     }
 
     /// Records a new transform for `object`: this script's own, or another object's, applied after the call.

@@ -239,6 +239,20 @@ single runs (`target\release\bayleaf-bench.exe`, milliseconds per step, mean):
 | Visual, interpreted, script step, 5000 | | | 22.8, then 13.6 with the frame |
 | Visual, compiled, script step, 20,000 | no fit | | 120.7, then 58.1 with the frame |
 
+Then at 20,000 objects, with the host's own work per object cut down:
+
+| Case, script step, 20,000 | Before (64c5b13) | Ids hashed fast (faef7cc) | View and transforms kept |
+|---|---:|---:|---:|
+| No scripts | 7.5 | 4.3 | 0.0 |
+| 3 empty Rust scripts, compiled | 26.5 | 15.7 | 5.9 |
+| Rust, compiled | 36.7 | 33.9 | 17.3 |
+| Visual, compiled | 38.8 | 36.3 | 18.9 |
+
+At 5000 objects after it: Rust 2.9 compiled and 17.0 interpreted, visual 5.3 compiled and 11.1
+interpreted. The view of the objects is kept from step to step and only what the scene's log says
+moved is read again; scripts' transforms go to one table that later scripts of the step read, and
+reach the scene once per object as the step ends; world matrices are worked out only for a ray.
+
 What changed: the world view keeps what changes only with the scene's structure; a Rust script's
 module runs every object of its file in one instance with one call per step, its objects'
 transforms going in and out in one frame, its properties and the time kept as last read, and the

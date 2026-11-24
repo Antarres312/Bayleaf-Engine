@@ -296,3 +296,20 @@ fn list_and_map_script_properties_come_back_from_the_file_as_they_went() {
     assert_eq!(properties.get("by"), Some(&map));
     assert!(list.fits_shape(PropertyType::WholeNumber, PropertyShape::List) && !list.fits_shape(PropertyType::Vector, PropertyShape::Single));
 }
+
+#[test]
+fn transform_writes_since_a_mark_are_listed_and_a_mark_too_old_says_so() {
+    let (mut scene, [a, child, _, b]) = tree();
+    let mark = scene.transform_mark();
+    let moved = crate::components::Transform { position: [1.0, 2.0, 3.0], rotation: [0.0; 3], scale: [1.0; 3] };
+    scene.set(a, moved.clone()).unwrap();
+    scene.set_component(b, "transform", json!({"position": [4, 5, 6], "rotation": [0, 0, 0], "scale": [1, 1, 1]})).unwrap();
+    scene.set(child, crate::components::Name("Renamed".to_owned())).unwrap();
+    assert_eq!(scene.transforms_written_since(mark), Some(&[a, b][..]), "the moved objects, not the renamed one");
+    assert_eq!(scene.transforms_written_since(scene.transform_mark()), Some(&[][..]), "nothing since now");
+    // Many more writes than objects: the log starts again, and the first mark no longer reaches.
+    for _ in 0..5000 {
+        scene.set(a, moved.clone()).unwrap();
+    }
+    assert_eq!(scene.transforms_written_since(mark), None);
+}

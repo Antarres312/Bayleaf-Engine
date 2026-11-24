@@ -867,6 +867,33 @@ fn a_raycast_finds_the_nearest_turned_box_and_misses_when_nothing_is_there() {
 }
 
 #[test]
+fn a_raycast_finds_a_child_where_its_parent_was_moved_between_steps() {
+    let mut b = Builder::new();
+    let update = b.node("update", json!({}));
+    let ray = b.node("raycast", json!({ "direction": [1.0, 0.0, 0.0], "distance": 50.0 }));
+    let log = b.node("log", json!({ "message": "" }));
+    b.link(update, "then", log, "run");
+    b.link(ray, "distance", log, "value");
+    let (mut scene, _, mut host) = run(&b.bytes(), &[]);
+    // A cube 5 ahead of its parent, the parent first at the origin.
+    let parent = scene.create_object(None, "Holder").unwrap();
+    let cube = scene.create_object(Some(parent), "Cube").unwrap();
+    scene.add_component(cube, "mesh").unwrap();
+    scene.set_component(cube, "mesh", json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.5})).unwrap();
+    scene.set(cube, Transform { position: [5.0, 0.0, 0.0], rotation: [0.0; 3], scale: [1.0; 3] }).unwrap();
+    let input = Arc::new(Input::default());
+    let distance = |host: &mut ScriptHost, scene: &mut Scene| -> f32 {
+        host.update(scene, 0.1, 0.0, &input);
+        host.take_logs()[0].text.parse().unwrap()
+    };
+    let before = distance(&mut host, &mut scene);
+    // Only the parent moves, outside the scripts: the cube goes with it.
+    scene.set(parent, Transform { position: [10.0, 0.0, 0.0], rotation: [0.0; 3], scale: [1.0; 3] }).unwrap();
+    let after = distance(&mut host, &mut scene);
+    assert!(after > before + 5.0, "the ray meets the cube farther once its parent moved: {before} then {after}");
+}
+
+#[test]
 fn move_by_keeps_small_steps_far_from_the_centre() {
     // Single precision rounds to 1/16 of a unit at 1000 km; double precision keeps every millimetre.
     let mut b = Builder::new();
