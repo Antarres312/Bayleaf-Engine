@@ -120,6 +120,35 @@ fn described_events(value: Option<&serde_json::Value>) -> Result<Vec<DeclaredEve
     Ok(events)
 }
 
+/// A store, shared by every object a module that runs many objects runs.
+type Shared = Arc<std::sync::Mutex<Store<HostState>>>;
+
+/// How a script's object gets its calls: a module of its own, or a slot of a module that runs every
+/// object of its file in one instance (it exports `bayleaf_update_all`; see `docs/script-abi.md`).
+#[derive(Clone)]
+enum Calls {
+    Own {
+        update: Option<TypedFunc<f32, ()>>,
+        /// `bayleaf_message(value)`, if the module takes messages.
+        on_message: Option<TypedFunc<f32, ()>>,
+    },
+    Batch {
+        /// `bayleaf_update_all(dt)`: every object of the module in one call.
+        update_all: TypedFunc<f32, ()>,
+        /// `bayleaf_message_slot(slot, value)`, if the module takes messages.
+        on_message: Option<TypedFunc<(i32, f32), ()>>,
+        /// `bayleaf_detach(slot)`: the object is gone from the module.
+        detach: TypedFunc<i32, ()>,
+    },
+}
+
+/// An init or a start still to run: the module's own, or a slot's of a module that runs many.
+#[derive(Clone)]
+enum Phase {
+    Own(TypedFunc<(), ()>),
+    Slot(TypedFunc<i32, ()>),
+}
+
 struct Instance {
     object: StableId,
     /// Position in the object's `scripts` list.
@@ -128,17 +157,61 @@ struct Instance {
     path: PathBuf,
     module_name: String,
     modified: Option<SystemTime>,
-    store: Store<HostState>,
-    update: Option<TypedFunc<f32, ()>>,
-    /// `bayleaf_message(value)`, if the module takes messages.
-    on_message: Option<TypedFunc<f32, ()>>,
+    /// The store it runs in: its own, or the one every object of a batched module shares.
+    store: Shared,
+    /// Its object's slot in the store (0 in a store of its own).
+    slot: usize,
+    /// The module's instance, to attach more objects of the same file to it.
+    module: rt::Instance,
+    /// Which module bytes it runs, so objects of the same file share a batched module only while
+    /// the file is the same.
+    key: u64,
+    /// What it declares, kept for objects attached to the same batched module.
+    description: Arc<Description>,
+    calls: Calls,
     /// Stopped after an error; it no longer runs.
     stopped: bool,
     /// `bayleaf_init`, until it has run. Scripts loaded together all init once all of them are
     /// loaded, then all start, so each one sees the others (their properties, as components).
-    pending_init: Option<TypedFunc<(), ()>>,
+    pending_init: Option<Phase>,
     /// `bayleaf_start`, until it has run (after every script loaded with it has run its init).
-    pending_start: Option<TypedFunc<(), ()>>,
+    pending_start: Option<Phase>,
+}
+
+impl Instance {
+    /// The store it runs in, its object selected for the host functions.
+    fn store(&self) -> std::sync::MutexGuard<'_, Store<HostState>> {
+        let mut store = self.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        store.data_mut().select(self.slot);
+        store
+    }
+
+    fn batched(&self) -> bool {
+        matches!(self.calls, Calls::Batch { .. })
+    }
+
+    /// Takes its object out of a batched module (it goes, or loads again): the module drops what
+    /// it kept for it, and the slot no longer runs.
+    fn release(&self) {
+        let Calls::Batch { detach, .. } = &self.calls else { return };
+        let mut store = self.store();
+        store.data_mut().running = false;
+        let _ = store.set_fuel(FUEL_PER_CALL);
+        let _ = detach.call(&mut *store, self.slot as i32);
+    }
+}
+
+/// A copy of a runtime handle: `Copy` in one runtime, `Clone` in the other, so the same code serves both.
+fn handle_copy<T: Clone>(value: &T) -> T {
+    value.clone()
+}
+
+/// A key for module bytes (within one run of the program).
+fn bytes_key(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// All script instances of one play session.
@@ -357,39 +430,40 @@ impl ScriptHost {
             }
         };
         self.reads_fields |= module.imports().any(|i| matches!(i.name(), "component_get" | "component_set"));
-        let mut state = HostState::new(object, read_transform(scene, object), Properties::new(), time, input, limits());
-        state.position = read_position(scene, object);
-        state.index = index;
-        state.state = Arc::clone(&self.state);
-        state.input_maps = Arc::clone(&self.input_maps);
-        // The world view comes before each call (init, start, every step), so a script just loaded
-        // keeps none: loading stays linear in the scene, not objects times scripts.
-        state.world = Arc::default();
-        let mut store = Store::new(&self.engine, state);
-        store.limiter(|state| &mut state.limits);
-        let trapped = |module: &str, e: Error| ScriptError::Trapped { module: module.to_owned(), message: trap_message(&e) };
-        store.set_fuel(FUEL_PER_CALL).map_err(|e| trapped(&module_name, e))?;
-        let instance = instantiate(&self.linker, &mut store, &module).map_err(|e| trapped(&module_name, e))?;
-        store.data_mut().native = native.map(|script| script.create());
-
-        let abi = instance
-            .get_typed_func::<(), i32>(&mut store, "bayleaf_abi")
-            .map_err(|_| ScriptError::Invalid(module_name.clone(), "it has no bayleaf_abi export".to_owned()))?;
-        let found = abi.call(&mut store, ()).map_err(|e| trapped(&module_name, e))?;
-        if found != ABI_VERSION {
-            return Err(ScriptError::AbiMismatch { module: module_name, found, expected: ABI_VERSION });
+        let key = bytes_key(bytes);
+        // Replace an earlier instance in the same place (hot reload).
+        for gone in self.instances.iter().filter(|i| i.object == object && i.index == index) {
+            gone.release();
         }
-        if instance.get_export(&mut store, "memory").and_then(rt::Extern::into_memory).is_none() {
-            return Err(ScriptError::Invalid(module_name, "it exports no memory".to_owned()));
-        }
+        self.instances.retain(|i| !(i.object == object && i.index == index));
+        // A module that runs many objects in one instance: every object of the same file shares it.
+        let batched = native.is_none() && module.exports().any(|e| e.name() == "bayleaf_update_all");
+        let shared = self.instances.iter().find(|i| batched && i.batched() && i.key == key && i.path == path);
+        let (store, slot, instance, description) = match shared {
+            Some(other) => {
+                let store = Arc::clone(&other.store);
+                let slot = {
+                    let mut locked = store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let own =
+                        crate::Own { object, index, transform: read_transform(scene, object), position: read_position(scene, object), ..Default::default() };
+                    locked.data_mut().add_slot(own)
+                };
+                (store, slot, handle_copy(&other.module), Arc::clone(&other.description))
+            }
+            None => {
+                let (store, instance, description) = self.new_store(object, index, &module, &module_name, native, scene, time, input)?;
+                (Arc::new(std::sync::Mutex::new(store)), 0, instance, Arc::new(description))
+            }
+        };
+        let mut locked = store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        locked.data_mut().select(slot);
         // Declared defaults, overridden by the values saved in the scene that fit the declared type.
         // A saved value the script does not declare is still there to read, typed by its shape.
         // A list or map (a property, or a visual script's variable) is kept apart: it fills that
         // list or map the first time the script uses it.
-        let description = describe_instance(&mut store, &instance, &module_name)?;
-        let (single, shaped): (Vec<_>, Vec<_>) = description.properties.into_iter().partition(|p| p.shape == PropertyShape::Single);
+        let (single, shaped): (Vec<_>, Vec<_>) = description.properties.iter().cloned().partition(|p| p.shape == PropertyShape::Single);
         let mut properties: Properties = single.into_iter().map(|p| (p.name, (p.ty, p.default))).collect();
-        let mut seeds: HashMap<String, DeclaredProperty> = shaped.into_iter().chain(description.kept).map(|p| (p.name.clone(), p)).collect();
+        let mut seeds: HashMap<String, DeclaredProperty> = shaped.into_iter().chain(description.kept.iter().cloned()).map(|p| (p.name.clone(), p)).collect();
         for (name, value) in &script.properties {
             if let Some(seed) = seeds.get_mut(name) {
                 if seed.accepts(value) {
@@ -405,15 +479,34 @@ impl ScriptHost {
                 }
             }
         }
-        store.data_mut().properties = properties;
-        store.data_mut().seeds = seeds;
-        let update = instance.get_typed_func::<f32, ()>(&mut store, "bayleaf_update").ok();
-        let on_message = instance.get_typed_func::<f32, ()>(&mut store, "bayleaf_message").ok();
-        let init = instance.get_typed_func::<(), ()>(&mut store, "bayleaf_init").ok();
-        let start = instance.get_typed_func::<(), ()>(&mut store, "bayleaf_start").ok();
-
-        // Replace an earlier instance in the same slot (hot reload).
-        self.instances.retain(|i| !(i.object == object && i.index == index));
+        locked.data_mut().properties = properties;
+        locked.data_mut().seeds = seeds;
+        let trapped = |module: &str, e: Error| ScriptError::Trapped { module: module.to_owned(), message: trap_message(&e) };
+        let (calls, init, start) = if batched {
+            let func = |locked: &mut Store<HostState>, name: &str| {
+                instance
+                    .get_typed_func::<i32, ()>(&mut *locked, name)
+                    .map_err(|_| ScriptError::Invalid(module_name.clone(), format!("it runs many objects but has no {name} export")))
+            };
+            let attach = func(&mut locked, "bayleaf_attach")?;
+            let detach = func(&mut locked, "bayleaf_detach")?;
+            let update_all = instance
+                .get_typed_func::<f32, ()>(&mut *locked, "bayleaf_update_all")
+                .map_err(|_| ScriptError::Invalid(module_name.clone(), "its bayleaf_update_all is not (f32)".to_owned()))?;
+            let on_message = instance.get_typed_func::<(i32, f32), ()>(&mut *locked, "bayleaf_message_slot").ok();
+            let init = instance.get_typed_func::<i32, ()>(&mut *locked, "bayleaf_init_slot").ok().map(Phase::Slot);
+            let start = instance.get_typed_func::<i32, ()>(&mut *locked, "bayleaf_start_slot").ok().map(Phase::Slot);
+            locked.set_fuel(FUEL_PER_CALL).map_err(|e| trapped(&module_name, e))?;
+            attach.call(&mut *locked, slot as i32).map_err(|e| trapped(&module_name, e))?;
+            (Calls::Batch { update_all, on_message, detach }, init, start)
+        } else {
+            let update = instance.get_typed_func::<f32, ()>(&mut *locked, "bayleaf_update").ok();
+            let on_message = instance.get_typed_func::<f32, ()>(&mut *locked, "bayleaf_message").ok();
+            let init = instance.get_typed_func::<(), ()>(&mut *locked, "bayleaf_init").ok().map(Phase::Own);
+            let start = instance.get_typed_func::<(), ()>(&mut *locked, "bayleaf_start").ok().map(Phase::Own);
+            (Calls::Own { update, on_message }, init, start)
+        };
+        drop(locked);
         let script_name = script.display_name();
         self.instances.push(Instance {
             object,
@@ -423,13 +516,58 @@ impl ScriptHost {
             module_name,
             modified,
             store,
-            update,
-            on_message,
+            slot,
+            module: instance,
+            key,
+            description,
+            calls,
             stopped: false,
             pending_init: init,
             pending_start: start,
         });
         Ok(())
+    }
+
+    /// A store of its own for a module's first object: the instance made, its ABI checked, what it
+    /// declares.
+    #[allow(clippy::too_many_arguments)]
+    fn new_store(
+        &self,
+        object: StableId,
+        index: usize,
+        module: &Module,
+        module_name: &str,
+        native: Option<crate::NativeScript>,
+        scene: &Scene,
+        time: f64,
+        input: &Arc<Input>,
+    ) -> Result<(Store<HostState>, rt::Instance, Description), ScriptError> {
+        let mut state = HostState::new(object, read_transform(scene, object), Properties::new(), time, input, limits());
+        state.position = read_position(scene, object);
+        state.index = index;
+        state.state = Arc::clone(&self.state);
+        state.input_maps = Arc::clone(&self.input_maps);
+        // The world view comes before each call (init, start, every step), so a script just loaded
+        // keeps none: loading stays linear in the scene, not objects times scripts.
+        state.world = Arc::default();
+        let mut store = Store::new(&self.engine, state);
+        store.limiter(|state| &mut state.limits);
+        let trapped = |e: Error| ScriptError::Trapped { module: module_name.to_owned(), message: trap_message(&e) };
+        store.set_fuel(FUEL_PER_CALL).map_err(trapped)?;
+        let instance = instantiate(&self.linker, &mut store, module).map_err(trapped)?;
+        store.data_mut().native = native.map(|script| script.create());
+        let abi = instance
+            .get_typed_func::<(), i32>(&mut store, "bayleaf_abi")
+            .map_err(|_| ScriptError::Invalid(module_name.to_owned(), "it has no bayleaf_abi export".to_owned()))?;
+        let found = abi.call(&mut store, ()).map_err(trapped)?;
+        if found != ABI_VERSION {
+            return Err(ScriptError::AbiMismatch { module: module_name.to_owned(), found, expected: ABI_VERSION });
+        }
+        if instance.get_export(&mut store, "memory").and_then(rt::Extern::into_memory).is_none() {
+            return Err(ScriptError::Invalid(module_name.to_owned(), "it exports no memory".to_owned()));
+        }
+        let description = describe_instance(&mut store, &instance, module_name)?;
+        Ok((store, instance, description))
     }
 
     /// Runs `bayleaf_init` of every script loaded and not initialised yet, then `bayleaf_start` of
@@ -447,7 +585,7 @@ impl ScriptHost {
         scene: &mut Scene,
         time: f64,
         input: &Arc<Input>,
-        take: impl Fn(&mut Instance) -> Option<TypedFunc<(), ()>>,
+        take: impl Fn(&mut Instance) -> Option<Phase>,
     ) -> Vec<(StableId, usize, ScriptError)> {
         let world = {
             let values = self.script_values();
@@ -456,9 +594,10 @@ impl ScriptHost {
         let mut failed = Vec::new();
         let mut logs = Vec::new();
         for entry in self.instances.iter_mut().filter(|e| !e.stopped) {
-            let Some(start) = take(entry) else { continue };
+            let Some(phase) = take(entry) else { continue };
+            let mut store = entry.store();
             {
-                let state = entry.store.data_mut();
+                let state = store.data_mut();
                 state.world = Arc::clone(&world);
                 state.transform = read_transform(scene, entry.object);
                 state.position = read_position(scene, entry.object);
@@ -466,11 +605,15 @@ impl ScriptHost {
                 state.time = time;
                 state.input = Arc::clone(input);
             }
-            let result = call(entry, |store| start.call(store, ()));
-            let script = entry.script_name.clone();
-            logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
-            after_call(scene, entry, &mut self.requests, &mut self.messages, &mut self.property_writes);
+            let result = call(&mut store, &entry.module_name, FUEL_PER_CALL, |store| match &phase {
+                Phase::Own(start) => start.call(store, ()),
+                Phase::Slot(start) => start.call(store, entry.slot as i32),
+            });
+            drain_logs(&mut store, &entry.script_name, &mut logs);
+            after_call(scene, &mut store, &mut self.requests, &mut self.messages, &mut self.property_writes);
             if let Err(error) = result {
+                store.data_mut().running = false;
+                drop(store);
                 entry.stopped = true;
                 failed.push((entry.object, entry.index, error));
             }
@@ -480,7 +623,9 @@ impl ScriptHost {
         failed
     }
 
-    /// Runs `bayleaf_update(dt)` on every running script and writes changed transforms back.
+    /// Runs every running script's update and writes changed transforms back: `bayleaf_update(dt)`
+    /// once per object for a module of its own, `bayleaf_update_all(dt)` once for all the objects of
+    /// a module that runs many.
     pub fn update(&mut self, scene: &mut Scene, dt: f32, time: f64, input: &Arc<Input>) {
         let mut faults = Vec::new();
         let mut logs = Vec::new();
@@ -489,47 +634,104 @@ impl ScriptHost {
             let values = self.script_values();
             WorldView::of(scene, values, &mut self.layout)
         };
-        for entry in self.instances.iter_mut().filter(|i| !i.stopped) {
+        let shared = Shares {
+            world: &world,
+            time,
+            input,
+            velocities: &self.velocities,
+            grounded: &self.grounded,
+            interface: &self.interface,
+            input_maps: &self.input_maps,
+            state: &self.state,
+        };
+        // The batched modules, each once: the place of each of its objects' instances.
+        let mut batches: Vec<(Shared, TypedFunc<f32, ()>, Vec<usize>)> = Vec::new();
+        for (place, entry) in self.instances.iter_mut().enumerate().filter(|(_, i)| !i.stopped) {
             if !scene.contains(entry.object) {
                 entry.stopped = true;
+                if entry.batched() {
+                    entry.store().data_mut().running = false;
+                }
                 continue;
             }
-            let Some(update) = entry.update.as_ref().cloned() else { continue };
-            {
-                let state = entry.store.data_mut();
-                let t = scene.get::<bayleaf_scene::components::Transform>(entry.object).cloned().unwrap_or_default();
-                state.transform = crate::abi_transform(&t);
-                state.position = t.position;
-                state.transform_changed = false;
-                state.time = time;
-                state.input = Arc::clone(input);
-                state.world = Arc::clone(&world);
-                state.velocities = Arc::clone(&self.velocities);
-                state.grounded = Arc::clone(&self.grounded);
-                state.interface = Arc::clone(&self.interface);
-                state.input_maps = Arc::clone(&self.input_maps);
-                state.state = Arc::clone(&self.state);
-            }
-            let started = self.timing.then(bayleaf_core::time::Instant::now);
-            let result = call(entry, |store| update.call(store, dt));
-            if let Some(started) = started {
-                let took = started.elapsed();
-                match self.timings.iter_mut().find(|(name, _)| *name == entry.script_name) {
-                    Some((_, total)) => *total += took,
-                    None => self.timings.push((entry.script_name.clone(), took)),
+            let update = match &entry.calls {
+                Calls::Own { update: Some(update), .. } => handle_copy(update),
+                Calls::Own { update: None, .. } => continue,
+                Calls::Batch { update_all, .. } => {
+                    match batches.iter_mut().find(|(store, _, _)| Arc::ptr_eq(store, &entry.store)) {
+                        Some((_, _, places)) => places.push(place),
+                        None => batches.push((Arc::clone(&entry.store), handle_copy(update_all), vec![place])),
+                    }
+                    continue;
                 }
+            };
+            let mut store = entry.store();
+            shared.prepare(store.data_mut(), scene, entry.object);
+            let started = self.timing.then(bayleaf_core::time::Instant::now);
+            let result = call(&mut store, &entry.module_name, FUEL_PER_CALL, |store| update.call(store, dt));
+            if let Some(started) = started {
+                add_timing(&mut self.timings, &entry.script_name, started.elapsed());
             }
-            let state = entry.store.data_mut();
-            if !state.logs.is_empty() {
-                let script = entry.script_name.clone();
-                logs.extend(state.logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
-            }
+            drain_logs(&mut store, &entry.script_name, &mut logs);
             match result {
-                Ok(()) => after_call(scene, entry, &mut self.requests, &mut self.messages, &mut self.property_writes),
+                Ok(()) => after_call(scene, &mut store, &mut self.requests, &mut self.messages, &mut self.property_writes),
                 Err(error) => {
+                    drop(store);
                     entry.stopped = true;
                     faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
                 }
+            }
+        }
+        for (store, update_all, places) in batches {
+            let mut store = store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            shared.prepare_shared(store.data_mut());
+            // Each object's transform where it is kept, without selecting it.
+            for &place in &places {
+                let entry = &self.instances[place];
+                let Some(view) = store.data_mut().slot_view(entry.slot) else { continue };
+                let t = scene.get::<bayleaf_scene::components::Transform>(entry.object).cloned().unwrap_or_default();
+                *view.transform = crate::abi_transform(&t);
+                *view.position = t.position;
+                *view.changed = false;
+                *view.running = true;
+            }
+            let Some(first) = places.first().map(|p| &self.instances[*p]) else { continue };
+            let (module_name, script_name) = (first.module_name.clone(), first.script_name.clone());
+            let started = self.timing.then(bayleaf_core::time::Instant::now);
+            let fuel = FUEL_PER_CALL.saturating_mul(places.len() as u64);
+            let result = call(&mut store, &module_name, fuel, |store| update_all.call(store, dt));
+            if let Some(started) = started {
+                add_timing(&mut self.timings, &script_name, started.elapsed());
+            }
+            // The object whose update failed, if one did: the one its frame marks as being updated,
+            // else the one selected when it stopped.
+            let failing = if result.is_err() { failing_object(&mut store, &first.module, &self.instances, &places) } else { store.data().object };
+            // What the call did for all its objects, then for each: its transform and its logs.
+            if result.is_ok() {
+                after_shared(scene, &mut store, &mut self.requests, &mut self.messages, &mut self.property_writes);
+            }
+            for &place in &places {
+                let entry = &self.instances[place];
+                let Some(view) = store.data_mut().slot_view(entry.slot) else { continue };
+                if result.is_err() {
+                    *view.running = false;
+                } else if std::mem::take(view.changed) && scene.contains(entry.object) {
+                    let _ = scene.set(entry.object, transform_from(view.transform, *view.position));
+                }
+                if !view.logs.is_empty() {
+                    logs.extend(view.logs.drain(..).map(|text| LogLine { object: entry.object, script: entry.script_name.clone(), text }));
+                }
+            }
+            drop(store);
+            if let Err(error) = result {
+                // An error stops the module, and with it every object it runs: the error is the one
+                // object's whose update it was in.
+                for &place in &places {
+                    self.instances[place].stopped = true;
+                }
+                let others = places.len().saturating_sub(1);
+                let error = if others == 0 { error } else { with_others(error, others) };
+                faults.push(ScriptFault { object: failing, script: script_name, error });
             }
         }
         self.faults.extend(faults);
@@ -546,7 +748,7 @@ impl ScriptHost {
         }
         let mut out: HashMap<StableId, Vec<ScriptValues>> = HashMap::new();
         for entry in self.instances.iter().filter(|i| !i.stopped) {
-            let values = ScriptValues { keys: script_keys(&entry.script_name, &entry.path), properties: entry.store.data().properties.clone() };
+            let values = ScriptValues { keys: script_keys(&entry.script_name, &entry.path), properties: entry.store().data().properties.clone() };
             out.entry(entry.object).or_default().push(values);
         }
         Some(out)
@@ -557,10 +759,13 @@ impl ScriptHost {
     fn apply_property_writes(&mut self) {
         for write in std::mem::take(&mut self.property_writes) {
             for entry in self.instances.iter_mut().filter(|i| i.object == write.object && script_keys(&i.script_name, &i.path).contains(&write.key)) {
-                if let Some((ty, slot)) = entry.store.data_mut().properties.get_mut(&write.name)
+                let mut store = entry.store();
+                let state = store.data_mut();
+                if let Some((ty, slot)) = state.properties.get_mut(&write.name)
                     && let Some(value) = PropertyValue::from_numbers(*ty, write.value)
                 {
                     *slot = value;
+                    state.properties_changed = true;
                 }
             }
         }
@@ -577,10 +782,20 @@ impl ScriptHost {
             let values = self.script_values();
             WorldView::of(scene, values, &mut self.layout)
         };
+        let shared = Shares {
+            world: &world,
+            time,
+            input,
+            velocities: &self.velocities,
+            grounded: &self.grounded,
+            interface: &self.interface,
+            input_maps: &self.input_maps,
+            state: &self.state,
+        };
         let mut later = Vec::new();
         let mut faults = Vec::new();
         let mut logs = Vec::new();
-        self.take_subscribing();
+        take_subscribing(&self.instances, &mut self.subscriptions);
         // A subscriber's copy of an event goes after the event, in this same delivery; copies have no
         // subscribers of their own, so nothing loops.
         let mut queue: std::collections::VecDeque<Message> = messages.into();
@@ -600,42 +815,47 @@ impl ScriptHost {
                     }
                 }
             }
-            for entry in self.instances.iter_mut().filter(|i| reaches(i)) {
-                let Some(on_message) = entry.on_message.as_ref().cloned() else { continue };
+            let mut stopped = Vec::new();
+            for (place, entry) in self.instances.iter().enumerate().filter(|(_, i)| reaches(i)) {
+                let on_message = match &entry.calls {
+                    Calls::Own { on_message: Some(f), .. } => Phase2::Own(handle_copy(f)),
+                    Calls::Batch { on_message: Some(f), .. } => Phase2::Slot(handle_copy(f)),
+                    _ => continue,
+                };
                 if !scene.contains(entry.object) {
                     continue;
                 }
+                let mut store = entry.store();
                 {
-                    let state = entry.store.data_mut();
-                    state.transform = read_transform(scene, entry.object);
-                    state.position = read_position(scene, entry.object);
-                    state.transform_changed = false;
-                    state.time = time;
-                    state.input = Arc::clone(input);
-                    state.world = Arc::clone(&world);
-                    state.velocities = Arc::clone(&self.velocities);
-                    state.grounded = Arc::clone(&self.grounded);
-                    state.interface = Arc::clone(&self.interface);
-                    state.input_maps = Arc::clone(&self.input_maps);
-                    state.state = Arc::clone(&self.state);
+                    let state = store.data_mut();
+                    shared.prepare(state, scene, entry.object);
                     state.message = Some(message.name.clone());
                     state.message_args = Arc::clone(&message.args);
                     state.message_from = message.from;
                 }
-                let result = call(entry, |store| on_message.call(store, message.value));
-                entry.store.data_mut().message = None;
-                entry.store.data_mut().message_args = Arc::from([]);
-                entry.store.data_mut().message_from = None;
-                take_subscribing_of(entry, &mut self.subscriptions);
-                let script = entry.script_name.clone();
-                logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
+                let result = call(&mut store, &entry.module_name, FUEL_PER_CALL, |store| match &on_message {
+                    Phase2::Own(f) => f.call(store, message.value),
+                    Phase2::Slot(f) => f.call(store, (entry.slot as i32, message.value)),
+                });
+                {
+                    let state = store.data_mut();
+                    state.message = None;
+                    state.message_args = Arc::from([]);
+                    state.message_from = None;
+                }
+                take_subscribing_of(&mut store, &mut self.subscriptions);
+                drain_logs(&mut store, &entry.script_name, &mut logs);
                 match result {
-                    Ok(()) => after_call(scene, entry, &mut self.requests, &mut later, &mut self.property_writes),
+                    Ok(()) => after_call(scene, &mut store, &mut self.requests, &mut later, &mut self.property_writes),
                     Err(error) => {
-                        entry.stopped = true;
+                        store.data_mut().running = false;
+                        stopped.push(place);
                         faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
                     }
                 }
+            }
+            for place in stopped {
+                self.instances[place].stopped = true;
             }
         }
         self.messages = later;
@@ -643,23 +863,18 @@ impl ScriptHost {
         self.push_logs(logs);
     }
 
-    /// Subscriptions scripts asked for or cancelled since this was last asked; those of objects that
-    /// are gone go too.
-    fn take_subscribing(&mut self) {
-        for entry in &mut self.instances {
-            take_subscribing_of(entry, &mut self.subscriptions);
-        }
-        let live: HashSet<(StableId, usize)> = self.instances.iter().filter(|i| !i.stopped).map(|i| (i.object, i.index)).collect();
-        self.subscriptions.retain(|s| live.contains(&s.subscriber));
-    }
-
     /// Reloads modules whose file changed since it was loaded. Returns the reloaded module names.
     pub fn reload_changed(&mut self, scene: &mut Scene, time: f64, input: &Arc<Input>) -> Vec<String> {
+        // Each module file's time once, however many objects run it.
+        let mut times: HashMap<&Path, Option<SystemTime>> = HashMap::new();
+        for entry in &self.instances {
+            times.entry(entry.path.as_path()).or_insert_with(|| bayleaf_core::files::modified(&entry.path));
+        }
         let changed: Vec<(StableId, usize, PathBuf)> = self
             .instances
             .iter()
             .filter(|i| {
-                let now = bayleaf_core::files::modified(&i.path);
+                let now = times.get(i.path.as_path()).copied().flatten();
                 now.is_some() && now != i.modified
             })
             .map(|i| (i.object, i.index, i.path.clone()))
@@ -798,27 +1013,127 @@ impl ScriptHost {
     }
 }
 
-/// Runs one guest call with a fresh fuel budget and turns a trap into a [`ScriptError`].
-fn call(entry: &mut Instance, run: impl FnOnce(&mut Store<HostState>) -> Result<(), Error>) -> Result<(), ScriptError> {
-    let trapped = |message: String| ScriptError::Trapped { module: entry.module_name.clone(), message };
-    entry.store.set_fuel(FUEL_PER_CALL).map_err(|e| trapped(e.to_string()))?;
-    entry.store.data_mut().fault = None;
-    match run(&mut entry.store) {
+/// What every call of one step shares: the world view, the time and input, and what physics and
+/// the interface said.
+struct Shares<'a> {
+    world: &'a Arc<WorldView>,
+    time: f64,
+    input: &'a Arc<Input>,
+    velocities: &'a Arc<Velocities>,
+    grounded: &'a Arc<HashSet<StableId>>,
+    interface: &'a Arc<crate::InterfaceValues>,
+    input_maps: &'a actions::SharedInput,
+    state: &'a SharedState,
+}
+
+impl Shares<'_> {
+    /// Readies the selected object's call: its transform as the scene has it, and what calls share.
+    fn prepare(&self, state: &mut HostState, scene: &Scene, object: StableId) {
+        Self::prepare_own(state, scene, object);
+        self.prepare_shared(state);
+    }
+
+    /// The selected object's transform as the scene has it.
+    fn prepare_own(state: &mut HostState, scene: &Scene, object: StableId) {
+        let t = scene.get::<bayleaf_scene::components::Transform>(object).cloned().unwrap_or_default();
+        state.transform = crate::abi_transform(&t);
+        state.position = t.position;
+        state.transform_changed = false;
+    }
+
+    /// What every object of a store shares in a call.
+    fn prepare_shared(&self, state: &mut HostState) {
+        state.time = self.time;
+        state.input = Arc::clone(self.input);
+        state.world = Arc::clone(self.world);
+        state.velocities = Arc::clone(self.velocities);
+        state.grounded = Arc::clone(self.grounded);
+        state.interface = Arc::clone(self.interface);
+        state.input_maps = Arc::clone(self.input_maps);
+        state.state = Arc::clone(self.state);
+    }
+}
+
+/// A message call: a module's own, or a slot's of a module that runs many objects.
+enum Phase2 {
+    Own(TypedFunc<f32, ()>),
+    Slot(TypedFunc<(i32, f32), ()>),
+}
+
+/// The object a module that runs many objects was updating when its update stopped: the one its
+/// frame marks (`FRAME_CURRENT`), else the one it selected last.
+fn failing_object(store: &mut Store<HostState>, module: &rt::Instance, instances: &[Instance], places: &[usize]) -> StableId {
+    let selected = store.data().object;
+    let Some((at, count)) = store.data_mut().frame_at.take() else { return selected };
+    let Some(memory) = module.get_export(&mut *store, "memory").and_then(rt::Extern::into_memory) else { return selected };
+    let mut bytes = vec![0u8; count * FRAME_ENTRY];
+    if usize::try_from(at).ok().and_then(|at| memory.read(&*store, at, &mut bytes).ok()).is_none() {
+        return selected;
+    }
+    let marked =
+        bytes.as_chunks::<FRAME_ENTRY>().0.iter().position(|entry| u32::from_le_bytes([entry[36], entry[37], entry[38], entry[39]]) & FRAME_CURRENT != 0);
+    marked.and_then(|slot| places.iter().map(|p| &instances[*p]).find(|i| i.slot == slot)).map_or(selected, |i| i.object)
+}
+
+/// Adds a script's time to the profiler's, by its name.
+fn add_timing(timings: &mut Vec<(String, std::time::Duration)>, name: &str, took: std::time::Duration) {
+    match timings.iter_mut().find(|(n, _)| n == name) {
+        Some((_, total)) => *total += took,
+        None => timings.push((name.to_owned(), took)),
+    }
+}
+
+/// An error of a module that runs many objects, saying how many others stopped with it.
+fn with_others(error: ScriptError, others: usize) -> ScriptError {
+    match error {
+        ScriptError::Trapped { module, message } => {
+            ScriptError::Trapped { module, message: format!("{message} (the {others} other objects running this script stopped with it)") }
+        }
+        other => other,
+    }
+}
+
+/// The selected object's log lines, as lines of `script`.
+fn drain_logs(store: &mut Store<HostState>, script: &str, out: &mut Vec<LogLine>) {
+    let state = store.data_mut();
+    if state.logs.is_empty() {
+        return;
+    }
+    let object = state.object;
+    out.extend(state.logs.drain(..).map(|text| LogLine { object, script: script.to_owned(), text }));
+}
+
+/// Subscriptions scripts asked for or cancelled since this was last asked; those of objects that
+/// are gone go too.
+fn take_subscribing(instances: &[Instance], subscriptions: &mut Vec<Subscription>) {
+    for entry in instances {
+        take_subscribing_of(&mut entry.store(), subscriptions);
+    }
+    let live: HashSet<(StableId, usize)> = instances.iter().filter(|i| !i.stopped).map(|i| (i.object, i.index)).collect();
+    subscriptions.retain(|s| live.contains(&s.subscriber));
+}
+
+/// Runs one guest call with a fuel budget and turns a trap into a [`ScriptError`].
+fn call(store: &mut Store<HostState>, module_name: &str, fuel: u64, run: impl FnOnce(&mut Store<HostState>) -> Result<(), Error>) -> Result<(), ScriptError> {
+    let trapped = |message: String| ScriptError::Trapped { module: module_name.to_owned(), message };
+    store.set_fuel(fuel).map_err(|e| trapped(e.to_string()))?;
+    store.data_mut().fault = None;
+    match run(store) {
         Ok(()) => Ok(()),
         Err(error) => {
-            let reason = entry.store.data_mut().fault.take().unwrap_or_else(|| {
+            let reason = store.data_mut().fault.take().unwrap_or_else(|| {
                 if out_of_fuel(&error) { format!("ran longer than the limit of {FUEL_PER_CALL} instructions in one call") } else { trap_message(&error) }
             });
-            Err(ScriptError::Trapped { module: entry.module_name.clone(), message: reason })
+            Err(ScriptError::Trapped { module: module_name.to_owned(), message: reason })
         }
     }
 }
 
-/// Applies what a call changed: its own transform, other objects' transforms, and its requests.
-/// Applies the subscriptions one script asked for or cancelled.
-fn take_subscribing_of(entry: &mut Instance, subscriptions: &mut Vec<Subscription>) {
-    let subscriber = (entry.object, entry.index);
-    for (add, publisher, event) in entry.store.data_mut().subscribing.drain(..) {
+/// Applies the subscriptions the selected object's script asked for or cancelled.
+fn take_subscribing_of(store: &mut Store<HostState>, subscriptions: &mut Vec<Subscription>) {
+    let state = store.data_mut();
+    let subscriber = (state.object, state.index);
+    for (add, publisher, event) in state.subscribing.drain(..) {
         let same = |s: &Subscription| s.publisher == publisher && s.event == event && s.subscriber == subscriber;
         if !add {
             subscriptions.retain(|s| !same(s));
@@ -828,9 +1143,28 @@ fn take_subscribing_of(entry: &mut Instance, subscriptions: &mut Vec<Subscriptio
     }
 }
 
-fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Request>, messages: &mut Vec<Message>, properties: &mut Vec<PropertyWrite>) {
-    write_transform(scene, entry);
-    let state = entry.store.data_mut();
+/// Applies what a call changed for the selected object: its own transform, other objects'
+/// transforms, and its requests.
+fn after_call(scene: &mut Scene, store: &mut Store<HostState>, requests: &mut Vec<Request>, messages: &mut Vec<Message>, properties: &mut Vec<PropertyWrite>) {
+    let state = store.data_mut();
+    if state.transform_changed && scene.contains(state.object) {
+        state.transform_changed = false;
+        // `transform_set` already refused non-finite numbers.
+        let _ = scene.set(state.object, transform_from(&state.transform, state.position));
+    }
+    after_shared(scene, store, requests, messages, properties);
+}
+
+/// Applies what a call changed apart from its objects' own transforms: other objects' transforms,
+/// requests, messages and property writes.
+fn after_shared(
+    scene: &mut Scene,
+    store: &mut Store<HostState>,
+    requests: &mut Vec<Request>,
+    messages: &mut Vec<Message>,
+    properties: &mut Vec<PropertyWrite>,
+) {
+    let state = store.data_mut();
     for (object, v, position) in state.writes.drain(..) {
         if scene.contains(object) {
             let _ = scene.set(object, transform_from(&v, position));
@@ -839,17 +1173,6 @@ fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Reques
     requests.append(&mut state.requests);
     messages.append(&mut state.outbox);
     properties.append(&mut state.property_writes);
-}
-
-fn write_transform(scene: &mut Scene, entry: &mut Instance) {
-    let state = entry.store.data_mut();
-    if !state.transform_changed {
-        return;
-    }
-    state.transform_changed = false;
-    let transform = transform_from(&state.transform, state.position);
-    // `transform_set` already refused non-finite numbers, and the object exists (checked by the caller).
-    let _ = scene.set(entry.object, transform);
 }
 
 /// Bytes each value takes in `event_send`'s list: a kind, then up to three words.
@@ -1252,6 +1575,16 @@ fn link_native(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
 fn make_linker(engine: &Engine) -> Linker<HostState> {
     let mut linker = Linker::new(engine);
     let result = (|| -> Result<(), LinkError> {
+        // A module that runs many objects picks the one the next calls are about (see `bayleaf_update_all`):
+        // 0 when it does not run, 1 when it does, 2 when its properties changed since last asked.
+        linker.func_wrap("bayleaf", "slot_select", |mut caller: Caller<'_, HostState>, slot: i32| -> i32 {
+            let state = caller.data_mut();
+            let Ok(slot) = usize::try_from(slot) else { return 0 };
+            if !state.select(slot) || !state.running {
+                return 0;
+            }
+            1 + i32::from(std::mem::take(&mut state.properties_changed))
+        })?;
         linker.func_wrap("bayleaf", "log", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<(), Error> {
             let text = read_text(&mut caller, ptr, len, MAX_LOG_BYTES).map_err(|m| fault(&mut caller, format!("log: {m}")))?;
             caller.data_mut().logs.push(text);
@@ -1829,6 +2162,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         })?;
         link_events(&mut linker)?;
         link_collections(&mut linker)?;
+        link_frames(&mut linker)?;
         link_native(&mut linker)?;
         Ok(())
     })();
@@ -1936,6 +2270,78 @@ fn seeded_key(world: &WorldView, ty: PropertyType, key: &str) -> Option<MapKey> 
             MapKey::Vector([*x, *y, *z].map(Ordered::new))
         }
     })
+}
+
+/// Bytes of one object's entry in a frame (`frame_get`, `frame_set`): its transform (nine `f32`),
+/// a word of flags, and its position in double precision.
+const FRAME_ENTRY: usize = 64;
+/// Frame flags: the object runs; its properties changed since last asked; (from the script) its
+/// transform changed.
+const FRAME_RUNNING: u32 = 1;
+const FRAME_PROPERTIES: u32 = 2;
+const FRAME_CHANGED: u32 = 4;
+/// (From the script) the object being updated, so an error is reported on it.
+const FRAME_CURRENT: u32 = 8;
+
+/// The frame functions: a module that runs many objects reads every object's transform in one
+/// call before its update and writes the changed ones back in one call after it, instead of a call
+/// per object for each.
+fn link_frames(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
+    linker.func_wrap("bayleaf", "frame_get", |mut caller: Caller<'_, HostState>, out: i32, cap: i32| -> Result<i32, Error> {
+        let state = caller.data_mut();
+        let count = state.parked.len();
+        let room = usize::try_from(cap).unwrap_or(0);
+        if room < count {
+            return Ok(count as i32);
+        }
+        let mut bytes = vec![0u8; count * FRAME_ENTRY];
+        for (slot, entry) in bytes.as_chunks_mut::<FRAME_ENTRY>().0.iter_mut().enumerate() {
+            let Some(view) = state.slot_view(slot) else { continue };
+            for (i, v) in view.transform.iter().enumerate() {
+                entry[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+            }
+            let mut flags = if *view.running { FRAME_RUNNING } else { 0 };
+            if std::mem::take(view.properties_changed) {
+                flags |= FRAME_PROPERTIES;
+            }
+            entry[36..40].copy_from_slice(&flags.to_le_bytes());
+            for (i, v) in view.position.iter().enumerate() {
+                entry[40 + i * 8..48 + i * 8].copy_from_slice(&v.to_le_bytes());
+            }
+        }
+        write_guest(&mut caller, out, &bytes, "frame_get")?;
+        caller.data_mut().frame_at = Some((out, count));
+        Ok(count as i32)
+    })?;
+    linker.func_wrap("bayleaf", "frame_set", |mut caller: Caller<'_, HostState>, ptr: i32, count: i32| -> Result<(), Error> {
+        let slots = caller.data().parked.len();
+        let count = usize::try_from(count).map_err(|_| fault(&mut caller, "frame_set: negative count".to_owned()))?;
+        if count > slots {
+            return Err(fault(&mut caller, format!("frame_set: {count} objects, but the module runs {slots}")));
+        }
+        let bytes =
+            read_guest(&mut caller, ptr, (count * FRAME_ENTRY) as i32, slots * FRAME_ENTRY).map_err(|m| fault(&mut caller, format!("frame_set: {m}")))?;
+        for (slot, entry) in bytes.as_chunks::<FRAME_ENTRY>().0.iter().enumerate() {
+            let word = |at: usize| [entry[at], entry[at + 1], entry[at + 2], entry[at + 3]];
+            if u32::from_le_bytes(word(36)) & FRAME_CHANGED == 0 {
+                continue;
+            }
+            let values: [f32; 9] = std::array::from_fn(|i| f32::from_le_bytes(word(i * 4)));
+            if !values.iter().all(|v| v.is_finite()) {
+                return Err(fault(&mut caller, "frame_set: values must be finite numbers".to_owned()));
+            }
+            let state = caller.data_mut();
+            if let Some(view) = state.slot_view(slot)
+                && *view.running
+            {
+                *view.position = merged_position(&values, *view.position);
+                *view.transform = values;
+                *view.changed = true;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// Lists and maps a visual script keeps (`list_*`, `map_*`): each by its name, made empty the first

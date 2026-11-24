@@ -84,6 +84,9 @@ mod raw {
         pub fn event_unsubscribe(handle: i32, script: i32, name_ptr: *const u8, name_len: usize) -> i32;
         pub fn event_source() -> i32;
         pub fn event_source_component() -> i32;
+        pub fn slot_select(slot: i32) -> i32;
+        pub fn frame_get(out: *mut u8, cap: i32) -> i32;
+        pub fn frame_set(ptr: *const u8, count: i32);
     }
 }
 
@@ -765,11 +768,16 @@ mod bridge {
 pub use bridge::with_bridge;
 
 pub(crate) fn log(text: &str) {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `text`, which outlives the call; the host only reads.
     unsafe { raw::log(text.as_ptr(), text.len()) }
 }
 
 pub(crate) fn transform_get() -> [f32; 9] {
+    if let Some(values) = crate::batch::transform() {
+        return values;
+    }
+    crate::batch::sync();
     let mut values = [0.0f32; 9];
     // SAFETY: `values` is 9 writable f32, exactly what the host writes.
     unsafe { raw::transform_get(values.as_mut_ptr()) }
@@ -777,21 +785,30 @@ pub(crate) fn transform_get() -> [f32; 9] {
 }
 
 pub(crate) fn transform_set(values: &[f32; 9]) {
+    if crate::batch::set_transform(values) {
+        return;
+    }
+    crate::batch::sync();
     // SAFETY: `values` is 9 readable f32, exactly what the host reads.
     unsafe { raw::transform_set(values.as_ptr()) }
 }
 
 pub(crate) fn property(name: &str) -> f32 {
-    // SAFETY: the pointer and length describe `name`; the host only reads.
-    unsafe { raw::property(name.as_ptr(), name.len()) }
+    crate::batch::property(name, || {
+        crate::batch::sync();
+        // SAFETY: the pointer and length describe `name`; the host only reads.
+        unsafe { raw::property(name.as_ptr(), name.len()) }
+    })
 }
 
 pub(crate) fn property_whole(name: &str) -> i32 {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::property_whole(name.as_ptr(), name.len()) }
 }
 
 pub(crate) fn property_vector(name: &str) -> Option<[f32; 3]> {
+    crate::batch::sync();
     let mut out = [0.0f32; 3];
     // SAFETY: the pointer and length describe `name`; `out` is 3 writable f32, what the host writes.
     let found = unsafe { raw::property_vector(name.as_ptr(), name.len(), out.as_mut_ptr()) };
@@ -799,6 +816,7 @@ pub(crate) fn property_vector(name: &str) -> Option<[f32; 3]> {
 }
 
 pub(crate) fn property_text(name: &str) -> String {
+    crate::batch::sync();
     // SAFETY: a null pointer with no room only asks for the length.
     let len = unsafe { raw::property_text(name.as_ptr(), name.len(), std::ptr::null_mut(), 0) };
     let mut bytes = vec![0u8; usize::try_from(len).unwrap_or(0)];
@@ -808,31 +826,41 @@ pub(crate) fn property_text(name: &str) -> String {
 }
 
 pub(crate) fn property_object(name: &str) -> i32 {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::property_object(name.as_ptr(), name.len()) }
 }
 
 pub(crate) fn property_set(name: &str, [x, y, z]: [f32; 3]) -> bool {
+    crate::batch::sync();
+    crate::batch::forget_properties();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::property_set(name.as_ptr(), name.len(), x, y, z) != 0 }
 }
 
 pub(crate) fn property_set_text(name: &str, text: &str) -> bool {
+    crate::batch::sync();
+    crate::batch::forget_properties();
     // SAFETY: both pointers and lengths describe `name` and `text`; the host only reads.
     unsafe { raw::property_set_text(name.as_ptr(), name.len(), text.as_ptr(), text.len()) != 0 }
 }
 
 pub(crate) fn time() -> f64 {
-    // SAFETY: no arguments; the host returns a plain number.
-    unsafe { raw::time() }
+    crate::batch::time(|| {
+        crate::batch::sync();
+        // SAFETY: no arguments; the host returns a plain number.
+        unsafe { raw::time() }
+    })
 }
 
 pub(crate) fn key_down(name: &str) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::key_down(name.as_ptr(), name.len()) != 0 }
 }
 
 pub(crate) fn pointer() -> Option<[f32; 2]> {
+    crate::batch::sync();
     let mut xy = [0.0f32; 2];
     // SAFETY: `xy` is 2 writable f32, exactly what the host writes.
     let inside = unsafe { raw::pointer(xy.as_mut_ptr()) };
@@ -840,77 +868,92 @@ pub(crate) fn pointer() -> Option<[f32; 2]> {
 }
 
 pub(crate) fn pointer_over_interface() -> bool {
+    crate::batch::sync();
     // SAFETY: no arguments; a plain number out.
     unsafe { raw::pointer_over_interface() != 0 }
 }
 
 pub(crate) fn mouse_down(button: i32) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::mouse_down(button) != 0 }
 }
 
 pub(crate) fn self_handle() -> i32 {
+    crate::batch::sync();
     // SAFETY: no arguments; the host returns a plain number.
     unsafe { raw::self_handle() }
 }
 
 pub(crate) fn find(name: &str) -> i32 {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::find(name.as_ptr(), name.len()) }
 }
 
 pub(crate) fn find_with(kind: &str, index: i32) -> i32 {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `kind`; the host only reads.
     unsafe { raw::find_with(kind.as_ptr(), kind.len(), index) }
 }
 
 pub(crate) fn count_with(kind: &str) -> i32 {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `kind`; the host only reads.
     unsafe { raw::count_with(kind.as_ptr(), kind.len()) }
 }
 
 pub(crate) fn particles_play(handle: i32) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::particles_play(handle) != 0 }
 }
 
 pub(crate) fn particles_stop(handle: i32) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::particles_stop(handle) != 0 }
 }
 
 pub(crate) fn particles_burst(handle: i32, count: u32) -> bool {
+    crate::batch::sync();
     // SAFETY: plain numbers in and out.
     unsafe { raw::particles_burst(handle, i32::try_from(count).unwrap_or(i32::MAX)) != 0 }
 }
 
 pub(crate) fn ui_set_text(handle: i32, element: &str, text: &str) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointers and lengths describe `element` and `text`; the host only reads.
     unsafe { raw::ui_set_text(handle, element.as_ptr(), element.len(), text.as_ptr(), text.len()) != 0 }
 }
 
 pub(crate) fn ui_set_value(handle: i32, element: &str, value: f64) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `element`; the host only reads.
     unsafe { raw::ui_set_value(handle, element.as_ptr(), element.len(), value) != 0 }
 }
 
 pub(crate) fn ui_add(handle: i32, parent: &str, what: &str, name: &str) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointers and lengths describe the three texts; the host only reads.
     unsafe { raw::ui_add(handle, parent.as_ptr(), parent.len(), what.as_ptr(), what.len(), name.as_ptr(), name.len()) != 0 }
 }
 
 pub(crate) fn ui_remove(handle: i32, name: &str) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::ui_remove(handle, name.as_ptr(), name.len()) != 0 }
 }
 
 pub(crate) fn ui_value(handle: i32, element: &str) -> Option<f64> {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `element`; the host only reads.
     let value = unsafe { raw::ui_value(handle, element.as_ptr(), element.len()) };
     (!value.is_nan()).then_some(value)
 }
 
 pub(crate) fn ui_text(handle: i32, element: &str) -> Option<String> {
+    crate::batch::sync();
     let mut room = vec![0u8; 256];
     // SAFETY: `room` has `room.len()` writable bytes; the name is read only.
     let full = unsafe { raw::ui_text(handle, element.as_ptr(), element.len(), room.as_mut_ptr(), room.len()) };
@@ -925,47 +968,56 @@ pub(crate) fn ui_text(handle: i32, element: &str) -> Option<String> {
 }
 
 pub(crate) fn ui_show(handle: i32, element: &str, visible: bool) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `element`; the host only reads.
     unsafe { raw::ui_show(handle, element.as_ptr(), element.len(), i32::from(visible)) != 0 }
 }
 
 pub(crate) fn sound_play(handle: i32) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::sound_play(handle) != 0 }
 }
 
 pub(crate) fn sound_stop(handle: i32) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::sound_stop(handle) != 0 }
 }
 
 pub(crate) fn sound_play_at(path: &str, position: [f32; 3], volume: f32) -> bool {
+    crate::batch::sync();
     let [x, y, z] = position;
     // SAFETY: the pointer and length describe `path`; the host only reads.
     unsafe { raw::sound_play_at(path.as_ptr(), path.len(), x, y, z, volume) != 0 }
 }
 
 pub(crate) fn scene_load(path: &str, additive: bool) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `path`; the host only reads.
     unsafe { raw::scene_load(path.as_ptr(), path.len(), i32::from(additive)) != 0 }
 }
 
 pub(crate) fn scene_unload(path: &str) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `path`; the host only reads.
     unsafe { raw::scene_unload(path.as_ptr(), path.len()) != 0 }
 }
 
 pub(crate) fn object_ref(handle: i32) -> i32 {
+    crate::batch::sync();
     // SAFETY: plain numbers in and out.
     unsafe { raw::object_ref(handle) }
 }
 
 pub(crate) fn object_of(reference: i32) -> i32 {
+    crate::batch::sync();
     // SAFETY: plain numbers in and out.
     unsafe { raw::object_of(reference) }
 }
 
 pub(crate) fn name_of(handle: i32) -> String {
+    crate::batch::sync();
     // SAFETY: a null pointer with no room only asks for the length.
     let len = unsafe { raw::name_of(handle, std::ptr::null_mut(), 0) };
     let mut bytes = vec![0u8; usize::try_from(len).unwrap_or(0)];
@@ -975,6 +1027,7 @@ pub(crate) fn name_of(handle: i32) -> String {
 }
 
 pub(crate) fn component_get(handle: i32, component: &str, field: &str) -> Option<[f32; 3]> {
+    crate::batch::sync();
     let mut out = [0.0f32; 3];
     // SAFETY: the pointers and lengths describe `component` and `field`, which the host only reads;
     // `out` is 3 writable f32, exactly what the host writes.
@@ -983,12 +1036,14 @@ pub(crate) fn component_get(handle: i32, component: &str, field: &str) -> Option
 }
 
 pub(crate) fn component_set(handle: i32, component: &str, field: &str, value: [f32; 3]) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointers and lengths describe `component`, `field` and the 3 f32 of `value`; the
     // host only reads.
     unsafe { raw::component_set(handle, component.as_ptr(), component.len(), field.as_ptr(), field.len(), value.as_ptr()) != 0 }
 }
 
 pub(crate) fn transform_get_of(handle: i32) -> [f32; 9] {
+    crate::batch::sync();
     let mut values = [0.0f32; 9];
     // SAFETY: `values` is 9 writable f32, exactly what the host writes.
     unsafe { raw::transform_get_of(handle, values.as_mut_ptr()) }
@@ -996,27 +1051,32 @@ pub(crate) fn transform_get_of(handle: i32) -> [f32; 9] {
 }
 
 pub(crate) fn transform_set_of(handle: i32, values: &[f32; 9]) {
+    crate::batch::sync();
     // SAFETY: `values` is 9 readable f32, exactly what the host reads.
     unsafe { raw::transform_set_of(handle, values.as_ptr()) }
 }
 
 pub(crate) fn spawn(prefab: &str, position: [f32; 3]) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `prefab`; the host only reads.
     unsafe { raw::spawn(prefab.as_ptr(), prefab.len(), position[0], position[1], position[2]) != 0 }
 }
 
 pub(crate) fn destroy(handle: i32) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::destroy(handle) != 0 }
 }
 
 pub(crate) fn send(handle: i32, name: &str, value: f32) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::send(handle, name.as_ptr(), name.len(), value) != 0 }
 }
 
 /// The name of the message being delivered, or an empty string outside `bayleaf_message`.
 pub(crate) fn message_name() -> String {
+    crate::batch::sync();
     let mut buffer = [0u8; 64];
     // SAFETY: `buffer` is 64 writable bytes and the host writes at most `cap` of them.
     let len = unsafe { raw::message_name(buffer.as_mut_ptr(), buffer.len()) };
@@ -1025,22 +1085,26 @@ pub(crate) fn message_name() -> String {
 }
 
 pub(crate) fn pad_connected() -> bool {
+    crate::batch::sync();
     // SAFETY: no arguments; the host returns a plain number.
     unsafe { raw::pad_connected() != 0 }
 }
 
 pub(crate) fn pad_axis(index: i32) -> f32 {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::pad_axis(index) }
 }
 
 pub(crate) fn pad_button(index: i32) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::pad_button(index) != 0 }
 }
 
 /// The handle of the first object a ray hits (0 for none), its distance and the hit point.
 pub(crate) fn raycast(origin: [f32; 3], direction: [f32; 3], max: f32) -> (i32, [f32; 4]) {
+    crate::batch::sync();
     let mut out = [0.0f32; 4];
     let [ox, oy, oz] = origin;
     let [dx, dy, dz] = direction;
@@ -1050,16 +1114,19 @@ pub(crate) fn raycast(origin: [f32; 3], direction: [f32; 3], max: f32) -> (i32, 
 }
 
 pub(crate) fn apply_impulse(handle: i32, v: [f32; 3]) -> bool {
+    crate::batch::sync();
     // SAFETY: plain numbers in and out.
     unsafe { raw::apply_impulse(handle, v[0], v[1], v[2]) != 0 }
 }
 
 pub(crate) fn set_velocity(handle: i32, v: [f32; 3]) -> bool {
+    crate::batch::sync();
     // SAFETY: plain numbers in and out.
     unsafe { raw::set_velocity(handle, v[0], v[1], v[2]) != 0 }
 }
 
 pub(crate) fn velocity_of(handle: i32) -> Option<[f32; 3]> {
+    crate::batch::sync();
     let mut out = [0.0f32; 3];
     // SAFETY: `out` is 3 writable f32, exactly what the host writes.
     let found = unsafe { raw::velocity_of(handle, out.as_mut_ptr()) };
@@ -1067,6 +1134,7 @@ pub(crate) fn velocity_of(handle: i32) -> Option<[f32; 3]> {
 }
 
 pub(crate) fn position_get_of(handle: i32) -> [f64; 3] {
+    crate::batch::sync();
     let mut values = [0.0f64; 3];
     // SAFETY: `values` is 3 writable f64, exactly what the host writes.
     unsafe { raw::position_get_of(handle, values.as_mut_ptr()) }
@@ -1074,26 +1142,31 @@ pub(crate) fn position_get_of(handle: i32) -> [f64; 3] {
 }
 
 pub(crate) fn position_set_of(handle: i32, values: &[f64; 3]) {
+    crate::batch::sync();
     // SAFETY: `values` is 3 readable f64, exactly what the host reads.
     unsafe { raw::position_set_of(handle, values.as_ptr()) }
 }
 
 pub(crate) fn character_walk(handle: i32, v: [f32; 3]) -> bool {
+    crate::batch::sync();
     // SAFETY: plain numbers in and out.
     unsafe { raw::character_walk(handle, v[0], v[1], v[2]) != 0 }
 }
 
 pub(crate) fn character_jump(handle: i32, speed: f32) -> bool {
+    crate::batch::sync();
     // SAFETY: plain numbers in and out.
     unsafe { raw::character_jump(handle, speed) != 0 }
 }
 
 pub(crate) fn character_grounded(handle: i32) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::character_grounded(handle) != 0 }
 }
 
 pub(crate) fn action(name: &str) -> f32 {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::action(name.as_ptr(), name.len()) }
 }
@@ -1101,6 +1174,7 @@ pub(crate) fn action(name: &str) -> f32 {
 /// A value of the game's state (scope 0), a player's (scope 1; handle 0 for the first player) or a
 /// saved one (scope 2).
 pub(crate) fn state_get(scope: i32, handle: i32, name: &str) -> Option<f64> {
+    crate::batch::sync();
     let mut out = 0.0f64;
     // SAFETY: the pointer and length describe `name`, which the host only reads; `out` is one
     // writable f64 that outlives the call.
@@ -1109,17 +1183,20 @@ pub(crate) fn state_get(scope: i32, handle: i32, name: &str) -> Option<f64> {
 }
 
 pub(crate) fn state_set(scope: i32, handle: i32, name: &str, value: f64) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::state_set(scope, handle, name.as_ptr(), name.len(), value) != 0 }
 }
 
 /// Makes a map active: the project's Input Map (handle 0) or an object's own.
 pub(crate) fn input_map_set(handle: i32, map: &str) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `map`; the host only reads.
     unsafe { raw::input_map_set(handle, map.as_ptr(), map.len()) != 0 }
 }
 
 pub(crate) fn game_end(won: bool) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::game_end(i32::from(won)) != 0 }
 }
@@ -1153,6 +1230,7 @@ fn encode_event(values: &[EventSlot<'_>], mut text_at: impl FnMut(&str) -> Optio
 }
 
 pub(crate) fn event_send(handle: i32, name: &str, values: &[EventSlot<'_>]) -> bool {
+    crate::batch::sync();
     #[cfg(target_arch = "wasm32")]
     {
         // In WebAssembly a text's place is its address in the script's memory.
@@ -1168,31 +1246,37 @@ pub(crate) fn event_send(handle: i32, name: &str, values: &[EventSlot<'_>]) -> b
 }
 
 pub(crate) fn event_number(index: i32) -> f32 {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::event_number(index) }
 }
 
 pub(crate) fn event_whole(index: i32) -> i32 {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::event_whole(index) }
 }
 
 pub(crate) fn event_flag(index: i32) -> bool {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::event_flag(index) != 0 }
 }
 
 pub(crate) fn event_vector(index: i32) -> [f32; 3] {
+    crate::batch::sync();
     // SAFETY: plain numbers in and out.
     [0, 1, 2].map(|part| unsafe { raw::event_vector(index, part) })
 }
 
 pub(crate) fn event_object(index: i32) -> i32 {
+    crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::event_object(index) }
 }
 
 pub(crate) fn event_text(index: i32) -> String {
+    crate::batch::sync();
     // SAFETY: a null pointer with no room only asks for the length.
     let len = unsafe { raw::event_text(index, std::ptr::null_mut(), 0) };
     let mut bytes = vec![0u8; usize::try_from(len).unwrap_or(0)];
@@ -1202,16 +1286,19 @@ pub(crate) fn event_text(index: i32) -> String {
 }
 
 pub(crate) fn script_component(handle: i32, name: &str) -> i32 {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe { raw::script_component(handle, name.as_ptr(), name.len()) }
 }
 
 pub(crate) fn self_component() -> i32 {
+    crate::batch::sync();
     // SAFETY: no arguments; a plain number out.
     unsafe { raw::self_component() }
 }
 
 pub(crate) fn event_send_to(handle: i32, script: i32, name: &str, values: &[EventSlot<'_>]) -> bool {
+    crate::batch::sync();
     #[cfg(target_arch = "wasm32")]
     {
         let Some(listed) = encode_event(values, |text| u32::try_from(text.as_ptr() as usize).ok()) else { return false };
@@ -1226,6 +1313,7 @@ pub(crate) fn event_send_to(handle: i32, script: i32, name: &str, values: &[Even
 }
 
 pub(crate) fn event_subscribe(handle: i32, script: i32, name: &str, add: bool) -> bool {
+    crate::batch::sync();
     // SAFETY: the pointer and length describe `name`; the host only reads.
     unsafe {
         if add {
@@ -1237,11 +1325,38 @@ pub(crate) fn event_subscribe(handle: i32, script: i32, name: &str, add: bool) -
 }
 
 pub(crate) fn event_source() -> i32 {
+    crate::batch::sync();
     // SAFETY: no arguments; a plain number out.
     unsafe { raw::event_source() }
 }
 
 pub(crate) fn event_source_component() -> i32 {
+    crate::batch::sync();
     // SAFETY: no arguments; a plain number out.
     unsafe { raw::event_source_component() }
+}
+
+/// Makes `slot` the object the next calls are about, in a module that runs many objects: 0 when it
+/// does not run, 1 when it does, 2 when its properties changed since last asked.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn slot_select(slot: i32) -> i32 {
+    // SAFETY: a plain number in and out.
+    unsafe { raw::slot_select(slot) }
+}
+
+/// Writes every object's frame entry of a module that runs many objects at `buffer` when it has room
+/// for all; how many objects there are.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn frame_get(buffer: &mut [u8], room: usize) -> i32 {
+    let room = i32::try_from(room.min(buffer.len() / 64)).unwrap_or(0);
+    // SAFETY: the host writes at most `room` entries of 64 bytes, which `buffer` holds.
+    unsafe { raw::frame_get(buffer.as_mut_ptr(), room) }
+}
+
+/// Hands the frame back: the host applies the transforms marked changed.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn frame_set(buffer: &[u8], count: usize) {
+    let count = i32::try_from(count.min(buffer.len() / 64)).unwrap_or(0);
+    // SAFETY: the host reads `count` entries of 64 bytes, which `buffer` holds.
+    unsafe { raw::frame_set(buffer.as_ptr(), count) }
 }

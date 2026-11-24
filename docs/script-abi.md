@@ -177,6 +177,36 @@ precision; `transform_get` gives them rounded to `f32`, and a `transform_set` th
 position as it was read keeps the exact one. Far from the world's centre (beyond about 10 km), move
 objects with `position_get_of` and `position_set_of`, as visual scripts' Move By does.
 
+## Modules that run many objects
+
+A module may run every object of its file in one instance, so a step is one call for all of them
+instead of one per object. It says so by exporting `bayleaf_update_all`; then the host gives each
+object a *slot* (0, 1, 2, … in the order the objects load) and calls these instead of
+`bayleaf_init`, `bayleaf_start`, `bayleaf_update` and `bayleaf_message`:
+
+| Export | Signature | Called |
+|---|---|---|
+| `bayleaf_attach` | `(slot: i32) -> ()` | an object comes to the module, before its init |
+| `bayleaf_detach` | `(slot: i32) -> ()` | the object goes (it is destroyed, or its script loads again); the slot is not used again |
+| `bayleaf_init_slot`, `bayleaf_start_slot` | `(slot: i32) -> ()` | as `bayleaf_init` and `bayleaf_start`, for that object |
+| `bayleaf_update_all` | `(dt: f32) -> ()` | every step, once for all the module's objects |
+| `bayleaf_message_slot` | `(slot: i32, value: f32) -> ()` | as `bayleaf_message`, for that object |
+
+| Import | Signature | What it does |
+|---|---|---|
+| `slot_select` | `(slot: i32) -> i32` | makes that object the one every other import is about ("this object": its transform, properties, logs, lists and maps, subscriptions); `0` when it does not run (its object stopped or went), `1` when it does, `2` when its properties changed since last asked (another script or the Inspector set one) |
+| `frame_get` | `(out, cap: i32) -> i32` | how many slots the module has; when `cap` slots fit, writes for each, at `out + slot × 64`, its transform (nine `f32`, as `transform_get`), at byte 36 a word of flags (`1` it runs, `2` its properties changed since last asked) and at byte 40 its position in double precision (three `f64`) |
+| `frame_set` | `(ptr, count: i32) -> ()` | takes back `count` such entries: each whose flags have `4` (changed) set becomes its object's transform, as `transform_set` would make it. A module sets `8` on the entry of the object it is updating, so an error is reported on that object even when it made no call for it |
+
+Within `bayleaf_update_all` the module selects each object before a call about it (`slot_select`; the SDK does it only before a call that needs it); the host
+gives its calls the fuel of one call per object. An error in it stops the module, and every object
+it runs, with one fault, on the object selected when it stopped. A transform the module writes
+through the frame reaches the host when `frame_set` gives it back, so within the step other imports
+still see the object where the step began. Rust scripts built with `bayleaf-script-sdk` run this
+way: `script!` keeps each object's value by slot, reads the frame before the update of all and
+writes it back after it, and keeps each object's number properties and the play time as last read,
+so `Transform::get`, `set`, `property` and `time` need no host call during it.
+
 ## Limits
 
 - Each call may run about 10 million WebAssembly instructions ("fuel"). A script that runs out,

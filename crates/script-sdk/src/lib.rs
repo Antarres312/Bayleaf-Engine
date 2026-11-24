@@ -762,8 +762,10 @@ macro_rules! script {
             $crate::native::NativeScript::of::<$ty>()
         }
 
+        // One instance runs every object of this script: each one's value by its slot, which the
+        // host hands out (`docs/script-abi.md`, "Modules that run many objects").
         #[cfg(target_arch = "wasm32")]
-        static BAYLEAF_SCRIPT: ::std::sync::Mutex<Option<$ty>> = ::std::sync::Mutex::new(None);
+        static BAYLEAF_SLOTS: ::std::sync::Mutex<Vec<Option<$ty>>> = ::std::sync::Mutex::new(Vec::new());
 
         #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
@@ -788,36 +790,328 @@ macro_rules! script {
 
         #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
-        pub extern "C" fn bayleaf_init() {
-            let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
-            let script = state.get_or_insert_with(<$ty as ::core::default::Default>::default);
-            $crate::Script::init(script);
+        pub extern "C" fn bayleaf_attach(slot: i32) {
+            let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+            let Ok(slot) = usize::try_from(slot) else { return };
+            if slots.len() <= slot {
+                slots.resize_with(slot + 1, || None);
+            }
+            slots[slot] = Some(<$ty as ::core::default::Default>::default());
+            $crate::batch::attached(slot);
         }
 
         #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
-        pub extern "C" fn bayleaf_start() {
-            let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
-            let script = state.get_or_insert_with(<$ty as ::core::default::Default>::default);
-            $crate::Script::start(script);
+        pub extern "C" fn bayleaf_detach(slot: i32) {
+            let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(value) = usize::try_from(slot).ok().and_then(|slot| slots.get_mut(slot)) {
+                *value = None;
+            }
         }
 
         #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
-        pub extern "C" fn bayleaf_update(dt: f32) {
-            let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
-            let script = state.get_or_insert_with(<$ty as ::core::default::Default>::default);
-            $crate::Script::update(script, dt);
+        pub extern "C" fn bayleaf_init_slot(slot: i32) {
+            let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(Some(script)) = usize::try_from(slot).ok().and_then(|slot| slots.get_mut(slot))
+                && $crate::batch::select(slot)
+            {
+                $crate::Script::init(script);
+            }
         }
 
         #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
-        pub extern "C" fn bayleaf_message(value: f32) {
-            let mut state = BAYLEAF_SCRIPT.lock().unwrap_or_else(|e| e.into_inner());
-            let script = state.get_or_insert_with(<$ty as ::core::default::Default>::default);
-            $crate::Script::message(script, &$crate::message_name(), value);
+        pub extern "C" fn bayleaf_start_slot(slot: i32) {
+            let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(Some(script)) = usize::try_from(slot).ok().and_then(|slot| slots.get_mut(slot))
+                && $crate::batch::select(slot)
+            {
+                $crate::Script::start(script);
+            }
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn bayleaf_update_all(dt: f32) {
+            let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+            $crate::batch::begin();
+            for (slot, script) in slots.iter_mut().enumerate() {
+                if let Some(script) = script
+                    && $crate::batch::select(slot as i32)
+                {
+                    $crate::Script::update(script, dt);
+                }
+            }
+            $crate::batch::end();
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn bayleaf_message_slot(slot: i32, value: f32) {
+            let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(Some(script)) = usize::try_from(slot).ok().and_then(|slot| slots.get_mut(slot))
+                && $crate::batch::select(slot)
+            {
+                $crate::Script::message(script, &$crate::message_name(), value);
+            }
         }
     };
+}
+
+/// What a module that runs many objects keeps about the update of all of them (used by
+/// [`script!`]): which object the calls are about, every object's transform for the step (read from
+/// the host in one call and written back in one), and each object's properties as last read, so its
+/// update needs no host call for them. Outside such an update (and off WebAssembly) every call goes
+/// to the host as usual.
+#[doc(hidden)]
+pub mod batch {
+    /// Bytes of one object's entry in the frame, and its flags (see `docs/script-abi.md`).
+    #[cfg(target_arch = "wasm32")]
+    const ENTRY: usize = 64;
+    #[cfg(target_arch = "wasm32")]
+    const RUNNING: u32 = 1;
+    #[cfg(target_arch = "wasm32")]
+    const PROPERTIES: u32 = 2;
+    #[cfg(target_arch = "wasm32")]
+    const CHANGED: u32 = 4;
+    /// The object being updated, so the host knows whose update an error was in.
+    #[cfg(target_arch = "wasm32")]
+    const CURRENT: u32 = 8;
+
+    #[cfg(target_arch = "wasm32")]
+    struct Frame {
+        data: Vec<u8>,
+        /// How many objects the frame holds; 0 outside an update of all.
+        count: usize,
+        /// The object the calls are about, while the frame holds it.
+        current: Option<usize>,
+        /// The play time, once asked in this update of all.
+        time: Option<f64>,
+        /// Each object's number properties as last read, by slot.
+        properties: Vec<Vec<(String, f32)>>,
+        /// The object the host has selected, as far as this module knows: it is selected only before
+        /// a call to the host needs it.
+        host: Option<usize>,
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    static FRAME: std::sync::Mutex<Frame> =
+        std::sync::Mutex::new(Frame { data: Vec::new(), count: 0, current: None, time: None, properties: Vec::new(), host: None });
+
+    #[cfg(target_arch = "wasm32")]
+    fn frame() -> std::sync::MutexGuard<'static, Frame> {
+        FRAME.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn flags(frame: &Frame, slot: usize) -> u32 {
+        let at = slot * ENTRY + 36;
+        frame.data.get(at..at + 4).map_or(0, |w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn set_flags(frame: &mut Frame, slot: usize, change: impl FnOnce(u32) -> u32) {
+        let at = slot * ENTRY + 36;
+        if let Some(word) = frame.data.get_mut(at..at + 4) {
+            let flags = change(u32::from_le_bytes([word[0], word[1], word[2], word[3]]));
+            word.copy_from_slice(&flags.to_le_bytes());
+        }
+    }
+
+    /// Reads every object's transform before an update of all.
+    pub fn begin() {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut frame = frame();
+            loop {
+                let room = frame.data.len() / ENTRY;
+                let count = usize::try_from(crate::abi::frame_get(&mut frame.data, room)).unwrap_or(0);
+                if count <= room {
+                    frame.count = count;
+                    break;
+                }
+                frame.data.resize(count * ENTRY, 0);
+            }
+            if frame.properties.len() < frame.count {
+                let count = frame.count;
+                frame.properties.resize_with(count, Vec::new);
+            }
+            frame.time = None;
+            frame.current = None;
+            frame.host = None;
+        }
+    }
+
+    /// Writes back the transforms the update of all changed.
+    pub fn end() {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut frame = frame();
+            let count = frame.count;
+            crate::abi::frame_set(&frame.data[..count * ENTRY], count);
+            frame.count = 0;
+            frame.current = None;
+            frame.host = None;
+        }
+    }
+
+    /// Makes `slot` the object the next calls are about; false when it does not run (its object
+    /// stopped or went).
+    #[cfg(target_arch = "wasm32")]
+    pub fn select(slot: i32) -> bool {
+        let Ok(at) = usize::try_from(slot) else { return false };
+        {
+            let mut frame = frame();
+            if at < frame.count {
+                let flags = flags(&frame, at);
+                if flags & RUNNING == 0 {
+                    return false;
+                }
+                if flags & PROPERTIES != 0 {
+                    frame.properties[at].clear();
+                }
+                // The host selects it only when one of its calls needs it (`sync`); the frame says
+                // which object it is, for an error.
+                if let Some(before) = frame.current {
+                    set_flags(&mut frame, before, |f| f & !CURRENT);
+                }
+                set_flags(&mut frame, at, |f| f | CURRENT);
+                frame.current = Some(at);
+                return true;
+            }
+            frame.current = None;
+        }
+        let selected = crate::abi::slot_select(slot);
+        frame().host = (selected != 0).then_some(at);
+        if selected == 2
+            && let Some(kept) = frame().properties.get_mut(at)
+        {
+            kept.clear();
+        }
+        selected != 0
+    }
+
+    /// Before a call to the host: the object the calls are about is the one the host has selected.
+    pub(crate) fn sync() {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut frame = frame();
+            let Some(current) = frame.current else { return };
+            if frame.host == Some(current) {
+                return;
+            }
+            frame.host = Some(current);
+            drop(frame);
+            if crate::abi::slot_select(current as i32) == 2
+                && let Some(kept) = self::frame().properties.get_mut(current)
+            {
+                kept.clear();
+            }
+        }
+    }
+
+    /// A new object came to the module, in `slot`: it starts with no properties read.
+    pub fn attached(slot: usize) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(kept) = frame().properties.get_mut(slot) {
+            kept.clear();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = slot;
+    }
+
+    /// The current object's transform from the frame, during an update of all.
+    pub(crate) fn transform() -> Option<[f32; 9]> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let frame = frame();
+            let at = frame.current? * ENTRY;
+            let bytes = frame.data.get(at..at + 36)?;
+            Some(std::array::from_fn(|i| f32::from_le_bytes([bytes[i * 4], bytes[i * 4 + 1], bytes[i * 4 + 2], bytes[i * 4 + 3]])))
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        None
+    }
+
+    /// Sets the current object's transform in the frame, during an update of all; false outside one
+    /// (the host gets it then).
+    pub(crate) fn set_transform(values: &[f32; 9]) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut frame = frame();
+            let Some(slot) = frame.current else { return false };
+            let at = slot * ENTRY;
+            let Some(bytes) = frame.data.get_mut(at..at + 40) else { return false };
+            for (i, v) in values.iter().enumerate() {
+                bytes[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+            }
+            let flags = u32::from_le_bytes([bytes[36], bytes[37], bytes[38], bytes[39]]) | CHANGED;
+            bytes[36..40].copy_from_slice(&flags.to_le_bytes());
+            true
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = values;
+            false
+        }
+    }
+
+    /// A number property of the current object: as last read during an update of all, else `read`.
+    pub(crate) fn property(name: &str, read: impl FnOnce() -> f32) -> f32 {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let slot = frame().current;
+            let Some(slot) = slot else { return read() };
+            if let Some((_, value)) = frame().properties.get(slot).and_then(|kept| kept.iter().find(|(n, _)| n == name)) {
+                return *value;
+            }
+            let value = read();
+            if let Some(kept) = frame().properties.get_mut(slot) {
+                kept.push((name.to_owned(), value));
+            }
+            value
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = name;
+            read()
+        }
+    }
+
+    /// The current object's script set a property itself: read them again.
+    pub(crate) fn forget_properties() {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut frame = frame();
+            if let Some(slot) = frame.current
+                && let Some(kept) = frame.properties.get_mut(slot)
+            {
+                kept.clear();
+            }
+        }
+    }
+
+    /// The play time, read once per update of all.
+    pub(crate) fn time(read: impl FnOnce() -> f64) -> f64 {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let frame = frame();
+            if frame.count == 0 {
+                drop(frame);
+                return read();
+            }
+            if let Some(time) = frame.time {
+                return time;
+            }
+            drop(frame);
+            let time = read();
+            self::frame().time = Some(time);
+            time
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        read()
+    }
 }
 
 /// The `bayleaf_describe` text for `properties` (used by [`script!`]).

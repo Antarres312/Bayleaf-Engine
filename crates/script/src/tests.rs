@@ -626,3 +626,147 @@ fn a_script_finds_an_object_by_the_name_it_has_now_after_the_scene_changes_betwe
     assert!(host.take_logs().is_empty(), "and not once it is gone");
     assert!(host.take_faults().is_empty());
 }
+
+/// A module that runs many objects: each step one `bayleaf_update_all` turns every object it runs
+/// by one degree and logs "all" once, for the object selected first.
+fn batched_turner(trap_on_second_step: bool) -> Vec<u8> {
+    let trap = if trap_on_second_step { "(if (i32.eq (global.get $steps) (i32.const 2)) (then unreachable))" } else { "" };
+    let text = format!(
+        r#"(module {IMPORTS}
+            (import "bayleaf" "slot_select" (func $select (param i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 120) "all")
+            (global $n (mut i32) (i32.const 0))
+            (global $steps (mut i32) (i32.const 0))
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_attach") (param $slot i32)
+              (if (i32.ge_u (local.get $slot) (global.get $n)) (then (global.set $n (i32.add (local.get $slot) (i32.const 1))))))
+            (func (export "bayleaf_detach") (param $slot i32))
+            (func (export "bayleaf_update_all") (param $dt f32) (local $k i32) (local $logged i32)
+              (global.set $steps (i32.add (global.get $steps) (i32.const 1)))
+              (block $done (loop $next
+                (br_if $done (i32.ge_u (local.get $k) (global.get $n)))
+                (if (call $select (local.get $k))
+                  (then
+                    {trap}
+                    (if (i32.eqz (local.get $logged)) (then (call $log (i32.const 120) (i32.const 3)) (local.set $logged (i32.const 1))))
+                    (call $get (i32.const 0))
+                    (f32.store (i32.const 16) (f32.add (f32.load (i32.const 16)) (f32.const 1)))
+                    (call $set (i32.const 0))))
+                (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                (br $next)))))"#
+    );
+    wat::parse_str(text).unwrap()
+}
+
+#[test]
+fn a_module_that_runs_many_objects_runs_them_all_in_one_call_per_step() {
+    let input = Arc::new(Input::default());
+    let (mut scene, first, script) = setup(&[]);
+    let others: Vec<StableId> = (0..2).map(|i| scene.create_object(None, &format!("Other {i}")).unwrap()).collect();
+    let mut host = super::test_host();
+    let bytes = batched_turner(false);
+    for id in std::iter::once(first).chain(others.iter().copied()) {
+        load(&mut host, &mut scene, id, &script, &bytes).unwrap();
+    }
+    host.update(&mut scene, 0.1, 0.0, &input);
+    assert_eq!(host.take_logs().len(), 1, "one call for all three objects");
+    for id in std::iter::once(first).chain(others.iter().copied()) {
+        assert!((rotation_y(&scene, id) - 1.0).abs() < 1e-6, "each object turned once");
+    }
+    // An object that goes stops; the others go on in the same call.
+    scene.delete_object(others[0]).unwrap();
+    host.update(&mut scene, 0.1, 0.1, &input);
+    assert_eq!(host.take_logs().len(), 1);
+    assert!((rotation_y(&scene, first) - 2.0).abs() < 1e-6 && (rotation_y(&scene, others[1]) - 2.0).abs() < 1e-6);
+    assert_eq!(host.running(), 2);
+    assert!(host.take_faults().is_empty());
+}
+
+#[test]
+fn an_error_in_a_module_that_runs_many_objects_stops_them_all_with_one_fault() {
+    let input = Arc::new(Input::default());
+    let (mut scene, first, script) = setup(&[]);
+    let other = scene.create_object(None, "Other").unwrap();
+    let mut host = super::test_host();
+    let bytes = batched_turner(true);
+    load(&mut host, &mut scene, first, &script, &bytes).unwrap();
+    load(&mut host, &mut scene, other, &script, &bytes).unwrap();
+    host.update(&mut scene, 0.1, 0.0, &input);
+    host.update(&mut scene, 0.1, 0.1, &input);
+    let faults = host.take_faults();
+    assert_eq!(faults.len(), 1, "one fault for the module");
+    assert_eq!(faults[0].object, first, "on the object whose update it was in");
+    assert!(faults[0].error.to_string().contains("1 other"), "{}", faults[0].error);
+    assert_eq!(host.running(), 0, "and every object it runs stops");
+    host.update(&mut scene, 0.1, 0.2, &input);
+    assert!((rotation_y(&scene, other) - 1.0).abs() < 1e-6, "a stopped module does not run again");
+}
+
+#[test]
+fn a_module_that_runs_many_objects_moves_them_all_through_one_frame() {
+    let input = Arc::new(Input::default());
+    let (mut scene, first, script) = setup(&[]);
+    let other = scene.create_object(None, "Other").unwrap();
+    // Reads every object's entry, turns each running one by 2 degrees, marks it changed, hands
+    // the frame back: no call per object.
+    let text = format!(
+        r#"(module {IMPORTS}
+            (import "bayleaf" "frame_get" (func $frame_get (param i32 i32) (result i32)))
+            (import "bayleaf" "frame_set" (func $frame_set (param i32 i32)))
+            (memory (export "memory") 1)
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_attach") (param i32))
+            (func (export "bayleaf_detach") (param i32))
+            (func (export "bayleaf_update_all") (param $dt f32) (local $n i32) (local $k i32) (local $at i32)
+              (local.set $n (call $frame_get (i32.const 4096) (i32.const 16)))
+              (block $done (loop $next
+                (br_if $done (i32.ge_u (local.get $k) (local.get $n)))
+                (local.set $at (i32.add (i32.const 4096) (i32.mul (local.get $k) (i32.const 64))))
+                (if (i32.and (i32.load offset=36 (local.get $at)) (i32.const 1))
+                  (then
+                    (f32.store offset=16 (local.get $at) (f32.add (f32.load offset=16 (local.get $at)) (f32.const 2)))
+                    (i32.store offset=36 (local.get $at) (i32.or (i32.load offset=36 (local.get $at)) (i32.const 4)))))
+                (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                (br $next)))
+              (call $frame_set (i32.const 4096) (local.get $n))))"#
+    );
+    let bytes = wat::parse_str(text).unwrap();
+    let mut host = super::test_host();
+    load(&mut host, &mut scene, first, &script, &bytes).unwrap();
+    load(&mut host, &mut scene, other, &script, &bytes).unwrap();
+    host.update(&mut scene, 0.1, 0.0, &input);
+    host.update(&mut scene, 0.1, 0.1, &input);
+    assert!(host.take_faults().is_empty());
+    for id in [first, other] {
+        assert!((rotation_y(&scene, id) - 4.0).abs() < 1e-6, "each object turned through the frame, twice: {}", rotation_y(&scene, id));
+    }
+}
+
+#[test]
+fn an_error_in_an_update_of_all_is_reported_on_the_object_the_frame_marks() {
+    let input = Arc::new(Input::default());
+    let (mut scene, first, script) = setup(&[]);
+    let other = scene.create_object(None, "Other").unwrap();
+    // Marks the second object as being updated, then stops, without selecting it at the host.
+    let text = format!(
+        r#"(module {IMPORTS}
+            (import "bayleaf" "frame_get" (func $frame_get (param i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_attach") (param i32))
+            (func (export "bayleaf_detach") (param i32))
+            (func (export "bayleaf_update_all") (param $dt f32)
+              (drop (call $frame_get (i32.const 4096) (i32.const 16)))
+              (i32.store offset=36 (i32.const 4160) (i32.or (i32.load offset=36 (i32.const 4160)) (i32.const 8)))
+              unreachable))"#
+    );
+    let bytes = wat::parse_str(text).unwrap();
+    let mut host = super::test_host();
+    load(&mut host, &mut scene, first, &script, &bytes).unwrap();
+    load(&mut host, &mut scene, other, &script, &bytes).unwrap();
+    host.update(&mut scene, 0.1, 0.0, &input);
+    let faults = host.take_faults();
+    assert_eq!(faults.len(), 1);
+    assert_eq!(faults[0].object, other, "the object being updated, not the one selected last");
+}

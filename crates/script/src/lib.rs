@@ -731,8 +731,138 @@ struct HostState<L> {
     fault: Option<String>,
     /// This object's value of a native script, when the module is one built into the game.
     native: Option<Box<dyn bayleaf_script_sdk::native::NativeObject>>,
+    /// Whether this object's script runs (see [`Own::running`]).
+    running: bool,
+    /// Whether its properties changed since its script last read them.
+    properties_changed: bool,
+    /// What this store keeps for each object it runs, by slot; the selected object's place holds
+    /// nothing while its values are in the fields above. One slot unless the module runs many.
+    parked: Vec<Own>,
+    /// The slot of the object the host functions work on.
+    current: usize,
+    /// Where the frame of the last `frame_get` is in the module's memory, and how many objects.
+    frame_at: Option<(i32, usize)>,
     /// The runtime's memory and instance limits for this store.
     limits: L,
+}
+
+/// One slot's transform and flags, borrowed from where they are (see [`HostState::slot_view`]).
+struct SlotView<'a> {
+    transform: &'a mut [f32; 9],
+    position: &'a mut [f64; 3],
+    changed: &'a mut bool,
+    running: &'a mut bool,
+    properties_changed: &'a mut bool,
+    logs: &'a mut Vec<String>,
+}
+
+/// What a store keeps for each object it runs, while another object of the same module is the one
+/// the host functions work on (a module that runs many objects; see [`HostState::select`]).
+struct Own {
+    object: StableId,
+    index: usize,
+    position: [f64; 3],
+    transform: [f32; 9],
+    transform_changed: bool,
+    properties: Properties,
+    refs: Vec<StableId>,
+    collections: HashMap<String, Stored>,
+    seeds: HashMap<String, DeclaredProperty>,
+    logs: Vec<String>,
+    subscribing: Vec<(bool, (StableId, usize), String)>,
+    /// Whether this object's script runs (it stops after an error, or when its object goes).
+    running: bool,
+    /// Whether its properties changed since its script last read them (another script set one).
+    properties_changed: bool,
+}
+
+impl Default for Own {
+    fn default() -> Self {
+        Self {
+            object: StableId::from_u128(0),
+            index: 0,
+            position: [0.0; 3],
+            transform: [0.0; 9],
+            transform_changed: false,
+            properties: Properties::new(),
+            refs: Vec::new(),
+            collections: HashMap::new(),
+            seeds: HashMap::new(),
+            logs: Vec::new(),
+            subscribing: Vec::new(),
+            running: true,
+            properties_changed: false,
+        }
+    }
+}
+
+impl<L> HostState<L> {
+    /// Swaps every per-object field with `own`.
+    fn swap_own(&mut self, own: &mut Own) {
+        std::mem::swap(&mut self.object, &mut own.object);
+        std::mem::swap(&mut self.index, &mut own.index);
+        std::mem::swap(&mut self.position, &mut own.position);
+        std::mem::swap(&mut self.transform, &mut own.transform);
+        std::mem::swap(&mut self.transform_changed, &mut own.transform_changed);
+        std::mem::swap(&mut self.properties, &mut own.properties);
+        std::mem::swap(&mut self.refs, &mut own.refs);
+        std::mem::swap(&mut self.collections, &mut own.collections);
+        std::mem::swap(&mut self.seeds, &mut own.seeds);
+        std::mem::swap(&mut self.logs, &mut own.logs);
+        std::mem::swap(&mut self.subscribing, &mut own.subscribing);
+        std::mem::swap(&mut self.running, &mut own.running);
+        std::mem::swap(&mut self.properties_changed, &mut own.properties_changed);
+    }
+
+    /// Makes `slot` the object the host functions work on: what this store keeps for the one
+    /// selected so far goes aside, and that object's comes in. False when there is no such slot.
+    fn select(&mut self, slot: usize) -> bool {
+        if slot == self.current {
+            return true;
+        }
+        if slot >= self.parked.len() {
+            return false;
+        }
+        // The selected object's own values are in the fields; its parked place holds nothing.
+        let mut here = std::mem::take(&mut self.parked[self.current]);
+        self.swap_own(&mut here);
+        self.parked[self.current] = here;
+        let mut there = std::mem::take(&mut self.parked[slot]);
+        self.swap_own(&mut there);
+        self.parked[slot] = there;
+        self.current = slot;
+        true
+    }
+
+    /// One slot's transform, position and flags, wherever they are now (in the fields for the
+    /// selected object, else parked).
+    fn slot_view(&mut self, slot: usize) -> Option<SlotView<'_>> {
+        if slot == self.current {
+            return Some(SlotView {
+                transform: &mut self.transform,
+                position: &mut self.position,
+                changed: &mut self.transform_changed,
+                running: &mut self.running,
+                properties_changed: &mut self.properties_changed,
+                logs: &mut self.logs,
+            });
+        }
+        let own = self.parked.get_mut(slot)?;
+        Some(SlotView {
+            transform: &mut own.transform,
+            position: &mut own.position,
+            changed: &mut own.transform_changed,
+            running: &mut own.running,
+            properties_changed: &mut own.properties_changed,
+            logs: &mut own.logs,
+        })
+    }
+
+    /// Adds an object for this store to run, with what it keeps; its slot.
+    fn add_slot(&mut self, own: Own) -> usize {
+        self.parked.push(own);
+        self.parked.len() - 1
+    }
 }
 
 impl<L> HostState<L> {
@@ -767,6 +897,11 @@ impl<L> HostState<L> {
             fault: None,
             native: None,
             limits,
+            running: true,
+            properties_changed: false,
+            parked: vec![Own::default()],
+            current: 0,
+            frame_at: None,
         }
     }
 }
