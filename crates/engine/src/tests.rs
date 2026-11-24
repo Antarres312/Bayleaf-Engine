@@ -2888,23 +2888,43 @@ fn an_events_nodes_follow_its_new_name_and_values() {
 }
 
 #[test]
-fn a_lists_nodes_follow_its_new_name_and_type_and_lose_links_of_the_old_type() {
+fn a_variables_nodes_follow_a_new_type_and_shape_and_lose_links_that_no_longer_fit() {
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();
-    registry.execute(&mut session, "graph.new", &json!({"domain": "script"})).unwrap();
-    registry.execute(&mut session, "graph.collection.add", &json!({"name": "Scores", "kind": "list", "item": "number"})).unwrap();
-    assert!(registry.execute(&mut session, "graph.collection.add", &json!({"name": "Scores", "kind": "map", "item": "text"})).is_err(), "one of a name");
-    let add = registry.execute(&mut session, "graph.node.add", &json!({"kind": "listAdd", "position": [0, 0]})).unwrap()["node"].clone();
-    registry.execute(&mut session, "graph.node.set", &json!({"node": add, "name": "item", "value": ["number"]})).unwrap();
-    registry.execute(&mut session, "graph.node.set", &json!({"node": add, "name": "name", "value": "Scores"})).unwrap();
-    let time = registry.execute(&mut session, "graph.node.add", &json!({"kind": "time", "position": [0, 200]})).unwrap()["node"].clone();
-    registry.execute(&mut session, "graph.link.add", &json!({"from": {"node": time, "pin": "seconds"}, "to": {"node": add, "pin": "value"}})).unwrap();
-    registry.execute(&mut session, "graph.collection.set", &json!({"name": "Scores", "rename": "Names", "item": "text"})).unwrap();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params);
+    run(&mut session, "graph.new", json!({"domain": "script"})).unwrap();
+    run(&mut session, "graph.variable.add", json!({"name": "count", "type": "number", "start": 3.0})).unwrap();
+    let get = run(&mut session, "graph.node.add", json!({"kind": "variable", "position": [0, 0]})).unwrap()["node"].clone();
+    run(&mut session, "graph.node.set", json!({"node": get, "name": "name", "value": "count"})).unwrap();
+    let log = run(&mut session, "graph.node.add", json!({"kind": "log", "position": [200, 0]})).unwrap()["node"].clone();
+    run(&mut session, "graph.link.add", json!({"from": {"node": get, "pin": "value"}, "to": {"node": log, "pin": "value"}})).unwrap();
+
+    // A number becomes text: its Get node becomes a Get of text, and the number link goes.
+    run(&mut session, "graph.variable.set", json!({"name": "count", "type": "text"})).unwrap();
+    let graph = &session.graph().unwrap().graph;
+    let id = u32::try_from(get.as_u64().unwrap()).unwrap();
+    assert_eq!(graph.node(id).map(|n| n.kind.as_str()), Some("textVariable"), "the node keeps its place as the new type's");
+    assert_eq!(graph.variable("count").unwrap().start, json!(""), "3 is no text, so it starts empty");
+    assert!(graph.links.iter().all(|l| l.from.node != id), "text does not go into a number input");
+
+    // One value becomes a list, which starts with items and gets list nodes.
+    run(&mut session, "graph.variable.set", json!({"name": "count", "shape": "list", "start": ["a", "b"]})).unwrap();
+    assert!(run(&mut session, "graph.variable.set", json!({"name": "count", "start": [1, 2]})).is_err(), "a list of text holds text");
+    let add = run(&mut session, "graph.node.add", json!({"kind": "listAdd", "position": [0, 200]})).unwrap()["node"].clone();
+    run(&mut session, "graph.node.set", json!({"node": add, "name": "item", "value": ["text"]})).unwrap();
+    run(&mut session, "graph.node.set", json!({"node": add, "name": "name", "value": "count"})).unwrap();
+    let name = run(&mut session, "graph.node.add", json!({"kind": "nameOf", "position": [0, 400]})).unwrap()["node"].clone();
+    run(&mut session, "graph.link.add", json!({"from": {"node": name, "pin": "result"}, "to": {"node": add, "pin": "value"}})).unwrap();
+    run(&mut session, "graph.variable.set", json!({"name": "count", "type": "number", "rename": "scores"})).unwrap();
     let graph = &session.graph().unwrap().graph;
     let id = u32::try_from(add.as_u64().unwrap()).unwrap();
-    assert_eq!(graph.value(id, "name"), Some(&json!("Names")), "the node follows the new name");
-    assert_eq!(graph.value(id, "item"), Some(&json!(["text"])), "and what the list now holds");
-    assert!(graph.links.iter().all(|l| l.to.node != id || l.to.pin != "value"), "a number no longer goes into a list of text");
-    registry.execute(&mut session, "graph.collection.remove", &json!({"name": "Names"})).unwrap();
-    assert!(session.graph().unwrap().graph.collections.is_empty());
+    assert_eq!(graph.value(id, "name"), Some(&json!("scores")), "list nodes follow the new name");
+    assert_eq!(graph.value(id, "item"), Some(&json!(["number"])), "and what the list now holds");
+    assert!(graph.links.iter().all(|l| l.to.node != id || l.to.pin != "value"), "text no longer goes into a list of numbers");
+    assert_eq!(graph.variable("scores").unwrap().start, json!([]), "text items do not fit numbers");
+
+    // A property's shape and type change the same way.
+    run(&mut session, "graph.property.add", json!({"name": "waves", "type": "wholeNumber", "shape": "map", "default": {"easy": 3}})).unwrap();
+    run(&mut session, "graph.property.set", json!({"name": "waves", "shape": "list"})).unwrap();
+    assert_eq!(session.graph().unwrap().graph.property("waves").unwrap().default, json!([]), "a map is no list, so the list starts empty");
 }

@@ -1,10 +1,10 @@
-//! Lists and maps a visual script declares: the pins their nodes take from what they hold, and the
+//! Variables and properties of a visual script that are lists or maps: the pins their nodes take from what they hold, and the
 //! actions and values those nodes compile to. The host keeps each one by its name for this script
 //! on this object (`list_*` and `map_*` in `docs/script-abi.md`).
 
 use std::fmt::Write as _;
 
-use bayleaf_graph::{CollectionKind, Node, NodeDef, PinDef, PinDefault, PinType, Problem, VariableType};
+use bayleaf_graph::{Node, NodeDef, PinDef, PinDefault, PinType, Problem, Shape, VariableType};
 
 use super::{Compiler, Val, as_bool, as_float, as_int, as_object, as_text, as_vec};
 
@@ -13,7 +13,7 @@ type Variants = Vec<(String, VariableType, &'static NodeDef)>;
 static VARIANTS: std::sync::Mutex<Variants> = std::sync::Mutex::new(Vec::new());
 
 /// What a list or map node holds, from its `item` setting (the type code, kept in step with the
-/// declaration by `graph.collection.set`).
+/// declaration by `graph.variable.set` and `graph.property.set`).
 fn item_of(node: &Node) -> Option<VariableType> {
     let code = node.values.get("item")?.as_array()?.first()?.as_str()?;
     VariableType::from_code(code)
@@ -107,8 +107,9 @@ fn on_map(kind: &str) -> bool {
 }
 
 impl Compiler<'_> {
-    /// The list or map a node names, as the graph declares it: where its name is placed, and what it
-    /// holds. A node out of step with the declaration (made before the type changed) is a problem.
+    /// The list or map a node names: a variable or property of the script in that shape. Where its
+    /// name is placed, and what it holds. A node out of step with the declaration (made before the
+    /// type changed) is a problem, and so is a name both a variable and a property have.
     fn collection(&mut self, node: u32) -> Result<(String, VariableType), Problem> {
         let n = self.graph.node(node).ok_or_else(|| Problem::on(node, "no such node"))?;
         let map = on_map(&n.kind);
@@ -117,12 +118,16 @@ impl Compiler<'_> {
         if name.is_empty() {
             return Err(Problem::on(node, format!("choose the {what}")));
         }
-        let declared = self.graph.collection(&name).ok_or_else(|| Problem::on(node, format!("this script declares no list or map {name}")))?;
-        let kind = if map { CollectionKind::Map } else { CollectionKind::List };
-        if declared.kind != kind {
-            return Err(Problem::on(node, format!("{name} is a {}, not a {what}", declared.kind.label().to_lowercase())));
+        let variable = self.graph.variable(&name).filter(|v| !v.shape.is_single()).map(|v| (v.ty, v.shape));
+        let property = self.graph.property(&name).filter(|p| !p.shape.is_single()).map(|p| (p.ty, p.shape));
+        let (item, shape) = match (variable, property) {
+            (Some(_), Some(_)) => return Err(Problem::on(node, format!("{name} is both a variable and a property: rename one"))),
+            (Some(found), None) | (None, Some(found)) => found,
+            (None, None) => return Err(Problem::on(node, format!("this script has no {what} variable or property {name}"))),
+        };
+        if shape != if map { Shape::Map } else { Shape::List } {
+            return Err(Problem::on(node, format!("{name} is a {}, not a {what}", shape.label().to_lowercase())));
         }
-        let item = declared.item;
         if item_of(n) != Some(item) && (takes_value(&n.kind) || n.values.contains_key("item")) {
             return Err(Problem::on(node, format!("{name} holds {}: choose it again", item.code())));
         }

@@ -7,8 +7,8 @@
 
 use std::fmt::Write as _;
 
-use bayleaf_graph::{Catalog, Graph, NodeDef, PinDef, PinDefault, PinType, Problem, SettingDef, SettingKind, VariableType};
-use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue};
+use bayleaf_graph::{Catalog, Graph, NodeDef, PinDef, PinDefault, PinType, Problem, SettingDef, SettingKind, Shape, VariableType};
+use bayleaf_scene::components::{DeclaredProperty, PropertyShape, PropertyType, PropertyValue};
 
 use PinType::{Any, Bool, Float, Flow, Vec3};
 
@@ -142,7 +142,7 @@ pub const COMPONENT_EVENT_KINDS: [&str; 2] = ["triggerComponentEvent", "componen
 /// Every node kind that names another script's event (subscribing too).
 pub const SCRIPT_EVENT_KINDS: [&str; 4] = ["triggerComponentEvent", "componentEventStart", "subscribeEvent", "unsubscribeEvent"];
 /// The list a list node works on, one the script declares, and the type code of what it holds
-/// (`["number"]`), kept in step with the declaration by `graph.collection.set`.
+/// (`["number"]`), kept in step with the declaration by `graph.variable.set` and `graph.property.set`.
 pub(crate) const LIST_SETTINGS: [SettingDef; 2] =
     [SettingDef { name: "name", label: "List", kind: SettingKind::Name("") }, SettingDef { name: "item", label: "Holds", kind: SettingKind::Names }];
 /// The map a map node works on, and what it holds, as for a list.
@@ -1371,7 +1371,7 @@ struct Compiler<'g> {
     /// Return nodes belong there only.
     scope: Option<String>,
     /// Declared properties: name, type and default, in the order first met.
-    properties: Vec<(String, PropertyType, serde_json::Value)>,
+    properties: Vec<(String, String, serde_json::Value)>,
     /// Globals actions need (the object and index of a For Each), declared once each.
     globals: Vec<String>,
     /// Each text variable's buffer and starting length, by name.
@@ -1433,6 +1433,33 @@ fn described_default(ty: VariableType, value: &serde_json::Value) -> serde_json:
             serde_json::json!(parts)
         }
         _ => value.clone(),
+    }
+}
+
+/// A declared default or start in `shape` as `bayleaf_describe` lists it: one value as
+/// [`described_default`] makes it, or a list (array) or map (object) of such values.
+fn described_value(ty: VariableType, shape: Shape, value: &serde_json::Value) -> serde_json::Value {
+    match shape {
+        Shape::Single => described_default(ty, value),
+        Shape::List => value.as_array().map_or_else(|| serde_json::json!([]), |items| items.iter().map(|v| described_default(ty, v)).collect()),
+        Shape::Map => serde_json::Value::Object(
+            value.as_object().map(|entries| entries.iter().map(|(k, v)| (k.clone(), described_default(ty, v))).collect()).unwrap_or_default(),
+        ),
+    }
+}
+
+/// The type code a description gives a value of `ty` in `shape`: `number`, or `list:number`.
+fn described_type(ty: VariableType, shape: Shape) -> String {
+    let code = scene_property_type(ty).code();
+    if shape.is_single() { code.to_owned() } else { format!("{}:{code}", shape.code()) }
+}
+
+/// How the scene and the Inspector call a shape.
+pub fn scene_property_shape(shape: Shape) -> PropertyShape {
+    match shape {
+        Shape::Single => PropertyShape::Single,
+        Shape::List => PropertyShape::List,
+        Shape::Map => PropertyShape::Map,
     }
 }
 
@@ -1562,6 +1589,13 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         }
     }
     let functions = compile_functions(&mut c, &mut problems);
+    // A variable node names one value, never a list or map.
+    for node in graph.nodes.iter().filter(|n| VariableType::ALL.iter().any(|ty| variable_kinds(*ty).contains(&n.kind.as_str()))) {
+        let name = c.setting_text(node.id, "name", "");
+        if let Some(v) = graph.variable(&name).filter(|v| !v.shape.is_single()) {
+            problems.push(Problem::on(node.id, format!("{name} is a {}: use the list and map nodes", v.shape.label().to_lowercase())));
+        }
+    }
     // Nodes naming a property that is not declared still declare it, at the type's zero.
     for node in graph.nodes.iter().filter(|n| property_type(&n.kind).is_some()) {
         if let Err(p) = c.property_of(node.id) {
@@ -1587,7 +1621,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         let kinds = variable_kinds(ty);
         let mut names: std::collections::BTreeMap<String, serde_json::Value> =
             graph.nodes.iter().filter(|n| kinds.contains(&n.kind.as_str())).map(|n| (c.setting_text(n.id, "name", default), ty.zero())).collect();
-        names.extend(graph.variables.iter().filter(|v| v.ty == ty).map(|v| (v.name.clone(), v.start.clone())));
+        names.extend(graph.variables.iter().filter(|v| v.ty == ty && v.shape.is_single()).map(|v| (v.name.clone(), v.start.clone())));
         names
     };
     let number = |v: &serde_json::Value| v.as_f64().unwrap_or(0.0) as f32;
@@ -1957,10 +1991,13 @@ impl Compiler<'_> {
             return Err(Problem::on(node, "choose a property"));
         }
         match self.graph.property(&name) {
+            Some(declared) if !declared.shape.is_single() => {
+                Err(Problem::on(node, format!("{name} is a {}: use the list and map nodes", declared.shape.label().to_lowercase())))
+            }
             Some(declared) if declared.ty != ty => Err(Problem::on(node, format!("{name} is a {} property, not a {}", declared.ty.label(), ty.label()))),
             _ => {
                 if !self.properties.iter().any(|(n, _, _)| *n == name) {
-                    self.properties.push((name.clone(), scene_property_type(ty), described_default(ty, &ty.zero())));
+                    self.properties.push((name.clone(), described_type(ty, Shape::Single), described_default(ty, &ty.zero())));
                 }
                 Ok(name)
             }
@@ -2788,7 +2825,7 @@ fn zip(node: u32, a: Val, b: Val, op: impl Fn(&str, &str) -> String) -> Result<V
 fn declare_storage(c: &mut Compiler<'_>) {
     let graph = c.graph;
     for p in &graph.properties {
-        c.properties.push((p.name.clone(), scene_property_type(p.ty), described_default(p.ty, &p.default)));
+        c.properties.push((p.name.clone(), described_type(p.ty, p.shape), described_value(p.ty, p.shape, &p.default)));
     }
     let mut starts: std::collections::BTreeMap<String, String> = graph
         .nodes
@@ -2796,7 +2833,13 @@ fn declare_storage(c: &mut Compiler<'_>) {
         .filter(|n| variable_kinds(VariableType::Text).contains(&n.kind.as_str()))
         .map(|n| (c.setting_text(n.id, "name", "label"), String::new()))
         .collect();
-    starts.extend(graph.variables.iter().filter(|v| v.ty == VariableType::Text).map(|v| (v.name.clone(), v.start.as_str().unwrap_or_default().to_owned())));
+    starts.extend(
+        graph
+            .variables
+            .iter()
+            .filter(|v| v.ty == VariableType::Text && v.shape.is_single())
+            .map(|v| (v.name.clone(), v.start.as_str().unwrap_or_default().to_owned())),
+    );
     for (name, start) in starts {
         let mut end = start.len().min(TEXT_VARIABLE_BYTES as usize);
         while !start.is_char_boundary(end) {
@@ -2889,8 +2932,18 @@ fn parts_of(node: u32, ty: VariableType, value: Val) -> Result<Vec<String>, Prob
 
 /// What `bayleaf_describe` says, as JSON: the properties, the menu path, how the Inspector lays the
 /// properties out, and the events.
-fn description(graph: &Graph, properties: &[(String, PropertyType, serde_json::Value)]) -> Result<String, Problem> {
-    let mut description = serde_json::json!({ "properties": properties.iter().map(|(n, ty, v)| serde_json::json!([n, v, ty.code()])).collect::<Vec<_>>() });
+fn description(graph: &Graph, properties: &[(String, String, serde_json::Value)]) -> Result<String, Problem> {
+    let mut description = serde_json::json!({ "properties": properties.iter().map(|(n, ty, v)| serde_json::json!([n, v, ty])).collect::<Vec<_>>() });
+    // Lists and maps of variables, with what they start with, for the host to keep.
+    let kept: Vec<serde_json::Value> = graph
+        .variables
+        .iter()
+        .filter(|v| !v.shape.is_single())
+        .map(|v| serde_json::json!([v.name, described_value(v.ty, v.shape, &v.start), described_type(v.ty, v.shape)]))
+        .collect();
+    if !kept.is_empty() {
+        description["variables"] = serde_json::Value::Array(kept);
+    }
     if !graph.menu.trim().is_empty() {
         let path = crate::menu_path(&graph.menu).map_err(|problem| Problem::graph(format!("menu path: {problem}")))?;
         description["menu"] = serde_json::json!(path);
@@ -3613,8 +3666,9 @@ pub fn check_inspector(graph: &Graph) -> Result<(), String> {
         .properties
         .iter()
         .map(|p| {
-            let default = serde_json::from_value(described_default(p.ty, &p.default)).unwrap_or(PropertyValue::Number(0.0));
-            DeclaredProperty { name: p.name.clone(), ty: scene_property_type(p.ty), default }
+            let (ty, shape) = (scene_property_type(p.ty), scene_property_shape(p.shape));
+            let default = PropertyValue::from_described(&described_value(p.ty, p.shape, &p.default), ty, shape).unwrap_or_else(|| ty.zero_of(shape));
+            DeclaredProperty { name: p.name.clone(), ty, shape, default }
         })
         .collect();
     bayleaf_scene::inspector::parse(&layout, &declared).map(|_| ())

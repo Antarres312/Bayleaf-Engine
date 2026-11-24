@@ -2,7 +2,7 @@
 //! value never changes the width of the panel around it.
 
 use crate::i18n::tl;
-use bayleaf_engine::scene::components::{MAX_PROPERTY_TEXT, PropertyType, PropertyValue};
+use bayleaf_engine::scene::components::{MAX_PROPERTY_ITEMS, MAX_PROPERTY_TEXT, PropertyType, PropertyValue};
 use serde_json::{Number, Value};
 
 use crate::theme::{self, GAP, LABEL_WIDTH, ROW_HEIGHT, Tokens};
@@ -433,6 +433,130 @@ pub(crate) fn named_property(
     if !hint.is_empty() {
         shown.response.on_hover_text(hint);
     }
+    (outcome, reset)
+}
+
+/// A list or map script property: its title with a button that adds an item (or key) and the reset
+/// button on one row, then a row per item (a list's by its place, a map's with its key in a field)
+/// with the field of its type and a × that takes it out. Returns the edit outcome and whether reset
+/// was clicked.
+pub(crate) fn shaped_property(
+    ui: &mut egui::Ui,
+    property: &PropertyRow<'_>,
+    value: &mut PropertyValue,
+    salt: impl std::hash::Hash + std::fmt::Debug,
+) -> (Outcome, bool) {
+    let t = theme::tokens(ui);
+    let mut reset = false;
+    let mut outcome = Outcome::default();
+    let layout = property.layout;
+    let title = layout.and_then(|l| l.label.clone()).unwrap_or_else(|| title_case(property.name));
+    let read_only = layout.is_some_and(|l| l.read_only);
+    let ty = property.ty;
+    ui.push_id(salt, |ui| {
+        let count = match &*value {
+            PropertyValue::List { list } => list.len(),
+            PropertyValue::Map { map } => map.len(),
+            _ => 0,
+        };
+        let is_map = matches!(value, PropertyValue::Map { .. });
+        row(ui, t, &title, |ui, _, _| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if reset_button(ui, property.changed && !read_only, &title).clicked() {
+                    reset = true;
+                }
+                let (word, hint) = if is_map { ("Add Key", "Add a key to {name}") } else { ("Add Item", "Add an item to {name}") };
+                let add = ui.add_enabled(!read_only && count < MAX_PROPERTY_ITEMS, egui::Button::new(tl(word)).small());
+                ui.ctx().accesskit_node_builder(add.id, |node| node.set_label(crate::i18n::tf(hint, &[("name", &title)])));
+                if add.clicked() {
+                    match value {
+                        PropertyValue::List { list } => list.push(ty.zero()),
+                        PropertyValue::Map { map } => {
+                            let fresh = (1..).map(|n| if n == 1 { "key".to_owned() } else { format!("key{n}") }).find(|k| !map.contains_key(k));
+                            if let Some(fresh) = fresh {
+                                map.insert(fresh, ty.zero());
+                            }
+                        }
+                        _ => {}
+                    }
+                    outcome = Outcome { changed: true, ended: true };
+                }
+            });
+        });
+        ui.add_enabled_ui(!read_only, |ui| {
+            ui.indent("items", |ui| match value {
+                PropertyValue::List { list } => {
+                    let mut gone = None;
+                    for (i, item) in list.iter_mut().enumerate() {
+                        ui.push_id(i, |ui| {
+                            row(ui, t, &i.to_string(), |ui, label, _| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let remove = ui.small_button("×").on_hover_text(tl("Remove"));
+                                    let name = crate::i18n::tf("Remove item {index} of {name}", &[("index", &i.to_string()), ("name", &title)]);
+                                    ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(name));
+                                    if remove.clicked() {
+                                        gone = Some(i);
+                                    }
+                                    let width = (ui.available_width() - 1.0).max(40.0);
+                                    outcome.merge(property_field(ui, ty, item, property.objects, label, width, None));
+                                });
+                            });
+                        });
+                    }
+                    if let Some(i) = gone {
+                        list.remove(i);
+                        outcome = Outcome { changed: true, ended: true };
+                    }
+                }
+                PropertyValue::Map { map } => {
+                    let (mut gone, mut renamed) = (None, None);
+                    for (i, (key, item)) in map.iter_mut().enumerate() {
+                        ui.push_id(i, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.set_min_height(ROW_HEIGHT);
+                                // The key as typed stays until the field is left, then the entry moves to it.
+                                let id = ui.make_persistent_id("key");
+                                let mut typed = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_else(|| key.clone());
+                                let field = ui.add_sized([LABEL_WIDTH, ROW_HEIGHT], egui::TextEdit::singleline(&mut typed).char_limit(MAX_PROPERTY_TEXT));
+                                let name = crate::i18n::tf("Key {index} of {name}", &[("index", &i.to_string()), ("name", &title)]);
+                                ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(name));
+                                if field.lost_focus() {
+                                    if typed != *key {
+                                        renamed = Some((key.clone(), typed));
+                                    }
+                                    ui.data_mut(|d| d.remove::<String>(id));
+                                } else if field.has_focus() {
+                                    ui.data_mut(|d| d.insert_temp(id, typed));
+                                }
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let remove = ui.small_button("×").on_hover_text(tl("Remove"));
+                                    let name = crate::i18n::tf("Remove {key} from {name}", &[("key", key), ("name", &title)]);
+                                    ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(name));
+                                    if remove.clicked() {
+                                        gone = Some(key.clone());
+                                    }
+                                    let width = (ui.available_width() - 1.0).max(40.0);
+                                    outcome.merge(property_field(ui, ty, item, property.objects, field.id, width, None));
+                                });
+                            });
+                        });
+                    }
+                    if let Some(key) = gone {
+                        map.remove(&key);
+                        outcome = Outcome { changed: true, ended: true };
+                    }
+                    // A key renamed to one the map has already, or to nothing, stays as it was.
+                    if let Some((old, new)) = renamed.filter(|(_, new)| !new.is_empty() && !map.contains_key(new))
+                        && let Some(item) = map.remove(&old)
+                    {
+                        map.insert(new, item);
+                        outcome = Outcome { changed: true, ended: true };
+                    }
+                }
+                _ => {}
+            });
+        });
+    });
     (outcome, reset)
 }
 

@@ -131,14 +131,14 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "graph.variable.add",
             "Add Variable",
-            "{name, type: \"number\" | \"wholeNumber\" | \"vector\" | \"trueFalse\" | \"text\" | \"object\" | \"color\", start?}: declares a variable of a visual script, starting at start (else zero)",
+            "{name, type: \"number\" | \"wholeNumber\" | \"vector\" | \"trueFalse\" | \"text\" | \"object\" | \"color\", shape?, start?}: declares a variable of a visual script, starting at start (else zero); shape \"list\" or \"map\" makes it a list (items in order, by index from 0) or a map (values by text keys) of that type, starting empty or with start ([...] or {...})",
             Mutates::Graph,
             variable_add,
         ),
         spec(
             "graph.variable.set",
             "Change Variable",
-            "{name, rename?, start?}: a new start value, or a new name that the variable's nodes follow",
+            "{name, rename?, type?, shape?, start?}: a new start value, a new name that the variable's nodes follow, or a new type or shape (\"single\", \"list\", \"map\"); the start stays where it still fits, else it goes to zero, and its nodes follow the new type",
             Mutates::Graph,
             variable_set,
         ),
@@ -146,14 +146,14 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "graph.property.add",
             "Add Property",
-            "{name, type, default?}: declares a property of a visual script (type as for variables), with a default (else zero); the Inspector sets it per object",
+            "{name, type, shape?, default?}: declares a property of a visual script (type and shape as for variables), with a default (else zero); the Inspector sets it per object",
             Mutates::Graph,
             property_add,
         ),
         spec(
             "graph.property.set",
             "Change Property",
-            "{name, rename?, default?, inspector?}: a new default, a new name that its Property and Set Property nodes follow, or how the Inspector shows it ({label?, hint?, group?, range?, slider?, readOnly?, choices?, showIf?}; {} for a plain row)",
+            "{name, rename?, type?, shape?, default?, inspector?}: a new default, a new type or shape (as for variables; options that no longer fit go), a new name that its Property and Set Property nodes follow, or how the Inspector shows it ({label?, hint?, group?, range?, slider?, readOnly?, choices?, showIf?}; {} for a plain row)",
             Mutates::Graph,
             property_set,
         ),
@@ -189,21 +189,6 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         ),
         spec("graph.event.remove", "Remove Event", "{name}: its nodes stay (a Trigger Event may name another script's event)", Mutates::Graph, event_remove),
         spec(
-            "graph.collection.add",
-            "Add List or Map",
-            "{name, kind, item}: declares a list (kind \"list\": items in order, by index from 0) or a map (\"map\": values by text keys) of a visual script, holding item values (type as for variables); each object running the script keeps its own, empty when play starts",
-            Mutates::Graph,
-            collection_add,
-        ),
-        spec(
-            "graph.collection.set",
-            "Change List or Map",
-            "{name, rename?, item?}: a new name, or what it holds; its nodes follow, and links to their values go when the type changes",
-            Mutates::Graph,
-            collection_set,
-        ),
-        spec("graph.collection.remove", "Remove List or Map", "{name}: its nodes stay, and say they name no list or map", Mutates::Graph, collection_remove),
-        spec(
             "graph.menu.set",
             "Set Menu Path",
             "{path}: where Add Component lists the visual script (Light/Flicker); empty for under Scripts",
@@ -229,12 +214,21 @@ struct VariableAddParams {
     #[serde(rename = "type")]
     ty: bayleaf_graph::VariableType,
     #[serde(default)]
+    shape: Option<bayleaf_graph::Shape>,
+    #[serde(default)]
     start: Option<Value>,
 }
 
 fn variable_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: VariableAddParams = parse(params)?;
-    open_script(session)?.add_variable(&p.name, p.ty, p.start).map_err(failed)?;
+    let graph = open_script(session)?;
+    let mut trial = graph.clone();
+    trial.add_variable(&p.name, p.ty, None).map_err(failed)?;
+    trial.retype_variable(&p.name, p.ty, p.shape.unwrap_or_default()).map_err(failed)?;
+    if let Some(start) = p.start {
+        trial.set_variable(&p.name, None, Some(start), &[]).map_err(failed)?;
+    }
+    *graph = trial;
     Ok(json!({}))
 }
 
@@ -244,15 +238,61 @@ struct VariableSetParams {
     name: String,
     #[serde(default)]
     rename: Option<String>,
+    #[serde(default, rename = "type")]
+    ty: Option<bayleaf_graph::VariableType>,
+    #[serde(default)]
+    shape: Option<bayleaf_graph::Shape>,
     #[serde(default)]
     start: Option<Value>,
+}
+
+/// The node kinds that name a declaration of `ty` by their `name` setting: its Get and Set nodes
+/// (`kinds`), and the list and map nodes.
+fn naming_kinds(kinds: [&'static str; 2]) -> Vec<&'static str> {
+    kinds.into_iter().chain(bayleaf_script::visual::COLLECTION_KINDS).collect()
+}
+
+/// After a declaration `name` went from `old` to `new` type and shape: its Get and Set nodes become
+/// the new type's (`kinds` gives a type's two), keeping their places and the links that still fit,
+/// and its list and map nodes take what it now holds.
+fn follow_retype(
+    graph: &mut Graph,
+    name: &str,
+    old: bayleaf_graph::VariableType,
+    new: (bayleaf_graph::VariableType, bayleaf_graph::Shape),
+    kinds: fn(bayleaf_graph::VariableType) -> [&'static str; 2],
+) -> Result<(), CommandError> {
+    let catalog = &bayleaf_script::visual::CATALOG;
+    if old != new.0 {
+        let (before, after) = (kinds(old), kinds(new.0));
+        let named: Vec<(u32, usize)> = graph
+            .nodes
+            .iter()
+            .filter(|n| n.values.get("name").and_then(Value::as_str) == Some(name))
+            .filter_map(|n| before.iter().position(|k| *k == n.kind).map(|i| (n.id, i)))
+            .collect();
+        for (id, i) in named {
+            graph.change_kind(catalog, id, after[i]).map_err(failed)?;
+        }
+    }
+    if !new.1.is_single() {
+        graph.follow_item(catalog, name, new.0, &bayleaf_script::visual::COLLECTION_KINDS).map_err(failed)?;
+    }
+    Ok(())
 }
 
 fn variable_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: VariableSetParams = parse(params)?;
     let graph = open_script(session)?;
-    let ty = graph.variable(&p.name).map(|v| v.ty).ok_or_else(|| CommandError::BadParams(format!("there is no variable {}", p.name)))?;
-    graph.set_variable(&p.name, p.rename.as_deref(), p.start, &bayleaf_script::visual::variable_kinds(ty)).map_err(failed)?;
+    let (ty, shape) = graph.variable(&p.name).map(|v| (v.ty, v.shape)).ok_or_else(|| CommandError::BadParams(format!("there is no variable {}", p.name)))?;
+    let new = (p.ty.unwrap_or(ty), p.shape.unwrap_or(shape));
+    let mut trial = graph.clone();
+    if new != (ty, shape) {
+        trial.retype_variable(&p.name, new.0, new.1).map_err(failed)?;
+        follow_retype(&mut trial, &p.name, ty, new, bayleaf_script::visual::variable_kinds)?;
+    }
+    trial.set_variable(&p.name, p.rename.as_deref(), p.start, &naming_kinds(bayleaf_script::visual::variable_kinds(new.0))).map_err(failed)?;
+    *graph = trial;
     Ok(json!({}))
 }
 
@@ -275,12 +315,21 @@ struct PropertyAddParams {
     #[serde(rename = "type")]
     ty: bayleaf_graph::VariableType,
     #[serde(default)]
+    shape: Option<bayleaf_graph::Shape>,
+    #[serde(default)]
     default: Option<Value>,
 }
 
 fn property_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: PropertyAddParams = parse(params)?;
-    open_script(session)?.add_property(&p.name, p.ty, p.default).map_err(failed)?;
+    let graph = open_script(session)?;
+    let mut trial = graph.clone();
+    trial.add_property(&p.name, p.ty, None).map_err(failed)?;
+    trial.retype_property(&p.name, p.ty, p.shape.unwrap_or_default()).map_err(failed)?;
+    if let Some(default) = p.default {
+        trial.set_property(&p.name, None, Some(default), &[]).map_err(failed)?;
+    }
+    *graph = trial;
     Ok(json!({}))
 }
 
@@ -290,6 +339,10 @@ struct PropertySetParams {
     name: String,
     #[serde(default)]
     rename: Option<String>,
+    #[serde(default, rename = "type")]
+    ty: Option<bayleaf_graph::VariableType>,
+    #[serde(default)]
+    shape: Option<bayleaf_graph::Shape>,
     #[serde(default)]
     default: Option<Value>,
     #[serde(default)]
@@ -299,17 +352,33 @@ struct PropertySetParams {
 fn property_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: PropertySetParams = parse(params)?;
     let graph = open_script(session)?;
-    let ty = graph.property(&p.name).map(|v| v.ty).ok_or_else(|| CommandError::BadParams(format!("there is no property {}", p.name)))?;
-    // Options are checked as the script host checks them, before anything changes.
+    let property = graph.property(&p.name).ok_or_else(|| CommandError::BadParams(format!("there is no property {}", p.name)))?;
+    let (ty, shape) = (property.ty, property.shape);
+    let new = (p.ty.unwrap_or(ty), p.shape.unwrap_or(shape));
+    let mut trial = graph.clone();
+    if new != (ty, shape) {
+        trial.retype_property(&p.name, new.0, new.1).map_err(failed)?;
+        follow_retype(&mut trial, &p.name, ty, new, bayleaf_script::visual::property_kinds)?;
+        // Options of the old type that no longer fit (a range on text) go; its words stay.
+        if bayleaf_script::visual::check_inspector(&trial).is_err()
+            && let Some(kept) = trial.property(&p.name).map(|p| bayleaf_graph::PropertyOptions {
+                label: p.inspector.label.clone(),
+                hint: p.inspector.hint.clone(),
+                group: p.inspector.group.clone(),
+                read_only: p.inspector.read_only,
+                ..Default::default()
+            })
+        {
+            trial.set_property_options(&p.name, kept).map_err(failed)?;
+        }
+    }
     if let Some(options) = &p.inspector {
-        let mut trial = graph.clone();
         trial.set_property_options(&p.name, options.clone()).map_err(failed)?;
-        bayleaf_script::visual::check_inspector(&trial).map_err(CommandError::BadParams)?;
     }
-    graph.set_property(&p.name, p.rename.as_deref(), p.default, &bayleaf_script::visual::property_kinds(ty)).map_err(failed)?;
-    if let Some(options) = p.inspector {
-        graph.set_property_options(&p.name, options).map_err(failed)?;
-    }
+    // Options are checked as the script host checks them, before anything changes.
+    bayleaf_script::visual::check_inspector(&trial).map_err(CommandError::BadParams)?;
+    trial.set_property(&p.name, p.rename.as_deref(), p.default, &naming_kinds(bayleaf_script::visual::property_kinds(new.0))).map_err(failed)?;
+    *graph = trial;
     Ok(json!({}))
 }
 
@@ -382,43 +451,6 @@ fn event_set(session: &mut Session, params: &Value) -> Result<Value, CommandErro
 fn event_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: FunctionAddParams = parse(params)?;
     open_script(session)?.remove_event(&p.name).map_err(failed)?;
-    Ok(json!({}))
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CollectionAddParams {
-    name: String,
-    kind: bayleaf_graph::CollectionKind,
-    item: bayleaf_graph::VariableType,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CollectionSetParams {
-    name: String,
-    #[serde(default)]
-    rename: Option<String>,
-    #[serde(default)]
-    item: Option<bayleaf_graph::VariableType>,
-}
-
-fn collection_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
-    let p: CollectionAddParams = parse(params)?;
-    open_script(session)?.add_collection(&p.name, p.kind, p.item).map_err(failed)?;
-    Ok(json!({}))
-}
-
-fn collection_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
-    let p: CollectionSetParams = parse(params)?;
-    let catalog = &bayleaf_script::visual::CATALOG;
-    open_script(session)?.set_collection(catalog, &p.name, p.rename.as_deref(), p.item, &bayleaf_script::visual::COLLECTION_KINDS).map_err(failed)?;
-    Ok(json!({}))
-}
-
-fn collection_remove(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
-    let p: FunctionAddParams = parse(params)?;
-    open_script(session)?.remove_collection(&p.name).map_err(failed)?;
     Ok(json!({}))
 }
 

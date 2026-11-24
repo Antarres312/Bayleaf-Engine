@@ -569,6 +569,8 @@ struct HostState<L> {
     subscribing: Vec<(bool, (StableId, usize), String)>,
     /// The lists and maps this script keeps, by name.
     collections: HashMap<String, Stored>,
+    /// The lists and maps of its properties and variables not used yet, with what they start with.
+    seeds: HashMap<String, DeclaredProperty>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
     /// Interface elements as they show, for `ui_value` and `ui_text`.
@@ -606,6 +608,7 @@ impl<L> HostState<L> {
             index: 0,
             subscribing: Vec::new(),
             collections: HashMap::new(),
+            seeds: HashMap::new(),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
             interface: Arc::new(InterfaceValues::new()),
@@ -662,6 +665,8 @@ pub struct Description {
     pub inspector: Vec<bayleaf_scene::inspector::InspectorItem>,
     /// Events it declares, which other scripts and the interface can trigger on its object.
     pub events: Vec<DeclaredEvent>,
+    /// The lists and maps a visual script's variables start with (as properties, by name).
+    pub kept: Vec<DeclaredProperty>,
 }
 
 /// An event a script declares: its name and its values, each `name:type` (`amount:number`).

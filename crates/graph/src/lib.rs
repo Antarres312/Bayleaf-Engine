@@ -18,7 +18,7 @@ pub const FORMAT: &str = "bayleaf.graph";
 /// Current graph file version. Version 2 added declared `variables`; version 3 moved a visual script's
 /// Menu Path node into `menu`; version 4 added `functions`; version 5 added declared `properties`;
 /// version 6 added how each property shows in the Inspector (`properties[].inspector`); version 7
-/// added declared `events`; version 8 added declared lists and maps (`collections`).
+/// added declared `events`; version 8 let variables and properties hold lists or maps (`shape`).
 /// Older files still read: a Menu Path node becomes `menu`, and a catalog's `upgrade` moves what its
 /// own nodes kept (a visual script's Property nodes' defaults become `properties`).
 pub const VERSION: u32 = 8;
@@ -373,9 +373,6 @@ pub struct Graph {
     /// Events a visual script declares: what each brings. Any script may trigger them on an object.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<Event>,
-    /// Lists and maps a visual script keeps, per object, for the whole of play.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub collections: Vec<Collection>,
     /// Properties a visual script declares: values the Inspector sets per object, with defaults.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<Property>,
@@ -389,6 +386,9 @@ pub struct Property {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: VariableType,
+    /// One value, a list or a map; one value when left out.
+    #[serde(default, skip_serializing_if = "Shape::is_single")]
+    pub shape: Shape,
     pub default: Value,
     /// How the Inspector shows it; empty for a plain row.
     #[serde(default, skip_serializing_if = "PropertyOptions::is_empty")]
@@ -513,6 +513,28 @@ impl VariableType {
             VariableType::Object => value.is_null(),
         }
     }
+
+    /// What a new variable of this type and shape starts at: the type's zero, or an empty list or map.
+    pub fn zero_of(self, shape: Shape) -> Value {
+        match shape {
+            Shape::Single => self.zero(),
+            Shape::List => Value::Array(Vec::new()),
+            Shape::Map => Value::Object(serde_json::Map::new()),
+        }
+    }
+
+    /// Whether `value` fits this type in `shape`: one value that [`fits`](Self::fits), or a list
+    /// (an array) or map (an object, keys of at most [`MAX_TEXT`] characters) of at most
+    /// [`MAX_ITEMS`] of them.
+    pub fn fits_shape(self, shape: Shape, value: &Value) -> bool {
+        match shape {
+            Shape::Single => self.fits(value),
+            Shape::List => value.as_array().is_some_and(|items| items.len() <= MAX_ITEMS && items.iter().all(|v| self.fits(v))),
+            Shape::Map => value
+                .as_object()
+                .is_some_and(|entries| entries.len() <= MAX_ITEMS && entries.iter().all(|(k, v)| k.chars().count() <= MAX_TEXT && self.fits(v))),
+        }
+    }
 }
 
 /// One input or output of a function: a name and what it holds.
@@ -547,34 +569,44 @@ pub struct Event {
     pub params: Vec<Param>,
 }
 
-/// Whether a collection is a list (items in order, by index from 0) or a map (values by text keys).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Whether a variable or property holds one value, a list of them (in order, by index from 0) or a
+/// map of them (under text keys, in the keys' order).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum CollectionKind {
+pub enum Shape {
+    #[default]
+    Single,
     List,
     Map,
 }
 
-impl CollectionKind {
+impl Shape {
+    pub const ALL: [Shape; 3] = [Shape::Single, Shape::List, Shape::Map];
+
+    pub fn is_single(&self) -> bool {
+        *self == Shape::Single
+    }
+
     pub fn label(self) -> &'static str {
         match self {
-            CollectionKind::List => "List",
-            CollectionKind::Map => "Map",
+            Shape::Single => "Single Value",
+            Shape::List => "List",
+            Shape::Map => "Map",
+        }
+    }
+
+    /// The word a description uses before a type code (`list:number`); none for one value.
+    pub fn code(self) -> &'static str {
+        match self {
+            Shape::Single => "single",
+            Shape::List => "list",
+            Shape::Map => "map",
         }
     }
 }
 
-/// A list or map a visual script keeps: its name, which it is, and the type of what it holds.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Collection {
-    pub name: String,
-    pub kind: CollectionKind,
-    pub item: VariableType,
-}
-
-/// Most lists and maps a graph declares.
-pub const MAX_COLLECTIONS: usize = 64;
+/// Most items a list or map starts with: a variable's start, a property's default.
+pub const MAX_ITEMS: usize = 1024;
 
 /// Most events a graph declares.
 pub const MAX_EVENTS: usize = 64;
@@ -616,6 +648,9 @@ pub struct Variable {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: VariableType,
+    /// One value, a list or a map; one value when left out.
+    #[serde(default, skip_serializing_if = "Shape::is_single")]
+    pub shape: Shape,
     pub start: Value,
 }
 
@@ -649,7 +684,7 @@ impl Graph {
         if !ty.fits(&start) {
             return Err(GraphError::Refused(format!("a {} variable cannot start at {start}", ty.label())));
         }
-        self.variables.push(Variable { name: name.to_owned(), ty, start });
+        self.variables.push(Variable { name: name.to_owned(), ty, shape: Shape::Single, start });
         Ok(())
     }
 
@@ -658,8 +693,8 @@ impl Graph {
     pub fn set_variable(&mut self, name: &str, rename: Option<&str>, start: Option<Value>, kinds: &[&str]) -> Result<(), GraphError> {
         let index = self.variables.iter().position(|v| v.name == name).ok_or_else(|| GraphError::Refused(format!("there is no variable {name}")))?;
         if let Some(start) = start {
-            let ty = self.variables[index].ty;
-            if !ty.fits(&start) {
+            let (ty, shape) = (self.variables[index].ty, self.variables[index].shape);
+            if !ty.fits_shape(shape, &start) {
                 return Err(GraphError::Refused(format!("a {} variable cannot start at {start}", ty.label())));
             }
             self.variables[index].start = start;
@@ -794,74 +829,68 @@ impl Graph {
         Ok(())
     }
 
-    pub fn collection(&self, name: &str) -> Option<&Collection> {
-        self.collections.iter().find(|c| c.name == name)
+    /// Gives a variable another type or shape; its start stays where it still fits, else it goes
+    /// back to the new type's zero (an empty list or map). Returns the old type and shape. Its
+    /// nodes are the caller's to follow (they depend on the domain's node kinds).
+    pub fn retype_variable(&mut self, name: &str, ty: VariableType, shape: Shape) -> Result<(VariableType, Shape), GraphError> {
+        let variable = self.variables.iter_mut().find(|v| v.name == name).ok_or_else(|| GraphError::Refused(format!("there is no variable {name}")))?;
+        let old = (variable.ty, variable.shape);
+        (variable.ty, variable.shape) = (ty, shape);
+        if !ty.fits_shape(shape, &variable.start) {
+            variable.start = ty.zero_of(shape);
+        }
+        Ok(old)
     }
 
-    /// Declares a list or a map of `item`s.
-    pub fn add_collection(&mut self, name: &str, kind: CollectionKind, item: VariableType) -> Result<(), GraphError> {
-        check_variable_name(name).map_err(|_| GraphError::Refused(format!("list or map name {name:?} must be 1 to 64 letters, digits or _")))?;
-        if self.collection(name).is_some() {
-            return Err(GraphError::Refused(format!("there is already a list or map {name}")));
+    /// Gives a property another type or shape, as [`Graph::retype_variable`] does a variable.
+    pub fn retype_property(&mut self, name: &str, ty: VariableType, shape: Shape) -> Result<(VariableType, Shape), GraphError> {
+        let property = self.properties.iter_mut().find(|p| p.name == name).ok_or_else(|| GraphError::Refused(format!("there is no property {name}")))?;
+        let old = (property.ty, property.shape);
+        (property.ty, property.shape) = (ty, shape);
+        if !ty.fits_shape(shape, &property.default) {
+            property.default = ty.zero_of(shape);
         }
-        if self.collections.len() >= MAX_COLLECTIONS {
-            return Err(GraphError::Refused(format!("a graph declares at most {MAX_COLLECTIONS} lists and maps")));
-        }
-        self.collections.push(Collection { name: name.to_owned(), kind, item });
-        Ok(())
+        Ok(old)
     }
 
-    /// Renames a list or map, or changes what it holds; nodes of `kinds` that name it follow (their
-    /// `name` setting, and `item`, the type code of what it holds), and links to their values go when
-    /// the type changes.
-    pub fn set_collection(
-        &mut self,
-        catalog: &Catalog,
-        name: &str,
-        rename: Option<&str>,
-        item: Option<VariableType>,
-        kinds: &[&str],
-    ) -> Result<(), GraphError> {
-        let mut collection = self.collection(name).cloned().ok_or_else(|| GraphError::Refused(format!("there is no list or map {name}")))?;
-        if let Some(new) = rename.filter(|n| *n != name) {
-            check_variable_name(new).map_err(|_| GraphError::Refused(format!("list or map name {new:?} must be 1 to 64 letters, digits or _")))?;
-            if self.collection(new).is_some() {
-                return Err(GraphError::Refused(format!("there is already a list or map {new}")));
-            }
-            collection.name = new.to_owned();
-        }
-        let retyped = item.is_some_and(|ty| ty != collection.item);
-        if let Some(ty) = item {
-            collection.item = ty;
-        }
+    /// Makes node `id` a node of another kind in place: it keeps its id, place and the values the
+    /// new kind still has, and loses the links the new kind's pins no longer take.
+    pub fn change_kind(&mut self, catalog: &Catalog, id: u32, kind: &str) -> Result<(), GraphError> {
+        catalog.get(kind).ok_or_else(|| GraphError::UnknownKind(kind.to_owned(), catalog.domain))?;
         let mut trial = self.clone();
-        if let Some(slot) = trial.collections.iter_mut().find(|c| c.name == name) {
-            *slot = collection.clone();
-        }
-        let named: Vec<u32> = trial
-            .nodes
-            .iter()
-            .filter(|n| kinds.contains(&n.kind.as_str()) && n.values.get("name").and_then(Value::as_str) == Some(name))
-            .map(|n| n.id)
-            .collect();
-        for id in named {
-            if retyped {
-                trial.links.retain(|l| !((l.from.node == id && l.from.pin == "value") || (l.to.node == id && l.to.pin == "value")));
+        trial.node_mut(id)?.kind = kind.to_owned();
+        let def = trial.node(id).and_then(|n| catalog.def_of(n)).ok_or_else(|| GraphError::UnknownKind(kind.to_owned(), catalog.domain))?;
+        trial.node_mut(id)?.values.retain(|name, _| def.input(name).is_some() || def.setting(name).is_some());
+        trial.drop_dangling_links(catalog, id);
+        let touching: Vec<Link> = trial.links.iter().filter(|l| l.from.node == id || l.to.node == id).cloned().collect();
+        for link in touching {
+            let others: Graph = Graph { links: trial.links.iter().filter(|l| **l != link).cloned().collect(), ..trial.clone() };
+            if others.check_link(catalog, &link, Some(&others)).is_err() {
+                trial.links.retain(|l| *l != link);
             }
-            trial.set_value(catalog, id, "item", Value::from(vec![collection.item.code()]))?;
-            trial.set_value(catalog, id, "name", Value::from(collection.name.as_str()))?;
         }
         *self = trial;
         Ok(())
     }
 
-    /// Takes a list or map away; nodes naming it stay, and the compiler says they name none.
-    pub fn remove_collection(&mut self, name: &str) -> Result<(), GraphError> {
-        let before = self.collections.len();
-        self.collections.retain(|c| c.name != name);
-        if self.collections.len() == before {
-            return Err(GraphError::Refused(format!("there is no list or map {name}")));
+    /// The nodes of `kinds` that name `name` (their `name` setting) keep the type code of what it
+    /// holds in `item`; when it changes, links to their values go.
+    pub fn follow_item(&mut self, catalog: &Catalog, name: &str, item: VariableType, kinds: &[&str]) -> Result<(), GraphError> {
+        let code = Value::from(vec![item.code()]);
+        let named: Vec<u32> = self
+            .nodes
+            .iter()
+            .filter(|n| kinds.contains(&n.kind.as_str()) && n.values.get("name").and_then(Value::as_str) == Some(name))
+            .map(|n| n.id)
+            .collect();
+        let mut trial = self.clone();
+        for id in named {
+            if trial.value(id, "item") != Some(&code) {
+                trial.links.retain(|l| !((l.from.node == id && l.from.pin == "value") || (l.to.node == id && l.to.pin == "value")));
+                trial.set_value(catalog, id, "item", code.clone())?;
+            }
         }
+        *self = trial;
         Ok(())
     }
 
@@ -902,7 +931,7 @@ impl Graph {
         if !ty.fits(&default) {
             return Err(GraphError::Refused(format!("a {} property cannot default to {default}", ty.label())));
         }
-        self.properties.push(Property { name: name.to_owned(), ty, default, inspector: PropertyOptions::default() });
+        self.properties.push(Property { name: name.to_owned(), ty, shape: Shape::Single, default, inspector: PropertyOptions::default() });
         Ok(())
     }
 
@@ -911,8 +940,8 @@ impl Graph {
     pub fn set_property(&mut self, name: &str, rename: Option<&str>, default: Option<Value>, kinds: &[&str]) -> Result<(), GraphError> {
         let index = self.properties.iter().position(|p| p.name == name).ok_or_else(|| GraphError::Refused(format!("there is no property {name}")))?;
         if let Some(default) = default {
-            let ty = self.properties[index].ty;
-            if !ty.fits(&default) {
+            let (ty, shape) = (self.properties[index].ty, self.properties[index].shape);
+            if !ty.fits_shape(shape, &default) {
                 return Err(GraphError::Refused(format!("a {} property cannot default to {default}", ty.label())));
             }
             self.properties[index].default = default;
@@ -974,7 +1003,6 @@ impl Graph {
             menu: String::new(),
             functions: Vec::new(),
             events: Vec::new(),
-            collections: Vec::new(),
             properties: Vec::new(),
         }
     }
@@ -1083,7 +1111,7 @@ impl Graph {
         }
         for (index, variable) in self.variables.iter().enumerate() {
             check_variable_name(&variable.name).map_err(GraphError::Format)?;
-            if !variable.ty.fits(&variable.start) {
+            if !variable.ty.fits_shape(variable.shape, &variable.start) {
                 return Err(GraphError::Format(format!("variable {} starts at a value that is not a {}", variable.name, variable.ty.label())));
             }
             if self.variables[..index].iter().any(|v| v.name == variable.name) {
@@ -1095,7 +1123,7 @@ impl Graph {
         }
         for (index, property) in self.properties.iter().enumerate() {
             check_variable_name(&property.name).map_err(GraphError::Format)?;
-            if !property.ty.fits(&property.default) {
+            if !property.ty.fits_shape(property.shape, &property.default) {
                 return Err(GraphError::Format(format!("property {} defaults to a value that is not a {}", property.name, property.ty.label())));
             }
             if self.properties[..index].iter().any(|p| p.name == property.name) {
@@ -1111,15 +1139,6 @@ impl Graph {
             check_params(&function.name, &function.outputs).map_err(GraphError::Format)?;
             if self.functions[..index].iter().any(|f| f.name == function.name) {
                 return Err(GraphError::Format(format!("function {} is declared twice", function.name)));
-            }
-        }
-        if self.collections.len() > MAX_COLLECTIONS {
-            return Err(GraphError::Format(format!("a graph declares at most {MAX_COLLECTIONS} lists and maps")));
-        }
-        for (index, collection) in self.collections.iter().enumerate() {
-            check_variable_name(&collection.name).map_err(GraphError::Format)?;
-            if self.collections[..index].iter().any(|c| c.name == collection.name) {
-                return Err(GraphError::Format(format!("list or map {} is declared twice", collection.name)));
             }
         }
         if self.events.len() > MAX_EVENTS {

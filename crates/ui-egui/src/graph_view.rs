@@ -154,8 +154,10 @@ impl SearchChoices {
             // A script that cannot be read (not built yet, or broken) is left out, so nodes keep its
             // last known properties.
             if let Ok(properties) = editor.script_info.properties(&dir.join(&module)) {
-                // Fields as `name:type`; text and object properties are not read or set as numbers.
-                let fields = properties.into_iter().filter_map(|p| match p.ty.code() {
+                // Fields as `name:type`; text and object properties are not read or set as numbers, nor
+                // lists and maps.
+                let single = properties.into_iter().filter(|p| p.shape == bayleaf_engine::scene::components::PropertyShape::Single);
+                let fields = single.filter_map(|p| match p.ty.code() {
                     "number" => Some(p.name),
                     "text" | "object" => None,
                     code => Some(format!("{}:{code}", p.name)),
@@ -1836,29 +1838,31 @@ fn function_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayl
 }
 
 /// On Event and Trigger Event pick one of this script's events; the node's pins follow it.
-/// A list or map node picks one the script declares, of its own kind (list or map); the node keeps
-/// its name and what it holds, as one undo step.
+/// A list or map node picks one of the script's variables or properties of its own shape (a list or a
+/// map); the node keeps its name and what it holds, as one undo step.
 fn collection_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayleaf_engine::graph::SettingDef, field: Rect, requests: &mut Requests) {
-    use bayleaf_engine::graph::CollectionKind;
-    let kind = if bayleaf_engine::script::visual::MAP_KINDS.contains(&node.kind.as_str()) { CollectionKind::Map } else { CollectionKind::List };
+    use bayleaf_engine::graph::Shape;
+    let kind = if bayleaf_engine::script::visual::MAP_KINDS.contains(&node.kind.as_str()) { Shape::Map } else { Shape::List };
     let current = node.values.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
-    let shown = if current.is_empty() { tl(if kind == CollectionKind::Map { "Choose a map" } else { "Choose a list" }).to_owned() } else { current.clone() };
+    let shown = if current.is_empty() { tl(if kind == Shape::Map { "Choose a map" } else { "Choose a list" }).to_owned() } else { current.clone() };
     let response = ui.put(field, |ui: &mut egui::Ui| {
         craft_ui::ComboBox::from_id_salt(("collection", node.id))
             .width(field.width())
             .truncate()
             .selected_text(shown)
             .show_ui(ui, |ui| {
-                let mut offered = graph.collections.iter().filter(|c| c.kind == kind).peekable();
-                if offered.peek().is_none() {
-                    ui.label(egui::RichText::new(tl("None yet: add one in the panel beside the graph")).small());
+                let variables = graph.variables.iter().filter(|v| v.shape == kind).map(|v| (v.name.as_str(), v.ty, "variable"));
+                let properties = graph.properties.iter().filter(|p| p.shape == kind).map(|p| (p.name.as_str(), p.ty, "property"));
+                let offered: Vec<_> = variables.chain(properties).collect();
+                if offered.is_empty() {
+                    ui.label(egui::RichText::new(tl("None yet: make a variable or property a list or map in the panel beside the graph")).small());
                 }
-                for collection in offered {
-                    let label = crate::i18n::tf("{name} · {type}", &[("name", &collection.name), ("type", tl(collection.item.label()))]);
-                    if ui.selectable_label(collection.name == current, label).clicked() && collection.name != current {
-                        let key = format!("collection {} {}", node.id, collection.name);
-                        requests.merge("graph.node.set", json!({ "node": node.id, "name": "item", "value": [collection.item.code()] }), key.clone());
-                        requests.merge("graph.node.set", json!({ "node": node.id, "name": "name", "value": collection.name }), key);
+                for (name, item, what) in offered {
+                    let label = crate::i18n::tf("{name} · {type} {what}", &[("name", name), ("type", tl(item.label())), ("what", tl(what))]);
+                    if ui.selectable_label(name == current, label).clicked() && name != current {
+                        let key = format!("collection {} {name}", node.id);
+                        requests.merge("graph.node.set", json!({ "node": node.id, "name": "item", "value": [item.code()] }), key.clone());
+                        requests.merge("graph.node.set", json!({ "node": node.id, "name": "name", "value": name }), key);
                     }
                 }
             })

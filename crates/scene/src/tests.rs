@@ -212,9 +212,24 @@ fn an_inspector_layout_is_checked_against_the_declared_properties() {
     use crate::components::{DeclaredProperty, PropertyType, PropertyValue};
     use crate::inspector::{InspectorItem, parse};
     let declared = [
-        DeclaredProperty { name: "speed".into(), ty: PropertyType::Number, default: PropertyValue::Number(1.0) },
-        DeclaredProperty { name: "mode".into(), ty: PropertyType::WholeNumber, default: PropertyValue::Number(0.0) },
-        DeclaredProperty { name: "label".into(), ty: PropertyType::Text, default: PropertyValue::Text(String::new()) },
+        DeclaredProperty {
+            name: "speed".into(),
+            ty: PropertyType::Number,
+            shape: crate::components::PropertyShape::Single,
+            default: PropertyValue::Number(1.0),
+        },
+        DeclaredProperty {
+            name: "mode".into(),
+            ty: PropertyType::WholeNumber,
+            shape: crate::components::PropertyShape::Single,
+            default: PropertyValue::Number(0.0),
+        },
+        DeclaredProperty {
+            name: "label".into(),
+            ty: PropertyType::Text,
+            shape: crate::components::PropertyShape::Single,
+            default: PropertyValue::Text(String::new()),
+        },
     ];
     let layout = serde_json::json!([
         {"group": "Movement", "closed": true, "items": [
@@ -262,4 +277,22 @@ fn post_processing_antialiasing_reads_old_on_and_off_and_the_new_choices() {
     assert!(PostProcessing::from_text(&file(3, r#""best""#)).is_err(), "only off, fast or fine");
     let written = PostProcessing { antialiasing: Antialiasing::Fine, ..PostProcessing::default() }.to_text();
     assert!(written.contains(r#""antialiasing": "fine""#), "{written}");
+}
+
+#[test]
+fn list_and_map_script_properties_come_back_from_the_file_as_they_went() {
+    use crate::components::{PropertyShape, PropertyType, PropertyValue, ScriptRef, Scripts};
+    let mut scene = Scene::new();
+    let id = scene.create_object(None, "Spawner").unwrap();
+    // Three numbers in a list are a list, not a vector.
+    let list = PropertyValue::List { list: [1.0, 2.0, 3.0].map(PropertyValue::Number).to_vec() };
+    let map = PropertyValue::Map { map: [("easy".to_owned(), PropertyValue::Number(3.0))].into() };
+    let script = ScriptRef { module: "waves.bscript".into(), properties: [("waves".to_owned(), list.clone()), ("by".to_owned(), map.clone())].into() };
+    scene.set(id, Scripts(vec![script])).unwrap();
+    let saved = serde_json::to_string(&scene.to_doc()).unwrap();
+    let back = Scene::from_doc(&serde_json::from_str::<SceneDoc>(&saved).unwrap()).unwrap();
+    let properties = &back.get::<Scripts>(id).unwrap().0[0].properties;
+    assert_eq!(properties.get("waves"), Some(&list));
+    assert_eq!(properties.get("by"), Some(&map));
+    assert!(list.fits_shape(PropertyType::WholeNumber, PropertyShape::List) && !list.fits_shape(PropertyType::Vector, PropertyShape::Single));
 }

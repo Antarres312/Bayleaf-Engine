@@ -521,10 +521,49 @@ impl PropertyType {
             PropertyType::Text | PropertyType::Object => PropertyValue::Text(String::new()),
         }
     }
+
+    /// The value a property of this type and shape has when nothing sets it: the type's zero, or
+    /// an empty list or map.
+    pub fn zero_of(self, shape: PropertyShape) -> PropertyValue {
+        match shape {
+            PropertyShape::Single => self.zero(),
+            PropertyShape::List => PropertyValue::List { list: Vec::new() },
+            PropertyShape::Map => PropertyValue::Map { map: std::collections::BTreeMap::new() },
+        }
+    }
 }
 
+/// Whether a script property holds one value, a list of them or a map of them under text keys.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PropertyShape {
+    #[default]
+    Single,
+    List,
+    Map,
+}
+
+impl PropertyShape {
+    /// The word a description puts before the type code (`list:number`); `single` for one value.
+    pub fn code(self) -> &'static str {
+        match self {
+            PropertyShape::Single => "single",
+            PropertyShape::List => "list",
+            PropertyShape::Map => "map",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<PropertyShape> {
+        [PropertyShape::Single, PropertyShape::List, PropertyShape::Map].into_iter().find(|s| s.code() == code)
+    }
+}
+
+/// Most items a list or map property holds in the scene.
+pub const MAX_PROPERTY_ITEMS: usize = 1024;
+
 /// A script property's value, stored in the scene as plain JSON: a number, `true`/`false`, three
-/// numbers (a vector or a colour) or text (text, or an object's name).
+/// numbers (a vector or a colour) or text (text, or an object's name), or the items of a list or
+/// map property.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PropertyValue {
@@ -532,6 +571,14 @@ pub enum PropertyValue {
     Number(f64),
     Triple([f32; 3]),
     Text(String),
+    /// A list property's items, saved as `{"list": [...]}`.
+    List {
+        list: Vec<PropertyValue>,
+    },
+    /// A map property's values by key, saved as `{"map": {...}}`.
+    Map {
+        map: std::collections::BTreeMap<String, PropertyValue>,
+    },
 }
 
 impl PropertyValue {
@@ -549,6 +596,32 @@ impl PropertyValue {
         }
     }
 
+    /// A value of type `ty` in `shape` as a script's description lists it: one value, or a list
+    /// (a plain array) or map (a plain object) of them. `None` when it does not fit.
+    pub fn from_described(value: &serde_json::Value, ty: PropertyType, shape: PropertyShape) -> Option<PropertyValue> {
+        let one = |v: &serde_json::Value| serde_json::from_value::<PropertyValue>(v.clone()).ok().filter(|v| v.fits(ty));
+        let made = match shape {
+            PropertyShape::Single => one(value)?,
+            PropertyShape::List => PropertyValue::List { list: value.as_array()?.iter().map(one).collect::<Option<_>>()? },
+            PropertyShape::Map => PropertyValue::Map { map: value.as_object()?.iter().map(|(k, v)| Some((k.clone(), one(v)?))).collect::<Option<_>>()? },
+        };
+        made.fits_shape(ty, shape).then_some(made)
+    }
+
+    /// Whether the value can be a property of type `ty` in `shape`: one value that
+    /// [`fits`](Self::fits), or a list or map of at most [`MAX_PROPERTY_ITEMS`] of them (keys of at
+    /// most [`MAX_PROPERTY_TEXT`] bytes).
+    pub fn fits_shape(&self, ty: PropertyType, shape: PropertyShape) -> bool {
+        match (shape, self) {
+            (PropertyShape::Single, value) => value.fits(ty),
+            (PropertyShape::List, PropertyValue::List { list }) => list.len() <= MAX_PROPERTY_ITEMS && list.iter().all(|v| v.fits(ty)),
+            (PropertyShape::Map, PropertyValue::Map { map }) => {
+                map.len() <= MAX_PROPERTY_ITEMS && map.iter().all(|(k, v)| k.len() <= MAX_PROPERTY_TEXT && !k.contains('\0') && v.fits(ty))
+            }
+            _ => false,
+        }
+    }
+
     /// The type a value of this shape has when no script declares it: a number, true/false, a
     /// vector or text.
     pub fn shape_type(&self) -> PropertyType {
@@ -557,6 +630,8 @@ impl PropertyValue {
             PropertyValue::Number(_) => PropertyType::Number,
             PropertyValue::Triple(_) => PropertyType::Vector,
             PropertyValue::Text(_) => PropertyType::Text,
+            PropertyValue::List { list } => list.first().map_or(PropertyType::Number, PropertyValue::shape_type),
+            PropertyValue::Map { map } => map.values().next().map_or(PropertyType::Number, PropertyValue::shape_type),
         }
     }
 
@@ -596,12 +671,20 @@ impl PropertyValue {
     }
 }
 
-/// A property a script declares: its name, type and default.
+/// A property a script declares: its name, type and default (a list or map is one of its type's values in that shape).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeclaredProperty {
     pub name: String,
     pub ty: PropertyType,
+    pub shape: PropertyShape,
     pub default: PropertyValue,
+}
+
+impl DeclaredProperty {
+    /// Whether `value` can be this property's: its type, in its shape.
+    pub fn accepts(&self, value: &PropertyValue) -> bool {
+        value.fits_shape(self.ty, self.shape)
+    }
 }
 
 /// One WebAssembly script on an object; see `docs/script-abi.md`.
@@ -656,8 +739,11 @@ impl SceneComponent for Scripts {
             if script.module.is_empty() || script.module.contains('\0') {
                 return Err("a script needs a module path without NUL characters".to_owned());
             }
-            if script.properties.values().any(|v| !PropertyType::ALL.iter().any(|ty| v.fits(*ty))) {
-                return Err("a script property must be a finite number, true or false, three finite numbers, or text up to 1024 bytes".to_owned());
+            let shapes = [PropertyShape::Single, PropertyShape::List, PropertyShape::Map];
+            if script.properties.values().any(|v| !PropertyType::ALL.iter().any(|ty| shapes.iter().any(|shape| v.fits_shape(*ty, *shape)))) {
+                return Err(format!(
+                    "a script property must be a finite number, true or false, three finite numbers, text up to 1024 bytes, or a list or map of at most {MAX_PROPERTY_ITEMS} of one of them"
+                ));
             }
         }
         Ok(())

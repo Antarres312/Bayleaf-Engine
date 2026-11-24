@@ -3486,30 +3486,69 @@ fn another_scripts_event_is_subscribed_to_from_the_script_panel_with_its_compone
 }
 
 #[test]
-fn lists_are_declared_retyped_and_their_nodes_placed_from_the_script_panel() {
+fn a_property_becomes_a_list_in_the_panel_and_the_inspector_adds_to_each_objects_own() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-list-property-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    harness.state_mut().dispatch("graph.new", &json!({ "domain": "script" }), None);
+    harness.run();
+    harness.get_by_label("Add Property").click();
+    harness.run();
+    harness.get_by_label("Whole Number").click();
+    harness.run();
+    // Its type menu makes it a list; it starts empty, and the panel adds an item.
+    harness.get_by_label("What count holds: Whole Number").click();
+    harness.run();
+    // The open menu's choice: the one drawn last, on top.
+    harness.get_all_by_label("List").last().expect("the menu offers List").click();
+    harness.run();
+    let declared = graph(&harness).property("count").cloned().unwrap();
+    assert_eq!((declared.shape, declared.default.clone()), (bayleaf_engine::graph::Shape::List, json!([])), "a list of whole numbers, empty");
+    harness.get_by_label("Add an item to count").click();
+    harness.run();
+    assert_eq!(graph(&harness).property("count").map(|p| p.default.clone()), Some(json!([0])));
+    // A list has list nodes, not Get and Set.
+    assert!(harness.query_by_label("Get property count").is_none());
+    harness.get_by_label("Place a node for count").click();
+    harness.run();
+    harness.get_by_label("List Length").click();
+    harness.run();
+    let length = graph(&harness).nodes.iter().find(|n| n.kind == "listLength").cloned().expect("Place Node places it");
+    assert_eq!(length.values.get("item"), Some(&json!(["whole"])), "holding what the list holds");
+    harness.state_mut().dispatch("graph.save", &json!({ "path": dir.join("waves.bscript") }), None);
+
+    // An object with the script has its own list, starting as the default, and adds to it.
+    let editor = harness.state_mut();
+    let id = editor.dispatch("scene.object.create", &json!({ "name": "Spawner" }), None).unwrap()["id"].as_str().map(str::to_owned).unwrap();
+    let id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    editor.dispatch("scene.script.add", &json!({ "id": id, "module": "waves.bscript" }), None);
+    editor.select_only(Some(id));
+    harness.run();
+    harness.get_by_label("Add an item to Count").click();
+    harness.run();
+    let scripts = harness.state().session.scene().get::<bayleaf_engine::scene::components::Scripts>(id).cloned().unwrap();
+    let two = bayleaf_engine::scene::components::PropertyValue::List { list: vec![bayleaf_engine::scene::components::PropertyValue::Number(0.0); 2] };
+    assert_eq!(scripts.0[0].properties.get("count"), Some(&two), "the default's item and the added one");
+    assert!(harness.query_by_label("Remove item 1 of Count").is_some(), "each item can be taken out");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_variables_type_changes_from_its_menu_and_its_nodes_follow() {
     let mut harness = graph_harness("script");
-    harness.get_by_label("Add List").click();
+    harness.get_by_label("Add Variable").click();
     harness.run();
     harness.get_by_label("Number").click();
     harness.run();
-    let g = graph(&harness);
-    assert_eq!(g.collections.len(), 1, "Add List declares one");
-    let name = g.collections[0].name.clone();
-    assert_eq!(g.collections[0].kind, bayleaf_engine::graph::CollectionKind::List);
-
-    harness.get_by_label(&format!("Place a node for {name}")).click();
+    harness.get_by_label("Get number").click();
     harness.run();
-    harness.get_by_label("Add to List").click();
-    harness.run();
-    let add = graph(&harness).nodes.iter().find(|n| n.kind == "listAdd").map(|n| n.id).expect("Place Node places the node");
-    assert_eq!(graph(&harness).value(add, "name"), Some(&json!(name)), "naming the list");
-    assert_eq!(graph(&harness).value(add, "item"), Some(&json!(["number"])), "and what it holds");
-
-    harness.get_by_label(&format!("What {name} holds: Number")).click();
+    harness.get_by_label("What number holds: Number").click();
     harness.run();
     harness.get_by_label("Text").click();
     harness.run();
-    assert_eq!(graph(&harness).collections[0].item, bayleaf_engine::graph::VariableType::Text, "the list now holds text");
-    assert_eq!(graph(&harness).value(add, "item"), Some(&json!(["text"])), "and its node follows");
+    let g = graph(&harness);
+    assert_eq!(g.variable("number").map(|v| v.ty), Some(bayleaf_engine::graph::VariableType::Text));
+    assert!(g.nodes.iter().any(|n| n.kind == "textVariable"), "its Get node reads text now");
     assert!(harness.query_by_label_contains("this visual script compiles").is_some(), "{}", harness.state().status);
 }

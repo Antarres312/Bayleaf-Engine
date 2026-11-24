@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use bayleaf_core::StableId;
 use bayleaf_core::math::Vec3;
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue, ScriptRef, Scripts};
+use bayleaf_scene::components::{DeclaredProperty, PropertyShape, PropertyType, PropertyValue, ScriptRef, Scripts};
 
 use super::rt::{self, Caller, Engine, Linker, Module, Store, TypedFunc};
 use super::{Error, LinkError, error, instantiate, limits, out_of_fuel, trap_message};
@@ -48,29 +48,9 @@ fn describe_instance(store: &mut Store<HostState>, instance: &rt::Instance, name
     let mut bytes = vec![0; len as usize];
     memory.read(&*store, ptr as usize, &mut bytes).map_err(|_| invalid("description is outside the script's memory".to_owned()))?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
-    let mut out = Vec::new();
-    for entry in value.get("properties").and_then(serde_json::Value::as_array).map_or(&[][..], Vec::as_slice) {
-        let parts = entry.as_array().filter(|p| (2..=3).contains(&p.len()));
-        let Some(parts) = parts else {
-            return Err(invalid(format!("each property must be [name, default] or [name, default, type], got {entry}")));
-        };
-        let key = parts[0].as_str().unwrap_or_default();
-        if key.is_empty() || key.len() > 64 || key.contains(':') {
-            return Err(invalid(format!("property {key:?} needs a name of 1 to 64 bytes without ':'")));
-        }
-        let ty = match parts.get(2) {
-            None => PropertyType::Number,
-            Some(code) => code.as_str().and_then(PropertyType::from_code).ok_or_else(|| invalid(format!("property {key:?} has an unknown type {code}")))?,
-        };
-        let default = serde_json::from_value::<PropertyValue>(parts[1].clone()).ok().filter(|v| v.fits(ty));
-        let Some(default) = default else {
-            return Err(invalid(format!("property {key:?}: the default {} is not a {}", parts[1], ty.label())));
-        };
-        if out.iter().any(|p: &DeclaredProperty| p.name == key) {
-            return Err(invalid(format!("property {key:?} is declared twice")));
-        }
-        out.push(DeclaredProperty { name: key.to_owned(), ty, default });
-    }
+    let out = described_properties(value.get("properties"), "property").map_err(invalid)?;
+    // Lists and maps a visual script's variables start with.
+    let kept = described_properties(value.get("variables"), "variable").map_err(invalid)?;
     let menu = match value.get("menu").and_then(serde_json::Value::as_str) {
         Some(text) => Some(menu_path(text).map_err(invalid)?),
         None => None,
@@ -80,7 +60,43 @@ fn describe_instance(store: &mut Store<HostState>, instance: &rt::Instance, name
         None => Vec::new(),
     };
     let events = described_events(value.get("events")).map_err(invalid)?;
-    Ok(Description { properties: out, menu, inspector, events })
+    Ok(Description { properties: out, menu, inspector, events, kept })
+}
+
+/// Properties (or variables) a description lists: each `[name, default]` or `[name, default, type]`,
+/// the type a code (`number` when left out), or a shape and a code (`list:number`, `map:text`) with
+/// a list or map default.
+fn described_properties(value: Option<&serde_json::Value>, what: &str) -> Result<Vec<DeclaredProperty>, String> {
+    let mut out: Vec<DeclaredProperty> = Vec::new();
+    for entry in value.and_then(serde_json::Value::as_array).map_or(&[][..], Vec::as_slice) {
+        let parts = entry.as_array().filter(|p| (2..=3).contains(&p.len()));
+        let Some(parts) = parts else {
+            return Err(format!("each {what} must be [name, default] or [name, default, type], got {entry}"));
+        };
+        let key = parts[0].as_str().unwrap_or_default();
+        if key.is_empty() || key.len() > 64 || key.contains(':') {
+            return Err(format!("{what} {key:?} needs a name of 1 to 64 bytes without ':'"));
+        }
+        let code = match parts.get(2) {
+            None => "number",
+            Some(code) => code.as_str().ok_or_else(|| format!("{what} {key:?} has an unknown type {code}"))?,
+        };
+        let (shape, code) = match code.split_once(':') {
+            Some((shape, code)) => (PropertyShape::from_code(shape), code),
+            None => (Some(PropertyShape::Single), code),
+        };
+        let (Some(shape), Some(ty)) = (shape, PropertyType::from_code(code)) else {
+            return Err(format!("{what} {key:?} has an unknown type {}", parts.get(2).map_or_else(String::new, ToString::to_string)));
+        };
+        let Some(default) = PropertyValue::from_described(&parts[1], ty, shape) else {
+            return Err(format!("{what} {key:?}: the default {} is not a {}", parts[1], ty.label()));
+        };
+        if out.iter().any(|p| p.name == key) {
+            return Err(format!("{what} {key:?} is declared twice"));
+        }
+        out.push(DeclaredProperty { name: key.to_owned(), ty, shape, default });
+    }
+    Ok(out)
 }
 
 /// The events a description lists: `[{"name": "Damaged", "params": ["amount:number"]}]`.
@@ -363,9 +379,19 @@ impl ScriptHost {
         }
         // Declared defaults, overridden by the values saved in the scene that fit the declared type.
         // A saved value the script does not declare is still there to read, typed by its shape.
-        let mut properties: Properties =
-            describe_instance(&mut store, &instance, &module_name)?.properties.into_iter().map(|p| (p.name, (p.ty, p.default))).collect();
+        // A list or map (a property, or a visual script's variable) is kept apart: it fills that
+        // list or map the first time the script uses it.
+        let description = describe_instance(&mut store, &instance, &module_name)?;
+        let (single, shaped): (Vec<_>, Vec<_>) = description.properties.into_iter().partition(|p| p.shape == PropertyShape::Single);
+        let mut properties: Properties = single.into_iter().map(|p| (p.name, (p.ty, p.default))).collect();
+        let mut seeds: HashMap<String, DeclaredProperty> = shaped.into_iter().chain(description.kept).map(|p| (p.name.clone(), p)).collect();
         for (name, value) in &script.properties {
+            if let Some(seed) = seeds.get_mut(name) {
+                if seed.accepts(value) {
+                    seed.default = value.clone();
+                }
+                continue;
+            }
             match properties.get_mut(name) {
                 Some((ty, slot)) if value.fits(*ty) => *slot = value.clone(),
                 Some(_) => {}
@@ -375,6 +401,7 @@ impl ScriptHost {
             }
         }
         store.data_mut().properties = properties;
+        store.data_mut().seeds = seeds;
         let update = instance.get_typed_func::<f32, ()>(&mut store, "bayleaf_update").ok();
         let on_message = instance.get_typed_func::<f32, ()>(&mut store, "bayleaf_message").ok();
         let init = instance.get_typed_func::<(), ()>(&mut store, "bayleaf_init").ok();
@@ -1780,8 +1807,38 @@ fn with_stored<R>(caller: &mut Caller<'_, HostState>, ptr: i32, len: i32, list: 
     if other {
         return Err(fault(caller, format!("{what}: {name} is a {}", if list { "map" } else { "list" })));
     }
+    if !known && let Some(seed) = caller.data_mut().seeds.remove(&name) {
+        let seeded = seeded(caller, &seed);
+        if matches!(seeded, Stored::List(_)) != list {
+            return Err(fault(caller, format!("{what}: {name} is a {}", if list { "map" } else { "list" })));
+        }
+        caller.data_mut().collections.insert(name.clone(), seeded);
+    }
     let stored = caller.data_mut().collections.entry(name).or_insert_with(|| if list { Stored::List(Vec::new()) } else { Stored::Map(Default::default()) });
     Ok(f(stored))
+}
+
+/// A list or map as a property or variable starts it, its values as the script reads them: an
+/// object by its name, found in the scene as the step began (none when there is no such object).
+fn seeded(caller: &Caller<'_, HostState>, seed: &DeclaredProperty) -> Stored {
+    let world = &caller.data().world;
+    let arg = |value: &PropertyValue| -> EventArg {
+        match (seed.ty, value) {
+            (PropertyType::WholeNumber, PropertyValue::Number(n)) => EventArg::Whole(*n as i32),
+            (PropertyType::Object, PropertyValue::Text(name)) => EventArg::Object(world.objects.iter().find(|(_, n, _)| n == name).map(|(id, _, _)| *id)),
+            (_, PropertyValue::Number(n)) => EventArg::Number(*n as f32),
+            (_, PropertyValue::Flag(b)) => EventArg::Flag(*b),
+            (_, PropertyValue::Triple(v)) => EventArg::Vector(*v),
+            (_, PropertyValue::Text(t)) => EventArg::Text(t.clone()),
+            (_, PropertyValue::List { .. } | PropertyValue::Map { .. }) => EventArg::Number(0.0),
+        }
+    };
+    match (&seed.shape, &seed.default) {
+        (PropertyShape::Map, PropertyValue::Map { map }) => Stored::Map(map.iter().map(|(k, v)| (k.clone(), arg(v))).collect()),
+        (PropertyShape::Map, _) => Stored::Map(Default::default()),
+        (_, PropertyValue::List { list }) => Stored::List(list.iter().map(arg).collect()),
+        _ => Stored::List(Vec::new()),
+    }
 }
 
 /// Lists and maps a visual script keeps (`list_*`, `map_*`): each by its name, made empty the first

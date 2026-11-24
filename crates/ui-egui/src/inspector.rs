@@ -448,7 +448,7 @@ struct Card<'a> {
 fn current_value(card: &Card<'_>, name: &str) -> Option<PropertyValue> {
     let declared = card.declared.iter().find(|p| p.name == name);
     match declared {
-        Some(p) => Some(card.script.properties.get(name).filter(|v| v.fits(p.ty)).unwrap_or(&p.default).clone()),
+        Some(p) => Some(card.script.properties.get(name).filter(|v| p.accepts(v)).unwrap_or(&p.default).clone()),
         None => card.script.properties.get(name).cloned(),
     }
 }
@@ -459,7 +459,7 @@ fn property_row(ui: &mut egui::Ui, card: &Card<'_>, name: &str, layout: Option<&
     let set = card.script.properties.get(name);
     let (ty, mut value, changed) = match declared {
         Some(p) => {
-            let set = set.filter(|v| v.fits(p.ty));
+            let set = set.filter(|v| p.accepts(v));
             (p.ty, set.unwrap_or(&p.default).clone(), set.is_some_and(|v| *v != p.default))
         }
         // A value the script no longer declares: shown by its shape.
@@ -469,7 +469,13 @@ fn property_row(ui: &mut egui::Ui, card: &Card<'_>, name: &str, layout: Option<&
         },
     };
     let row = value_editor::PropertyRow { name, ty, changed, objects: card.objects, layout };
-    let (outcome, reset) = value_editor::named_property(ui, &row, &mut value, ("script property", card.index, name));
+    let salt = ("script property", card.index, name);
+    // A list or map edits item by item; one value in one row.
+    let (outcome, reset) = if declared.is_some_and(|p| p.shape != bayleaf_engine::scene::components::PropertyShape::Single) {
+        value_editor::shaped_property(ui, &row, &mut value, salt)
+    } else {
+        value_editor::named_property(ui, &row, &mut value, salt)
+    };
     if outcome.changed {
         *pending = Some(Pending::ScriptProperty { index: card.index, name: name.to_owned(), value: Some(value) });
     }

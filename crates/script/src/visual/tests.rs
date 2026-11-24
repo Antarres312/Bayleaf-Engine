@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use bayleaf_core::StableId;
-use bayleaf_graph::{Graph, Link, PinRef, VariableType};
+use bayleaf_graph::{Graph, Link, PinRef, Shape, VariableType};
 use bayleaf_scene::Scene;
 use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue, ScriptRef, Transform};
 use serde_json::json;
@@ -85,7 +85,15 @@ fn spinner() -> Builder {
 fn a_visual_script_rotates_by_its_declared_property() {
     let bytes = spinner().bytes();
     let declared = ScriptHost::new().describe("spin.bscript", &bytes).unwrap();
-    assert_eq!(declared, [DeclaredProperty { name: "speed".to_owned(), ty: PropertyType::Number, default: PropertyValue::Number(90.0) }]);
+    assert_eq!(
+        declared,
+        [DeclaredProperty {
+            name: "speed".to_owned(),
+            ty: PropertyType::Number,
+            shape: bayleaf_scene::components::PropertyShape::Single,
+            default: PropertyValue::Number(90.0)
+        }]
+    );
     let (mut scene, id, mut host) = run(&bytes, &[]);
     for _ in 0..10 {
         host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
@@ -599,8 +607,8 @@ fn every_node_kind_compiles_and_runs() {
     b.link(heard_from, "then", heard_log, "run");
     b.link(named, "result", heard_log, "text");
     // A list and a map the script declares: changed, read, and gone through.
-    b.0.add_collection("Seen", bayleaf_graph::CollectionKind::List, VariableType::Vector).unwrap();
-    b.0.add_collection("Names", bayleaf_graph::CollectionKind::Map, VariableType::Object).unwrap();
+    shaped_variable(&mut b, "Seen", VariableType::Vector, Shape::List, None);
+    shaped_property(&mut b, "Names", VariableType::Object, Shape::Map, None);
     let list = json!({ "name": "Seen", "item": ["vector"] });
     let map = json!({ "name": "Names", "item": ["object"] });
     let mut previous = unsubscribe;
@@ -2000,8 +2008,8 @@ fn a_script_subscribes_to_a_components_event_hears_it_with_its_source_and_values
 #[test]
 fn lists_keep_their_order_and_maps_their_keys_for_the_whole_of_play() {
     let mut b = Builder::new();
-    b.0.add_collection("Scores", bayleaf_graph::CollectionKind::List, VariableType::Number).unwrap();
-    b.0.add_collection("Words", bayleaf_graph::CollectionKind::Map, VariableType::Text).unwrap();
+    shaped_variable(&mut b, "Scores", VariableType::Number, Shape::List, Some(json!([3.0])));
+    shaped_variable(&mut b, "Words", VariableType::Text, Shape::Map, None);
     let list = |extra: serde_json::Value| {
         let mut values = json!({ "name": "Scores", "item": ["number"] });
         values.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
@@ -2013,9 +2021,8 @@ fn lists_keep_their_order_and_maps_their_keys_for_the_whole_of_play() {
         values
     };
     let start = b.node("start", json!({}));
-    // [3] → [3, 1] → [5, 3, 1] → [5, 3, 7] → [5, 7]; inserting past the end does nothing.
+    // [3] (as it starts) → [3, 1] → [5, 3, 1] → [5, 3, 7] → [5, 7]; inserting past the end does nothing.
     let steps = [
-        b.node("listAdd", list(json!({ "value": 3.0 }))),
         b.node("listAdd", list(json!({ "value": 1.0 }))),
         b.node("listInsert", list(json!({ "index": 0, "value": 5.0 }))),
         b.node("listInsert", list(json!({ "index": 9, "value": 8.0 }))),
@@ -2101,12 +2108,60 @@ fn lists_keep_their_order_and_maps_their_keys_for_the_whole_of_play() {
 #[test]
 fn a_list_node_naming_a_map_or_nothing_is_a_problem_on_that_node() {
     let mut b = Builder::new();
-    b.0.add_collection("Words", bayleaf_graph::CollectionKind::Map, VariableType::Text).unwrap();
+    shaped_variable(&mut b, "Words", VariableType::Text, Shape::Map, None);
     let start = b.node("start", json!({}));
     let clear = b.node("listClear", json!({ "name": "Words", "item": ["text"] }));
     b.link(start, "then", clear, "run");
     let problem = compile(&b.0).unwrap_err();
     assert!(problem.iter().any(|p| p.node == Some(clear)), "the node that names a map as a list is the one in trouble: {problem:?}");
-    b.0.remove_collection("Words").unwrap();
+    b.0.remove_variable("Words").unwrap();
     assert!(compile(&b.0).unwrap_err().iter().any(|p| p.node == Some(clear)), "and so is one naming a list or map the script lost");
+}
+
+/// Declares a variable of `ty` in `shape`, starting with `start` (else empty).
+fn shaped_variable(b: &mut Builder, name: &str, ty: VariableType, shape: Shape, start: Option<serde_json::Value>) {
+    b.0.add_variable(name, ty, None).unwrap();
+    b.0.retype_variable(name, ty, shape).unwrap();
+    if let Some(start) = start {
+        b.0.set_variable(name, None, Some(start), &[]).unwrap();
+    }
+}
+
+/// Declares a property of `ty` in `shape`, with `default` (else empty).
+fn shaped_property(b: &mut Builder, name: &str, ty: VariableType, shape: Shape, default: Option<serde_json::Value>) {
+    b.0.add_property(name, ty, None).unwrap();
+    b.0.retype_property(name, ty, shape).unwrap();
+    if let Some(default) = default {
+        b.0.set_property(name, None, Some(default), &[]).unwrap();
+    }
+}
+
+#[test]
+fn a_list_property_starts_with_what_the_object_sets_objects_found_by_name() {
+    let mut b = Builder::new();
+    shaped_property(&mut b, "Targets", VariableType::Object, Shape::List, None);
+    let start = b.node("start", json!({}));
+    let each = b.node("listForEach", json!({ "name": "Targets", "item": ["object"] }));
+    b.link(start, "then", each, "run");
+    let named = b.node("nameOf", json!({}));
+    b.link(each, "value", named, "target");
+    let said = b.node("log", json!({ "message": "target" }));
+    b.link(each, "each", said, "run");
+    b.link(named, "result", said, "text");
+
+    // The script says the property is a list of objects, so the Inspector can edit it as one.
+    let declared = ScriptHost::new().describe_all("targets.bscript", &b.bytes()).unwrap().properties;
+    assert_eq!((declared[0].ty, declared[0].shape), (PropertyType::Object, bayleaf_scene::components::PropertyShape::List));
+
+    let mut scene = Scene::new();
+    let id = scene.create_object(None, "Scripted").unwrap();
+    scene.create_object(None, "Door").unwrap();
+    let names = PropertyValue::List { list: vec![PropertyValue::Text("Door".into()), PropertyValue::Text("Nobody".into())] };
+    let script = ScriptRef { module: "test.bscript".into(), properties: BTreeMap::from([("Targets".to_owned(), names)]) };
+    let mut host = ScriptHost::new();
+    host.load_bytes(id, 0, Path::new("test.bscript"), None, &b.bytes(), &script, &mut scene, 0.0, &Arc::new(Input::default())).unwrap();
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    assert!(host.take_faults().is_empty());
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["target Door", "target "], "the object's own items, in order; a name no object has is none (no name)");
 }
