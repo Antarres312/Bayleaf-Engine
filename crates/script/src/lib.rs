@@ -303,6 +303,11 @@ pub enum EventArg {
     Vector([f32; 3]),
     Text(String),
     Object(Option<StableId>),
+    /// A visual script's list, copied as it was when the event was triggered (its items are never
+    /// lists or maps themselves).
+    List(Vec<EventArg>),
+    /// A visual script's map, copied as a list is.
+    Map(std::collections::BTreeMap<String, EventArg>),
 }
 
 /// A list or map a visual script keeps, by name, for the whole of play.

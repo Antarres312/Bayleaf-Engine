@@ -259,6 +259,8 @@ fn pin_color(t: &Tokens, ty: PinType) -> Color32 {
         PinType::Text => t.pin_text,
         PinType::Int => t.pin_int,
         PinType::Component => t.pin_component,
+        // A list or map has its item's colour; its shape says it is many.
+        PinType::List(item) | PinType::Map(item) => pin_color(t, item.pin(bayleaf_engine::graph::Shape::Single)),
     }
 }
 
@@ -869,6 +871,12 @@ fn paint_link(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, width: 
     painter.add(egui::epaint::CubicBezierShape::from_points_stroke(points, false, Color32::TRANSPARENT, Stroke::new(width, color)));
 }
 
+/// Whether a node with a pin of type `to` is offered for a link from `from` in the Add Node menu: one
+/// it links to, or a list or map node of another item type, which takes the linked list's type.
+fn offered(from: PinType, to: PinType) -> bool {
+    matches!((from, to), (PinType::List(_), PinType::List(_)) | (PinType::Map(_), PinType::Map(_))) || from.connects_to(to)
+}
+
 fn link_pins(a: &PinPick, b: &PinPick, requests: &mut Requests) {
     if a.output == b.output || a.pin.node == b.pin.node {
         return;
@@ -1287,31 +1295,11 @@ fn pin_ui(
     let response = response.on_hover_text(pin_hint(pin));
     screen_bounds(ui, &response);
 
-    let color = pin_color(t, pin.ty);
     let hot = response.hovered() || response.has_focus() || picked_here;
     let r = if hot { PIN_RADIUS + 1.5 } else { PIN_RADIUS };
     let painter = ui.painter();
     let filled = !links.is_empty();
-    if pin.ty == PinType::Flow {
-        // Flow pins are arrows, so they differ from data pins by shape as well as colour.
-        let points = vec![center + vec2(-r, -r), center + vec2(r, 0.0), center + vec2(-r, r)];
-        painter.add(egui::Shape::convex_polygon(points, if filled { color } else { t.surface }, Stroke::new(2.0, color)));
-    } else if pin.ty == PinType::Int {
-        // Whole-number pins are rings with a dot.
-        painter.circle(center, r, if filled { color } else { t.surface }, Stroke::new(2.0, color));
-        painter.circle_filled(center, r * 0.35, if filled { t.surface } else { color });
-    } else if pin.ty == PinType::Text {
-        // Text pins are squares.
-        let rect = Rect::from_center_size(center, vec2(r * 2.0, r * 2.0));
-        painter.rect(rect, 1.0, if filled { color } else { t.surface }, Stroke::new(2.0, color), egui::StrokeKind::Middle);
-    } else if pin.ty == PinType::Object {
-        // Object pins are diamonds.
-        let d = r + 1.0;
-        let points = vec![center + vec2(0.0, -d), center + vec2(d, 0.0), center + vec2(0.0, d), center + vec2(-d, 0.0)];
-        painter.add(egui::Shape::convex_polygon(points, if filled { color } else { t.surface }, Stroke::new(2.0, color)));
-    } else {
-        painter.circle(center, r, if filled { color } else { t.surface }, Stroke::new(2.0, color));
-    }
+    paint_pin(painter, t, pin.ty, center, r, filled);
     view.focused |= response.has_focus();
     if response.has_focus() {
         painter.circle_stroke(center, r + 4.0, Stroke::new(2.0, t.focus));
@@ -1352,6 +1340,45 @@ fn pin_ui(
     });
 }
 
+/// Draws a pin of type `ty` at `center`, `r` across from its middle: filled while it is linked. Each
+/// kind of pin has a shape of its own as well as a colour.
+fn paint_pin(painter: &egui::Painter, t: &Tokens, ty: PinType, center: Pos2, r: f32, filled: bool) {
+    let color = pin_color(t, ty);
+    if ty == PinType::Flow {
+        // Flow pins are arrows, so they differ from data pins by shape as well as colour.
+        let points = vec![center + vec2(-r, -r), center + vec2(r, 0.0), center + vec2(-r, r)];
+        painter.add(egui::Shape::convex_polygon(points, if filled { color } else { t.surface }, Stroke::new(2.0, color)));
+    } else if ty == PinType::Int {
+        // Whole-number pins are rings with a dot.
+        painter.circle(center, r, if filled { color } else { t.surface }, Stroke::new(2.0, color));
+        painter.circle_filled(center, r * 0.35, if filled { t.surface } else { color });
+    } else if ty == PinType::Text {
+        // Text pins are squares.
+        let rect = Rect::from_center_size(center, vec2(r * 2.0, r * 2.0));
+        painter.rect(rect, 1.0, if filled { color } else { t.surface }, Stroke::new(2.0, color), egui::StrokeKind::Middle);
+    } else if let PinType::List(_) | PinType::Map(_) = ty {
+        // List pins are three rows, map pins two columns of them (keys and values), so they differ
+        // from one value's pin by shape as well as by name.
+        let frame = Rect::from_center_size(center, vec2(r * 2.0, r * 2.0));
+        painter.rect(frame, 1.5, if filled { color } else { t.surface }, Stroke::new(1.5, color), egui::StrokeKind::Middle);
+        let ink = if filled { t.surface } else { color };
+        let columns: &[(f32, f32)] = if matches!(ty, PinType::Map(_)) { &[(-0.6, -0.1), (0.1, 0.6)] } else { &[(-0.6, 0.6)] };
+        for (left, right) in columns {
+            for row in [-0.45, 0.0, 0.45] {
+                let y = center.y + row * r;
+                painter.line_segment([pos2(center.x + left * r, y), pos2(center.x + right * r, y)], Stroke::new(1.5, ink));
+            }
+        }
+    } else if ty == PinType::Object {
+        // Object pins are diamonds.
+        let d = r + 1.0;
+        let points = vec![center + vec2(0.0, -d), center + vec2(d, 0.0), center + vec2(0.0, d), center + vec2(-d, 0.0)];
+        painter.add(egui::Shape::convex_polygon(points, if filled { color } else { t.surface }, Stroke::new(2.0, color)));
+    } else {
+        painter.circle(center, r, if filled { color } else { t.surface }, Stroke::new(2.0, color));
+    }
+}
+
 /// What hovering a pin, its label or its value says: the pin's name and the type of data it carries.
 /// An output pin as its node's inputs make it: a number-or-vector output shows what it gives (a
 /// vector, a number or a whole number), in its colour, hint and accessible name.
@@ -1371,6 +1398,8 @@ fn pin_hint(pin: &PinDef) -> String {
         PinType::Text => "letters, words and numbers as written",
         PinType::Int => "a whole number",
         PinType::Component => "a script on an object, or none",
+        PinType::List(_) => "values of one type in order, by index from 0",
+        PinType::Map(_) => "values of one type under text keys",
     };
     crate::i18n::tf("{pin}: {type} ({meaning})", &[("pin", tl(pin.label)), ("type", tl(pin.ty.label())), ("meaning", meaning)])
 }
@@ -1459,6 +1488,8 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
         }
         // An unlinked object input means the node's own choice (named in its settings, or this object).
         PinType::Flow | PinType::Object | PinType::Component => {}
+        // A list or map comes only from a link; unlinked, the node works on the one it names.
+        PinType::List(_) | PinType::Map(_) => {}
     }
 }
 
@@ -2057,8 +2088,8 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
             let needle = menu.search.to_lowercase();
             let fits = |def: &NodeDef| match &menu.from {
                 None => true,
-                Some(from) if from.output => def.inputs.iter().any(|p| from.ty.connects_to(p.ty)),
-                Some(from) => def.outputs.iter().any(|p| p.ty.connects_to(from.ty)),
+                Some(from) if from.output => def.inputs.iter().any(|p| offered(from.ty, p.ty)),
+                Some(from) => def.outputs.iter().any(|p| offered(p.ty, from.ty)),
             };
             let unique_taken = |def: &NodeDef| def.unique && graph.nodes.iter().any(|n| n.kind == def.kind);
             let matches: Vec<&'static NodeDef> = catalog
@@ -2127,8 +2158,7 @@ fn add_menu(editor: &mut Editor, ctx: &egui::Context, graph: &Graph, catalog: &C
             view.selected = vec![id];
             view.focus_node = Some(id);
             if let Some(from) = &menu.from {
-                let target =
-                    if from.output { def.inputs.iter().find(|p| from.ty.connects_to(p.ty)) } else { def.outputs.iter().find(|p| p.ty.connects_to(from.ty)) };
+                let target = if from.output { def.inputs.iter().find(|p| offered(from.ty, p.ty)) } else { def.outputs.iter().find(|p| offered(p.ty, from.ty)) };
                 if let Some(pin) = target {
                     let other = PinPick { pin: PinRef::new(id, pin.name), output: !from.output, ty: pin.ty };
                     let mut requests = Requests::default();

@@ -13,6 +13,7 @@ use bayleaf_scene::components::{DeclaredProperty, PropertyShape, PropertyType, P
 use PinType::{Any, Bool, Float, Flow, Vec3};
 
 mod collections;
+pub use collections::adopted_item;
 mod fields;
 pub use fields::{COMPONENTS, ComponentNodes, component_of, script_fields};
 
@@ -149,11 +150,14 @@ pub(crate) const LIST_SETTINGS: [SettingDef; 2] =
 pub(crate) const MAP_SETTINGS: [SettingDef; 2] =
     [SettingDef { name: "name", label: "Map", kind: SettingKind::Name("") }, SettingDef { name: "item", label: "Holds", kind: SettingKind::Names }];
 /// The node kinds that work on a declared list.
-pub const LIST_KINDS: [&str; 9] = ["listAdd", "listInsert", "listSet", "listRemove", "listClear", "listItem", "listLength", "listFind", "listForEach"];
+pub const LIST_KINDS: [&str; 10] =
+    ["getList", "listAdd", "listInsert", "listSet", "listRemove", "listClear", "listItem", "listLength", "listFind", "listForEach"];
 /// The node kinds that work on a declared map.
-pub const MAP_KINDS: [&str; 6] = ["mapSet", "mapRemove", "mapClear", "mapGet", "mapCount", "mapForEach"];
+pub const MAP_KINDS: [&str; 7] = ["getMap", "mapSet", "mapRemove", "mapClear", "mapGet", "mapCount", "mapForEach"];
 /// Every node kind that names a declared list or map in its `name` setting.
-pub const COLLECTION_KINDS: [&str; 15] = [
+pub const COLLECTION_KINDS: [&str; 17] = [
+    "getList",
+    "getMap",
     "listAdd",
     "listInsert",
     "listSet",
@@ -174,6 +178,13 @@ pub const COLLECTION_KINDS: [&str; 15] = [
 const INDEX: PinDef = PinDef::with("index", "Index", PinType::Int, PinDefault::Int(0));
 /// A map key.
 const KEY: PinDef = text("key", "Key", "");
+/// The list a list node works on, as a pin (of numbers here; a node's own type is its `item`).
+const LIST: PinDef = PinDef::new("list", "List", PinType::List(VariableType::Number));
+/// The map a map node works on, as a pin.
+const MAP: PinDef = PinDef::new("map", "Map", PinType::Map(VariableType::Number));
+/// The value a list or map node puts in, and gives.
+const VALUE_IN: PinDef = number("value", "Value", Float, 0.0);
+const VALUE_OUT: PinDef = pin("value", "Value", Float);
 /// A list node.
 const fn list_node(kind: &'static str, label: &'static str, description: &'static str, inputs: &'static [PinDef], outputs: &'static [PinDef]) -> NodeDef {
     NodeDef { kind, label, category: "Lists", description, inputs, outputs, settings: &LIST_SETTINGS, unique: false }
@@ -646,62 +657,76 @@ pub const CATALOG: Catalog = Catalog {
             settings: &COMPONENT_EVENT_SETTINGS,
             unique: false,
         },
-        list_node("listAdd", "Add to List", "Puts the value at the end of the list.", &[RUN], &[THEN]),
+        list_node("getList", "Get List", "The list itself, to pass on: into a list node, a function or an event.", &[], &[LIST]),
+        list_node("listAdd", "Add to List", "Puts the value at the end of the list: the one linked in, else the one named.", &[RUN, LIST, VALUE_IN], &[THEN]),
         list_node(
             "listInsert",
             "Insert into List",
             "Puts the value in the list at the index (from 0), moving the items from there on along; an index past the end does nothing.",
-            &[RUN, INDEX],
+            &[RUN, LIST, INDEX, VALUE_IN],
             &[THEN],
         ),
-        list_node("listSet", "Set List Item", "Replaces the list's item at the index (from 0); an index past the end does nothing.", &[RUN, INDEX], &[THEN]),
+        list_node(
+            "listSet",
+            "Set List Item",
+            "Replaces the list's item at the index (from 0); an index past the end does nothing.",
+            &[RUN, LIST, INDEX, VALUE_IN],
+            &[THEN],
+        ),
         list_node(
             "listRemove",
             "Remove from List",
             "Takes the item at the index (from 0) out of the list; the items after it move back.",
-            &[RUN, INDEX],
+            &[RUN, LIST, INDEX],
             &[THEN],
         ),
-        list_node("listClear", "Clear List", "Takes every item out of the list.", &[RUN], &[THEN]),
+        list_node("listClear", "Clear List", "Takes every item out of the list.", &[RUN, LIST], &[THEN]),
         list_node(
             "listItem",
             "List Item",
             "The list's item at the index (from 0). Past the end, Found is false and the value is empty.",
-            &[INDEX],
-            &[pin("found", "Found", Bool)],
+            &[LIST, INDEX],
+            &[VALUE_OUT, pin("found", "Found", Bool)],
         ),
-        list_node("listLength", "List Length", "How many items the list holds.", &[], &[pin("length", "Length", PinType::Int)]),
+        list_node("listLength", "List Length", "How many items the list holds.", &[LIST], &[pin("length", "Length", PinType::Int)]),
         list_node(
             "listFind",
             "Find in List",
             "The index of the first item equal to the value, or -1 when there is none.",
-            &[],
+            &[LIST, VALUE_IN],
             &[pin("index", "Index", PinType::Int)],
         ),
         list_node(
             "listForEach",
             "For Each in List",
             "Runs Each once for every item of the list, in order, with the item and its index (from 0); then runs Then. Items added or taken out on the way count.",
-            &[RUN],
-            &[pin("each", "Each", Flow), pin("index", "Index", PinType::Int), THEN],
+            &[RUN, LIST],
+            &[pin("each", "Each", Flow), VALUE_OUT, pin("index", "Index", PinType::Int), THEN],
         ),
-        map_node("mapSet", "Set Map Value", "Keeps the value under the key, in place of what was there.", &[RUN, KEY], &[THEN]),
-        map_node("mapRemove", "Remove from Map", "Takes the key, and its value, out of the map.", &[RUN, KEY], &[THEN]),
-        map_node("mapClear", "Clear Map", "Takes every key out of the map.", &[RUN], &[THEN]),
+        map_node("getMap", "Get Map", "The map itself, to pass on: into a map node, a function or an event.", &[], &[MAP]),
+        map_node(
+            "mapSet",
+            "Set Map Value",
+            "Keeps the value under the key, in place of what was there, in the map linked in, else the one named.",
+            &[RUN, MAP, KEY, VALUE_IN],
+            &[THEN],
+        ),
+        map_node("mapRemove", "Remove from Map", "Takes the key, and its value, out of the map.", &[RUN, MAP, KEY], &[THEN]),
+        map_node("mapClear", "Clear Map", "Takes every key out of the map.", &[RUN, MAP], &[THEN]),
         map_node(
             "mapGet",
             "Map Value",
             "The value under the key. When the map has no such key, Found is false and the value is empty.",
-            &[KEY],
-            &[pin("found", "Found", Bool)],
+            &[MAP, KEY],
+            &[VALUE_OUT, pin("found", "Found", Bool)],
         ),
-        map_node("mapCount", "Map Count", "How many keys the map holds.", &[], &[pin("count", "Count", PinType::Int)]),
+        map_node("mapCount", "Map Count", "How many keys the map holds.", &[MAP], &[pin("count", "Count", PinType::Int)]),
         map_node(
             "mapForEach",
             "For Each in Map",
             "Runs Each once for every key of the map, in the keys' order (sorted by their characters), with the key and its value; then runs Then. Keys added or taken out on the way count.",
-            &[RUN],
-            &[pin("each", "Each", Flow), pin("key", "Key", PinType::Text), THEN],
+            &[RUN, MAP],
+            &[pin("each", "Each", Flow), pin("key", "Key", PinType::Text), VALUE_OUT, THEN],
         ),
         node("position", "Position", "Object", "The object's position, relative to its parent.", &[], &[pin("position", "Position", Vec3)]),
         node("rotation", "Rotation", "Object", "The object's rotation in degrees.", &[], &[pin("rotation", "Rotation", Vec3)]),
@@ -1352,6 +1377,10 @@ enum Val {
     I(String),
     /// A script on an object: `i64` of the object's handle << 32 | the script's place plus one (0 for none).
     C(String),
+    /// A list this script keeps: `i64` of where its name is << 32 | the name's length.
+    L(String),
+    /// A map this script keeps, as a list is.
+    M(String),
 }
 
 /// What a Get, Try Get or Set Component node works on.
@@ -1809,15 +1838,20 @@ impl Compiler<'_> {
     }
 
     /// An On Event's value `pin`, read from the event being delivered; only on its own actions.
-    fn event_value(&self, node: u32, pin: &str) -> Result<Val, Problem> {
+    fn event_value(&mut self, node: u32, pin: &str) -> Result<Val, Problem> {
         if self.scope.as_deref() != Some(event_scope(node).as_str()) {
             return Err(Problem::on(node, "the values of an On Event are read only on its own actions"));
         }
         let params = self.event_params(node);
-        let (k, (_, ty)) =
-            params.iter().enumerate().find(|(_, (name, _))| name == pin).ok_or_else(|| Problem::on(node, format!("this event brings no {pin}")))?;
+        let (k, param) = params.iter().enumerate().find(|(_, p)| p.name == pin).ok_or_else(|| Problem::on(node, format!("this event brings no {pin}")))?;
         let at = format!("(i32.const {k})");
-        Ok(match ty {
+        // A list or map it brings is kept as the chain begins (see `event_chain`).
+        if !param.shape.is_single() {
+            let (name_at, name_len) = self.text(event_list_name(node, pin).as_bytes());
+            let name = format!("(call $mk (i32.const {name_at}) (i32.const {name_len}))");
+            return Ok(if param.shape == Shape::Map { Val::M(name) } else { Val::L(name) });
+        }
+        Ok(match param.ty {
             VariableType::Number => Val::F(format!("(call $event_number {at})")),
             VariableType::WholeNumber => Val::I(format!("(call $event_whole {at})")),
             VariableType::TrueFalse => Val::B(format!("(call $event_flag {at})")),
@@ -1828,16 +1862,8 @@ impl Compiler<'_> {
     }
 
     /// The values an On Event or Trigger Event node keeps (`params`, each `name:type`), in order.
-    fn event_params(&self, node: u32) -> Vec<(String, VariableType)> {
-        let listed = self.graph.value(node, "params").and_then(serde_json::Value::as_array);
-        listed
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| {
-                let (name, code) = entry.as_str()?.split_once(':')?;
-                Some((name.to_owned(), VariableType::from_code(code)?))
-            })
-            .collect()
+    fn event_params(&self, node: u32) -> Vec<bayleaf_graph::Param> {
+        event_params_of(self.graph, node)
     }
 
     /// Trigger Event: its values listed for `event_send` (per value a kind and three words, in
@@ -1887,9 +1913,18 @@ impl Compiler<'_> {
         let list = format!("$events_{node}");
         self.global(format!("(global {list} (mut i32) (i32.const 0))"));
         let _ = writeln!(code, "{indent}(global.set {list} (call $alloc (i32.const {})))", params.len().max(1) * 16);
-        for (k, (param, ty)) in params.iter().enumerate() {
+        for (k, p) in params.iter().enumerate() {
+            let (param, ty) = (&p.name, &p.ty);
             let value = self.input(node, param)?;
             let place = |offset: usize| format!("(i32.add (global.get {list}) (i32.const {}))", k * 16 + offset);
+            // A list or map goes by its name; the host copies it.
+            if !p.shape.is_single() {
+                let (kind, name) = if p.shape == Shape::Map { (7, as_map(node, value)?) } else { (6, as_list(node, value)?) };
+                let _ = writeln!(code, "{indent}(i32.store {} (i32.const {kind}))", place(0));
+                let _ = writeln!(code, "{indent}(i32.store {} (call $tp {name}))", place(4));
+                let _ = writeln!(code, "{indent}(i32.store {} (call $tl {name}))", place(8));
+                continue;
+            }
             let kind = match ty {
                 VariableType::Number => 0,
                 VariableType::WholeNumber => 1,
@@ -2319,11 +2354,11 @@ impl Compiler<'_> {
                 let mut args = Vec::new();
                 for param in &function.inputs {
                     let value = self.input(next, &param.name)?;
-                    args.extend(parts_of(next, param.ty, value)?);
+                    args.extend(parts_of(next, param, value)?);
                 }
                 let mut kept = Vec::new();
                 for (k, param) in function.outputs.iter().enumerate() {
-                    for (j, ty) in wasm_types(param.ty).iter().enumerate() {
+                    for (j, ty) in wasm_types(param).iter().enumerate() {
                         let global = format!("$ret_{next}_{k}_{j}");
                         self.global(format!("(global {global} (mut {ty}) ({ty}.const 0))"));
                         kept.push(global);
@@ -2346,7 +2381,7 @@ impl Compiler<'_> {
                 let mut values = Vec::new();
                 for param in &function.outputs {
                     let value = self.input(next, &param.name)?;
-                    values.extend(parts_of(next, param.ty, value)?);
+                    values.extend(parts_of(next, param, value)?);
                 }
                 let _ = writeln!(code, "{indent}(return {})", values.join(" "));
             }
@@ -2417,7 +2452,9 @@ impl Compiler<'_> {
                             Val::F(b) => Val::F(format!("(call $math_pow {b} {e})")),
                             Val::I(b) => Val::F(format!("(call $math_pow (f32.convert_i32_s {b}) {e})")),
                             Val::V(v) => Val::V(v.map(|c| format!("(call $math_pow {c} {e})"))),
-                            Val::B(_) | Val::O(_) | Val::T(_) | Val::C(_) => return Err(Problem::on(node, "Power needs a number or a vector")),
+                            Val::B(_) | Val::O(_) | Val::T(_) | Val::C(_) | Val::L(_) | Val::M(_) => {
+                                return Err(Problem::on(node, "Power needs a number or a vector"));
+                            }
                         }
                     }
                 }
@@ -2428,7 +2465,9 @@ impl Compiler<'_> {
                     Val::F(v) => Val::F(root(&v)),
                     Val::I(i) => Val::F(root(&format!("(f32.convert_i32_s {i})"))),
                     Val::V(v) => Val::V(v.map(|c| root(&c))),
-                    Val::B(_) | Val::O(_) | Val::T(_) | Val::C(_) => return Err(Problem::on(node, "Square Root needs a number or a vector")),
+                    Val::B(_) | Val::O(_) | Val::T(_) | Val::C(_) | Val::L(_) | Val::M(_) => {
+                        return Err(Problem::on(node, "Square Root needs a number or a vector"));
+                    }
                 }
             }
             _ => {
@@ -2456,7 +2495,7 @@ impl Compiler<'_> {
                     .enumerate()
                     .find(|(_, p)| p.name == pin)
                     .ok_or_else(|| Problem::on(node, format!("{} has no input {pin}", function.name)))?;
-                val_of(param.ty, (0..wasm_types(param.ty).len()).map(|j| format!("(local.get $a{k}_{j})")).collect())
+                val_of(param, (0..wasm_types(param).len()).map(|j| format!("(local.get $a{k}_{j})")).collect())
             }
             "callFunction" => {
                 let function = self.function_of(node)?;
@@ -2466,7 +2505,7 @@ impl Compiler<'_> {
                     .enumerate()
                     .find(|(_, p)| p.name == pin)
                     .ok_or_else(|| Problem::on(node, format!("{} has no output {pin}", function.name)))?;
-                let parts: Vec<String> = wasm_types(param.ty)
+                let parts: Vec<String> = wasm_types(param)
                     .iter()
                     .enumerate()
                     .map(|(j, ty)| {
@@ -2475,7 +2514,7 @@ impl Compiler<'_> {
                         format!("(global.get {global})")
                     })
                     .collect();
-                val_of(param.ty, parts)
+                val_of(param, parts)
             }
             "update" if pin == "dt" => Val::F("(global.get $dt)".to_owned()),
             "message" | "interfaceChanged" if pin == "value" => Val::F("(global.get $message)".to_owned()),
@@ -2758,7 +2797,7 @@ impl Compiler<'_> {
                 Val::F(v) => Val::F(format!("(call $sin {v})")),
                 Val::V(v) => Val::V(v.map(|c| format!("(call $sin {c})"))),
                 Val::I(i) => Val::F(format!("(call $sin (f32.convert_i32_s {i}))")),
-                Val::B(_) | Val::O(_) | Val::T(_) | Val::C(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
+                Val::B(_) | Val::O(_) | Val::T(_) | Val::C(_) | Val::L(_) | Val::M(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
             },
             "power" | "squareRoot" | "vectorLength" => self.power_and_roots(node, &n.kind)?,
             "normalize" => {
@@ -2798,7 +2837,9 @@ impl Compiler<'_> {
                 Val::B(format!("(i32.{} {a} {b})", n.kind))
             }
             "not" => Val::B(format!("(i32.eqz {})", self.input(node, "value").and_then(|v| as_bool(node, v))?)),
-            "listItem" | "listLength" | "listFind" | "listForEach" | "mapGet" | "mapCount" | "mapForEach" => self.collection_value(node, &n.kind, pin)?,
+            "listItem" | "listLength" | "listFind" | "listForEach" | "mapGet" | "mapCount" | "mapForEach" | "getList" | "getMap" => {
+                self.collection_value(node, &n.kind, pin)?
+            }
             _ => return Err(Problem::on(node, format!("{} gives no value here", def.label))),
         })
     }
@@ -2876,11 +2917,11 @@ fn compile_functions(c: &mut Compiler<'_>, problems: &mut Vec<Problem>) -> Strin
             Ok(body) => {
                 let mut signature = String::new();
                 for (k, param) in function.inputs.iter().enumerate() {
-                    for (j, ty) in wasm_types(param.ty).iter().enumerate() {
+                    for (j, ty) in wasm_types(param).iter().enumerate() {
                         let _ = write!(signature, " (param $a{k}_{j} {ty})");
                     }
                 }
-                let results: Vec<&str> = function.outputs.iter().flat_map(|p| wasm_types(p.ty).iter().copied()).collect();
+                let results: Vec<&str> = function.outputs.iter().flat_map(|p| wasm_types(p).iter().copied()).collect();
                 if !results.is_empty() {
                     let _ = write!(signature, " (result {})", results.join(" "));
                 }
@@ -2896,8 +2937,12 @@ fn compile_functions(c: &mut Compiler<'_>, problems: &mut Vec<Problem>) -> Strin
 }
 
 /// The WebAssembly value types a value of `ty` is passed as, in order.
-fn wasm_types(ty: VariableType) -> &'static [&'static str] {
-    match ty {
+fn wasm_types(param: &bayleaf_graph::Param) -> &'static [&'static str] {
+    if !param.shape.is_single() {
+        // A list or map passes as its name in the script's memory.
+        return &["i64"];
+    }
+    match param.ty {
         VariableType::Number => &["f32"],
         VariableType::WholeNumber | VariableType::TrueFalse | VariableType::Object => &["i32"],
         VariableType::Text => &["i64"],
@@ -2906,9 +2951,14 @@ fn wasm_types(ty: VariableType) -> &'static [&'static str] {
 }
 
 /// A value of `ty` from the expressions of its parts ([`wasm_types`]).
-fn val_of(ty: VariableType, mut parts: Vec<String>) -> Val {
+fn val_of(param: &bayleaf_graph::Param, mut parts: Vec<String>) -> Val {
     let mut next = || if parts.is_empty() { String::new() } else { parts.remove(0) };
-    match ty {
+    match param.shape {
+        Shape::List => return Val::L(next()),
+        Shape::Map => return Val::M(next()),
+        Shape::Single => {}
+    }
+    match param.ty {
         VariableType::Number => Val::F(next()),
         VariableType::WholeNumber => Val::I(next()),
         VariableType::TrueFalse => Val::B(next()),
@@ -2919,8 +2969,13 @@ fn val_of(ty: VariableType, mut parts: Vec<String>) -> Val {
 }
 
 /// The expressions of a value passed as `ty` ([`wasm_types`]).
-fn parts_of(node: u32, ty: VariableType, value: Val) -> Result<Vec<String>, Problem> {
-    Ok(match ty {
+fn parts_of(node: u32, param: &bayleaf_graph::Param, value: Val) -> Result<Vec<String>, Problem> {
+    match param.shape {
+        Shape::List => return Ok(vec![as_list(node, value)?]),
+        Shape::Map => return Ok(vec![as_map(node, value)?]),
+        Shape::Single => {}
+    }
+    Ok(match param.ty {
         VariableType::Number => vec![as_float(node, value)?],
         VariableType::WholeNumber => vec![as_int(node, value)?],
         VariableType::TrueFalse => vec![as_bool(node, value)?],
@@ -2973,7 +3028,34 @@ fn event_chain(c: &mut Compiler<'_>, graph: &Graph, event: &bayleaf_graph::Node)
     c.scope = Some(event_scope(event.id));
     let chained = c.chain(event.id, "then", 1);
     c.scope = None;
-    chained
+    let mut kept = String::new();
+    for (k, param) in event_params_of(graph, event.id).iter().enumerate().filter(|(_, p)| !p.shape.is_single()) {
+        let (at, len) = c.text(event_list_name(event.id, &param.name).as_bytes());
+        let map = i32::from(param.shape == Shape::Map);
+        let _ = writeln!(kept, "        (drop (call $event_keep (i32.const {k}) (i32.const {map}) (i32.const {at}) (i32.const {len})))");
+    }
+    chained.map(|chain| if chain.is_empty() { chain } else { kept + &chain })
+}
+
+/// The values an On Event or Trigger Event node keeps (`params`, each `name:type`, a list's
+/// `name:list:type`), in order.
+fn event_params_of(graph: &Graph, node: u32) -> Vec<bayleaf_graph::Param> {
+    let listed = graph.value(node, "params").and_then(serde_json::Value::as_array);
+    listed
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let (name, code) = entry.as_str()?.split_once(':')?;
+            let (ty, shape) = VariableType::from_shaped_code(code)?;
+            Some(bayleaf_graph::Param { name: name.to_owned(), ty, shape })
+        })
+        .collect()
+}
+
+/// The name a list or map an event brings is kept under while its On Event runs: never a variable's
+/// or property's (they have no spaces).
+fn event_list_name(node: u32, param: &str) -> String {
+    format!("event {node} {param}")
 }
 
 /// The scope an On Event's chain compiles in, which its values are read in.
@@ -2997,6 +3079,7 @@ fn as_float(node: u32, value: Val) -> Result<String, Problem> {
         Val::B(_) => Err(Problem::on(node, "this input takes a number but gets true/false; use Choose")),
         Val::O(_) => Err(Problem::on(node, "this input takes a number but gets an object; use Position Of")),
         Val::C(_) => Err(Problem::on(node, "this input takes a number but gets a component")),
+        Val::L(_) | Val::M(_) => Err(Problem::on(node, "this input takes a number but gets a list or map; use List Item or Map Value")),
         Val::T(_) => Err(Problem::on(node, "this input takes a number but gets text; use Text to Number")),
     }
 }
@@ -3012,6 +3095,7 @@ fn as_vec(node: u32, value: Val) -> Result<[String; 3], Problem> {
         Val::B(_) => Err(Problem::on(node, "this input takes a vector but gets true/false")),
         Val::O(_) => Err(Problem::on(node, "this input takes a vector but gets an object; use Position Of")),
         Val::C(_) => Err(Problem::on(node, "this input takes a vector but gets a component")),
+        Val::L(_) | Val::M(_) => Err(Problem::on(node, "this input takes a vector but gets a list or map")),
         Val::T(_) => Err(Problem::on(node, "this input takes a vector but gets text")),
     }
 }
@@ -3036,6 +3120,24 @@ fn as_text(node: u32, value: Val) -> Result<String, Problem> {
     match value {
         Val::T(text) => Ok(text),
         _ => Err(Problem::on(node, "this input takes text; use To Text or Name Of")),
+    }
+}
+
+/// A list's name, from a list pin.
+fn as_list(node: u32, value: Val) -> Result<String, Problem> {
+    match value {
+        Val::L(name) => Ok(name),
+        Val::M(_) => Err(Problem::on(node, "this input takes a list but gets a map")),
+        _ => Err(Problem::on(node, "this input takes a list: link a Get List, a list input or a list an event brings")),
+    }
+}
+
+/// A map's name, from a map pin.
+fn as_map(node: u32, value: Val) -> Result<String, Problem> {
+    match value {
+        Val::M(name) => Ok(name),
+        Val::L(_) => Err(Problem::on(node, "this input takes a map but gets a list")),
+        _ => Err(Problem::on(node, "this input takes a map: link a Get Map, a map input or a map an event brings")),
     }
 }
 
@@ -3148,6 +3250,7 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "map_get" (func $map_get (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "map_text" (func $map_text (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "map_next" (func $map_next (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "event_keep" (func $event_keep (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "particles_play" (func $particles_play (param i32) (result i32)))
   (import "bayleaf" "particles_stop" (func $particles_stop (param i32) (result i32)))
   (import "bayleaf" "particles_burst" (func $particles_burst (param i32 i32) (result i32)))

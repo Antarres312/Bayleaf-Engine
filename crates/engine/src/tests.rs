@@ -2928,3 +2928,25 @@ fn a_variables_nodes_follow_a_new_type_and_shape_and_lose_links_that_no_longer_f
     run(&mut session, "graph.property.set", json!({"name": "waves", "shape": "list"})).unwrap();
     assert_eq!(session.graph().unwrap().graph.property("waves").unwrap().default, json!([]), "a map is no list, so the list starts empty");
 }
+
+#[test]
+fn linking_a_list_into_a_list_node_gives_the_node_its_type_in_one_step() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params);
+    run(&mut session, "graph.new", json!({"domain": "script"})).unwrap();
+    run(&mut session, "graph.variable.add", json!({"name": "words", "type": "text", "shape": "list"})).unwrap();
+    let get = run(&mut session, "graph.node.add", json!({"kind": "getList", "position": [0, 0]})).unwrap()["node"].clone();
+    run(&mut session, "graph.node.set", json!({"node": get, "name": "item", "value": ["text"]})).unwrap();
+    run(&mut session, "graph.node.set", json!({"node": get, "name": "name", "value": "words"})).unwrap();
+    // A fresh For Each holds numbers; a number goes into nothing it has, so no link is lost.
+    let each = run(&mut session, "graph.node.add", json!({"kind": "listForEach", "position": [200, 0]})).unwrap()["node"].clone();
+    run(&mut session, "graph.link.add", json!({"from": {"node": get, "pin": "list"}, "to": {"node": each, "pin": "list"}})).unwrap();
+    let graph = &session.graph().unwrap().graph;
+    let id = u32::try_from(each.as_u64().unwrap()).unwrap();
+    assert_eq!(graph.value(id, "item"), Some(&json!(["text"])), "the node now goes through text");
+    assert!(graph.links.iter().any(|l| l.to.node == id && l.to.pin == "list"), "and the list is linked");
+    // Undo takes back both.
+    run(&mut session, "edit.undo", Value::Null).unwrap();
+    assert_eq!(session.graph().unwrap().graph.value(id, "item"), None);
+}

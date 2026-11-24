@@ -115,7 +115,7 @@ fn described_events(value: Option<&serde_json::Value>) -> Result<Vec<DeclaredEve
         let params: Vec<String> =
             entry.get("params").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(|p| p.as_str().map(str::to_owned)).collect();
         if params.len() > MAX_EVENT_ARGS
-            || params.iter().any(|p| p.split_once(':').is_none_or(|(n, t)| n.is_empty() || bayleaf_graph::VariableType::from_code(t).is_none()))
+            || params.iter().any(|p| p.split_once(':').is_none_or(|(n, t)| n.is_empty() || bayleaf_graph::VariableType::from_shaped_code(t).is_none()))
         {
             return Err(format!("event {name}: at most {MAX_EVENT_ARGS} values, each name:type"));
         }
@@ -841,6 +841,10 @@ fn read_event_args(caller: &mut Caller<'_, HostState>, ptr: i32, count: i32) -> 
             3 => EventArg::Vector([number(1), number(2), number(3)]),
             4 => EventArg::Text(read_text(caller, word(1) as i32, word(2) as i32, MAX_EVENT_TEXT)?),
             5 => EventArg::Object(caller.data().world.get(word(1) as i32).map(|(id, _, _)| *id)),
+            6 | 7 => {
+                let name = read_text(caller, word(1) as i32, word(2) as i32, MAX_EVENT_TEXT)?;
+                copied(caller, &name, word(0) == 6)?
+            }
             kind => return Err(format!("{kind} is not a kind of event value")),
         });
         if let Some(EventArg::Number(v) | EventArg::Vector([v, ..])) = args.last()
@@ -850,6 +854,23 @@ fn read_event_args(caller: &mut Caller<'_, HostState>, ptr: i32, count: i32) -> 
         }
     }
     Ok(args)
+}
+
+/// A copy of the list (`list`) or map named `name` this script keeps (as its property or variable
+/// starts it, if it has not used it yet), for an event to bring; empty when it keeps none.
+fn copied(caller: &Caller<'_, HostState>, name: &str, list: bool) -> Result<EventArg, String> {
+    let state = caller.data();
+    let kept = match state.collections.get(name) {
+        Some(stored) => Some(stored.clone()),
+        None => state.seeds.get(name).map(|seed| seeded(caller, seed)),
+    };
+    match (kept, list) {
+        (Some(Stored::List(items)), true) => Ok(EventArg::List(items)),
+        (Some(Stored::Map(entries)), false) => Ok(EventArg::Map(entries)),
+        (None, true) => Ok(EventArg::List(Vec::new())),
+        (None, false) => Ok(EventArg::Map(Default::default())),
+        (Some(_), _) => Err(format!("{name} is a {}", if list { "map" } else { "list" })),
+    }
 }
 
 /// The object a component handle's value names, and which of its scripts: `None` when the object is
@@ -966,6 +987,24 @@ fn link_events(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
             Some(EventArg::Object(Some(id))) => caller.data().world.handle_of(id),
             _ => 0,
         }
+    })?;
+    // A list or map the event brings becomes one this script keeps under `name`, so list and map
+    // nodes work on it.
+    linker.func_wrap("bayleaf", "event_keep", move |mut caller: Caller<'_, HostState>, index: i32, map: i32, p: i32, l: i32| -> Result<i32, Error> {
+        let name = read_text(&mut caller, p, l, MAX_MESSAGE_NAME).map_err(|m| fault(&mut caller, format!("event_keep: {m}")))?;
+        let kept = match arg(&caller, index) {
+            Some(EventArg::List(items)) if map == 0 => Stored::List(items),
+            Some(EventArg::Map(entries)) if map != 0 => Stored::Map(entries),
+            _ if map == 0 => Stored::List(Vec::new()),
+            _ => Stored::Map(Default::default()),
+        };
+        let state = caller.data_mut();
+        if !state.collections.contains_key(&name) && state.collections.len() >= MAX_STORED_COLLECTIONS {
+            return Err(fault(&mut caller, format!("event_keep: a script keeps at most {MAX_STORED_COLLECTIONS} lists and maps")));
+        }
+        state.seeds.remove(&name);
+        state.collections.insert(name, kept);
+        Ok(1)
     })?;
     linker.func_wrap("bayleaf", "event_text", move |mut caller: Caller<'_, HostState>, index: i32, out: i32, cap: i32| -> Result<i32, Error> {
         let Some(EventArg::Text(text)) = arg(&caller, index) else { return Ok(0) };
@@ -1774,6 +1813,7 @@ fn write_value(caller: &mut Caller<'_, HostState>, out: i32, value: &EventArg, w
         EventArg::Vector([x, y, z]) => [3, x.to_bits(), y.to_bits(), z.to_bits()],
         EventArg::Text(text) => [4, text.len() as u32, 0, 0],
         EventArg::Object(id) => [5, id.map_or(0, |id| caller.data().world.handle_of(id)) as u32, 0, 0],
+        EventArg::List(_) | EventArg::Map(_) => [0; 4],
     };
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
     write_guest(caller, out, &bytes, what)
@@ -1782,6 +1822,9 @@ fn write_value(caller: &mut Caller<'_, HostState>, out: i32, value: &EventArg, w
 /// The one value at `ptr`, as `event_send` lists values.
 fn read_value(caller: &mut Caller<'_, HostState>, ptr: i32, what: &str) -> Result<EventArg, Error> {
     let mut values = read_event_args(caller, ptr, 1).map_err(|m| fault(caller, format!("{what}: {m}")))?;
+    if matches!(values.first(), Some(EventArg::List(_) | EventArg::Map(_))) {
+        return Err(fault(caller, format!("{what}: a list or map holds no lists or maps")));
+    }
     values.pop().ok_or_else(|| fault(caller, format!("{what}: no value")))
 }
 

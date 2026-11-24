@@ -576,7 +576,7 @@ fn every_node_kind_compiles_and_runs() {
     b.link(read_value, "found", found_gate, "condition");
     // An event this script declares: triggered on every object, and heard here.
     b.0.add_event("Hit").unwrap();
-    let hit = vec![bayleaf_graph::Param { name: "power".to_owned(), ty: VariableType::Number }];
+    let hit = vec![bayleaf_graph::Param::new("power".to_owned(), VariableType::Number)];
     b.0.set_event(&CATALOG, "Hit", None, Some(hit.clone()), &super::EVENT_KINDS).unwrap();
     let hit_pins = bayleaf_graph::param_pins(&hit);
     let trigger_hit = b.node("triggerEvent", json!({ "event": "Hit", "params": hit_pins }));
@@ -647,6 +647,19 @@ fn every_node_kind_compiles_and_runs() {
     let at = b.node("log", json!({ "message": "at" }));
     b.link(gate, "true", at, "run");
     b.link(item_at, "x", at, "value");
+    // The list and the map passed on through pins: Get List into List Length, Get Map into Map Count.
+    let whole_list = b.node("getList", json!({ "name": "Seen", "item": ["vector"] }));
+    let whole_map = b.node("getMap", json!({ "name": "Names", "item": ["object"] }));
+    let counted = b.node("listLength", json!({ "item": ["vector"] }));
+    b.link(whole_list, "list", counted, "list");
+    let keys = b.node("mapCount", json!({ "item": ["object"] }));
+    b.link(whole_map, "map", keys, "map");
+    let sizes = b.node("log", json!({ "message": "sizes" }));
+    b.link(at, "then", sizes, "run");
+    b.link(counted, "length", sizes, "value");
+    let more = b.node("log", json!({ "message": "keys" }));
+    b.link(sizes, "then", more, "run");
+    b.link(keys, "count", more, "value");
     // Physics contacts: each names the other object (none arrive here).
     for kind in ["triggerEntered", "triggerLeft", "collisionStarted", "collisionEnded"] {
         let contact = b.node(kind, json!({}));
@@ -1508,7 +1521,7 @@ fn another_script_s_whole_number_property_is_read_and_set_as_a_whole_number() {
 
 /// Declares a function on the builder's graph with typed inputs and outputs.
 fn declare(b: &mut Builder, name: &str, inputs: &[(&str, VariableType)], outputs: &[(&str, VariableType)]) {
-    let params = |list: &[(&str, VariableType)]| list.iter().map(|(n, ty)| bayleaf_graph::Param { name: (*n).to_owned(), ty: *ty }).collect::<Vec<_>>();
+    let params = |list: &[(&str, VariableType)]| list.iter().map(|(n, ty)| bayleaf_graph::Param::new((*n).to_owned(), *ty)).collect::<Vec<_>>();
     b.0.add_function(name).unwrap();
     b.0.set_function(&CATALOG, name, None, Some(params(inputs)), Some(params(outputs)), &FUNCTION_KINDS).unwrap();
 }
@@ -1847,7 +1860,7 @@ fn an_event_triggered_with_its_values_runs_on_event_which_reads_each_of_them() {
         ("count", VariableType::WholeNumber),
     ]
     .into_iter()
-    .map(|(name, ty)| Param { name: name.to_owned(), ty })
+    .map(|(name, ty)| Param::new(name, ty))
     .collect();
     b.0.set_event(&CATALOG, "Damaged", None, Some(declared.clone()), &super::EVENT_KINDS).unwrap();
     let pins = bayleaf_graph::param_pins(&declared);
@@ -1905,7 +1918,7 @@ fn an_event_triggered_with_its_values_runs_on_event_which_reads_each_of_them() {
 fn an_on_events_values_are_read_only_on_its_own_actions() {
     let mut b = Builder::new();
     b.0.add_event("Ping").unwrap();
-    let declared = vec![bayleaf_graph::Param { name: "n".to_owned(), ty: VariableType::Number }];
+    let declared = vec![bayleaf_graph::Param::new("n".to_owned(), VariableType::Number)];
     b.0.set_event(&CATALOG, "Ping", None, Some(declared.clone()), &super::EVENT_KINDS).unwrap();
     let on = b.node("eventStart", json!({ "event": "Ping", "params": bayleaf_graph::param_pins(&declared) }));
     let update = b.node("update", json!({}));
@@ -1920,7 +1933,7 @@ fn an_on_events_values_are_read_only_on_its_own_actions() {
 fn a_plain_message_such_as_an_interface_click_runs_on_event_with_its_values_at_zero() {
     let mut b = Builder::new();
     b.0.add_event("OpenDoor").unwrap();
-    let declared = vec![bayleaf_graph::Param { name: "speed".to_owned(), ty: VariableType::Number }];
+    let declared = vec![bayleaf_graph::Param::new("speed".to_owned(), VariableType::Number)];
     b.0.set_event(&CATALOG, "OpenDoor", None, Some(declared.clone()), &super::EVENT_KINDS).unwrap();
     let on = b.node("eventStart", json!({ "event": "OpenDoor", "params": bayleaf_graph::param_pins(&declared) }));
     let log = b.node("log", json!({ "message": "open" }));
@@ -1936,9 +1949,8 @@ fn a_plain_message_such_as_an_interface_click_runs_on_event_with_its_values_at_z
 
 #[test]
 fn a_script_subscribes_to_a_components_event_hears_it_with_its_source_and_values_and_can_stop() {
-    use bayleaf_graph::Param;
     use bayleaf_scene::components::Scripts;
-    let died = vec![Param { name: "amount".to_owned(), ty: VariableType::Number }];
+    let died = vec![bayleaf_graph::Param::new("amount".to_owned(), VariableType::Number)];
     let pins = bayleaf_graph::param_pins(&died);
     // The publisher declares Died and logs when it happens on it.
     let mut publisher = Builder::new();
@@ -2164,4 +2176,76 @@ fn a_list_property_starts_with_what_the_object_sets_objects_found_by_name() {
     assert!(host.take_faults().is_empty());
     let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(logs, ["target Door", "target "], "the object's own items, in order; a name no object has is none (no name)");
+}
+
+#[test]
+fn a_list_goes_through_pins_into_functions_as_itself_and_into_events_as_a_copy() {
+    let mut b = Builder::new();
+    shaped_variable(&mut b, "Scores", VariableType::Number, Shape::List, Some(json!([1.0, 2.0])));
+    let scores = json!({ "name": "Scores", "item": ["number"] });
+    let list_of_numbers = bayleaf_graph::Param { name: "scores".to_owned(), ty: VariableType::Number, shape: Shape::List };
+    // A function that adds 10 to the list it is given.
+    b.0.add_function("addTen").unwrap();
+    b.0.set_function(&CATALOG, "addTen", None, Some(vec![list_of_numbers.clone()]), Some(Vec::new()), &FUNCTION_KINDS).unwrap();
+    let begin = function_node(&mut b, "functionStart", "addTen");
+    let add = b.node("listAdd", json!({ "item": ["number"], "value": 10.0 }));
+    b.link(begin, "then", add, "run");
+    b.link(begin, "scores", add, "list");
+    // On start: the function gets Scores itself, so Scores grows.
+    let start = b.node("start", json!({}));
+    let call = function_node(&mut b, "callFunction", "addTen");
+    b.link(start, "then", call, "run");
+    let whole = b.node("getList", scores.clone());
+    b.link(whole, "list", call, "scores");
+    let length = b.node("listLength", scores.clone());
+    let after = b.node("log", json!({ "message": "length" }));
+    b.link(call, "then", after, "run");
+    b.link(length, "length", after, "value");
+    // An event brings Scores to this object as a copy.
+    b.0.add_event("Report").unwrap();
+    b.0.set_event(&CATALOG, "Report", None, Some(vec![list_of_numbers]), &super::EVENT_KINDS).unwrap();
+    let pins = bayleaf_graph::param_pins(&b.0.event("Report").unwrap().params);
+    let report = b.node("triggerEvent", json!({ "event": "Report", "params": pins }));
+    b.link(after, "then", report, "run");
+    b.link(whole, "list", report, "scores");
+    let me = b.node("thisObject", json!({}));
+    b.link(me, "object", report, "target");
+    let heard = b.node("eventStart", json!({ "event": "Report", "params": pins }));
+    let each = b.node("listForEach", json!({ "item": ["number"] }));
+    b.link(heard, "then", each, "run");
+    b.link(heard, "scores", each, "list");
+    let got = b.node("log", json!({ "message": "got" }));
+    b.link(each, "each", got, "run");
+    b.link(each, "value", got, "value");
+    // Changing the copy leaves Scores as it was.
+    let change = b.node("listClear", json!({ "item": ["number"] }));
+    b.link(each, "then", change, "run");
+    b.link(heard, "scores", change, "list");
+    let original = b.node("log", json!({ "message": "still" }));
+    b.link(change, "then", original, "run");
+    b.link(length, "length", original, "value");
+
+    let (mut scene, _, mut host) = run(&b.bytes(), &[]);
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    host.update(&mut scene, 0.1, 0.1, &Arc::new(Input::default()));
+    assert!(host.take_faults().is_empty());
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["length 3", "got 1", "got 2", "got 10", "still 3"], "the function changes Scores; the event's copy is its own");
+}
+
+#[test]
+fn a_list_pin_takes_only_a_list_of_its_type_and_a_list_node_takes_the_type_linked_into_it() {
+    let mut b = Builder::new();
+    shaped_variable(&mut b, "Words", VariableType::Text, Shape::List, None);
+    let words = b.node("getList", json!({ "name": "Words", "item": ["text"] }));
+    let count = b.node("listLength", json!({}));
+    assert!(super::adopted_item(&b.0, &Link { from: PinRef::new(words, "list"), to: PinRef::new(count, "list") }) == Some((count, VariableType::Text)));
+    // A list of text does not go into a list of numbers as it is.
+    let refused = b.0.connect(&CATALOG, Link { from: PinRef::new(words, "list"), to: PinRef::new(count, "list") });
+    assert!(refused.is_err(), "a fresh list node holds numbers until it takes another type");
+    b.set_value_for_tests(count, "item", json!(["text"]));
+    b.link(words, "list", count, "list");
+    // Nor into a number input.
+    let log = b.node("log", json!({}));
+    assert!(b.0.connect(&CATALOG, Link { from: PinRef::new(words, "list"), to: PinRef::new(log, "value") }).is_err());
 }

@@ -349,7 +349,11 @@ fn functions(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                                             kept.remove(index);
                                             changed = Some(kept);
                                         }
-                                        ui.label(egui::RichText::new(tl(param.ty.label())).small().color(t.text_muted));
+                                        if let Some((ty, shape)) = type_menu(ui, t, param.ty, param.shape, &param.name) {
+                                            let mut retyped = params.clone();
+                                            (retyped[index].ty, retyped[index].shape) = (ty, shape);
+                                            changed = Some(retyped);
+                                        }
                                         let key = format!("function {} {side} {index}", function.name);
                                         let label = crate::i18n::tf("Name of {name} of {function}", &[("name", &param.name), ("function", &function.name)]);
                                         if let Some(typed) = name_field(ui, panel, &key, &param.name, &label) {
@@ -367,7 +371,7 @@ fn functions(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                                 if ui.button(tl(ty.label())).clicked() {
                                     let stem = if side == "inputs" { "input" } else { "output" };
                                     let mut more = params.clone();
-                                    more.push(Param { name: free_name(stem, |n| params.iter().any(|p| p.name == n)), ty });
+                                    more.push(Param::new(free_name(stem, |n| params.iter().any(|p| p.name == n)), ty));
                                     changed = Some(more);
                                     ui.close();
                                 }
@@ -505,7 +509,11 @@ fn events(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at:
                                     kept.remove(index);
                                     changed = Some(kept);
                                 }
-                                ui.label(egui::RichText::new(tl(param.ty.label())).small().color(t.text_muted));
+                                if let Some((ty, shape)) = type_menu(ui, t, param.ty, param.shape, &param.name) {
+                                    let mut retyped = event.params.clone();
+                                    (retyped[index].ty, retyped[index].shape) = (ty, shape);
+                                    changed = Some(retyped);
+                                }
                                 let key = format!("event {} value {index}", event.name);
                                 let label = crate::i18n::tf("Name of {name} of {event}", &[("name", &param.name), ("event", &event.name)]);
                                 if let Some(typed) = name_field(ui, panel, &key, &param.name, &label) {
@@ -520,7 +528,7 @@ fn events(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at:
                         for ty in VariableType::ALL {
                             if ui.button(tl(ty.label())).clicked() {
                                 let mut more = event.params.clone();
-                                more.push(Param { name: free_name("value", |n| event.params.iter().any(|p| p.name == n)), ty });
+                                more.push(Param::new(free_name("value", |n| event.params.iter().any(|p| p.name == n)), ty));
                                 changed = Some(more);
                                 ui.close();
                             }

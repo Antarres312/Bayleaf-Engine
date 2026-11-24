@@ -56,6 +56,10 @@ pub enum PinType {
     /// A script on an object (visual scripts): which one, on which object, or none. Rust scripts and
     /// visual scripts alike are such components.
     Component,
+    /// A list of values of one type (visual scripts): a list variable or property, or one passed on.
+    List(VariableType),
+    /// A map of values of one type under text keys (visual scripts).
+    Map(VariableType),
 }
 
 impl PinType {
@@ -72,6 +76,8 @@ impl PinType {
             PinType::Text => "Text",
             PinType::Int => "Whole Number",
             PinType::Component => "Component",
+            PinType::List(item) => item.list_label(),
+            PinType::Map(item) => item.map_label(),
         }
     }
 
@@ -79,8 +85,11 @@ impl PinType {
     /// and colours; vectors and colours convert into each other. Whether an `Any` output really
     /// fits is checked when the graph is compiled.
     pub fn connects_to(self, to: PinType) -> bool {
-        use PinType::{Any, Bool, Color, Component, Float, Flow, Int, Object, Text, Vec3};
+        use PinType::{Any, Bool, Color, Component, Float, Flow, Int, List, Map, Object, Text, Vec3};
         match (self, to) {
+            // A list or map goes only where one of the same type is taken.
+            (List(a), List(b)) | (Map(a), Map(b)) => a == b,
+            (List(_) | Map(_), _) | (_, List(_) | Map(_)) => false,
             (Flow, Flow) | (Bool, Bool) | (Object, Object) | (Text, Text) | (Int, Int) | (Component, Component) => true,
             (Flow | Bool | Object | Text | Component, _) | (_, Flow | Bool | Object | Text | Component) => false,
             // A whole number widens to a number (and on to a vector); a number becomes whole only
@@ -514,6 +523,64 @@ impl VariableType {
         }
     }
 
+    /// "List of Number", and so on: a list pin's name shown to people.
+    pub fn list_label(self) -> &'static str {
+        match self {
+            VariableType::Number => "List of Number",
+            VariableType::Vector => "List of Vector",
+            VariableType::TrueFalse => "List of True/False",
+            VariableType::WholeNumber => "List of Whole Number",
+            VariableType::Text => "List of Text",
+            VariableType::Object => "List of Object",
+            VariableType::Color => "List of Color",
+        }
+    }
+
+    /// "Map of Number", and so on.
+    pub fn map_label(self) -> &'static str {
+        match self {
+            VariableType::Number => "Map of Number",
+            VariableType::Vector => "Map of Vector",
+            VariableType::TrueFalse => "Map of True/False",
+            VariableType::WholeNumber => "Map of Whole Number",
+            VariableType::Text => "Map of Text",
+            VariableType::Object => "Map of Object",
+            VariableType::Color => "Map of Color",
+        }
+    }
+
+    /// The pin type of this type in `shape`: one value's, or a list's or map's of it.
+    pub fn pin(self, shape: Shape) -> PinType {
+        match shape {
+            Shape::List => PinType::List(self),
+            Shape::Map => PinType::Map(self),
+            Shape::Single => match self {
+                VariableType::Number => PinType::Float,
+                VariableType::Vector => PinType::Vec3,
+                VariableType::TrueFalse => PinType::Bool,
+                VariableType::WholeNumber => PinType::Int,
+                VariableType::Text => PinType::Text,
+                VariableType::Object => PinType::Object,
+                VariableType::Color => PinType::Color,
+            },
+        }
+    }
+
+    /// The code of this type in `shape`, as pins and descriptions list it: `number`, `list:number`.
+    pub fn shaped_code(self, shape: Shape) -> String {
+        if shape.is_single() { self.code().to_owned() } else { format!("{}:{}", shape.code(), self.code()) }
+    }
+
+    /// The type and shape a code names: `number`, or `list:number` and `map:number`.
+    pub fn from_shaped_code(code: &str) -> Option<(VariableType, Shape)> {
+        match code.split_once(':') {
+            Some(("list", item)) => Some((VariableType::from_code(item)?, Shape::List)),
+            Some(("map", item)) => Some((VariableType::from_code(item)?, Shape::Map)),
+            Some(_) => None,
+            None => Some((VariableType::from_code(code)?, Shape::Single)),
+        }
+    }
+
     /// What a new variable of this type and shape starts at: the type's zero, or an empty list or map.
     pub fn zero_of(self, shape: Shape) -> Value {
         match shape {
@@ -537,13 +604,24 @@ impl VariableType {
     }
 }
 
-/// One input or output of a function: a name and what it holds.
+/// One input or output of a function, or a value an event brings: a name and what it holds (one
+/// value, or a list or map of them).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Param {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: VariableType,
+    /// One value, a list or a map; one value when left out.
+    #[serde(default, skip_serializing_if = "Shape::is_single")]
+    pub shape: Shape,
+}
+
+impl Param {
+    /// One value of `ty` named `name`.
+    pub fn new(name: impl Into<String>, ty: VariableType) -> Self {
+        Self { name: name.into(), ty, shape: Shape::Single }
+    }
 }
 
 /// A function a visual script declares. Its Function node begins its actions with the inputs as
@@ -620,7 +698,7 @@ const FLOW_PINS: [&str; 2] = ["run", "then"];
 
 /// The pins a list of params becomes, as nodes keep them: `name:type`.
 pub fn param_pins(params: &[Param]) -> Value {
-    Value::from(params.iter().map(|p| format!("{}:{}", p.name, p.ty.code())).collect::<Vec<_>>())
+    Value::from(params.iter().map(|p| format!("{}:{}", p.name, p.ty.shaped_code(p.shape))).collect::<Vec<_>>())
 }
 
 /// A function's inputs or outputs: at most [`MAX_PARAMS`], each named like a variable, no name twice
@@ -773,6 +851,7 @@ impl Graph {
         for id in named {
             trial.set_value(catalog, id, "inputs", param_pins(&function.inputs))?;
             trial.set_value(catalog, id, "outputs", param_pins(&function.outputs))?;
+            trial.drop_unfit_links(catalog, id);
             trial.set_value(catalog, id, "function", Value::from(function.name.as_str()))?;
         }
         *self = trial;
@@ -823,6 +902,7 @@ impl Graph {
             .collect();
         for id in named {
             trial.set_value(catalog, id, "params", param_pins(&event.params))?;
+            trial.drop_unfit_links(catalog, id);
             trial.set_value(catalog, id, "event", Value::from(event.name.as_str()))?;
         }
         *self = trial;
@@ -861,20 +941,13 @@ impl Graph {
         trial.node_mut(id)?.kind = kind.to_owned();
         let def = trial.node(id).and_then(|n| catalog.def_of(n)).ok_or_else(|| GraphError::UnknownKind(kind.to_owned(), catalog.domain))?;
         trial.node_mut(id)?.values.retain(|name, _| def.input(name).is_some() || def.setting(name).is_some());
-        trial.drop_dangling_links(catalog, id);
-        let touching: Vec<Link> = trial.links.iter().filter(|l| l.from.node == id || l.to.node == id).cloned().collect();
-        for link in touching {
-            let others: Graph = Graph { links: trial.links.iter().filter(|l| **l != link).cloned().collect(), ..trial.clone() };
-            if others.check_link(catalog, &link, Some(&others)).is_err() {
-                trial.links.retain(|l| *l != link);
-            }
-        }
+        trial.drop_unfit_links(catalog, id);
         *self = trial;
         Ok(())
     }
 
     /// The nodes of `kinds` that name `name` (their `name` setting) keep the type code of what it
-    /// holds in `item`; when it changes, links to their values go.
+    /// holds in `item`; when it changes, links that no longer fit go.
     pub fn follow_item(&mut self, catalog: &Catalog, name: &str, item: VariableType, kinds: &[&str]) -> Result<(), GraphError> {
         let code = Value::from(vec![item.code()]);
         let named: Vec<u32> = self
@@ -886,8 +959,8 @@ impl Graph {
         let mut trial = self.clone();
         for id in named {
             if trial.value(id, "item") != Some(&code) {
-                trial.links.retain(|l| !((l.from.node == id && l.from.pin == "value") || (l.to.node == id && l.to.pin == "value")));
                 trial.set_value(catalog, id, "item", code.clone())?;
+                trial.drop_unfit_links(catalog, id);
             }
         }
         *self = trial;
@@ -1261,6 +1334,19 @@ impl Graph {
         Ok(())
     }
 
+    /// Removes the links of `id` to pins its definition no longer has, or whose types no longer fit
+    /// (a setting changed what a pin carries).
+    pub fn drop_unfit_links(&mut self, catalog: &Catalog, id: u32) {
+        self.drop_dangling_links(catalog, id);
+        let touching: Vec<Link> = self.links.iter().filter(|l| l.from.node == id || l.to.node == id).cloned().collect();
+        for link in touching {
+            let others = Graph { links: self.links.iter().filter(|l| **l != link).cloned().collect(), ..self.clone() };
+            if others.check_link(catalog, &link, Some(&others)).is_err() {
+                self.links.retain(|l| *l != link);
+            }
+        }
+    }
+
     /// Removes the links of `id` to pins its definition no longer has (a setting changed its pins).
     fn drop_dangling_links(&mut self, catalog: &Catalog, id: u32) {
         let Some(def) = self.node(id).and_then(|n| catalog.def_of(n)) else { return };
@@ -1548,6 +1634,7 @@ fn check_value(def: &NodeDef, name: &str, value: &Value) -> Result<(), GraphErro
         PinType::Bool => Err(bad("true or false")),
         PinType::Object => Err(GraphError::Refused(format!("{} · {name} takes an object only from a link", def.label))),
         PinType::Component => Err(GraphError::Refused(format!("{} · {name} takes a component only from a link", def.label))),
+        PinType::List(_) | PinType::Map(_) => Err(GraphError::Refused(format!("{} · {name} takes a list or map only from a link", def.label))),
         PinType::Int => match value.as_i64() {
             Some(n) if i32::try_from(n).is_ok() => Ok(()),
             _ => Err(bad("a whole number from -2147483648 to 2147483647")),

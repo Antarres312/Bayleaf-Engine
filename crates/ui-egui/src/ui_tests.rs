@@ -3552,3 +3552,19 @@ fn a_variables_type_changes_from_its_menu_and_its_nodes_follow() {
     assert!(g.nodes.iter().any(|n| n.kind == "textVariable"), "its Get node reads text now");
     assert!(harness.query_by_label_contains("this visual script compiles").is_some(), "{}", harness.state().status);
 }
+
+#[test]
+fn list_pins_say_what_their_list_holds_and_a_fresh_list_node_has_its_value_pin() {
+    let mut harness = graph_harness("script");
+    let editor = harness.state_mut();
+    editor.dispatch("graph.variable.add", &json!({ "name": "words", "type": "text", "shape": "list" }), None);
+    let get = editor.dispatch("graph.node.add", &json!({ "kind": "getList", "position": [0, 0] }), None).unwrap()["node"].clone();
+    editor.dispatch("graph.node.set", &json!({ "node": get, "name": "item", "value": ["text"] }), None);
+    editor.dispatch("graph.node.set", &json!({ "node": get, "name": "name", "value": "words" }), None);
+    editor.dispatch("graph.node.add", &json!({ "kind": "listAdd", "position": [0, 200] }), None);
+    harness.run();
+    assert!(harness.query_by_label_contains("List (List of Text) of Get List").is_some(), "the list pin says it is a list of text");
+    // A list node just placed already has its list and its value, as numbers until it takes another type.
+    assert!(harness.query_by_label_contains("List (List of Number) of Add to List").is_some());
+    assert!(harness.query_by_label_contains("Value (Number) of Add to List").is_some());
+}

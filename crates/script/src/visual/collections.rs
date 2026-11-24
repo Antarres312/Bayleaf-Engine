@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use bayleaf_graph::{Node, NodeDef, PinDef, PinDefault, PinType, Problem, Shape, VariableType};
 
-use super::{Compiler, Val, as_bool, as_float, as_int, as_object, as_text, as_vec};
+use super::{Compiler, Val, as_bool, as_float, as_int, as_list, as_map, as_object, as_text, as_vec};
 
 /// Variants made so far, by node kind and what the list or map holds.
 type Variants = Vec<(String, VariableType, &'static NodeDef)>;
@@ -33,40 +33,50 @@ fn value_pin(ty: VariableType, input: bool) -> PinDef {
     PinDef { name: "value", label: "Value", ty: pin, default: if input { default } else { PinDefault::None } }
 }
 
-/// The pins of a list or map node that takes or gives a value: its catalog pins with a Value of the
-/// type the list or map holds. `None` for a node that has none, or names nothing yet.
+/// The pins of a list or map node of the type it holds (its `item`): the catalog's are a number's,
+/// and here the list or map pin and the Value take the type it names.
 pub(super) fn variant(node: &Node) -> Option<&'static NodeDef> {
-    // Where the Value goes: an input at the end, or an output at this place.
-    let output_at = match node.kind.as_str() {
-        "listAdd" | "listInsert" | "listSet" | "listFind" | "mapSet" => None,
-        "listItem" | "mapGet" => Some(0),
-        "listForEach" => Some(1),
-        "mapForEach" => Some(2),
-        _ => return None,
-    };
-    let ty = item_of(node)?;
+    let ty = item_of(node).unwrap_or(VariableType::Number);
+    let base = super::CATALOG.nodes.iter().find(|d| d.kind == node.kind)?;
+    if ty == VariableType::Number {
+        return Some(base);
+    }
     let mut made = VARIANTS.lock().ok()?;
     if let Some((_, _, def)) = made.iter().find(|(kind, t, _)| *kind == node.kind && *t == ty) {
         return Some(def);
     }
-    let base = super::CATALOG.nodes.iter().find(|d| d.kind == node.kind)?;
-    let leak = |pins: Vec<PinDef>| -> &'static [PinDef] { Box::leak(pins.into_boxed_slice()) };
-    let def = match output_at {
-        None => {
-            let mut inputs = base.inputs.to_vec();
-            inputs.push(value_pin(ty, true));
-            NodeDef { inputs: leak(inputs), ..*base }
-        }
-        Some(at) => {
-            let mut outputs = base.outputs.to_vec();
-            outputs.insert(at.min(outputs.len()), value_pin(ty, false));
-            NodeDef { outputs: leak(outputs), ..*base }
-        }
+    let retyped = |pins: &[PinDef], input: bool| -> &'static [PinDef] {
+        let pins: Vec<PinDef> = pins
+            .iter()
+            .map(|p| match (p.name, p.ty) {
+                ("list", PinType::List(_)) => PinDef { ty: PinType::List(ty), ..*p },
+                ("map", PinType::Map(_)) => PinDef { ty: PinType::Map(ty), ..*p },
+                ("value", _) => value_pin(ty, input),
+                _ => *p,
+            })
+            .collect();
+        Box::leak(pins.into_boxed_slice())
     };
+    let def = NodeDef { inputs: retyped(base.inputs, true), outputs: retyped(base.outputs, false), ..*base };
     // At most one per kind and type, so the leak is bounded.
     let def: &'static NodeDef = Box::leak(Box::new(def));
     made.push((node.kind.clone(), ty, def));
     Some(def)
+}
+
+/// What a list or map node should hold for `link` to fit: linking a list of text into a list node
+/// makes it a node for lists of text. `None` when the link goes elsewhere or fits already.
+pub fn adopted_item(graph: &bayleaf_graph::Graph, link: &bayleaf_graph::Link) -> Option<(u32, VariableType)> {
+    let to = graph.node(link.to.node)?;
+    if !super::COLLECTION_KINDS.contains(&to.kind.as_str()) || !matches!(link.to.pin.as_str(), "list" | "map") {
+        return None;
+    }
+    let (_, from) = graph.node_def(&super::CATALOG, link.from.node).ok()?;
+    let item = match (from.output(&link.from.pin)?.ty, link.to.pin.as_str()) {
+        (PinType::List(item), "list") | (PinType::Map(item), "map") => item,
+        _ => return None,
+    };
+    (item_of(to).unwrap_or(VariableType::Number) != item).then_some((to.id, item))
 }
 
 /// A value as a fresh 16-byte slot, as `event_send` lists values: the slot's address.
@@ -98,12 +108,12 @@ fn from_slot(ty: VariableType, at: &str) -> Val {
 
 /// Whether a node kind takes or gives a value of the type its list or map holds.
 fn takes_value(kind: &str) -> bool {
-    matches!(kind, "listAdd" | "listInsert" | "listSet" | "listFind" | "mapSet" | "listItem" | "mapGet" | "listForEach" | "mapForEach")
+    matches!(kind, "listAdd" | "listInsert" | "listSet" | "listFind" | "mapSet" | "listItem" | "mapGet" | "listForEach" | "mapForEach" | "getList" | "getMap")
 }
 
 /// Whether a node kind works on a map (else on a list).
 fn on_map(kind: &str) -> bool {
-    kind.starts_with("map")
+    kind.starts_with("map") || kind == "getMap"
 }
 
 impl Compiler<'_> {
@@ -114,9 +124,16 @@ impl Compiler<'_> {
         let n = self.graph.node(node).ok_or_else(|| Problem::on(node, "no such node"))?;
         let map = on_map(&n.kind);
         let what = if map { "map" } else { "list" };
+        // One linked in: its name, as the pin brings it, and what the node's pins say it holds.
+        if self.graph.link_into(node, what).is_some() {
+            let item = item_of(n).unwrap_or(VariableType::Number);
+            let value = self.input(node, what)?;
+            let name = if map { as_map(node, value)? } else { as_list(node, value)? };
+            return Ok((format!("(call $tp {name}) (call $tl {name})"), item));
+        }
         let name = self.setting_text(node, "name", "");
         if name.is_empty() {
-            return Err(Problem::on(node, format!("choose the {what}")));
+            return Err(Problem::on(node, format!("link a {what}, or choose one of this script's")));
         }
         let variable = self.graph.variable(&name).filter(|v| !v.shape.is_single()).map(|v| (v.ty, v.shape));
         let property = self.graph.property(&name).filter(|p| !p.shape.is_single()).map(|p| (p.ty, p.shape));
@@ -206,6 +223,8 @@ impl Compiler<'_> {
     pub(super) fn collection_value(&mut self, node: u32, kind: &str, pin: &str) -> Result<Val, Problem> {
         let (name, ty) = self.collection(node)?;
         Ok(match (kind, pin) {
+            ("getList", _) => Val::L(format!("(call $mk {name})")),
+            ("getMap", _) => Val::M(format!("(call $mk {name})")),
             ("listLength", _) => Val::I(format!("(call $list_len {name})")),
             ("mapCount", _) => Val::I(format!("(call $map_count {name})")),
             ("listFind", _) => Val::I(format!("(call $list_find {name} {})", self.value_slot(node, ty)?)),

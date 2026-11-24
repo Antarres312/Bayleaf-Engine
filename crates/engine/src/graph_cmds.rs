@@ -757,7 +757,17 @@ struct LinkParams {
 fn link_add(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     let p: LinkParams = parse(params)?;
     let (graph, catalog) = open(session)?;
-    graph.connect(catalog, Link { from: p.from, to: p.to }).map_err(failed)?;
+    let link = Link { from: p.from, to: p.to };
+    // A list or map node takes the type of the list linked into it (one undo step with the link).
+    let mut trial = graph.clone();
+    if catalog.domain == bayleaf_script::visual::CATALOG.domain
+        && let Some((id, item)) = bayleaf_script::visual::adopted_item(&trial, &link)
+    {
+        trial.set_value(catalog, id, "item", json!([item.code()])).map_err(failed)?;
+        trial.drop_unfit_links(catalog, id);
+    }
+    trial.connect(catalog, link).map_err(failed)?;
+    *graph = trial;
     Ok(json!({}))
 }
 
