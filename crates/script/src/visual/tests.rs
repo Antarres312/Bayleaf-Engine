@@ -2133,7 +2133,7 @@ fn a_list_node_naming_a_map_or_nothing_is_a_problem_on_that_node() {
 /// Declares a variable of `ty` in `shape`, starting with `start` (else empty).
 fn shaped_variable(b: &mut Builder, name: &str, ty: VariableType, shape: Shape, start: Option<serde_json::Value>) {
     b.0.add_variable(name, ty, None).unwrap();
-    b.0.retype_variable(name, ty, shape).unwrap();
+    b.0.retype_variable(name, ty, shape, VariableType::Text).unwrap();
     if let Some(start) = start {
         b.0.set_variable(name, None, Some(start), &[]).unwrap();
     }
@@ -2142,7 +2142,7 @@ fn shaped_variable(b: &mut Builder, name: &str, ty: VariableType, shape: Shape, 
 /// Declares a property of `ty` in `shape`, with `default` (else empty).
 fn shaped_property(b: &mut Builder, name: &str, ty: VariableType, shape: Shape, default: Option<serde_json::Value>) {
     b.0.add_property(name, ty, None).unwrap();
-    b.0.retype_property(name, ty, shape).unwrap();
+    b.0.retype_property(name, ty, shape, VariableType::Text).unwrap();
     if let Some(default) = default {
         b.0.set_property(name, None, Some(default), &[]).unwrap();
     }
@@ -2183,7 +2183,7 @@ fn a_list_goes_through_pins_into_functions_as_itself_and_into_events_as_a_copy()
     let mut b = Builder::new();
     shaped_variable(&mut b, "Scores", VariableType::Number, Shape::List, Some(json!([1.0, 2.0])));
     let scores = json!({ "name": "Scores", "item": ["number"] });
-    let list_of_numbers = bayleaf_graph::Param { name: "scores".to_owned(), ty: VariableType::Number, shape: Shape::List };
+    let list_of_numbers = bayleaf_graph::Param { name: "scores".to_owned(), ty: VariableType::Number, shape: Shape::List, key: VariableType::Text };
     // A function that adds 10 to the list it is given.
     b.0.add_function("addTen").unwrap();
     b.0.set_function(&CATALOG, "addTen", None, Some(vec![list_of_numbers.clone()]), Some(Vec::new()), &FUNCTION_KINDS).unwrap();
@@ -2239,7 +2239,10 @@ fn a_list_pin_takes_only_a_list_of_its_type_and_a_list_node_takes_the_type_linke
     shaped_variable(&mut b, "Words", VariableType::Text, Shape::List, None);
     let words = b.node("getList", json!({ "name": "Words", "item": ["text"] }));
     let count = b.node("listLength", json!({}));
-    assert!(super::adopted_item(&b.0, &Link { from: PinRef::new(words, "list"), to: PinRef::new(count, "list") }) == Some((count, VariableType::Text)));
+    assert!(
+        super::adopted_item(&b.0, &Link { from: PinRef::new(words, "list"), to: PinRef::new(count, "list") })
+            == Some((count, VariableType::Text, VariableType::Text))
+    );
     // A list of text does not go into a list of numbers as it is.
     let refused = b.0.connect(&CATALOG, Link { from: PinRef::new(words, "list"), to: PinRef::new(count, "list") });
     assert!(refused.is_err(), "a fresh list node holds numbers until it takes another type");
@@ -2248,4 +2251,57 @@ fn a_list_pin_takes_only_a_list_of_its_type_and_a_list_node_takes_the_type_linke
     // Nor into a number input.
     let log = b.node("log", json!({}));
     assert!(b.0.connect(&CATALOG, Link { from: PinRef::new(words, "list"), to: PinRef::new(log, "value") }).is_err());
+}
+
+#[test]
+fn a_maps_keys_have_a_type_of_their_own_and_go_in_that_types_order() {
+    let mut b = Builder::new();
+    // Whole-number keys, starting as the object sets them in the scene.
+    b.0.add_property("Waves", VariableType::Text, None).unwrap();
+    b.0.retype_property("Waves", VariableType::Text, Shape::Map, VariableType::WholeNumber).unwrap();
+    // Object keys, set while playing.
+    b.0.add_variable("Scores", VariableType::Number, None).unwrap();
+    b.0.retype_variable("Scores", VariableType::Number, Shape::Map, VariableType::Object).unwrap();
+    let waves = json!({ "name": "Waves", "item": ["text", "whole"] });
+    let scores = json!({ "name": "Scores", "item": ["number", "object"] });
+    let start = b.node("start", json!({}));
+    let more = b.node("mapSet", waves.clone());
+    b.set_value_for_tests(more, "key", json!(5));
+    b.set_value_for_tests(more, "value", json!("five"));
+    b.link(start, "then", more, "run");
+    // 1, 2, 5, 10: numbers by size, not as text would sort them.
+    let each = b.node("mapForEach", waves.clone());
+    b.link(more, "then", each, "run");
+    let said = b.node("log", json!({ "message": "wave" }));
+    b.link(each, "each", said, "run");
+    b.link(each, "key", said, "value");
+    b.link(each, "value", said, "text");
+    // An object as a key: this one.
+    let me = b.node("thisObject", json!({}));
+    let score = b.node("mapSet", scores.clone());
+    b.set_value_for_tests(score, "value", json!(7.0));
+    b.link(me, "object", score, "key");
+    b.link(each, "then", score, "run");
+    let mine = b.node("mapGet", scores);
+    b.link(me, "object", mine, "key");
+    let got = b.node("log", json!({ "message": "mine" }));
+    b.link(score, "then", got, "run");
+    b.link(mine, "value", got, "value");
+    let ten = b.node("mapGet", waves);
+    b.set_value_for_tests(ten, "key", json!(10));
+    let said_ten = b.node("log", json!({ "message": "ten is" }));
+    b.link(got, "then", said_ten, "run");
+    b.link(ten, "value", said_ten, "text");
+
+    let mut scene = Scene::new();
+    let id = scene.create_object(None, "Scripted").unwrap();
+    let text = |t: &str| PropertyValue::Text(t.to_owned());
+    let set = PropertyValue::Map { map: [("10".to_owned(), text("ten")), ("2".to_owned(), text("two")), ("1".to_owned(), text("one"))].into() };
+    let script = ScriptRef { module: "test.bscript".into(), properties: BTreeMap::from([("Waves".to_owned(), set)]) };
+    let mut host = ScriptHost::new();
+    host.load_bytes(id, 0, Path::new("test.bscript"), None, &b.bytes(), &script, &mut scene, 0.0, &Arc::new(Input::default())).unwrap();
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    assert!(host.take_faults().is_empty());
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["wave one 1", "wave two 2", "wave five 5", "wave ten 10", "mine 7", "ten is ten"]);
 }

@@ -19,9 +19,9 @@ use super::{from_val, to_val};
 use crate::{
     ABI_VERSION, DeclaredEvent, Description, EVERY_OBJECT, EventArg, FUEL_PER_CALL, GameState, Input, LogLine, MAX_COLLECTION_ITEMS, MAX_DECLARED_EVENTS,
     MAX_DESCRIPTION_BYTES, MAX_EVENT_ARGS, MAX_EVENT_TEXT, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME, MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS,
-    MAX_REQUESTS_PER_CALL, MAX_STORED_COLLECTIONS, MAX_SUBSCRIPTIONS, Message, Properties, PropertyWrite, Request, Scope, ScriptError, ScriptFault,
-    ScriptValues, SharedState, Stored, Subscription, Velocities, WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position, module_bytes,
-    read_position, read_transform, readable_component, script_keys, transform_from, visual,
+    MAX_REQUESTS_PER_CALL, MAX_STORED_COLLECTIONS, MAX_SUBSCRIPTIONS, MapKey, Message, Ordered, Properties, PropertyWrite, Request, Scope, ScriptError,
+    ScriptFault, ScriptValues, SharedState, Stored, Subscription, Velocities, WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position,
+    module_bytes, read_position, read_transform, readable_component, script_keys, transform_from, visual,
 };
 use bayleaf_script_sdk::native::NativeObject;
 #[cfg(not(target_arch = "wasm32"))]
@@ -81,11 +81,7 @@ fn described_properties(value: Option<&serde_json::Value>, what: &str) -> Result
             None => "number",
             Some(code) => code.as_str().ok_or_else(|| format!("{what} {key:?} has an unknown type {code}"))?,
         };
-        let (shape, code) = match code.split_once(':') {
-            Some((shape, code)) => (PropertyShape::from_code(shape), code),
-            None => (Some(PropertyShape::Single), code),
-        };
-        let (Some(shape), Some(ty)) = (shape, PropertyType::from_code(code)) else {
+        let Some((ty, shape)) = PropertyShape::parse(code) else {
             return Err(format!("{what} {key:?} has an unknown type {}", parts.get(2).map_or_else(String::new, ToString::to_string)));
         };
         let Some(default) = PropertyValue::from_described(&parts[1], ty, shape) else {
@@ -1877,11 +1873,31 @@ fn seeded(caller: &Caller<'_, HostState>, seed: &DeclaredProperty) -> Stored {
         }
     };
     match (&seed.shape, &seed.default) {
-        (PropertyShape::Map, PropertyValue::Map { map }) => Stored::Map(map.iter().map(|(k, v)| (k.clone(), arg(v))).collect()),
-        (PropertyShape::Map, _) => Stored::Map(Default::default()),
+        (PropertyShape::Map(key), PropertyValue::Map { map }) => {
+            Stored::Map(map.iter().filter_map(|(k, v)| Some((seeded_key(world, *key, k)?, arg(v)))).collect())
+        }
+        (PropertyShape::Map(_), _) => Stored::Map(Default::default()),
         (_, PropertyValue::List { list }) => Stored::List(list.iter().map(arg).collect()),
         _ => Stored::List(Vec::new()),
     }
+}
+
+/// A map key of type `ty` as a property or variable starts it (always text: `3`, `true`, `1,2,3`, an
+/// object's name); `None` when it is no such key, or names no object in the scene.
+fn seeded_key(world: &WorldView, ty: PropertyType, key: &str) -> Option<MapKey> {
+    let number = |t: &str| t.trim().parse::<f32>().ok().filter(|v| v.is_finite());
+    Some(match ty {
+        PropertyType::Text => MapKey::Text(key.to_owned()),
+        PropertyType::Object => MapKey::Object(world.objects.iter().find(|(_, n, _)| n == key).map(|(id, _, _)| *id)?),
+        PropertyType::Number => MapKey::Number(Ordered::new(number(key)?)),
+        PropertyType::WholeNumber => MapKey::Whole(key.trim().parse().ok()?),
+        PropertyType::TrueFalse => MapKey::Flag(key.parse().ok()?),
+        PropertyType::Vector | PropertyType::Color => {
+            let parts: Vec<f32> = key.split(',').map(number).collect::<Option<_>>()?;
+            let [x, y, z] = parts.as_slice() else { return None };
+            MapKey::Vector([*x, *y, *z].map(Ordered::new))
+        }
+    })
 }
 
 /// Lists and maps a visual script keeps (`list_*`, `map_*`): each by its name, made empty the first
@@ -1966,24 +1982,40 @@ fn list_item(caller: &mut Caller<'_, HostState>, p: i32, l: i32, index: i32, wha
     })
 }
 
-/// A map key read from the script's memory.
-fn map_key_at(caller: &mut Caller<'_, HostState>, p: i32, l: i32, what: &str) -> Result<String, Error> {
-    read_text(caller, p, l, MAX_EVENT_TEXT).map_err(|m| fault(caller, format!("{what}: {m}")))
+/// A map key read from the 16-byte value at `ptr`, as `event_send` lists values; `None` for an
+/// object that is none.
+fn map_key_at(caller: &mut Caller<'_, HostState>, ptr: i32, what: &str) -> Result<Option<MapKey>, Error> {
+    let value = read_value(caller, ptr, what)?;
+    Ok(MapKey::of(&value))
 }
 
-/// A map's value under the key at `kp`, if it has one.
-fn map_value(caller: &mut Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, what: &str) -> Result<Option<EventArg>, Error> {
-    let key = map_key_at(caller, kp, kl, what)?;
+/// A map's value under the key at `key`, if it has one.
+fn map_value(caller: &mut Caller<'_, HostState>, p: i32, l: i32, key: i32, what: &str) -> Result<Option<EventArg>, Error> {
+    let Some(key) = map_key_at(caller, key, what)? else { return Ok(None) };
     with_stored(caller, p, l, false, what, |s| match s {
         Stored::Map(entries) => entries.get(&key).cloned(),
         Stored::List(_) => None,
     })
 }
 
-/// The map half of [`link_collections`]: values by text keys, in key order.
+/// The map's first key, or the first after the key at `after` (below 0: from the start). For
+/// Each in Map goes on from where it is, so keys added or removed on the way are no trouble.
+fn map_next_key(caller: &mut Caller<'_, HostState>, p: i32, l: i32, after: i32, what: &str) -> Result<Option<MapKey>, Error> {
+    let after = if after < 0 { None } else { map_key_at(caller, after, what)? };
+    with_stored(caller, p, l, false, what, |s| match s {
+        Stored::Map(entries) => match &after {
+            None => entries.keys().next().cloned(),
+            Some(after) => entries.range::<MapKey, _>((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded)).next().map(|(k, _)| k.clone()),
+        },
+        Stored::List(_) => None,
+    })
+}
+
+/// The map half of [`link_collections`]: values by keys of one type, in key order. A key goes and
+/// comes as a value does (16 bytes, as `event_send` lists values).
 fn link_maps(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
-    linker.func_wrap("bayleaf", "map_put", |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, value: i32| -> Result<i32, Error> {
-        let key = map_key_at(&mut caller, kp, kl, "map_put")?;
+    linker.func_wrap("bayleaf", "map_put", |mut caller: Caller<'_, HostState>, p: i32, l: i32, key: i32, value: i32| -> Result<i32, Error> {
+        let Some(key) = map_key_at(&mut caller, key, "map_put")? else { return Ok(0) };
         let value = read_value(&mut caller, value, "map_put")?;
         let put = with_stored(&mut caller, p, l, false, "map_put", |s| {
             let Stored::Map(entries) = s else { return Ok(0) };
@@ -1995,8 +2027,8 @@ fn link_maps(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
         })?;
         put.map_err(|()| fault(&mut caller, format!("map_put: a map holds at most {MAX_COLLECTION_ITEMS} keys")))
     })?;
-    linker.func_wrap("bayleaf", "map_remove", |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32| -> Result<i32, Error> {
-        let key = map_key_at(&mut caller, kp, kl, "map_remove")?;
+    linker.func_wrap("bayleaf", "map_remove", |mut caller: Caller<'_, HostState>, p: i32, l: i32, key: i32| -> Result<i32, Error> {
+        let Some(key) = map_key_at(&mut caller, key, "map_remove")? else { return Ok(0) };
         with_stored(&mut caller, p, l, false, "map_remove", |s| match s {
             Stored::Map(entries) => i32::from(entries.remove(&key).is_some()),
             Stored::List(_) => 0,
@@ -2012,38 +2044,28 @@ fn link_maps(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
     linker.func_wrap("bayleaf", "map_count", |mut caller: Caller<'_, HostState>, p: i32, l: i32| -> Result<i32, Error> {
         with_stored(&mut caller, p, l, false, "map_count", |s| if let Stored::Map(entries) = s { entries.len() as i32 } else { 0 })
     })?;
-    linker.func_wrap("bayleaf", "map_get", |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, out: i32| -> Result<i32, Error> {
-        match map_value(&mut caller, p, l, kp, kl, "map_get")? {
+    linker.func_wrap("bayleaf", "map_get", |mut caller: Caller<'_, HostState>, p: i32, l: i32, key: i32, out: i32| -> Result<i32, Error> {
+        match map_value(&mut caller, p, l, key, "map_get")? {
             Some(value) => write_value(&mut caller, out, &value, "map_get").map(|()| 1),
+            None => Ok(0),
+        }
+    })?;
+    linker.func_wrap("bayleaf", "map_text", |mut caller: Caller<'_, HostState>, p: i32, l: i32, key: i32, out: i32, cap: i32| -> Result<i32, Error> {
+        let value = map_value(&mut caller, p, l, key, "map_text")?;
+        write_text(&mut caller, value, out, cap, "map_text")
+    })?;
+    linker.func_wrap("bayleaf", "map_next", |mut caller: Caller<'_, HostState>, p: i32, l: i32, after: i32, out: i32| -> Result<i32, Error> {
+        match map_next_key(&mut caller, p, l, after, "map_next")? {
+            Some(key) => write_value(&mut caller, out, &key.arg(), "map_next").map(|()| 1),
             None => Ok(0),
         }
     })?;
     linker.func_wrap(
         "bayleaf",
-        "map_text",
-        |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, out: i32, cap: i32| -> Result<i32, Error> {
-            let value = map_value(&mut caller, p, l, kp, kl, "map_text")?;
-            write_text(&mut caller, value, out, cap, "map_text")
-        },
-    )?;
-    linker.func_wrap(
-        "bayleaf",
-        "map_next",
-        |mut caller: Caller<'_, HostState>, p: i32, l: i32, kp: i32, kl: i32, out: i32, cap: i32| -> Result<i32, Error> {
-            // The first key, or the first after the key at `kp` (`kl` below 0 for the first): For Each
-            // in Map goes on from where it is, so keys added or removed on the way are no trouble.
-            let after = if kl < 0 { None } else { Some(map_key_at(&mut caller, kp, kl, "map_next")?) };
-            let key = with_stored(&mut caller, p, l, false, "map_next", |s| match s {
-                Stored::Map(entries) => match &after {
-                    None => entries.keys().next().cloned(),
-                    Some(after) => entries.range::<String, _>((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded)).next().map(|(k, _)| k.clone()),
-                },
-                Stored::List(_) => None,
-            })?;
-            match key {
-                Some(key) => write_text(&mut caller, Some(EventArg::Text(key)), out, cap, "map_next"),
-                None => Ok(-1),
-            }
+        "map_next_text",
+        |mut caller: Caller<'_, HostState>, p: i32, l: i32, after: i32, out: i32, cap: i32| -> Result<i32, Error> {
+            let key = map_next_key(&mut caller, p, l, after, "map_next_text")?;
+            write_text(&mut caller, key.map(|k| k.arg()), out, cap, "map_next_text")
         },
     )?;
     Ok(())

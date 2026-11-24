@@ -468,7 +468,8 @@ fn property_row(ui: &mut egui::Ui, card: &Card<'_>, name: &str, layout: Option<&
             None => return value_editor::Outcome::default(),
         },
     };
-    let row = value_editor::PropertyRow { name, ty, changed, objects: card.objects, layout };
+    let shape = declared.map_or(bayleaf_engine::scene::components::PropertyShape::Single, |p| p.shape);
+    let row = value_editor::PropertyRow { name, ty, shape, changed, objects: card.objects, layout };
     let salt = ("script property", card.index, name);
     // A list or map edits item by item; one value in one row.
     let (outcome, reset) = if declared.is_some_and(|p| p.shape != bayleaf_engine::scene::components::PropertyShape::Single) {

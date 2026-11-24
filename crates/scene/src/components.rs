@@ -511,6 +511,37 @@ impl PropertyType {
         PropertyType::ALL.into_iter().find(|t| t.code() == code)
     }
 
+    /// Whether `key`, a map key as the scene keeps it (always text), is a key of this type: text (or
+    /// an object's name) of at most [`MAX_PROPERTY_TEXT`] bytes, a finite number, a whole number,
+    /// `true` or `false`, or three numbers `x,y,z`.
+    pub fn fits_key(self, key: &str) -> bool {
+        let number = |t: &str| t.trim().parse::<f32>().is_ok_and(f32::is_finite);
+        match self {
+            PropertyType::Text | PropertyType::Object => key.len() <= MAX_PROPERTY_TEXT && !key.contains('\0'),
+            PropertyType::Number => number(key),
+            PropertyType::WholeNumber => key.trim().parse::<i32>().is_ok(),
+            PropertyType::TrueFalse => matches!(key, "true" | "false"),
+            PropertyType::Vector | PropertyType::Color => {
+                let parts: Vec<&str> = key.split(',').collect();
+                parts.len() == 3 && parts.iter().all(|p| number(p))
+            }
+        }
+    }
+
+    /// A map key of this type that no entry has yet (`taken` says which are): `key`, `key2`… for
+    /// text and objects, `0`, `1`… for numbers, `false` then `true`, `0,0,0`, `1,0,0`… for vectors.
+    pub fn fresh_key(self, taken: impl Fn(&str) -> bool) -> Option<String> {
+        let candidates: Vec<String> = match self {
+            PropertyType::Text | PropertyType::Object => {
+                (1..=MAX_PROPERTY_ITEMS + 1).map(|n| if n == 1 { "key".to_owned() } else { format!("key{n}") }).collect()
+            }
+            PropertyType::Number | PropertyType::WholeNumber => (0..=MAX_PROPERTY_ITEMS).map(|n| n.to_string()).collect(),
+            PropertyType::TrueFalse => vec!["false".to_owned(), "true".to_owned()],
+            PropertyType::Vector | PropertyType::Color => (0..=MAX_PROPERTY_ITEMS).map(|n| format!("{n},0,0")).collect(),
+        };
+        candidates.into_iter().find(|k| !taken(k))
+    }
+
     /// The value a property of this type has when nothing sets it.
     pub fn zero(self) -> PropertyValue {
         match self {
@@ -528,19 +559,20 @@ impl PropertyType {
         match shape {
             PropertyShape::Single => self.zero(),
             PropertyShape::List => PropertyValue::List { list: Vec::new() },
-            PropertyShape::Map => PropertyValue::Map { map: std::collections::BTreeMap::new() },
+            PropertyShape::Map(_) => PropertyValue::Map { map: std::collections::BTreeMap::new() },
         }
     }
 }
 
-/// Whether a script property holds one value, a list of them or a map of them under text keys.
+/// Whether a script property holds one value, a list of them, or a map of them under keys of one
+/// type (its keys' type).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PropertyShape {
     #[default]
     Single,
     List,
-    Map,
+    Map(PropertyType),
 }
 
 impl PropertyShape {
@@ -549,12 +581,26 @@ impl PropertyShape {
         match self {
             PropertyShape::Single => "single",
             PropertyShape::List => "list",
-            PropertyShape::Map => "map",
+            PropertyShape::Map(_) => "map",
         }
     }
 
-    pub fn from_code(code: &str) -> Option<PropertyShape> {
-        [PropertyShape::Single, PropertyShape::List, PropertyShape::Map].into_iter().find(|s| s.code() == code)
+    /// The type and shape a description's type code names: `number`, `list:number`, `map:number`
+    /// (text keys) or `map:whole:number` (the keys' type first).
+    pub fn parse(code: &str) -> Option<(PropertyType, PropertyShape)> {
+        let ty = PropertyType::from_code;
+        match code.split(':').collect::<Vec<_>>().as_slice() {
+            [one] => Some((ty(one)?, PropertyShape::Single)),
+            ["list", item] => Some((ty(item)?, PropertyShape::List)),
+            ["map", item] => Some((ty(item)?, PropertyShape::Map(PropertyType::Text))),
+            ["map", key, item] => Some((ty(item)?, PropertyShape::Map(ty(key)?))),
+            _ => None,
+        }
+    }
+
+    /// Every shape: one value, a list, and a map with keys of each type.
+    pub fn all() -> impl Iterator<Item = PropertyShape> {
+        [PropertyShape::Single, PropertyShape::List].into_iter().chain(PropertyType::ALL.into_iter().map(PropertyShape::Map))
     }
 }
 
@@ -603,7 +649,7 @@ impl PropertyValue {
         let made = match shape {
             PropertyShape::Single => one(value)?,
             PropertyShape::List => PropertyValue::List { list: value.as_array()?.iter().map(one).collect::<Option<_>>()? },
-            PropertyShape::Map => PropertyValue::Map { map: value.as_object()?.iter().map(|(k, v)| Some((k.clone(), one(v)?))).collect::<Option<_>>()? },
+            PropertyShape::Map(_) => PropertyValue::Map { map: value.as_object()?.iter().map(|(k, v)| Some((k.clone(), one(v)?))).collect::<Option<_>>()? },
         };
         made.fits_shape(ty, shape).then_some(made)
     }
@@ -615,9 +661,7 @@ impl PropertyValue {
         match (shape, self) {
             (PropertyShape::Single, value) => value.fits(ty),
             (PropertyShape::List, PropertyValue::List { list }) => list.len() <= MAX_PROPERTY_ITEMS && list.iter().all(|v| v.fits(ty)),
-            (PropertyShape::Map, PropertyValue::Map { map }) => {
-                map.len() <= MAX_PROPERTY_ITEMS && map.iter().all(|(k, v)| k.len() <= MAX_PROPERTY_TEXT && !k.contains('\0') && v.fits(ty))
-            }
+            (PropertyShape::Map(key), PropertyValue::Map { map }) => map.len() <= MAX_PROPERTY_ITEMS && map.iter().all(|(k, v)| key.fits_key(k) && v.fits(ty)),
             _ => false,
         }
     }
@@ -739,8 +783,7 @@ impl SceneComponent for Scripts {
             if script.module.is_empty() || script.module.contains('\0') {
                 return Err("a script needs a module path without NUL characters".to_owned());
             }
-            let shapes = [PropertyShape::Single, PropertyShape::List, PropertyShape::Map];
-            if script.properties.values().any(|v| !PropertyType::ALL.iter().any(|ty| shapes.iter().any(|shape| v.fits_shape(*ty, *shape)))) {
+            if script.properties.values().any(|v| !PropertyType::ALL.iter().any(|ty| PropertyShape::all().any(|shape| v.fits_shape(*ty, shape)))) {
                 return Err(format!(
                     "a script property must be a finite number, true or false, three finite numbers, text up to 1024 bytes, or a list or map of at most {MAX_PROPERTY_ITEMS} of one of them"
                 ));

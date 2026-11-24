@@ -70,8 +70,11 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                     // The type on the right, the name field in what is left, so a long type name never
                     // makes the row (and the panel) wider.
                     ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some((ty, shape)) = type_menu(ui, t, variable.ty, variable.shape, &variable.name) {
-                            editor.dispatch("graph.variable.set", &json!({ "name": variable.name, "type": ty, "shape": shape }), None);
+                        let holds = Holds::of(variable.ty, variable.shape, variable.key);
+                        if let Some(new) = type_menu(ui, t, holds, &variable.name) {
+                            let mut params = new.params();
+                            params["name"] = json!(variable.name);
+                            editor.dispatch("graph.variable.set", &params, None);
                         }
                         let text = panel.renaming.entry(variable.name.clone()).or_insert_with(|| variable.name.clone());
                         let field = ui.add_sized([ui.available_width().max(40.0), ROW_HEIGHT - 4.0], egui::TextEdit::singleline(text));
@@ -91,7 +94,9 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                     ui.horizontal_wrapped(|ui| {
                         ui.label(egui::RichText::new(tl("Starts at")).color(t.text_muted));
                         let key = format!("variable {}", variable.name);
-                        if let Some(start) = shaped_editor(ui, panel, &key, variable.ty, variable.shape, &variable.start, &variable.name) {
+                        if let Some(start) =
+                            shaped_editor(ui, panel, &key, Holds::of(variable.ty, variable.shape, variable.key), &variable.start, &variable.name)
+                        {
                             let key = format!("variable start {} {}", variable.name, editor.gesture);
                             editor.dispatch("graph.variable.set", &json!({ "name": variable.name, "start": start }), Some(&key));
                         }
@@ -113,7 +118,7 @@ fn variables(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                                 place(editor, set, at, &variable.name);
                             }
                         } else {
-                            place_node_menu(editor, ui, at, &variable.name, variable.ty, variable.shape);
+                            place_node_menu(editor, ui, at, &variable.name, Holds::of(variable.ty, variable.shape, variable.key));
                         }
                         let remove = ui.small_button(tl("Remove")).on_hover_text(tl("Its nodes keep working, starting from zero"));
                         ui.ctx().accesskit_node_builder(remove.id, |node| {
@@ -218,8 +223,11 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
                 egui::Frame::new().fill(t.panel).corner_radius(theme::SECTION_RADIUS).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), ROW_HEIGHT), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some((ty, shape)) = type_menu(ui, t, property.ty, property.shape, &property.name) {
-                            editor.dispatch("graph.property.set", &json!({ "name": property.name, "type": ty, "shape": shape }), None);
+                        let holds = Holds::of(property.ty, property.shape, property.key);
+                        if let Some(new) = type_menu(ui, t, holds, &property.name) {
+                            let mut params = new.params();
+                            params["name"] = json!(property.name);
+                            editor.dispatch("graph.property.set", &params, None);
                         }
                         let key = format!("property {}", property.name);
                         let label = crate::i18n::tf("Name of property {name}", &[("name", &property.name)]);
@@ -237,7 +245,9 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
                                 "empty; filled per object in the Inspector"
                             };
                             ui.label(egui::RichText::new(tl(note)).color(t.text_muted));
-                        } else if let Some(value) = shaped_editor(ui, panel, &key, property.ty, property.shape, &property.default, &property.name) {
+                        } else if let Some(value) =
+                            shaped_editor(ui, panel, &key, Holds::of(property.ty, property.shape, property.key), &property.default, &property.name)
+                        {
                             let key = format!("property default {} {}", property.name, editor.gesture);
                             editor.dispatch("graph.property.set", &json!({ "name": property.name, "default": value }), Some(&key));
                         }
@@ -262,7 +272,7 @@ fn properties(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph,
                                 place(editor, set, at, &property.name);
                             }
                         } else {
-                            place_node_menu(editor, ui, at, &property.name, property.ty, property.shape);
+                            place_node_menu(editor, ui, at, &property.name, Holds::of(property.ty, property.shape, property.key));
                         }
                         let remove = ui.small_button(tl("Remove")).on_hover_text(tl("Its nodes stay and read zero where no object sets it"));
                         ui.ctx()
@@ -349,9 +359,9 @@ fn functions(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, 
                                             kept.remove(index);
                                             changed = Some(kept);
                                         }
-                                        if let Some((ty, shape)) = type_menu(ui, t, param.ty, param.shape, &param.name) {
+                                        if let Some(new) = type_menu(ui, t, Holds::of(param.ty, param.shape, param.key), &param.name) {
                                             let mut retyped = params.clone();
-                                            (retyped[index].ty, retyped[index].shape) = (ty, shape);
+                                            (retyped[index].ty, retyped[index].shape, retyped[index].key) = (new.ty, new.shape, new.key);
                                             changed = Some(retyped);
                                         }
                                         let key = format!("function {} {side} {index}", function.name);
@@ -509,9 +519,9 @@ fn events(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at:
                                     kept.remove(index);
                                     changed = Some(kept);
                                 }
-                                if let Some((ty, shape)) = type_menu(ui, t, param.ty, param.shape, &param.name) {
+                                if let Some(new) = type_menu(ui, t, Holds::of(param.ty, param.shape, param.key), &param.name) {
                                     let mut retyped = event.params.clone();
-                                    (retyped[index].ty, retyped[index].shape) = (ty, shape);
+                                    (retyped[index].ty, retyped[index].shape, retyped[index].key) = (new.ty, new.shape, new.key);
                                     changed = Some(retyped);
                                 }
                                 let key = format!("event {} value {index}", event.name);
@@ -595,23 +605,56 @@ fn events(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at:
     });
 }
 
-/// Places a list or map node of `kind` naming `name`, which holds `item`.
-fn place_collection_node(editor: &mut Editor, kind: &str, at: [f32; 2], name: &str, item: VariableType) {
+/// What a variable, property, input or event value holds: its type, shape and a map's keys' type.
+#[derive(Clone, Copy, PartialEq)]
+struct Holds {
+    ty: VariableType,
+    shape: Shape,
+    key: VariableType,
+}
+
+impl Holds {
+    fn of(ty: VariableType, shape: Shape, key: VariableType) -> Self {
+        Self { ty, shape, key }
+    }
+
+    /// As words: `Number`, `List of Number`, or `Map from Text to Number`.
+    fn words(self) -> String {
+        match self.shape {
+            Shape::Single => tl(self.ty.label()).to_owned(),
+            Shape::List => crate::i18n::tf("List of {type}", &[("type", tl(self.ty.label()))]),
+            Shape::Map => crate::i18n::tf("Map from {key} to {type}", &[("key", tl(self.key.label())), ("type", tl(self.ty.label()))]),
+        }
+    }
+
+    /// The type codes list and map nodes keep in `item`: the values', then the keys'.
+    fn item(self) -> Value {
+        json!([self.ty.code(), self.key.code()])
+    }
+
+    /// As `graph.*.set` takes it.
+    fn params(self) -> Value {
+        json!({ "type": self.ty, "shape": self.shape, "key": self.key })
+    }
+}
+
+/// Places a list or map node of `kind` naming `name`, which holds what `holds` says.
+fn place_collection_node(editor: &mut Editor, kind: &str, at: [f32; 2], name: &str, holds: Holds) {
     if let Some(added) = editor.dispatch("graph.node.add", &json!({ "kind": kind, "position": at }), None) {
         let node = added["node"].clone();
-        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "item", "value": [item.code()] }), None);
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "item", "value": holds.item() }), None);
         editor.dispatch("graph.node.set", &json!({ "node": node, "name": "name", "value": name }), None);
     }
 }
 
-/// A menu of the nodes that work on the list or map `name` of `item`s: Place Node.
-fn place_node_menu(editor: &mut Editor, ui: &mut egui::Ui, at: [f32; 2], name: &str, item: VariableType, shape: Shape) {
+/// A menu of the nodes that work on the list or map `name`: Place Node.
+fn place_node_menu(editor: &mut Editor, ui: &mut egui::Ui, at: [f32; 2], name: &str, holds: Holds) {
     use bayleaf_engine::script::visual::{CATALOG, LIST_KINDS, MAP_KINDS};
-    let kinds: &[&str] = if shape == Shape::Map { &MAP_KINDS } else { &LIST_KINDS };
+    let kinds: &[&str] = if holds.shape == Shape::Map { &MAP_KINDS } else { &LIST_KINDS };
     let nodes = ui.menu_button(tl("Place Node"), |ui| {
         for def in CATALOG.nodes.iter().filter(|d| kinds.contains(&d.kind)) {
             if ui.button(tl(def.label)).on_hover_text(tl(def.description)).clicked() {
-                place_collection_node(editor, def.kind, at, name, item);
+                place_collection_node(editor, def.kind, at, name, holds);
                 ui.close();
             }
         }
@@ -620,48 +663,53 @@ fn place_node_menu(editor: &mut Editor, ui: &mut egui::Ui, at: [f32; 2], name: &
     ui.ctx().accesskit_node_builder(id, |node| node.set_label(crate::i18n::tf("Place a node for {name}", &[("name", name)])));
 }
 
-/// What a variable or property holds, as words: `Number`, or `List of Number`.
-fn holds(ty: VariableType, shape: Shape) -> String {
-    match shape {
-        Shape::Single => tl(ty.label()).to_owned(),
-        Shape::List => crate::i18n::tf("List of {type}", &[("type", tl(ty.label()))]),
-        Shape::Map => crate::i18n::tf("Map of {type}", &[("type", tl(ty.label()))]),
-    }
-}
-
-/// What a variable or property holds, as a menu that changes it: its type, and whether it is one
-/// value, a list or a map. The new type and shape when one is picked.
-fn type_menu(ui: &mut egui::Ui, t: &Tokens, ty: VariableType, shape: Shape, name: &str) -> Option<(VariableType, Shape)> {
-    let current = holds(ty, shape);
+/// What a variable or property holds, as a menu that changes it: its type, whether it is one value,
+/// a list or a map, and a map's keys' type. What it holds then, when something new is picked.
+fn type_menu(ui: &mut egui::Ui, t: &Tokens, holds: Holds, name: &str) -> Option<Holds> {
+    let current = holds.words();
     let mut picked = None;
     let menu = ui.menu_button(egui::RichText::new(&current).small().color(t.text_muted), |ui| {
         ui.label(egui::RichText::new(tl("Type")).small().color(t.text_muted));
         for other in VariableType::ALL {
-            if ui.selectable_label(other == ty, tl(other.label())).clicked() {
-                picked = Some((other, shape));
+            if ui.selectable_label(other == holds.ty, tl(other.label())).clicked() {
+                picked = Some(Holds { ty: other, ..holds });
                 ui.close();
             }
         }
         ui.separator();
         ui.label(egui::RichText::new(tl("Holds")).small().color(t.text_muted));
         for other in Shape::ALL {
-            if ui.selectable_label(other == shape, tl(other.label())).clicked() {
-                picked = Some((ty, other));
+            if ui.selectable_label(other == holds.shape, tl(other.label())).clicked() {
+                picked = Some(Holds { shape: other, ..holds });
                 ui.close();
             }
         }
+        // A map's keys can be of any type too.
+        if holds.shape == Shape::Map {
+            ui.separator();
+            ui.label(egui::RichText::new(tl("Key")).small().color(t.text_muted));
+            for other in VariableType::ALL {
+                let label = crate::i18n::tf("Keys of {type}", &[("type", tl(other.label()))]);
+                if ui.selectable_label(other == holds.key, label).clicked() {
+                    picked = Some(Holds { key: other, ..holds });
+                    ui.close();
+                }
+            }
+        }
     });
-    let id = menu.response.on_hover_text(tl("Change the type, or make it a list or a map")).id;
+    let id = menu.response.on_hover_text(tl("Change the type, make it a list or a map, or change a map's keys")).id;
     ui.ctx().accesskit_node_builder(id, |node| node.set_label(crate::i18n::tf("What {name} holds: {type}", &[("name", name), ("type", &current)])));
-    picked.filter(|p| *p != (ty, shape))
+    picked.filter(|p| *p != holds)
 }
 
-/// A start or default of `ty` in `shape`: one value's editor, or a list's items or a map's keys and
-/// values, each with a button that takes it out, and one that adds another. `key` keeps a map key's
-/// typing apart from other fields. The new value when it changed.
-fn shaped_editor(ui: &mut egui::Ui, panel: &mut ScriptPanel, key: &str, ty: VariableType, shape: Shape, value: &Value, name: &str) -> Option<Value> {
+/// A start or default of `holds`: one value's editor, or a list's items or a map's keys and values,
+/// each with a button that takes it out, and one that adds another. A map's key is typed as text
+/// (`3`, `true`, `1,2,3`) and kept only when it is a key of the map's keys' type. `key` keeps a map
+/// key's typing apart from other fields. The new value when it changed.
+fn shaped_editor(ui: &mut egui::Ui, panel: &mut ScriptPanel, key: &str, holds: Holds, value: &Value, name: &str) -> Option<Value> {
     use bayleaf_engine::graph::MAX_ITEMS;
-    match shape {
+    let ty = holds.ty;
+    match holds.shape {
         Shape::Single => start_editor(ui, ty, value, name),
         Shape::List => {
             let mut items = value.as_array().cloned().unwrap_or_default();
@@ -721,10 +769,12 @@ fn shaped_editor(ui: &mut egui::Ui, panel: &mut ScriptPanel, key: &str, ty: Vari
                         }
                     });
                 }
-                let add = ui.add_enabled(entries.len() < MAX_ITEMS, egui::Button::new(tl("Add Key")).small());
+                let fresh = holds.key.fresh_key(|k| entries.contains_key(k));
+                let add = ui.add_enabled(entries.len() < MAX_ITEMS && fresh.is_some(), egui::Button::new(tl("Add Key")).small());
                 ui.ctx().accesskit_node_builder(add.id, |node| node.set_label(crate::i18n::tf("Add a key to {name}", &[("name", name)])));
-                if add.clicked() {
-                    let fresh = free_name("key", |n| entries.contains_key(n));
+                if add.clicked()
+                    && let Some(fresh) = fresh
+                {
                     entries.insert(fresh, ty.zero());
                     changed = true;
                 }
@@ -733,8 +783,8 @@ fn shaped_editor(ui: &mut egui::Ui, panel: &mut ScriptPanel, key: &str, ty: Vari
                 entries.remove(&k);
                 changed = true;
             }
-            // A key renamed to one the map has already stays as it was.
-            if let Some((old, new)) = renamed.filter(|(old, new)| old != new && !new.is_empty() && !entries.contains_key(new))
+            // A key renamed to one the map has already, or to no key of its type, stays as it was.
+            if let Some((old, new)) = renamed.filter(|(old, new)| old != new && holds.key.fits_key(new) && !entries.contains_key(new))
                 && let Some(item) = entries.remove(&old)
             {
                 entries.insert(new, item);

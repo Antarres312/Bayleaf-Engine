@@ -392,6 +392,8 @@ fn edit_named_numbers(ui: &mut egui::Ui, map: &mut serde_json::Map<String, Value
 pub(crate) struct PropertyRow<'a> {
     pub(crate) name: &'a str,
     pub(crate) ty: PropertyType,
+    /// One value, a list, or a map and its keys' type.
+    pub(crate) shape: bayleaf_engine::scene::components::PropertyShape,
     /// The value differs from the script's default (a reset button shows).
     pub(crate) changed: bool,
     pub(crate) objects: &'a [(bayleaf_core::StableId, String)],
@@ -453,6 +455,11 @@ pub(crate) fn shaped_property(
     let title = layout.and_then(|l| l.label.clone()).unwrap_or_else(|| title_case(property.name));
     let read_only = layout.is_some_and(|l| l.read_only);
     let ty = property.ty;
+    // A map's keys are typed as text and kept only when they are keys of its keys' type.
+    let key_type = match property.shape {
+        bayleaf_engine::scene::components::PropertyShape::Map(key) => key,
+        _ => PropertyType::Text,
+    };
     ui.push_id(salt, |ui| {
         let count = match &*value {
             PropertyValue::List { list } => list.len(),
@@ -472,7 +479,7 @@ pub(crate) fn shaped_property(
                     match value {
                         PropertyValue::List { list } => list.push(ty.zero()),
                         PropertyValue::Map { map } => {
-                            let fresh = (1..).map(|n| if n == 1 { "key".to_owned() } else { format!("key{n}") }).find(|k| !map.contains_key(k));
+                            let fresh = key_type.fresh_key(|k| map.contains_key(k));
                             if let Some(fresh) = fresh {
                                 map.insert(fresh, ty.zero());
                             }
@@ -545,8 +552,8 @@ pub(crate) fn shaped_property(
                         map.remove(&key);
                         outcome = Outcome { changed: true, ended: true };
                     }
-                    // A key renamed to one the map has already, or to nothing, stays as it was.
-                    if let Some((old, new)) = renamed.filter(|(_, new)| !new.is_empty() && !map.contains_key(new))
+                    // A key renamed to one the map has already, or to no key of its type, stays as it was.
+                    if let Some((old, new)) = renamed.filter(|(_, new)| key_type.fits_key(new) && !map.contains_key(new))
                         && let Some(item) = map.remove(&old)
                     {
                         map.insert(new, item);

@@ -260,7 +260,7 @@ fn pin_color(t: &Tokens, ty: PinType) -> Color32 {
         PinType::Int => t.pin_int,
         PinType::Component => t.pin_component,
         // A list or map has its item's colour; its shape says it is many.
-        PinType::List(item) | PinType::Map(item) => pin_color(t, item.pin(bayleaf_engine::graph::Shape::Single)),
+        PinType::List(item) | PinType::Map(_, item) => pin_color(t, item.pin(bayleaf_engine::graph::Shape::Single, item)),
     }
 }
 
@@ -874,7 +874,7 @@ fn paint_link(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, width: 
 /// Whether a node with a pin of type `to` is offered for a link from `from` in the Add Node menu: one
 /// it links to, or a list or map node of another item type, which takes the linked list's type.
 fn offered(from: PinType, to: PinType) -> bool {
-    matches!((from, to), (PinType::List(_), PinType::List(_)) | (PinType::Map(_), PinType::Map(_))) || from.connects_to(to)
+    matches!((from, to), (PinType::List(_), PinType::List(_)) | (PinType::Map(..), PinType::Map(..))) || from.connects_to(to)
 }
 
 fn link_pins(a: &PinPick, b: &PinPick, requests: &mut Requests) {
@@ -1356,13 +1356,13 @@ fn paint_pin(painter: &egui::Painter, t: &Tokens, ty: PinType, center: Pos2, r: 
         // Text pins are squares.
         let rect = Rect::from_center_size(center, vec2(r * 2.0, r * 2.0));
         painter.rect(rect, 1.0, if filled { color } else { t.surface }, Stroke::new(2.0, color), egui::StrokeKind::Middle);
-    } else if let PinType::List(_) | PinType::Map(_) = ty {
+    } else if let PinType::List(_) | PinType::Map(..) = ty {
         // List pins are three rows, map pins two columns of them (keys and values), so they differ
         // from one value's pin by shape as well as by name.
         let frame = Rect::from_center_size(center, vec2(r * 2.0, r * 2.0));
         painter.rect(frame, 1.5, if filled { color } else { t.surface }, Stroke::new(1.5, color), egui::StrokeKind::Middle);
         let ink = if filled { t.surface } else { color };
-        let columns: &[(f32, f32)] = if matches!(ty, PinType::Map(_)) { &[(-0.6, -0.1), (0.1, 0.6)] } else { &[(-0.6, 0.6)] };
+        let columns: &[(f32, f32)] = if matches!(ty, PinType::Map(..)) { &[(-0.6, -0.1), (0.1, 0.6)] } else { &[(-0.6, 0.6)] };
         for (left, right) in columns {
             for row in [-0.45, 0.0, 0.45] {
                 let y = center.y + row * r;
@@ -1399,7 +1399,7 @@ fn pin_hint(pin: &PinDef) -> String {
         PinType::Int => "a whole number",
         PinType::Component => "a script on an object, or none",
         PinType::List(_) => "values of one type in order, by index from 0",
-        PinType::Map(_) => "values of one type under text keys",
+        PinType::Map(..) => "values of one type under keys of one type",
     };
     crate::i18n::tf("{pin}: {type} ({meaning})", &[("pin", tl(pin.label)), ("type", tl(pin.ty.label())), ("meaning", meaning)])
 }
@@ -1489,7 +1489,7 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
         // An unlinked object input means the node's own choice (named in its settings, or this object).
         PinType::Flow | PinType::Object | PinType::Component => {}
         // A list or map comes only from a link; unlinked, the node works on the one it names.
-        PinType::List(_) | PinType::Map(_) => {}
+        PinType::List(_) | PinType::Map(..) => {}
     }
 }
 
@@ -1882,17 +1882,20 @@ fn collection_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &ba
             .truncate()
             .selected_text(shown)
             .show_ui(ui, |ui| {
-                let variables = graph.variables.iter().filter(|v| v.shape == kind).map(|v| (v.name.as_str(), v.ty, "variable"));
-                let properties = graph.properties.iter().filter(|p| p.shape == kind).map(|p| (p.name.as_str(), p.ty, "property"));
+                let variables = graph.variables.iter().filter(|v| v.shape == kind).map(|v| (v.name.as_str(), v.ty, v.key, "variable"));
+                let properties = graph.properties.iter().filter(|p| p.shape == kind).map(|p| (p.name.as_str(), p.ty, p.key, "property"));
                 let offered: Vec<_> = variables.chain(properties).collect();
                 if offered.is_empty() {
                     ui.label(egui::RichText::new(tl("None yet: make a variable or property a list or map in the panel beside the graph")).small());
                 }
-                for (name, item, what) in offered {
-                    let label = crate::i18n::tf("{name} · {type} {what}", &[("name", name), ("type", tl(item.label())), ("what", tl(what))]);
+                for (name, item, key, what) in offered {
+                    // A map says its keys' type too.
+                    let holds = if kind == Shape::Map { tl(item.pin(kind, key).label()) } else { tl(item.label()) };
+                    let label = crate::i18n::tf("{name} · {type} {what}", &[("name", name), ("type", holds), ("what", tl(what))]);
                     if ui.selectable_label(name == current, label).clicked() && name != current {
+                        let key_type = key;
                         let key = format!("collection {} {name}", node.id);
-                        requests.merge("graph.node.set", json!({ "node": node.id, "name": "item", "value": [item.code()] }), key.clone());
+                        requests.merge("graph.node.set", json!({ "node": node.id, "name": "item", "value": [item.code(), key_type.code()] }), key.clone());
                         requests.merge("graph.node.set", json!({ "node": node.id, "name": "name", "value": name }), key);
                     }
                 }

@@ -299,8 +299,8 @@ fn typed_pins(entries: &[String], with_defaults: bool) -> Vec<PinDef> {
         .filter_map(|entry| {
             let (name, code) = entry.split_once(':')?;
             // A list or map: no default, it comes only from a link.
-            if let Some((item, shape)) = bayleaf_graph::VariableType::from_shaped_code(code).filter(|(_, s)| !s.is_single()) {
-                return Some(PinDef { name: leak(name.to_owned()), label: leak(super::title(name)), ty: item.pin(shape), default: PinDefault::None });
+            if let Some((item, shape, key)) = bayleaf_graph::VariableType::from_shaped_code(code).filter(|(_, s, _)| !s.is_single()) {
+                return Some(PinDef { name: leak(name.to_owned()), label: leak(super::title(name)), ty: item.pin(shape, key), default: PinDefault::None });
             }
             let (ty, default) = match code {
                 "number" => (Float, PinDefault::Float(0.0)),

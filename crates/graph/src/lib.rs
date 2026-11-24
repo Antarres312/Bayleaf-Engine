@@ -58,8 +58,9 @@ pub enum PinType {
     Component,
     /// A list of values of one type (visual scripts): a list variable or property, or one passed on.
     List(VariableType),
-    /// A map of values of one type under text keys (visual scripts).
-    Map(VariableType),
+    /// A map of values of one type under keys of one type (visual scripts): the key's type, then
+    /// the value's.
+    Map(VariableType, VariableType),
 }
 
 impl PinType {
@@ -77,7 +78,7 @@ impl PinType {
             PinType::Int => "Whole Number",
             PinType::Component => "Component",
             PinType::List(item) => item.list_label(),
-            PinType::Map(item) => item.map_label(),
+            PinType::Map(key, item) => item.map_label(key),
         }
     }
 
@@ -88,8 +89,9 @@ impl PinType {
         use PinType::{Any, Bool, Color, Component, Float, Flow, Int, List, Map, Object, Text, Vec3};
         match (self, to) {
             // A list or map goes only where one of the same type is taken.
-            (List(a), List(b)) | (Map(a), Map(b)) => a == b,
-            (List(_) | Map(_), _) | (_, List(_) | Map(_)) => false,
+            (List(a), List(b)) => a == b,
+            (Map(k, a), Map(l, b)) => k == l && a == b,
+            (List(_) | Map(..), _) | (_, List(_) | Map(..)) => false,
             (Flow, Flow) | (Bool, Bool) | (Object, Object) | (Text, Text) | (Int, Int) | (Component, Component) => true,
             (Flow | Bool | Object | Text | Component, _) | (_, Flow | Bool | Object | Text | Component) => false,
             // A whole number widens to a number (and on to a vector); a number becomes whole only
@@ -398,6 +400,9 @@ pub struct Property {
     /// One value, a list or a map; one value when left out.
     #[serde(default, skip_serializing_if = "Shape::is_single")]
     pub shape: Shape,
+    /// A map's keys' type; text when left out.
+    #[serde(default = "text_key", skip_serializing_if = "is_text_key")]
+    pub key: VariableType,
     pub default: Value,
     /// How the Inspector shows it; empty for a plain row.
     #[serde(default, skip_serializing_if = "PropertyOptions::is_empty")]
@@ -536,24 +541,25 @@ impl VariableType {
         }
     }
 
-    /// "Map of Number", and so on.
-    pub fn map_label(self) -> &'static str {
-        match self {
-            VariableType::Number => "Map of Number",
-            VariableType::Vector => "Map of Vector",
-            VariableType::TrueFalse => "Map of True/False",
-            VariableType::WholeNumber => "Map of Whole Number",
-            VariableType::Text => "Map of Text",
-            VariableType::Object => "Map of Object",
-            VariableType::Color => "Map of Color",
-        }
+    /// "Map from Text to Number", and so on: a map pin's name, its keys' type (`key`) first.
+    pub fn map_label(self, key: VariableType) -> &'static str {
+        static LABELS: std::sync::OnceLock<Vec<(VariableType, VariableType, &'static str)>> = std::sync::OnceLock::new();
+        let labels = LABELS.get_or_init(|| {
+            let all = VariableType::ALL;
+            all.iter()
+                .flat_map(|k| all.iter().map(move |v| (*k, *v)))
+                .map(|(k, v)| (k, v, &*Box::leak(format!("Map from {} to {}", k.label(), v.label()).into_boxed_str())))
+                .collect()
+        });
+        labels.iter().find(|(k, v, _)| *k == key && *v == self).map_or("Map", |(_, _, label)| label)
     }
 
-    /// The pin type of this type in `shape`: one value's, or a list's or map's of it.
-    pub fn pin(self, shape: Shape) -> PinType {
+    /// The pin type of this type in `shape`: one value's, or a list's or map's of it (a map's keys
+    /// of type `key`).
+    pub fn pin(self, shape: Shape, key: VariableType) -> PinType {
         match shape {
             Shape::List => PinType::List(self),
-            Shape::Map => PinType::Map(self),
+            Shape::Map => PinType::Map(key, self),
             Shape::Single => match self {
                 VariableType::Number => PinType::Float,
                 VariableType::Vector => PinType::Vec3,
@@ -566,19 +572,56 @@ impl VariableType {
         }
     }
 
-    /// The code of this type in `shape`, as pins and descriptions list it: `number`, `list:number`.
-    pub fn shaped_code(self, shape: Shape) -> String {
-        if shape.is_single() { self.code().to_owned() } else { format!("{}:{}", shape.code(), self.code()) }
+    /// The code of this type in `shape`, as pins and descriptions list it: `number`, `list:number`,
+    /// or a map's keys' type then its values' (`map:whole:number`).
+    pub fn shaped_code(self, shape: Shape, key: VariableType) -> String {
+        match shape {
+            Shape::Single => self.code().to_owned(),
+            Shape::List => format!("list:{}", self.code()),
+            Shape::Map => format!("map:{}:{}", key.code(), self.code()),
+        }
     }
 
-    /// The type and shape a code names: `number`, or `list:number` and `map:number`.
-    pub fn from_shaped_code(code: &str) -> Option<(VariableType, Shape)> {
-        match code.split_once(':') {
-            Some(("list", item)) => Some((VariableType::from_code(item)?, Shape::List)),
-            Some(("map", item)) => Some((VariableType::from_code(item)?, Shape::Map)),
-            Some(_) => None,
-            None => Some((VariableType::from_code(code)?, Shape::Single)),
+    /// The type, shape and key type a code names: `number`, `list:number`, `map:whole:number`, or
+    /// `map:number` for a map with text keys. The key type is text for all but a map.
+    pub fn from_shaped_code(code: &str) -> Option<(VariableType, Shape, VariableType)> {
+        let text = VariableType::Text;
+        match code.split(':').collect::<Vec<_>>().as_slice() {
+            [one] => Some((VariableType::from_code(one)?, Shape::Single, text)),
+            ["list", item] => Some((VariableType::from_code(item)?, Shape::List, text)),
+            ["map", item] => Some((VariableType::from_code(item)?, Shape::Map, text)),
+            ["map", key, item] => Some((VariableType::from_code(item)?, Shape::Map, VariableType::from_code(key)?)),
+            _ => None,
         }
+    }
+
+    /// Whether `key`, a map key as files keep it (always text), is a key of this type: text of at
+    /// most [`MAX_TEXT`] characters, a finite number, a whole number, `true` or `false`, three
+    /// numbers `x,y,z`, or an object's name.
+    pub fn fits_key(self, key: &str) -> bool {
+        let number = |t: &str| t.trim().parse::<f32>().is_ok_and(f32::is_finite);
+        match self {
+            VariableType::Text | VariableType::Object => key.chars().count() <= MAX_TEXT,
+            VariableType::Number => number(key),
+            VariableType::WholeNumber => key.trim().parse::<i32>().is_ok(),
+            VariableType::TrueFalse => matches!(key, "true" | "false"),
+            VariableType::Vector | VariableType::Color => {
+                let parts: Vec<&str> = key.split(',').collect();
+                parts.len() == 3 && parts.iter().all(|p| number(p))
+            }
+        }
+    }
+
+    /// A map key of this type that no entry has yet (`taken` says which are): `key`, `key2`… for
+    /// text and objects, `0`, `1`… for numbers, `false` then `true`, `0,0,0`, `1,0,0`… for vectors.
+    pub fn fresh_key(self, taken: impl Fn(&str) -> bool) -> Option<String> {
+        let candidates: Vec<String> = match self {
+            VariableType::Text | VariableType::Object => (1..=MAX_ITEMS + 1).map(|n| if n == 1 { "key".to_owned() } else { format!("key{n}") }).collect(),
+            VariableType::Number | VariableType::WholeNumber => (0..=MAX_ITEMS).map(|n| n.to_string()).collect(),
+            VariableType::TrueFalse => vec!["false".to_owned(), "true".to_owned()],
+            VariableType::Vector | VariableType::Color => (0..=MAX_ITEMS).map(|n| format!("{n},0,0")).collect(),
+        };
+        candidates.into_iter().find(|k| !taken(k))
     }
 
     /// What a new variable of this type and shape starts at: the type's zero, or an empty list or map.
@@ -591,15 +634,13 @@ impl VariableType {
     }
 
     /// Whether `value` fits this type in `shape`: one value that [`fits`](Self::fits), or a list
-    /// (an array) or map (an object, keys of at most [`MAX_TEXT`] characters) of at most
+    /// (an array) or map (an object, its keys of type `key` as [`fits_key`](Self::fits_key) reads them) of at most
     /// [`MAX_ITEMS`] of them.
-    pub fn fits_shape(self, shape: Shape, value: &Value) -> bool {
+    pub fn fits_shape(self, shape: Shape, key: VariableType, value: &Value) -> bool {
         match shape {
             Shape::Single => self.fits(value),
             Shape::List => value.as_array().is_some_and(|items| items.len() <= MAX_ITEMS && items.iter().all(|v| self.fits(v))),
-            Shape::Map => value
-                .as_object()
-                .is_some_and(|entries| entries.len() <= MAX_ITEMS && entries.iter().all(|(k, v)| k.chars().count() <= MAX_TEXT && self.fits(v))),
+            Shape::Map => value.as_object().is_some_and(|entries| entries.len() <= MAX_ITEMS && entries.iter().all(|(k, v)| key.fits_key(k) && self.fits(v))),
         }
     }
 }
@@ -615,12 +656,15 @@ pub struct Param {
     /// One value, a list or a map; one value when left out.
     #[serde(default, skip_serializing_if = "Shape::is_single")]
     pub shape: Shape,
+    /// A map's keys' type; text when left out.
+    #[serde(default = "text_key", skip_serializing_if = "is_text_key")]
+    pub key: VariableType,
 }
 
 impl Param {
     /// One value of `ty` named `name`.
     pub fn new(name: impl Into<String>, ty: VariableType) -> Self {
-        Self { name: name.into(), ty, shape: Shape::Single }
+        Self { name: name.into(), ty, shape: Shape::Single, key: VariableType::Text }
     }
 }
 
@@ -683,6 +727,15 @@ impl Shape {
     }
 }
 
+/// What a map's keys are when a file does not say: text.
+fn text_key() -> VariableType {
+    VariableType::Text
+}
+
+fn is_text_key(key: &VariableType) -> bool {
+    *key == VariableType::Text
+}
+
 /// Most items a list or map starts with: a variable's start, a property's default.
 pub const MAX_ITEMS: usize = 1024;
 
@@ -698,7 +751,7 @@ const FLOW_PINS: [&str; 2] = ["run", "then"];
 
 /// The pins a list of params becomes, as nodes keep them: `name:type`.
 pub fn param_pins(params: &[Param]) -> Value {
-    Value::from(params.iter().map(|p| format!("{}:{}", p.name, p.ty.shaped_code(p.shape))).collect::<Vec<_>>())
+    Value::from(params.iter().map(|p| format!("{}:{}", p.name, p.ty.shaped_code(p.shape, p.key))).collect::<Vec<_>>())
 }
 
 /// A function's inputs or outputs: at most [`MAX_PARAMS`], each named like a variable, no name twice
@@ -729,6 +782,9 @@ pub struct Variable {
     /// One value, a list or a map; one value when left out.
     #[serde(default, skip_serializing_if = "Shape::is_single")]
     pub shape: Shape,
+    /// A map's keys' type; text when left out.
+    #[serde(default = "text_key", skip_serializing_if = "is_text_key")]
+    pub key: VariableType,
     pub start: Value,
 }
 
@@ -762,7 +818,7 @@ impl Graph {
         if !ty.fits(&start) {
             return Err(GraphError::Refused(format!("a {} variable cannot start at {start}", ty.label())));
         }
-        self.variables.push(Variable { name: name.to_owned(), ty, shape: Shape::Single, start });
+        self.variables.push(Variable { name: name.to_owned(), ty, shape: Shape::Single, key: VariableType::Text, start });
         Ok(())
     }
 
@@ -771,8 +827,8 @@ impl Graph {
     pub fn set_variable(&mut self, name: &str, rename: Option<&str>, start: Option<Value>, kinds: &[&str]) -> Result<(), GraphError> {
         let index = self.variables.iter().position(|v| v.name == name).ok_or_else(|| GraphError::Refused(format!("there is no variable {name}")))?;
         if let Some(start) = start {
-            let (ty, shape) = (self.variables[index].ty, self.variables[index].shape);
-            if !ty.fits_shape(shape, &start) {
+            let (ty, shape, key) = (self.variables[index].ty, self.variables[index].shape, self.variables[index].key);
+            if !ty.fits_shape(shape, key, &start) {
                 return Err(GraphError::Refused(format!("a {} variable cannot start at {start}", ty.label())));
             }
             self.variables[index].start = start;
@@ -909,25 +965,25 @@ impl Graph {
         Ok(())
     }
 
-    /// Gives a variable another type or shape; its start stays where it still fits, else it goes
+    /// Gives a variable another type, shape or key type (a map's); its start stays where it still fits, else it goes
     /// back to the new type's zero (an empty list or map). Returns the old type and shape. Its
     /// nodes are the caller's to follow (they depend on the domain's node kinds).
-    pub fn retype_variable(&mut self, name: &str, ty: VariableType, shape: Shape) -> Result<(VariableType, Shape), GraphError> {
+    pub fn retype_variable(&mut self, name: &str, ty: VariableType, shape: Shape, key: VariableType) -> Result<(VariableType, Shape), GraphError> {
         let variable = self.variables.iter_mut().find(|v| v.name == name).ok_or_else(|| GraphError::Refused(format!("there is no variable {name}")))?;
         let old = (variable.ty, variable.shape);
-        (variable.ty, variable.shape) = (ty, shape);
-        if !ty.fits_shape(shape, &variable.start) {
+        (variable.ty, variable.shape, variable.key) = (ty, shape, key);
+        if !ty.fits_shape(shape, key, &variable.start) {
             variable.start = ty.zero_of(shape);
         }
         Ok(old)
     }
 
     /// Gives a property another type or shape, as [`Graph::retype_variable`] does a variable.
-    pub fn retype_property(&mut self, name: &str, ty: VariableType, shape: Shape) -> Result<(VariableType, Shape), GraphError> {
+    pub fn retype_property(&mut self, name: &str, ty: VariableType, shape: Shape, key: VariableType) -> Result<(VariableType, Shape), GraphError> {
         let property = self.properties.iter_mut().find(|p| p.name == name).ok_or_else(|| GraphError::Refused(format!("there is no property {name}")))?;
         let old = (property.ty, property.shape);
-        (property.ty, property.shape) = (ty, shape);
-        if !ty.fits_shape(shape, &property.default) {
+        (property.ty, property.shape, property.key) = (ty, shape, key);
+        if !ty.fits_shape(shape, key, &property.default) {
             property.default = ty.zero_of(shape);
         }
         Ok(old)
@@ -946,10 +1002,11 @@ impl Graph {
         Ok(())
     }
 
-    /// The nodes of `kinds` that name `name` (their `name` setting) keep the type code of what it
-    /// holds in `item`; when it changes, links that no longer fit go.
-    pub fn follow_item(&mut self, catalog: &Catalog, name: &str, item: VariableType, kinds: &[&str]) -> Result<(), GraphError> {
-        let code = Value::from(vec![item.code()]);
+    /// The nodes of `kinds` that name `name` (their `name` setting) keep the type codes of what it
+    /// holds and of its keys in `item` (`["number", "text"]`); when they change, links that no
+    /// longer fit go.
+    pub fn follow_item(&mut self, catalog: &Catalog, name: &str, item: VariableType, key: VariableType, kinds: &[&str]) -> Result<(), GraphError> {
+        let code = Value::from(vec![item.code(), key.code()]);
         let named: Vec<u32> = self
             .nodes
             .iter()
@@ -1004,7 +1061,14 @@ impl Graph {
         if !ty.fits(&default) {
             return Err(GraphError::Refused(format!("a {} property cannot default to {default}", ty.label())));
         }
-        self.properties.push(Property { name: name.to_owned(), ty, shape: Shape::Single, default, inspector: PropertyOptions::default() });
+        self.properties.push(Property {
+            name: name.to_owned(),
+            ty,
+            shape: Shape::Single,
+            key: VariableType::Text,
+            default,
+            inspector: PropertyOptions::default(),
+        });
         Ok(())
     }
 
@@ -1013,8 +1077,8 @@ impl Graph {
     pub fn set_property(&mut self, name: &str, rename: Option<&str>, default: Option<Value>, kinds: &[&str]) -> Result<(), GraphError> {
         let index = self.properties.iter().position(|p| p.name == name).ok_or_else(|| GraphError::Refused(format!("there is no property {name}")))?;
         if let Some(default) = default {
-            let (ty, shape) = (self.properties[index].ty, self.properties[index].shape);
-            if !ty.fits_shape(shape, &default) {
+            let (ty, shape, key) = (self.properties[index].ty, self.properties[index].shape, self.properties[index].key);
+            if !ty.fits_shape(shape, key, &default) {
                 return Err(GraphError::Refused(format!("a {} property cannot default to {default}", ty.label())));
             }
             self.properties[index].default = default;
@@ -1184,7 +1248,7 @@ impl Graph {
         }
         for (index, variable) in self.variables.iter().enumerate() {
             check_variable_name(&variable.name).map_err(GraphError::Format)?;
-            if !variable.ty.fits_shape(variable.shape, &variable.start) {
+            if !variable.ty.fits_shape(variable.shape, variable.key, &variable.start) {
                 return Err(GraphError::Format(format!("variable {} starts at a value that is not a {}", variable.name, variable.ty.label())));
             }
             if self.variables[..index].iter().any(|v| v.name == variable.name) {
@@ -1196,7 +1260,7 @@ impl Graph {
         }
         for (index, property) in self.properties.iter().enumerate() {
             check_variable_name(&property.name).map_err(GraphError::Format)?;
-            if !property.ty.fits_shape(property.shape, &property.default) {
+            if !property.ty.fits_shape(property.shape, property.key, &property.default) {
                 return Err(GraphError::Format(format!("property {} defaults to a value that is not a {}", property.name, property.ty.label())));
             }
             if self.properties[..index].iter().any(|p| p.name == property.name) {
@@ -1634,7 +1698,7 @@ fn check_value(def: &NodeDef, name: &str, value: &Value) -> Result<(), GraphErro
         PinType::Bool => Err(bad("true or false")),
         PinType::Object => Err(GraphError::Refused(format!("{} · {name} takes an object only from a link", def.label))),
         PinType::Component => Err(GraphError::Refused(format!("{} · {name} takes a component only from a link", def.label))),
-        PinType::List(_) | PinType::Map(_) => Err(GraphError::Refused(format!("{} · {name} takes a list or map only from a link", def.label))),
+        PinType::List(_) | PinType::Map(..) => Err(GraphError::Refused(format!("{} · {name} takes a list or map only from a link", def.label))),
         PinType::Int => match value.as_i64() {
             Some(n) if i32::try_from(n).is_ok() => Ok(()),
             _ => Err(bad("a whole number from -2147483648 to 2147483647")),

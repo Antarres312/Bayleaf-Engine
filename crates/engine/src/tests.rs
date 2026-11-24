@@ -2919,7 +2919,7 @@ fn a_variables_nodes_follow_a_new_type_and_shape_and_lose_links_that_no_longer_f
     let graph = &session.graph().unwrap().graph;
     let id = u32::try_from(add.as_u64().unwrap()).unwrap();
     assert_eq!(graph.value(id, "name"), Some(&json!("scores")), "list nodes follow the new name");
-    assert_eq!(graph.value(id, "item"), Some(&json!(["number"])), "and what the list now holds");
+    assert_eq!(graph.value(id, "item"), Some(&json!(["number", "text"])), "and what the list now holds");
     assert!(graph.links.iter().all(|l| l.to.node != id || l.to.pin != "value"), "text no longer goes into a list of numbers");
     assert_eq!(graph.variable("scores").unwrap().start, json!([]), "text items do not fit numbers");
 
@@ -2944,9 +2944,32 @@ fn linking_a_list_into_a_list_node_gives_the_node_its_type_in_one_step() {
     run(&mut session, "graph.link.add", json!({"from": {"node": get, "pin": "list"}, "to": {"node": each, "pin": "list"}})).unwrap();
     let graph = &session.graph().unwrap().graph;
     let id = u32::try_from(each.as_u64().unwrap()).unwrap();
-    assert_eq!(graph.value(id, "item"), Some(&json!(["text"])), "the node now goes through text");
+    assert_eq!(graph.value(id, "item"), Some(&json!(["text", "text"])), "the node now goes through text");
     assert!(graph.links.iter().any(|l| l.to.node == id && l.to.pin == "list"), "and the list is linked");
     // Undo takes back both.
     run(&mut session, "edit.undo", Value::Null).unwrap();
     assert_eq!(session.graph().unwrap().graph.value(id, "item"), None);
+}
+
+#[test]
+fn a_maps_key_type_changes_and_its_nodes_and_start_follow() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params);
+    run(&mut session, "graph.new", json!({"domain": "script"})).unwrap();
+    run(&mut session, "graph.variable.add", json!({"name": "waves", "type": "text", "shape": "map", "start": {"1": "one", "easy": "?"}})).unwrap();
+    assert!(
+        run(&mut session, "graph.variable.add", json!({"name": "bad", "type": "text", "shape": "map", "key": "wholeNumber", "start": {"easy": "?"}})).is_err(),
+        "easy is no whole number"
+    );
+    let set = run(&mut session, "graph.node.add", json!({"kind": "mapSet", "position": [0, 0]})).unwrap()["node"].clone();
+    run(&mut session, "graph.node.set", json!({"node": set, "name": "item", "value": ["text", "text"]})).unwrap();
+    run(&mut session, "graph.node.set", json!({"node": set, "name": "name", "value": "waves"})).unwrap();
+    run(&mut session, "graph.variable.set", json!({"name": "waves", "key": "wholeNumber"})).unwrap();
+    let graph = &session.graph().unwrap().graph;
+    let id = u32::try_from(set.as_u64().unwrap()).unwrap();
+    assert_eq!(graph.value(id, "item"), Some(&json!(["text", "whole"])), "the node's key is a whole number now");
+    assert_eq!(graph.variable("waves").unwrap().start, json!({}), "easy is no whole number, so the map starts empty");
+    let (_, def) = graph.node_def(&bayleaf_script::visual::CATALOG, id).unwrap();
+    assert_eq!(def.input("key").map(|p| p.ty), Some(bayleaf_graph::PinType::Int), "and its Key pin takes one");
 }

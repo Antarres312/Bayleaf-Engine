@@ -258,7 +258,7 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   Component Event**, with **Source** (the component it happened on) and the event's values. A
   subscription lasts while both scripts run; subscribing twice keeps one.
 - **Lists and maps.** A variable or property holds one value, a **list** of values of its type (in
-  order, by index from 0) or a **map** of them (under text keys, in the keys' order): its *shape*
+  order, by index from 0) or a **map** of them (under keys of a type of their own, text unless its type menu says another, in the keys' order: numbers by size, text by its characters): its *shape*
   (graph version 8, `shape`: `list` or `map`, left out for one value). Its type menu in the panel
   changes its type and its shape at any time; the start or default stays where it still fits, else
   it goes back to the type's zero (an empty list or map), and its nodes follow: Get and Set nodes
@@ -274,7 +274,7 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   it holds (`item`), so its Value pin has that type; Get and Set nodes do not work on a list or map,
   and a list and a map may not share a name between a variable and a property. A list or map starts
   with at most 1,024 items and holds at most 65,536; a script keeps at most 64.
-- **List and map pins.** A list or map also goes through pins of its own type (**List of Number**, **Map of Text**…), which link only to the same type; list pins are drawn as three rows, map pins as two columns of them, in the colour of what they hold. **Get List** and **Get Map** give one of the script's lists or maps; every list and map node takes one through its List (or Map) input, and works on the one it names only while nothing is linked there. A list or map node just placed holds numbers; linking a list of another type into it makes it that type's, in the same undo step. A function's inputs and outputs and an event's values can be lists and maps (their type menu says so): a function gets the list itself, so what it changes stays changed; an event brings a copy, as it was when triggered.
+- **List and map pins.** A list or map also goes through pins of its own type (**List of Number**, **Map from Text to Number**…), which link only to the same type; list pins are drawn as three rows, map pins as two columns of them, in the colour of what they hold. **Get List** and **Get Map** give one of the script's lists or maps; every list and map node takes one through its List (or Map) input, and works on the one it names only while nothing is linked there. A list or map node just placed holds numbers; linking a list of another type into it makes it that type's, in the same undo step. A function's inputs and outputs and an event's values can be lists and maps (their type menu says so): a function gets the list itself, so what it changes stays changed; an event brings a copy, as it was when triggered.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a
 graph with every node kind and runs it.

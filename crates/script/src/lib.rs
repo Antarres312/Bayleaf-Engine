@@ -307,7 +307,81 @@ pub enum EventArg {
     /// lists or maps themselves).
     List(Vec<EventArg>),
     /// A visual script's map, copied as a list is.
-    Map(std::collections::BTreeMap<String, EventArg>),
+    Map(std::collections::BTreeMap<MapKey, EventArg>),
+}
+
+/// A key of a visual script's map: one value of the map's key type, in an order of its own, so a
+/// walk through the map goes the same way every time (numbers by size, text by its characters,
+/// objects by their ids).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MapKey {
+    Flag(bool),
+    Whole(i32),
+    Number(Ordered),
+    Vector([Ordered; 3]),
+    Text(String),
+    Object(StableId),
+}
+
+/// A finite number that can be a map key: ordered by size, and 0 and -0 one key.
+#[derive(Clone, Copy, Debug)]
+pub struct Ordered(f32);
+
+impl Ordered {
+    pub fn new(value: f32) -> Self {
+        Self(if value == 0.0 { 0.0 } else { value })
+    }
+
+    pub fn get(self) -> f32 {
+        self.0
+    }
+}
+
+impl PartialEq for Ordered {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.total_cmp(&other.0).is_eq()
+    }
+}
+
+impl Eq for Ordered {}
+
+impl PartialOrd for Ordered {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Ordered {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+impl MapKey {
+    /// The key a value is; `None` for an object that is none, or a list or map.
+    pub fn of(value: &EventArg) -> Option<MapKey> {
+        Some(match value {
+            EventArg::Number(v) => MapKey::Number(Ordered::new(*v)),
+            EventArg::Whole(v) => MapKey::Whole(*v),
+            EventArg::Flag(v) => MapKey::Flag(*v),
+            EventArg::Vector(v) => MapKey::Vector(v.map(Ordered::new)),
+            EventArg::Text(t) => MapKey::Text(t.clone()),
+            EventArg::Object(id) => MapKey::Object((*id)?),
+            EventArg::List(_) | EventArg::Map(_) => return None,
+        })
+    }
+
+    /// The key as the value it is.
+    pub fn arg(&self) -> EventArg {
+        match self {
+            MapKey::Number(v) => EventArg::Number(v.get()),
+            MapKey::Whole(v) => EventArg::Whole(*v),
+            MapKey::Flag(v) => EventArg::Flag(*v),
+            MapKey::Vector(v) => EventArg::Vector(v.map(Ordered::get)),
+            MapKey::Text(t) => EventArg::Text(t.clone()),
+            MapKey::Object(id) => EventArg::Object(Some(*id)),
+        }
+    }
 }
 
 /// A list or map a visual script keeps, by name, for the whole of play.
@@ -315,7 +389,7 @@ pub enum EventArg {
 enum Stored {
     List(Vec<EventArg>),
     /// In key order, so For Each in Map goes the same way every time.
-    Map(std::collections::BTreeMap<String, EventArg>),
+    Map(std::collections::BTreeMap<MapKey, EventArg>),
 }
 
 /// Most items one list or map holds, and most lists and maps one script keeps.

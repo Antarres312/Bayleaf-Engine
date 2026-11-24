@@ -181,7 +181,7 @@ const KEY: PinDef = text("key", "Key", "");
 /// The list a list node works on, as a pin (of numbers here; a node's own type is its `item`).
 const LIST: PinDef = PinDef::new("list", "List", PinType::List(VariableType::Number));
 /// The map a map node works on, as a pin.
-const MAP: PinDef = PinDef::new("map", "Map", PinType::Map(VariableType::Number));
+const MAP: PinDef = PinDef::new("map", "Map", PinType::Map(VariableType::Text, VariableType::Number));
 /// The value a list or map node puts in, and gives.
 const VALUE_IN: PinDef = number("value", "Value", Float, 0.0);
 const VALUE_OUT: PinDef = pin("value", "Value", Float);
@@ -1477,18 +1477,23 @@ fn described_value(ty: VariableType, shape: Shape, value: &serde_json::Value) ->
     }
 }
 
-/// The type code a description gives a value of `ty` in `shape`: `number`, or `list:number`.
-fn described_type(ty: VariableType, shape: Shape) -> String {
+/// The type code a description gives a value of `ty` in `shape`: `number`, `list:number`, or a
+/// map's keys' type and then its values' (`map:whole:number`).
+fn described_type(ty: VariableType, shape: Shape, key: VariableType) -> String {
     let code = scene_property_type(ty).code();
-    if shape.is_single() { code.to_owned() } else { format!("{}:{code}", shape.code()) }
+    match shape {
+        Shape::Single => code.to_owned(),
+        Shape::List => format!("list:{code}"),
+        Shape::Map => format!("map:{}:{code}", scene_property_type(key).code()),
+    }
 }
 
 /// How the scene and the Inspector call a shape.
-pub fn scene_property_shape(shape: Shape) -> PropertyShape {
+pub fn scene_property_shape(shape: Shape, key: VariableType) -> PropertyShape {
     match shape {
         Shape::Single => PropertyShape::Single,
         Shape::List => PropertyShape::List,
-        Shape::Map => PropertyShape::Map,
+        Shape::Map => PropertyShape::Map(scene_property_type(key)),
     }
 }
 
@@ -2032,7 +2037,7 @@ impl Compiler<'_> {
             Some(declared) if declared.ty != ty => Err(Problem::on(node, format!("{name} is a {} property, not a {}", declared.ty.label(), ty.label()))),
             _ => {
                 if !self.properties.iter().any(|(n, _, _)| *n == name) {
-                    self.properties.push((name.clone(), described_type(ty, Shape::Single), described_default(ty, &ty.zero())));
+                    self.properties.push((name.clone(), described_type(ty, Shape::Single, VariableType::Text), described_default(ty, &ty.zero())));
                 }
                 Ok(name)
             }
@@ -2866,7 +2871,7 @@ fn zip(node: u32, a: Val, b: Val, op: impl Fn(&str, &str) -> String) -> Result<V
 fn declare_storage(c: &mut Compiler<'_>) {
     let graph = c.graph;
     for p in &graph.properties {
-        c.properties.push((p.name.clone(), described_type(p.ty, p.shape), described_value(p.ty, p.shape, &p.default)));
+        c.properties.push((p.name.clone(), described_type(p.ty, p.shape, p.key), described_value(p.ty, p.shape, &p.default)));
     }
     let mut starts: std::collections::BTreeMap<String, String> = graph
         .nodes
@@ -2994,7 +2999,7 @@ fn description(graph: &Graph, properties: &[(String, String, serde_json::Value)]
         .variables
         .iter()
         .filter(|v| !v.shape.is_single())
-        .map(|v| serde_json::json!([v.name, described_value(v.ty, v.shape, &v.start), described_type(v.ty, v.shape)]))
+        .map(|v| serde_json::json!([v.name, described_value(v.ty, v.shape, &v.start), described_type(v.ty, v.shape, v.key)]))
         .collect();
     if !kept.is_empty() {
         description["variables"] = serde_json::Value::Array(kept);
@@ -3046,8 +3051,8 @@ fn event_params_of(graph: &Graph, node: u32) -> Vec<bayleaf_graph::Param> {
         .flatten()
         .filter_map(|entry| {
             let (name, code) = entry.as_str()?.split_once(':')?;
-            let (ty, shape) = VariableType::from_shaped_code(code)?;
-            Some(bayleaf_graph::Param { name: name.to_owned(), ty, shape })
+            let (ty, shape, key) = VariableType::from_shaped_code(code)?;
+            Some(bayleaf_graph::Param { name: name.to_owned(), ty, shape, key })
         })
         .collect()
 }
@@ -3243,13 +3248,14 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "list_get" (func $list_get (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "list_text" (func $list_text (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "list_find" (func $list_find (param i32 i32 i32) (result i32)))
-  (import "bayleaf" "map_put" (func $map_put (param i32 i32 i32 i32 i32) (result i32)))
-  (import "bayleaf" "map_remove" (func $map_remove (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_put" (func $map_put (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_remove" (func $map_remove (param i32 i32 i32) (result i32)))
   (import "bayleaf" "map_clear" (func $map_clear (param i32 i32)))
   (import "bayleaf" "map_count" (func $map_count (param i32 i32) (result i32)))
-  (import "bayleaf" "map_get" (func $map_get (param i32 i32 i32 i32 i32) (result i32)))
-  (import "bayleaf" "map_text" (func $map_text (param i32 i32 i32 i32 i32 i32) (result i32)))
-  (import "bayleaf" "map_next" (func $map_next (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_get" (func $map_get (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_text" (func $map_text (param i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_next" (func $map_next (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "map_next_text" (func $map_next_text (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "event_keep" (func $event_keep (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "particles_play" (func $particles_play (param i32) (result i32)))
   (import "bayleaf" "particles_stop" (func $particles_stop (param i32) (result i32)))
@@ -3769,7 +3775,7 @@ pub fn check_inspector(graph: &Graph) -> Result<(), String> {
         .properties
         .iter()
         .map(|p| {
-            let (ty, shape) = (scene_property_type(p.ty), scene_property_shape(p.shape));
+            let (ty, shape) = (scene_property_type(p.ty), scene_property_shape(p.shape, p.key));
             let default = PropertyValue::from_described(&described_value(p.ty, p.shape, &p.default), ty, shape).unwrap_or_else(|| ty.zero_of(shape));
             DeclaredProperty { name: p.name.clone(), ty, shape, default }
         })

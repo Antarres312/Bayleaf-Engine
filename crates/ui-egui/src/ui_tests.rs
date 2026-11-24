@@ -3515,7 +3515,7 @@ fn a_property_becomes_a_list_in_the_panel_and_the_inspector_adds_to_each_objects
     harness.get_by_label("List Length").click();
     harness.run();
     let length = graph(&harness).nodes.iter().find(|n| n.kind == "listLength").cloned().expect("Place Node places it");
-    assert_eq!(length.values.get("item"), Some(&json!(["whole"])), "holding what the list holds");
+    assert_eq!(length.values.get("item"), Some(&json!(["whole", "text"])), "holding what the list holds");
     harness.state_mut().dispatch("graph.save", &json!({ "path": dir.join("waves.bscript") }), None);
 
     // An object with the script has its own list, starting as the default, and adds to it.
@@ -3567,4 +3567,22 @@ fn list_pins_say_what_their_list_holds_and_a_fresh_list_node_has_its_value_pin()
     // A list node just placed already has its list and its value, as numbers until it takes another type.
     assert!(harness.query_by_label_contains("List (List of Number) of Add to List").is_some());
     assert!(harness.query_by_label_contains("Value (Number) of Add to List").is_some());
+}
+
+#[test]
+fn a_maps_keys_type_is_chosen_from_its_type_menu() {
+    let mut harness = graph_harness("script");
+    harness.state_mut().dispatch("graph.variable.add", &json!({ "name": "waves", "type": "text", "shape": "map" }), None);
+    harness.run();
+    harness.get_by_label("What waves holds: Map from Text to Text").click();
+    harness.run();
+    harness.get_by_label("Keys of Whole Number").click();
+    harness.run();
+    let variable = graph(&harness).variable("waves").cloned().unwrap();
+    assert_eq!(variable.key, bayleaf_engine::graph::VariableType::WholeNumber, "the map's keys are whole numbers now");
+    // A key it adds is one of that type.
+    harness.get_by_label("Add a key to waves").click();
+    harness.run();
+    assert_eq!(graph(&harness).variable("waves").map(|v| v.start.clone()), Some(json!({ "0": "" })));
+    assert!(harness.query_by_label("What waves holds: Map from Whole Number to Text").is_some());
 }
