@@ -2305,3 +2305,51 @@ fn a_maps_keys_have_a_type_of_their_own_and_go_in_that_types_order() {
     let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(logs, ["wave one 1", "wave two 2", "wave five 5", "wave ten 10", "mine 7", "ten is ten"]);
 }
+
+#[test]
+fn objects_running_one_graph_each_keep_their_own_variables_and_text() {
+    let mut b = Builder::new();
+    // Each step: count += 1, and the label becomes "<this object's name>"; log both.
+    let update = b.node("update", json!({}));
+    let count = b.node("variable", json!({ "name": "count" }));
+    let more = b.node("add", json!({ "b": 1.0 }));
+    b.link(count, "value", more, "a");
+    let set = b.node("setVariable", json!({ "name": "count" }));
+    b.link(update, "then", set, "run");
+    b.link(more, "result", set, "value");
+    let me = b.node("thisObject", json!({}));
+    let name = b.node("nameOf", json!({}));
+    b.link(me, "object", name, "target");
+    let label = b.node("setTextVariable", json!({ "name": "label" }));
+    b.link(set, "then", label, "run");
+    b.link(name, "result", label, "value");
+    let said = b.node("log", json!({ "message": "" }));
+    b.link(label, "then", said, "run");
+    let read = b.node("textVariable", json!({ "name": "label" }));
+    b.link(read, "value", said, "text");
+    let now = b.node("variable", json!({ "name": "count" }));
+    b.link(now, "value", said, "value");
+    let bytes = b.bytes();
+    assert!(wat_exports(&bytes).contains(&"bayleaf_update_all".to_owned()), "a graph runs every object of its file in one instance");
+
+    let mut scene = Scene::new();
+    let first = scene.create_object(None, "First").unwrap();
+    let second = scene.create_object(None, "Second").unwrap();
+    let mut host = ScriptHost::new();
+    let input = Arc::new(Input::default());
+    let script = ScriptRef { module: "count.bscript".into(), properties: BTreeMap::new() };
+    for id in [first, second] {
+        host.load_bytes(id, 0, Path::new("count.bscript"), None, &bytes, &script, &mut scene, 0.0, &input).unwrap();
+    }
+    host.update(&mut scene, 0.1, 0.0, &input);
+    host.update(&mut scene, 0.1, 0.1, &input);
+    assert!(host.take_faults().is_empty());
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["First 1", "Second 1", "First 2", "Second 2"], "each object counts on its own and keeps its own text");
+}
+
+/// The names a module exports.
+fn wat_exports(bytes: &[u8]) -> Vec<String> {
+    let module = wasmi::Module::new(&wasmi::Engine::default(), bytes).unwrap();
+    module.exports().map(|e| e.name().to_owned()).collect()
+}

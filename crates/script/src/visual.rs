@@ -12,6 +12,7 @@ use bayleaf_scene::components::{DeclaredProperty, PropertyShape, PropertyType, P
 
 use PinType::{Any, Bool, Float, Flow, Vec3};
 
+mod batch;
 mod collections;
 pub use collections::adopted_item;
 mod fields;
@@ -1641,6 +1642,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     }
     let description = description(graph, &c.properties).map_err(|p| vec![p])?;
     let (describe_at, describe_len) = c.text(description.as_bytes());
+    let texts = starting_texts(&mut c);
     let pages = c.next.div_ceil(65536).max(1);
     // Text made while a call runs goes after the module's own data; each call starts it empty.
     let heap = c.next.next_multiple_of(16);
@@ -1658,6 +1660,8 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         names.extend(graph.variables.iter().filter(|v| v.ty == ty && v.shape.is_single()).map(|v| (v.name.clone(), v.start.clone())));
         names
     };
+    // Everything from here to the memory is what the script keeps per object.
+    let kept_from = out.len();
     let number = |v: &serde_json::Value| v.as_f64().unwrap_or(0.0) as f32;
     for (name, start) in named(VariableType::Number, "count") {
         let _ = writeln!(out, "  (global $var_{name} (mut f32) (f32.const {:?}))", number(&start));
@@ -1688,6 +1692,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     for global in state.iter().chain(&c.globals) {
         let _ = writeln!(out, "  {global}");
     }
+    let layout = batch::Layout::of(out[kept_from..].lines().filter(|l| !l.trim().is_empty()), texts);
     let _ = writeln!(out, "  (memory (export \"memory\") {pages})");
     for (at, bytes) in &c.data {
         let mut escaped = String::with_capacity(bytes.len() * 3);
@@ -1700,17 +1705,42 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         out,
         "  (func (export \"bayleaf_describe\") (result i64) (i64.or (i64.shl (i64.const {describe_at}) (i64.const 32)) (i64.const {describe_len})))"
     );
-    if graph.nodes.iter().any(|n| n.kind == "init") {
+    out.push_str(&entry_points(graph, layout.as_ref(), heap, &fresh, [&init, &start, &update, &message]));
+    out.push_str(&functions);
+    out.push_str(")\n");
+    Ok(without_unused_fields(out))
+}
+
+/// Where each text variable's starting text is kept (a copy placed now), so a module that runs many
+/// objects can put it back in a new object's slot.
+fn starting_texts(c: &mut Compiler<'_>) -> Vec<batch::TextSlot> {
+    let mut texts = Vec::new();
+    for (name, (at, len)) in c.text_vars.clone() {
+        let start: Vec<u8> = c.data.iter().find(|(a, _)| *a == at).map(|(_, bytes)| bytes[..(len as usize).min(bytes.len())].to_vec()).unwrap_or_default();
+        let (start_at, start_len) = c.text(&start);
+        texts.push(batch::TextSlot { buffer: at, length: format!("$txt_{name}"), start_at, start_len });
+    }
+    texts
+}
+
+/// The exported functions that run the events' code (`init`, `start`, `update`, `message`): for every
+/// object of the file in one instance when the script can run that way (`layout`), else for one.
+fn entry_points(graph: &Graph, layout: Option<&batch::Layout>, heap: u32, fresh: &str, [init, start, update, message]: [&String; 4]) -> String {
+    let has_init = graph.nodes.iter().any(|n| n.kind == "init");
+    let has_message = graph.nodes.iter().any(|n| takes_messages(&n.kind));
+    if let Some(layout) = layout {
+        return layout.exports(heap, has_init.then_some(init.as_str()), start, update, has_message.then_some(message.as_str()));
+    }
+    let mut out = String::new();
+    if has_init {
         let _ = writeln!(out, "  (func (export \"bayleaf_init\")\n{fresh}{init}  )");
     }
     let _ = writeln!(out, "  (func (export \"bayleaf_start\")\n{fresh}{start}  )");
     let _ = writeln!(out, "  (func (export \"bayleaf_update\") (param $dt f32)\n{fresh}    (global.set $dt (local.get $dt))\n{update}  )");
-    if graph.nodes.iter().any(|n| takes_messages(&n.kind)) {
+    if has_message {
         let _ = writeln!(out, "  (func (export \"bayleaf_message\") (param $value f32)\n{fresh}    (global.set $message (local.get $value))\n{message}  )");
     }
-    out.push_str(&functions);
-    out.push_str(")\n");
-    Ok(without_unused_fields(out))
+    out
 }
 
 /// The module without the component functions' imports and helpers when nothing in it reads or
@@ -3287,6 +3317,7 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "map_next" (func $map_next (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "map_next_text" (func $map_next_text (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "event_keep" (func $event_keep (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "slot_select" (func $slot_select (param i32) (result i32)))
   (import "bayleaf" "particles_play" (func $particles_play (param i32) (result i32)))
   (import "bayleaf" "particles_stop" (func $particles_stop (param i32) (result i32)))
   (import "bayleaf" "particles_burst" (func $particles_burst (param i32 i32) (result i32)))
