@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+bayleaf-core = { workspace = true }
 thiserror = { workspace = true }
 
 [lints]

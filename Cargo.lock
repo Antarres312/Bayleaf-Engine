@@ -580,6 +580,7 @@ dependencies = [
 name = "bayleaf-ecs"
 version = "0.3.0"
 dependencies = [
+ "bayleaf-core",
  "thiserror 2.0.21",
 ]
 

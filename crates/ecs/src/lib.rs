@@ -13,6 +13,8 @@ pub use schedule::Schedule;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
+use bayleaf_core::hash::IdMap;
+
 /// Any `'static` thread-safe type can be a component.
 pub trait Component: Any + Send + Sync {}
 impl<T: Any + Send + Sync> Component for T {}
@@ -86,7 +88,7 @@ impl<T: Component> Column for TypedColumn<T> {
 }
 
 struct Archetype {
-    columns: HashMap<TypeId, Box<dyn Column>>,
+    columns: IdMap<TypeId, Box<dyn Column>>,
     entities: Vec<Entity>,
 }
 
@@ -110,7 +112,7 @@ pub struct World {
 
 impl Default for World {
     fn default() -> Self {
-        let empty = Archetype { columns: HashMap::new(), entities: Vec::new() };
+        let empty = Archetype { columns: IdMap::default(), entities: Vec::new() };
         Self { slots: Vec::new(), free: Vec::new(), archetypes: vec![empty], by_types: HashMap::from([(Vec::new(), 0)]) }
     }
 }
@@ -260,7 +262,7 @@ impl World {
         if let Some(&index) = self.by_types.get(&types) {
             return index;
         }
-        let mut columns: HashMap<TypeId, Box<dyn Column>> = HashMap::new();
+        let mut columns: IdMap<TypeId, Box<dyn Column>> = IdMap::default();
         if let Some(src) = self.archetypes.get(template) {
             for (type_id, column) in &src.columns {
                 if Some(*type_id) != without {

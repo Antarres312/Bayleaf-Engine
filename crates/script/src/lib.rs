@@ -435,9 +435,9 @@ struct Layout {
     structure: u64,
     names: Vec<Arc<str>>,
     /// Each object's place, by id.
-    index: HashMap<StableId, usize>,
+    index: bayleaf_core::hash::IdMap<StableId, usize>,
     /// The first object of each name, in hierarchy order.
-    by_name: HashMap<Arc<str>, usize>,
+    by_name: bayleaf_core::hash::IdMap<Arc<str>, usize>,
     kinds: Vec<Vec<String>>,
     players: Vec<StableId>,
     script_names: Vec<Vec<String>>,
@@ -447,7 +447,7 @@ struct Layout {
 impl Layout {
     fn of(scene: &Scene, all: &[(StableId, DMat4)]) -> Self {
         let names: Vec<Arc<str>> = all.iter().map(|(id, _)| Arc::from(scene.name(*id).unwrap_or_default())).collect();
-        let mut by_name = HashMap::with_capacity(names.len());
+        let mut by_name = bayleaf_core::hash::IdMap::with_capacity_and_hasher(names.len(), Default::default());
         for (i, name) in names.iter().enumerate() {
             by_name.entry(Arc::clone(name)).or_insert(i);
         }

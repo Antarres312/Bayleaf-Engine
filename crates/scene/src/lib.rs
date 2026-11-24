@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use bayleaf_core::StableId;
+use bayleaf_core::hash::IdMap;
 use bayleaf_core::math::DMat4;
 use bayleaf_ecs::{Entity, World};
 use serde_json::Value;
@@ -57,9 +58,9 @@ pub enum SceneError {
 pub struct Scene {
     world: World,
     registry: ComponentRegistry,
-    entities: HashMap<StableId, Entity>,
-    parents: HashMap<StableId, Option<StableId>>,
-    children: HashMap<Option<StableId>, Vec<StableId>>,
+    entities: IdMap<StableId, Entity>,
+    parents: IdMap<StableId, Option<StableId>>,
+    children: IdMap<Option<StableId>, Vec<StableId>>,
     /// The scene's own settings (its lighting asset).
     settings: lighting::SceneSettings,
     /// Counts changes to anything but transforms: objects, their names and components, the
@@ -80,9 +81,9 @@ impl Default for Scene {
         Self {
             world: World::new(),
             registry: ComponentRegistry::builtin(),
-            entities: HashMap::new(),
-            parents: HashMap::new(),
-            children: HashMap::new(),
+            entities: IdMap::default(),
+            parents: IdMap::default(),
+            children: IdMap::default(),
             settings: lighting::SceneSettings::default(),
             structure: first_structure(),
         }

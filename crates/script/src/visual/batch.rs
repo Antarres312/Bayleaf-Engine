@@ -100,7 +100,8 @@ impl Layout {
       (then
         (global.set $slots (i32.add (local.get $k) (i32.const 1)))
         (global.set $frame_at (i32.add (i32.const {base}) (i32.mul (global.get $slots) (i32.const {size}))))
-        (global.set $heap_start (i32.add (global.get $frame_at) (i32.mul (global.get $slots) (i32.const 64))))
+        (global.set $others_at (i32.add (global.get $frame_at) (i32.mul (global.get $slots) (i32.const 64))))
+        (global.set $heap_start (i32.add (global.get $others_at) (i32.const 160)))
         (local.set $end (i32.add (global.get $heap_start) (i32.const 65536)))
         (if (i32.gt_u (local.get $end) (i32.shl (memory.size) (i32.const 16)))
           (then
@@ -131,9 +132,11 @@ impl Layout {
     ;; Every object's transform from the host in one call; each object's reads and writes use it.
     (local.set $n (call $frame_get (global.get $frame_at) (global.get $slots)))
     (global.set $in_frame (i32.le_u (local.get $n) (global.get $slots)))
+    (if (global.get $in_frame) (then (call $others_forget)))
     (block $all (loop $each
       (br_if $all (i32.ge_u (local.get $k) (global.get $slots)))
       (local.set $selected (call $slot_select (local.get $k)))
+      (call $object_forget)
       (if (local.get $selected)
         (then
           (call $slot_load (local.get $k))
@@ -248,7 +251,12 @@ pub(super) fn rewrite(module: &str, cached: &[Cached]) -> String {
         .replace("(call $position_set_of (call $self_handle) ", "(call $frame_position_set ")
         .replace("(call $time)", "(call $time_kept)")
         .replace("(call $property_set ", "(call $property_set_forgetting ")
-        .replace("(call $property_set_text ", "(call $property_set_text_forgetting ");
+        .replace("(call $property_set_text ", "(call $property_set_text_forgetting ")
+        .replace("(call $t_of ", "(call $t_of_kept ")
+        .replace("(call $object_of ", "(call $object_of_kept ")
+        .replace("(call $transform_set_of ", "(call $transform_set_of_forgetting ")
+        .replace("(call $position_set_of ", "(call $position_set_of_forgetting ")
+        .replace("(call $self_handle)", "(call $self_handle_kept)");
     for c in cached {
         let from = format!("{}{}) (i32.const {})", c.kind.call(), c.at, c.len);
         let to = format!("(call $pc{}_{}", c.kind.tag(), c.at);
@@ -298,6 +306,60 @@ pub(super) fn helpers(cached: &[Cached]) -> String {
   (func $property_set_text_forgetting (param $a i32) (param $l i32) (param $t i32) (param $tl i32) (result i32)
     (call $properties_forget)
     (call $property_set_text (local.get $a) (local.get $l) (local.get $t) (local.get $tl)))
+  ;; While an update of all runs: this object's handle and the object its last read variable names,
+  ;; kept for the object's update; other objects' transforms, kept for the step in four entries of a
+  ;; handle and nine values after the frame, until the module sets one.
+  (global $self_h (mut i32) (i32.const 0))
+  (global $ref_ok (mut i32) (i32.const 0))
+  (global $ref_kept (mut i32) (i32.const 0))
+  (global $ref_h (mut i32) (i32.const 0))
+  (global $others_at (mut i32) (i32.const 0))
+  (global $others_next (mut i32) (i32.const 0))
+  (func $object_forget
+    (global.set $self_h (i32.const 0))
+    (global.set $ref_ok (i32.const 0)))
+  (func $others_forget
+    (i32.store (global.get $others_at) (i32.const 0))
+    (i32.store offset=40 (global.get $others_at) (i32.const 0))
+    (i32.store offset=80 (global.get $others_at) (i32.const 0))
+    (i32.store offset=120 (global.get $others_at) (i32.const 0)))
+  (func $self_handle_kept (result i32)
+    (if (i32.eqz (global.get $in_frame)) (then (return (call $self_handle))))
+    (if (i32.eqz (global.get $self_h)) (then (global.set $self_h (call $self_handle))))
+    (global.get $self_h))
+  (func $object_of_kept (param $r i32) (result i32)
+    (if (i32.eqz (global.get $in_frame)) (then (return (call $object_of (local.get $r)))))
+    (if (i32.and (global.get $ref_ok) (i32.eq (global.get $ref_kept) (local.get $r))) (then (return (global.get $ref_h))))
+    (global.set $ref_h (call $object_of (local.get $r)))
+    (global.set $ref_kept (local.get $r))
+    (global.set $ref_ok (i32.const 1))
+    (global.get $ref_h))
+  (func $t_of_kept (param $h i32) (param $i i32) (result f32) (local $e i32) (local $end i32)
+    ;; No object (0, or -1 for no player) goes to the host, which says so.
+    (if (i32.or (i32.eqz (global.get $in_frame)) (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return (call $t_of (local.get $h) (local.get $i)))))
+    ;; This object's own transform is in the frame, with what this step set.
+    (if (i32.eq (local.get $h) (call $self_handle_kept))
+      (then (return (f32.load (i32.add (global.get $frame_cur) (i32.shl (local.get $i) (i32.const 2)))))))
+    (local.set $e (global.get $others_at))
+    (local.set $end (i32.add (local.get $e) (i32.const 160)))
+    (block $miss (loop $look
+      (br_if $miss (i32.ge_u (local.get $e) (local.get $end)))
+      (if (i32.eq (i32.load (local.get $e)) (local.get $h))
+        (then (return (f32.load offset=4 (i32.add (local.get $e) (i32.shl (local.get $i) (i32.const 2)))))))
+      (local.set $e (i32.add (local.get $e) (i32.const 40)))
+      (br $look)))
+    (local.set $e (i32.add (global.get $others_at) (i32.mul (global.get $others_next) (i32.const 40))))
+    (global.set $others_next (i32.and (i32.add (global.get $others_next) (i32.const 1)) (i32.const 3)))
+    (call $transform_get_of (local.get $h) (i32.add (local.get $e) (i32.const 4)))
+    (i32.store (local.get $e) (local.get $h))
+    (f32.load offset=4 (i32.add (local.get $e) (i32.shl (local.get $i) (i32.const 2)))))
+  (func $transform_set_of_forgetting (param $h i32) (param $ptr i32)
+    (if (global.get $in_frame) (then (call $others_forget)))
+    (call $transform_set_of (local.get $h) (local.get $ptr)))
+  (func $position_set_of_forgetting (param $h i32) (param $ptr i32)
+    (if (global.get $in_frame) (then (call $others_forget)))
+    (call $position_set_of (local.get $h) (local.get $ptr)))
 "#,
     );
     let mut forget = String::new();

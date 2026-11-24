@@ -2348,6 +2348,53 @@ fn objects_running_one_graph_each_keep_their_own_variables_and_text() {
     assert_eq!(logs, ["First 1", "Second 1", "First 2", "Second 2"], "each object counts on its own and keeps its own text");
 }
 
+#[test]
+fn objects_running_one_graph_see_another_object_where_they_last_moved_it() {
+    let mut b = Builder::new();
+    // Each step: Target's x += 1, then log Target's x, read again.
+    let update = b.node("update", json!({}));
+    let before = b.node("positionOf", json!({ "object": "Target" }));
+    let parts = b.node("split", json!({}));
+    b.link(before, "position", parts, "vector");
+    let more = b.node("add", json!({ "b": 1.0 }));
+    b.link(parts, "x", more, "a");
+    let moved = b.node("vector", json!({}));
+    b.link(more, "result", moved, "x");
+    let set = b.node("setPositionOf", json!({ "object": "Target" }));
+    b.link(update, "then", set, "run");
+    b.link(moved, "vector", set, "position");
+    let after = b.node("positionOf", json!({ "object": "Target" }));
+    let now = b.node("split", json!({}));
+    b.link(after, "position", now, "vector");
+    let said = b.node("log", json!({ "message": "" }));
+    b.link(set, "then", said, "run");
+    b.link(now, "x", said, "value");
+    let bytes = b.bytes();
+    assert!(wat_exports(&bytes).contains(&"bayleaf_update_all".to_owned()), "a graph runs every object of its file in one instance");
+
+    let mut scene = Scene::new();
+    scene.create_object(None, "Target").unwrap();
+    let movers = [scene.create_object(None, "First").unwrap(), scene.create_object(None, "Second").unwrap()];
+    let mut host = ScriptHost::new();
+    let input = Arc::new(Input::default());
+    let script = ScriptRef { module: "push.bscript".into(), properties: BTreeMap::new() };
+    for id in movers {
+        host.load_bytes(id, 0, Path::new("push.bscript"), None, &bytes, &script, &mut scene, 0.0, &input).unwrap();
+    }
+    let read = |host: &mut ScriptHost| -> Vec<f64> { host.take_logs().into_iter().map(|l| l.text.parse().unwrap()).collect() };
+    host.update(&mut scene, 0.1, 0.0, &input);
+    let first_step = read(&mut host);
+    host.update(&mut scene, 0.1, 0.1, &input);
+    let second_step = read(&mut host);
+    assert!(host.take_faults().is_empty());
+    // Within a step, each object sees the move it just made; the next step starts where the last left it.
+    assert!(first_step.iter().all(|x| *x > 0.0), "a move shows at once: {first_step:?}");
+    assert!(
+        second_step.iter().zip(&first_step).all(|(later, earlier)| later > earlier),
+        "each step goes on from the last: {first_step:?} then {second_step:?}"
+    );
+}
+
 /// The names a module exports.
 fn wat_exports(bytes: &[u8]) -> Vec<String> {
     let module = wasmi::Module::new(&wasmi::Engine::default(), bytes).unwrap();

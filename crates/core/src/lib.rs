@@ -7,6 +7,7 @@ pub use glam as math;
 pub use web_time as time;
 
 pub mod files;
+pub mod hash;
 
 use std::fmt;
 
