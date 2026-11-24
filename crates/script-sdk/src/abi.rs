@@ -609,7 +609,8 @@ mod raw {
     }
     pub unsafe fn input_map_set(handle: i32, ptr: *const u8, n: usize) -> i32 {
         // SAFETY: the safe wrappers pass a live slice.
-        text_call("input_map_set", unsafe { bytes(ptr, n) }, &[I32(handle)])
+        // The host takes the object first, then the map's name.
+        numbers_then_text("input_map_set", &[I32(handle)], unsafe { bytes(ptr, n) })
     }
     pub unsafe fn script_component(handle: i32, ptr: *const u8, n: usize) -> i32 {
         // SAFETY: the safe wrappers pass a live slice.
