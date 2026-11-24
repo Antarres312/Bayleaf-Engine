@@ -250,3 +250,28 @@ In rough order of gain for the work:
 Past these, the remaining gap is the sandbox's own price (a store, fuel and checked calls per
 script). Running all scripts of one kind in one instance, or batching host calls (a script reading
 and writing its transform through shared memory), would be the larger design changes.
+
+## Other languages, no engine (5000 and 10,000 objects)
+
+`bench/run-languages.ps1` runs the same scene and per-object work in C++ (`bench/cpp`), C#
+(`bench/csharp`, C# 5 so Windows' .NET Framework compiler builds it; the same program also runs on
+.NET 9 through a runtimeconfig) and Python (`bench/python`, plain CPython, no libraries). Three runs
+each; every row in [results/2026-11-24-languages.md](results/2026-11-24-languages.md).
+
+Script step, ms per step (times C++ with objects owning their components):
+
+| Version | 5000 | 10,000 |
+|---|---:|---:|
+| C++ (MSVC /O2), objects own components | 0.059 (1) | 0.117 (1) |
+| C# on .NET 9, objects own components | 0.099 (1.7) | 0.183 (1.6) |
+| C# on .NET Framework 4.8, objects own components | 0.272 (4.6) | 0.545 (4.7) |
+| Python 3.13, objects own components | 2.2 (38) | 5.8 (50) |
+| Bayleaf compiled, Rust scripts (table above) | 47.3 (775) | 118 (1015) |
+
+The runs' means differ by under 2 % for C++ and C#, and by up to 10 % for Python. The Python runs
+overlapped with the start of a Bayleaf run on another core.
+
+The Bayleaf numbers in this README were taken on `main` at 0.3.0. The benchmark was then moved onto
+`develop`; a quick check there at 500 objects gave somewhat lower step times (interpreted Rust
+3.7 ms against 5.1), and the host paths described above are unchanged, but the full suite has not
+been run again on `develop`.
