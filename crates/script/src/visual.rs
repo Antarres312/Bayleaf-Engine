@@ -1710,7 +1710,37 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     }
     out.push_str(&functions);
     out.push_str(")\n");
-    Ok(out)
+    Ok(without_unused_fields(out))
+}
+
+/// The module without the component functions' imports and helpers when nothing in it reads or
+/// sets a component field: the host gathers every object's fields each step for scripts that
+/// import them, so a script that does not should not.
+fn without_unused_fields(module: String) -> String {
+    let body = &module[PRELUDE.len()..];
+    let uses = ["(call $field_value", "(call $set_field", "(call $component_get", "(call $component_set"];
+    if uses.iter().any(|call| body.contains(call)) {
+        return module;
+    }
+    let mut prelude = String::with_capacity(PRELUDE.len());
+    let mut skipping = false;
+    for line in PRELUDE.lines() {
+        if line.contains("(import \"bayleaf\" \"component_get\"") || line.contains("(import \"bayleaf\" \"component_set\"") {
+            continue;
+        }
+        // The two helpers that call them, up to the comment after them.
+        if line.contains(";; Part $offset (0, 4 or 8) of a component field") {
+            skipping = true;
+        }
+        if skipping && line.contains(";; Text is (address << 32)") {
+            skipping = false;
+        }
+        if !skipping {
+            prelude.push_str(line);
+            prelude.push('\n');
+        }
+    }
+    prelude + body
 }
 
 /// A name as a label: `jumpHeight` and `jump_height` become `Jump Height`.

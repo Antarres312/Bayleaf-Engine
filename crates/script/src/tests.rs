@@ -595,3 +595,34 @@ fn a_list_used_as_a_map_or_grown_past_its_limit_stops_the_script_with_a_reason()
         assert!(faults[0].error.to_string().contains(expected), "{} does not mention {expected}", faults[0].error);
     }
 }
+
+#[test]
+fn a_script_finds_an_object_by_the_name_it_has_now_after_the_scene_changes_between_steps() {
+    let input = Arc::new(Input::default());
+    let (mut scene, id, script) = setup(&[]);
+    // Logs "found" while an object named Door is in the scene.
+    let text = format!(
+        r#"(module {IMPORTS}
+            (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "Door")
+            (data (i32.const 120) "found")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param f32)
+              (if (call $find (i32.const 100) (i32.const 4)) (then (call $log (i32.const 120) (i32.const 5))))))"#
+    );
+    let mut host = super::test_host();
+    load(&mut host, &mut scene, id, &script, &wat::parse_str(text).unwrap()).unwrap();
+    host.update(&mut scene, 0.1, 0.0, &input);
+    assert!(host.take_logs().is_empty(), "no Door yet");
+    let door = scene.create_object(None, "Gate").unwrap();
+    host.update(&mut scene, 0.1, 0.1, &input);
+    assert!(host.take_logs().is_empty(), "a Gate is no Door");
+    scene.set(door, bayleaf_scene::components::Name("Door".to_owned())).unwrap();
+    host.update(&mut scene, 0.1, 0.2, &input);
+    assert_eq!(host.take_logs().len(), 1, "renamed, it is found the next step");
+    scene.delete_object(door).unwrap();
+    host.update(&mut scene, 0.1, 0.3, &input);
+    assert!(host.take_logs().is_empty(), "and not once it is gone");
+    assert!(host.take_faults().is_empty());
+}

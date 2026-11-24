@@ -143,6 +143,8 @@ struct Instance {
 
 /// All script instances of one play session.
 pub struct ScriptHost {
+    /// What scripts see of the scene that changes only with its structure, kept from the last step.
+    layout: Option<Arc<crate::Layout>>,
     engine: Engine,
     linker: Linker<HostState>,
     /// Modules by their bytes, so a script on many objects is compiled once.
@@ -150,7 +152,10 @@ pub struct ScriptHost {
     /// Scripts built into the game, by the module path they stand for (native mode).
     natives: Vec<(PathBuf, crate::NativeScript)>,
     /// How long each script's update took since they were last taken, by script name.
+    /// Each script's time, by name, since the profiler last asked; kept only while it records.
     timings: Vec<(String, std::time::Duration)>,
+    /// Whether to time scripts (the profiler records).
+    timing: bool,
     instances: Vec<Instance>,
     faults: Vec<ScriptFault>,
     logs: Vec<LogLine>,
@@ -177,9 +182,11 @@ impl ScriptHost {
         Self {
             engine,
             linker,
+            layout: None,
             modules: HashMap::new(),
             natives: Vec::new(),
             timings: Vec::new(),
+            timing: false,
             instances: Vec::new(),
             faults: Vec::new(),
             logs: Vec::new(),
@@ -355,7 +362,9 @@ impl ScriptHost {
         state.index = index;
         state.state = Arc::clone(&self.state);
         state.input_maps = Arc::clone(&self.input_maps);
-        state.world = WorldView::of(scene, self.script_values());
+        // The world view comes before each call (init, start, every step), so a script just loaded
+        // keeps none: loading stays linear in the scene, not objects times scripts.
+        state.world = Arc::default();
         let mut store = Store::new(&self.engine, state);
         store.limiter(|state| &mut state.limits);
         let trapped = |module: &str, e: Error| ScriptError::Trapped { module: module.to_owned(), message: trap_message(&e) };
@@ -440,7 +449,10 @@ impl ScriptHost {
         input: &Arc<Input>,
         take: impl Fn(&mut Instance) -> Option<TypedFunc<(), ()>>,
     ) -> Vec<(StableId, usize, ScriptError)> {
-        let world = WorldView::of(scene, self.script_values());
+        let world = {
+            let values = self.script_values();
+            WorldView::of(scene, values, &mut self.layout)
+        };
         let mut failed = Vec::new();
         let mut logs = Vec::new();
         for entry in self.instances.iter_mut().filter(|e| !e.stopped) {
@@ -473,7 +485,10 @@ impl ScriptHost {
         let mut faults = Vec::new();
         let mut logs = Vec::new();
         // Every script sees the objects as the step began.
-        let world = WorldView::of(scene, self.script_values());
+        let world = {
+            let values = self.script_values();
+            WorldView::of(scene, values, &mut self.layout)
+        };
         for entry in self.instances.iter_mut().filter(|i| !i.stopped) {
             if !scene.contains(entry.object) {
                 entry.stopped = true;
@@ -482,8 +497,9 @@ impl ScriptHost {
             let Some(update) = entry.update.as_ref().cloned() else { continue };
             {
                 let state = entry.store.data_mut();
-                state.transform = read_transform(scene, entry.object);
-                state.position = read_position(scene, entry.object);
+                let t = scene.get::<bayleaf_scene::components::Transform>(entry.object).cloned().unwrap_or_default();
+                state.transform = crate::abi_transform(&t);
+                state.position = t.position;
                 state.transform_changed = false;
                 state.time = time;
                 state.input = Arc::clone(input);
@@ -494,11 +510,20 @@ impl ScriptHost {
                 state.input_maps = Arc::clone(&self.input_maps);
                 state.state = Arc::clone(&self.state);
             }
-            let started = bayleaf_core::time::Instant::now();
+            let started = self.timing.then(bayleaf_core::time::Instant::now);
             let result = call(entry, |store| update.call(store, dt));
-            self.timings.push((entry.script_name.clone(), started.elapsed()));
-            let script = entry.script_name.clone();
-            logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
+            if let Some(started) = started {
+                let took = started.elapsed();
+                match self.timings.iter_mut().find(|(name, _)| *name == entry.script_name) {
+                    Some((_, total)) => *total += took,
+                    None => self.timings.push((entry.script_name.clone(), took)),
+                }
+            }
+            let state = entry.store.data_mut();
+            if !state.logs.is_empty() {
+                let script = entry.script_name.clone();
+                logs.extend(state.logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
+            }
             match result {
                 Ok(()) => after_call(scene, entry, &mut self.requests, &mut self.messages, &mut self.property_writes),
                 Err(error) => {
@@ -548,7 +573,10 @@ impl ScriptHost {
         if messages.is_empty() {
             return;
         }
-        let world = WorldView::of(scene, self.script_values());
+        let world = {
+            let values = self.script_values();
+            WorldView::of(scene, values, &mut self.layout)
+        };
         let mut later = Vec::new();
         let mut faults = Vec::new();
         let mut logs = Vec::new();
@@ -670,7 +698,14 @@ impl ScriptHost {
         change(&mut lock(&self.state))
     }
 
-    /// How long each script's update took since this was last asked (for the profiler).
+    /// Whether to time each script's update (for the profiler, while it records). Off, scripts are
+    /// not timed at all.
+    pub fn set_timing(&mut self, on: bool) {
+        self.timing = on;
+    }
+
+    /// How long the scripts of each name took in all since this was last asked (for the profiler),
+    /// while timing is on.
     pub fn take_timings(&mut self) -> Vec<(String, std::time::Duration)> {
         std::mem::take(&mut self.timings)
     }
@@ -709,7 +744,10 @@ impl ScriptHost {
         if contacts.is_empty() {
             return;
         }
-        let world = WorldView::of(scene, self.script_values());
+        let world = {
+            let values = self.script_values();
+            WorldView::of(scene, values, &mut self.layout)
+        };
         for (object, name, other) in contacts {
             self.messages.push(Message {
                 to: Some(*object),
@@ -1109,12 +1147,12 @@ fn state_scope(caller: &mut Caller<'_, HostState>, what: &str, scope: i32, handl
     match scope {
         0 => Ok(Some(Scope::Game)),
         2 => Ok(Some(Scope::Saved)),
-        1 if handle == 0 => Ok(caller.data().world.players.first().copied().map(Scope::Player)),
+        1 if handle == 0 => Ok(caller.data().world.players().first().copied().map(Scope::Player)),
         // -1 names no object, as a search that found nothing; it is no player.
         1 if handle == -1 => Ok(None),
         1 => match caller.data().world.object(handle) {
             // Only objects with Player Control have a player state.
-            Some((id, _)) => Ok(caller.data().world.players.contains(&id).then_some(Scope::Player(id))),
+            Some((id, _)) => Ok(caller.data().world.players().contains(&id).then_some(Scope::Player(id))),
             None => Err(fault(caller, format!("{what}: there is no object with handle {handle}"))),
         },
         _ => Err(fault(caller, format!("{what}: scope is 0 (the game), 1 (a player) or 2 (saved)"))),
@@ -1327,7 +1365,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             if name.is_empty() {
                 return Ok(0);
             }
-            Ok(state.world.objects.iter().position(|(_, n, _)| n == name).map_or(0, |i| i as i32 + 1))
+            Ok(state.world.find(name))
         })?;
         linker.func_wrap("bayleaf", "time", |caller: Caller<'_, HostState>| -> f64 { caller.data().time })?;
         linker.func_wrap("bayleaf", "key_down", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, Error> {
@@ -1460,7 +1498,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         })?;
         linker.func_wrap("bayleaf", "find", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, Error> {
             let name = read_text(&mut caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("find: {m}")))?;
-            Ok(caller.data().world.objects.iter().position(|(_, n, _)| *n == name).map_or(0, |i| i as i32 + 1))
+            Ok(caller.data().world.find(&name))
         })?;
         linker.func_wrap("bayleaf", "find_with", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, index: i32| -> Result<i32, Error> {
             let kind = read_text(&mut caller, ptr, len, 256).map_err(|m| fault(&mut caller, format!("find_with: {m}")))?;
@@ -1864,7 +1902,7 @@ fn seeded(caller: &Caller<'_, HostState>, seed: &DeclaredProperty) -> Stored {
     let arg = |value: &PropertyValue| -> EventArg {
         match (seed.ty, value) {
             (PropertyType::WholeNumber, PropertyValue::Number(n)) => EventArg::Whole(*n as i32),
-            (PropertyType::Object, PropertyValue::Text(name)) => EventArg::Object(world.objects.iter().find(|(_, n, _)| n == name).map(|(id, _, _)| *id)),
+            (PropertyType::Object, PropertyValue::Text(name)) => EventArg::Object(world.get(world.find(name)).map(|(id, _, _)| *id)),
             (_, PropertyValue::Number(n)) => EventArg::Number(*n as f32),
             (_, PropertyValue::Flag(b)) => EventArg::Flag(*b),
             (_, PropertyValue::Triple(v)) => EventArg::Vector(*v),
@@ -1888,7 +1926,7 @@ fn seeded_key(world: &WorldView, ty: PropertyType, key: &str) -> Option<MapKey> 
     let number = |t: &str| t.trim().parse::<f32>().ok().filter(|v| v.is_finite());
     Some(match ty {
         PropertyType::Text => MapKey::Text(key.to_owned()),
-        PropertyType::Object => MapKey::Object(world.objects.iter().find(|(_, n, _)| n == key).map(|(id, _, _)| *id)?),
+        PropertyType::Object => MapKey::Object(world.get(world.find(key)).map(|(id, _, _)| *id)?),
         PropertyType::Number => MapKey::Number(Ordered::new(number(key)?)),
         PropertyType::WholeNumber => MapKey::Whole(key.trim().parse().ok()?),
         PropertyType::TrueFalse => MapKey::Flag(key.parse().ok()?),

@@ -62,6 +62,17 @@ pub struct Scene {
     children: HashMap<Option<StableId>, Vec<StableId>>,
     /// The scene's own settings (its lighting asset).
     settings: lighting::SceneSettings,
+    /// Counts changes to anything but transforms: objects, their names and components, the
+    /// hierarchy. Each scene starts at a number no other scene of the process starts at, so what is
+    /// cached against it (the scripts' view of the world) never mixes two scenes.
+    structure: u64,
+}
+
+/// Where the next scene's structure count starts: far apart, so no two scenes' counts meet.
+static NEXT_STRUCTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn first_structure() -> u64 {
+    NEXT_STRUCTURE.fetch_add(1 << 40, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Default for Scene {
@@ -73,6 +84,7 @@ impl Default for Scene {
             parents: HashMap::new(),
             children: HashMap::new(),
             settings: lighting::SceneSettings::default(),
+            structure: first_structure(),
         }
     }
 }
@@ -103,6 +115,13 @@ impl Scene {
     /// The ECS world, for systems that read component data directly.
     pub fn world(&self) -> &World {
         &self.world
+    }
+
+    /// A number that changes whenever anything but a transform does: an object comes or goes, is
+    /// renamed or moved in the hierarchy, or a component is added, removed or changed. Equal numbers
+    /// mean the same scene with the same structure.
+    pub fn structure(&self) -> u64 {
+        self.structure
     }
 
     pub fn object_count(&self) -> usize {
@@ -137,6 +156,9 @@ impl Scene {
     /// Typed write of one component, checked like a value from a file or command.
     pub fn set<T: components::SceneComponent>(&mut self, id: StableId, value: T) -> Result<(), SceneError> {
         value.validate().map_err(|message| SceneError::InvalidValue { component: T::NAME.to_owned(), message })?;
+        if T::NAME != <Transform as components::SceneComponent>::NAME {
+            self.structure += 1;
+        }
         let entity = self.entity(id)?;
         self.world.insert(entity, value).map_err(|e| SceneError::Internal(e.to_string()))
     }
@@ -173,6 +195,7 @@ impl Scene {
         let id = StableId::random().map_err(|e| SceneError::Internal(e.to_string()))?;
         let entity = self.insert_object(id, parent)?;
         for kind in self.registry.kinds().iter().filter(|k| !k.removable) {
+            self.structure += 1;
             kind.add_default(&mut self.world, entity).map_err(SceneError::Internal)?;
         }
         self.world.insert(entity, Name(name.to_owned())).map_err(|e| SceneError::Internal(e.to_string()))?;
@@ -185,6 +208,7 @@ impl Scene {
             return Err(SceneError::UnknownObject(id));
         }
         let parent = self.parent(id);
+        self.structure += 1;
         if let Some(siblings) = self.children.get_mut(&parent) {
             siblings.retain(|c| *c != id);
         }
@@ -212,6 +236,7 @@ impl Scene {
                 return Err(SceneError::Cycle);
             }
         }
+        self.structure += 1;
         let old_parent = self.parent(id);
         if let Some(siblings) = self.children.get_mut(&old_parent) {
             siblings.retain(|c| *c != id);
@@ -286,6 +311,7 @@ impl Scene {
         if !kind.removable {
             return Err(SceneError::NotRemovable(component.to_owned()));
         }
+        self.structure += 1;
         if kind.remove(&mut self.world, entity) { Ok(()) } else { Err(SceneError::MissingComponent { object: id, component: component.to_owned() }) }
     }
 
@@ -443,6 +469,7 @@ impl Scene {
         {
             return Err(SceneError::UnknownObject(parent));
         }
+        self.structure += 1;
         let entity = self.world.spawn().map_err(|e| SceneError::Internal(e.to_string()))?;
         self.world.insert(entity, id).map_err(|e| SceneError::Internal(e.to_string()))?;
         self.entities.insert(id, entity);
@@ -454,6 +481,9 @@ impl Scene {
     fn write_component(&mut self, id: StableId, component: &str, value: Value) -> Result<(), SceneError> {
         let entity = self.entity(id)?;
         let kind = *self.registry.find(component).ok_or_else(|| SceneError::UnknownComponent(component.to_owned()))?;
+        if kind.name != <Transform as components::SceneComponent>::NAME {
+            self.structure += 1;
+        }
         kind.set(&mut self.world, entity, value).map_err(|message| SceneError::InvalidValue { component: component.to_owned(), message })
     }
 

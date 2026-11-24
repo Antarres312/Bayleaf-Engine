@@ -678,6 +678,11 @@ fn status(session: &mut Session, params: &Value) -> Result<Value, CommandError> 
 /// Advances play mode by `dt` seconds, split into steps of at most [`MAX_STEP`].
 pub(crate) fn step(session: &mut Session, dt: f32) {
     let started = bayleaf_core::time::Instant::now();
+    // Scripts are timed one by one only while the profiler records.
+    let recording = session.profiler.is_recording();
+    if let Some(play) = session.play.as_mut() {
+        play.host.set_timing(recording);
+    }
     step_parts(session, dt);
     // Each script's time, and the whole step, for the profiler.
     let timings = session.play.as_mut().map(|p| p.host.take_timings()).unwrap_or_default();

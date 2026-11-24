@@ -428,14 +428,57 @@ struct Subscription {
 /// Most subscriptions one game keeps.
 pub const MAX_SUBSCRIPTIONS: usize = 65_536;
 
+/// What scripts see of the scene that changes only with its structure (`Scene::structure`): each
+/// object's name, what it is for searches, its scripts' names, whether it is a player and what rays
+/// can hit on it, by its place in hierarchy order. Kept from step to step while the structure stays.
+struct Layout {
+    structure: u64,
+    names: Vec<Arc<str>>,
+    /// Each object's place, by id.
+    index: HashMap<StableId, usize>,
+    /// The first object of each name, in hierarchy order.
+    by_name: HashMap<Arc<str>, usize>,
+    kinds: Vec<Vec<String>>,
+    players: Vec<StableId>,
+    script_names: Vec<Vec<String>>,
+    shapes: Vec<Option<ShapeSpec>>,
+}
+
+impl Layout {
+    fn of(scene: &Scene, all: &[(StableId, DMat4)]) -> Self {
+        let names: Vec<Arc<str>> = all.iter().map(|(id, _)| Arc::from(scene.name(*id).unwrap_or_default())).collect();
+        let mut by_name = HashMap::with_capacity(names.len());
+        for (i, name) in names.iter().enumerate() {
+            by_name.entry(Arc::clone(name)).or_insert(i);
+        }
+        Self {
+            structure: scene.structure(),
+            index: all.iter().enumerate().map(|(i, (id, _))| (*id, i)).collect(),
+            by_name,
+            names,
+            kinds: all.iter().map(|(id, _)| object_kinds(scene, *id)).collect(),
+            players: all.iter().map(|(id, _)| *id).filter(|id| scene.get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect(),
+            script_names: all
+                .iter()
+                .map(|(id, _)| {
+                    scene
+                        .get::<bayleaf_scene::components::Scripts>(*id)
+                        .map(|s| s.0.iter().map(|script| kind_key(&script.display_name())).collect())
+                        .unwrap_or_default()
+                })
+                .collect(),
+            shapes: all.iter().map(|(id, _)| shape_spec(scene, *id)).collect(),
+        }
+    }
+}
+
 /// The objects scripts can see during one step: names and local transforms as the step began.
 /// A handle is an object's position in this list plus one; 0 means none.
 #[derive(Default)]
 struct WorldView {
-    objects: Vec<(StableId, String, [f32; 9])>,
-    /// What rays can hit, by the same index: the world matrix and the box of the object's shape or
-    /// sprite, in its own space.
-    shapes: Vec<Option<(DMat4, RayShape)>>,
+    objects: Vec<(StableId, Arc<str>, [f32; 9])>,
+    /// Each object's world matrix as the step began, by the same index: where its ray shape is.
+    worlds: Vec<DMat4>,
     /// Each object's position in double precision, by the same index.
     positions: Vec<[f64; 3]>,
     /// The fields of each object's readable components (`visual::COMPONENTS`), by the same index;
@@ -444,44 +487,62 @@ struct WorldView {
     /// The scripts on each object with their properties as the step began, by object; empty unless a
     /// loaded script reads or sets component fields.
     scripts: HashMap<StableId, Vec<ScriptValues>>,
-    /// What each object is, by the same index, for searches: its components' names and labels,
-    /// its tags and its scripts' names, each as `kind_key` makes them.
-    kinds: Vec<Vec<String>>,
-    /// Objects with Player Control, in hierarchy order.
-    players: Vec<StableId>,
-    /// Each object's scripts in order, by the same index: each one's name as `kind_key` makes it.
-    script_names: Vec<Vec<String>>,
+    /// What changes only with the scene's structure.
+    layout: Option<Arc<Layout>>,
 }
 
 impl WorldView {
     /// `scripts` is `Some` when scripts read or set component fields: then their values come along.
-    fn of(scene: &Scene, scripts: Option<HashMap<StableId, Vec<ScriptValues>>>) -> Arc<Self> {
+    /// `kept` is the layout of an earlier step, used again while the scene's structure is the same,
+    /// and replaced when it is not.
+    fn of(scene: &Scene, scripts: Option<HashMap<StableId, Vec<ScriptValues>>>, kept: &mut Option<Arc<Layout>>) -> Arc<Self> {
         let with_fields = scripts.is_some();
         let all = scene.world_matrices();
-        let objects = all.iter().map(|(id, _)| (*id, scene.name(*id).unwrap_or_default().to_owned(), read_transform(scene, *id))).collect();
-        let shapes = all.iter().map(|(id, world)| ray_shape(scene, *id, *world)).collect();
-        let positions = all.iter().map(|(id, _)| read_position(scene, *id)).collect();
-        let players = all.iter().map(|(id, _)| *id).filter(|id| scene.get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect();
-        let kinds = all.iter().map(|(id, _)| object_kinds(scene, *id)).collect();
+        let layout = match kept {
+            Some(layout) if layout.structure == scene.structure() && layout.names.len() == all.len() => Arc::clone(layout),
+            _ => {
+                let layout = Arc::new(Layout::of(scene, &all));
+                *kept = Some(Arc::clone(&layout));
+                layout
+            }
+        };
+        let mut objects = Vec::with_capacity(all.len());
+        let mut positions = Vec::with_capacity(all.len());
+        for (i, (id, _)) in all.iter().enumerate() {
+            let t = scene.get::<Transform>(*id).cloned().unwrap_or_default();
+            objects.push((*id, Arc::clone(&layout.names[i]), abi_transform(&t)));
+            positions.push(t.position);
+        }
+        let worlds = all.iter().map(|(_, world)| *world).collect();
         let fields = if with_fields { all.iter().map(|(id, _)| object_fields(scene, *id)).collect() } else { Vec::new() };
-        let script_names = all
-            .iter()
-            .map(|(id, _)| {
-                scene
-                    .get::<bayleaf_scene::components::Scripts>(*id)
-                    .map(|s| s.0.iter().map(|script| kind_key(&script.display_name())).collect())
-                    .unwrap_or_default()
-            })
-            .collect();
-        Arc::new(Self { objects, shapes, positions, players, kinds, fields, scripts: scripts.unwrap_or_default(), script_names })
+        Arc::new(Self { objects, worlds, positions, fields, scripts: scripts.unwrap_or_default(), layout: Some(layout) })
+    }
+
+    fn layout(&self) -> Option<&Layout> {
+        self.layout.as_deref()
+    }
+
+    /// The players, in hierarchy order.
+    fn players(&self) -> &[StableId] {
+        self.layout().map_or(&[], |l| l.players.as_slice())
+    }
+
+    /// The handle of the first object named `name`, in hierarchy order; 0 for none.
+    fn find(&self, name: &str) -> i32 {
+        self.layout().and_then(|l| l.by_name.get(name)).map_or(0, |i| *i as i32 + 1)
     }
 
     /// The nearest shape a ray hits within `max`, other than `skip`: its index and the distance.
     fn raycast(&self, origin: DVec3, direction: DVec3, max: f64, skip: StableId) -> Option<(usize, f64)> {
+        let layout = self.layout()?;
         let mut best: Option<(usize, f64)> = None;
-        for (index, shape) in self.shapes.iter().enumerate() {
-            let Some((pose, shape)) = shape else { continue };
-            if self.objects[index].0 == skip || pose.determinant().abs() < 1e-12 {
+        for (index, spec) in layout.shapes.iter().enumerate() {
+            let (Some(spec), Some(world)) = (spec, self.worlds.get(index)) else { continue };
+            if self.objects[index].0 == skip {
+                continue;
+            }
+            let (pose, shape) = spec.placed(*world);
+            if pose.determinant().abs() < 1e-12 {
                 continue;
             }
             // In the shape's own space; the ray's parameter stays the world distance.
@@ -499,11 +560,15 @@ impl WorldView {
     /// hierarchy order.
     fn with_kind(&self, kind: &str) -> impl Iterator<Item = i32> + '_ {
         let key = kind_key(kind);
-        self.kinds.iter().enumerate().filter(move |(_, kinds)| !key.is_empty() && kinds.contains(&key)).map(|(i, _)| i as i32 + 1)
+        self.layout()
+            .into_iter()
+            .flat_map(|l| l.kinds.iter().enumerate())
+            .filter(move |(_, kinds)| !key.is_empty() && kinds.contains(&key))
+            .map(|(i, _)| i as i32 + 1)
     }
 
     fn handle_of(&self, id: StableId) -> i32 {
-        self.objects.iter().position(|(o, _, _)| *o == id).map_or(0, |i| i as i32 + 1)
+        self.layout().and_then(|l| l.index.get(&id)).map_or(0, |i| *i as i32 + 1)
     }
 
     /// The object a handle names and its index.
@@ -516,11 +581,11 @@ impl WorldView {
     fn script_on(&self, handle: i32, name: &str) -> i32 {
         let key = kind_key(name);
         self.object(handle)
-            .and_then(|(_, index)| self.script_names.get(index)?.iter().position(|k| *k == key))
+            .and_then(|(_, index)| self.layout()?.script_names.get(index)?.iter().position(|k| *k == key))
             .map_or(0, |place| i32::try_from(place + 1).unwrap_or(0))
     }
 
-    fn get(&self, handle: i32) -> Option<&(StableId, String, [f32; 9])> {
+    fn get(&self, handle: i32) -> Option<&(StableId, Arc<str>, [f32; 9])> {
         usize::try_from(handle).ok().and_then(|h| h.checked_sub(1)).and_then(|i| self.objects.get(i))
     }
 }
@@ -841,31 +906,26 @@ fn sphere_hit(o: DVec3, d: DVec3, center: DVec3, r: f64) -> Option<f64> {
     (t >= 0.0).then_some(t)
 }
 
-/// What a ray hits on an object, and the pose it is in: a character's capsule or a collider's
-/// shape (triggers are left out, as physics leaves them out), else its mesh shape or sprite.
-/// Colliders are sized as physics sizes them: by the object's world scale, without skewing.
-fn ray_shape(scene: &Scene, id: StableId, world: DMat4) -> Option<(DMat4, RayShape)> {
-    use bayleaf_scene::components::{CharacterBody, Collider, ColliderShape, Mesh, Shape, Sprite};
-    let (scale, rotation, translation) = world.to_scale_rotation_translation();
-    let unscaled = DMat4::from_rotation_translation(rotation, translation);
-    let scale = scale.abs();
+/// What a ray hits on an object apart from where it is (that comes from its world matrix each step):
+/// a character's capsule or a collider's shape (triggers are left out, as physics leaves them
+/// out), else its mesh shape or sprite.
+#[derive(Clone, Copy)]
+enum ShapeSpec {
+    /// A character's capsule: its height and radius, unscaled.
+    Character(f64, f64),
+    /// A collider's shape and size, scaled by the object's world scale as physics scales it.
+    Collider(bayleaf_scene::components::ColliderShape, DVec3),
+    /// A mesh's or sprite's box: its half size, in the object's own (scaled) space.
+    Half(DVec3),
+}
+
+fn shape_spec(scene: &Scene, id: StableId) -> Option<ShapeSpec> {
+    use bayleaf_scene::components::{CharacterBody, Collider, Mesh, Shape, Sprite};
     if let Some(c) = scene.get::<CharacterBody>(id) {
-        let r = f64::from(c.radius);
-        return Some((unscaled, RayShape::Capsule((f64::from(c.height) * 0.5 - r).max(0.0), r)));
+        return Some(ShapeSpec::Character(f64::from(c.height), f64::from(c.radius)));
     }
     if let Some(c) = scene.get::<Collider>(id) {
-        if c.trigger {
-            return None;
-        }
-        let size = DVec3::from(c.size.map(f64::from)) * scale;
-        return Some(match c.shape {
-            ColliderShape::Box => (unscaled, RayShape::Box(-size * 0.5, size * 0.5)),
-            ColliderShape::Sphere => (unscaled, RayShape::Sphere(size.max_element() * 0.5)),
-            ColliderShape::Capsule => {
-                let r = size.x.max(size.z) * 0.5;
-                (unscaled, RayShape::Capsule((size.y * 0.5 - r).max(0.0), r))
-            }
-        });
+        return (!c.trigger).then(|| ShapeSpec::Collider(c.shape, DVec3::from(c.size.map(f64::from))));
     }
     let half = if let Some(mesh) = scene.get::<Mesh>(id) {
         // A mesh with a model counts as its shape's unit box; models do not keep their exact size here.
@@ -878,11 +938,44 @@ fn ray_shape(scene: &Scene, id: StableId, world: DMat4) -> Option<(DMat4, RaySha
         let sprite = scene.get::<Sprite>(id)?;
         DVec3::new(f64::from(sprite.size[0]) * 0.5, f64::from(sprite.size[1]) * 0.5, 0.001)
     };
-    Some((world, RayShape::Box(-half, half)))
+    Some(ShapeSpec::Half(half))
+}
+
+impl ShapeSpec {
+    /// The shape where the object's world matrix puts it, and the pose it is in. Colliders are sized
+    /// as physics sizes them: by the object's world scale, without skewing.
+    fn placed(self, world: DMat4) -> (DMat4, RayShape) {
+        use bayleaf_scene::components::ColliderShape;
+        let unscaled = || {
+            let (scale, rotation, translation) = world.to_scale_rotation_translation();
+            (DMat4::from_rotation_translation(rotation, translation), scale.abs())
+        };
+        match self {
+            ShapeSpec::Character(height, r) => (unscaled().0, RayShape::Capsule((height * 0.5 - r).max(0.0), r)),
+            ShapeSpec::Collider(shape, size) => {
+                let (pose, scale) = unscaled();
+                let size = size * scale;
+                match shape {
+                    ColliderShape::Box => (pose, RayShape::Box(-size * 0.5, size * 0.5)),
+                    ColliderShape::Sphere => (pose, RayShape::Sphere(size.max_element() * 0.5)),
+                    ColliderShape::Capsule => {
+                        let r = size.x.max(size.z) * 0.5;
+                        (pose, RayShape::Capsule((size.y * 0.5 - r).max(0.0), r))
+                    }
+                }
+            }
+            ShapeSpec::Half(half) => (world, RayShape::Box(-half, half)),
+        }
+    }
 }
 /// The transform as the 9 numbers of the ABI (the position narrowed to single precision).
 fn read_transform(scene: &Scene, object: StableId) -> [f32; 9] {
     let t = scene.get::<Transform>(object).cloned().unwrap_or_default();
+    abi_transform(&t)
+}
+
+/// A transform as the 9 numbers of the ABI.
+fn abi_transform(t: &Transform) -> [f32; 9] {
     let p = t.position.map(|v| v as f32);
     [p[0], p[1], p[2], t.rotation[0], t.rotation[1], t.rotation[2], t.scale[0], t.scale[1], t.scale[2]]
 }

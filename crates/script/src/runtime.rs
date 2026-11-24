@@ -222,6 +222,11 @@ impl ScriptHost {
         each!(&mut self.0, host => host.take_faults())
     }
 
+    /// Whether to time each script's update (for the profiler, while it records).
+    pub fn set_timing(&mut self, on: bool) {
+        each!(&mut self.0, host => host.set_timing(on))
+    }
+
     /// How long each script's update took since this was last asked (for the profiler).
     pub fn take_timings(&mut self) -> Vec<(String, std::time::Duration)> {
         each!(&mut self.0, host => host.take_timings())
