@@ -63,6 +63,8 @@ impl Layout {
         let size = self.size;
         let mut out = String::new();
         let _ = writeln!(out, "  (global $slots (mut i32) (i32.const 0))");
+        // The slots from `base`, then the frame (an entry of 64 bytes per slot), then the heap.
+        let _ = writeln!(out, "  (global $frame_at (mut i32) (i32.const {base}))");
         let _ = writeln!(out, "  (global $heap_start (mut i32) (i32.const {base}))");
         // Puts every kept global and text back as the script starts.
         let mut reset = String::new();
@@ -97,7 +99,8 @@ impl Layout {
     (if (i32.ge_u (local.get $k) (global.get $slots))
       (then
         (global.set $slots (i32.add (local.get $k) (i32.const 1)))
-        (global.set $heap_start (i32.add (i32.const {base}) (i32.mul (global.get $slots) (i32.const {size}))))
+        (global.set $frame_at (i32.add (i32.const {base}) (i32.mul (global.get $slots) (i32.const {size}))))
+        (global.set $heap_start (i32.add (global.get $frame_at) (i32.mul (global.get $slots) (i32.const 64))))
         (local.set $end (i32.add (global.get $heap_start) (i32.const 65536)))
         (if (i32.gt_u (local.get $end) (i32.shl (memory.size) (i32.const 16)))
           (then
@@ -108,10 +111,12 @@ impl Layout {
         );
         let _ = writeln!(out, "  (func (export \"bayleaf_detach\") (param $k i32))");
         let fresh = "    (global.set $heap (global.get $heap_start))\n";
+        // Outside an update of all, properties and the time are read afresh.
+        let forget = "    (call $properties_forget)\n    (global.set $time_ok (i32.const 0))\n";
         let mut slot_function = |name: &str, body: &str| {
             let _ = writeln!(
                 out,
-                "  (func (export \"{name}\") (param $k i32)\n    (call $slot_load (local.get $k))\n{fresh}{body}    (call $slot_save (local.get $k)))"
+                "  (func (export \"{name}\") (param $k i32)\n    (call $slot_load (local.get $k))\n{forget}{fresh}{body}    (call $slot_save (local.get $k)))"
             );
         };
         if let Some(init) = init {
@@ -120,23 +125,212 @@ impl Layout {
         slot_function("bayleaf_start_slot", start);
         let _ = writeln!(
             out,
-            "  (func (export \"bayleaf_update_all\") (param $dt f32) (local $k i32)
+            "  (func (export \"bayleaf_update_all\") (param $dt f32) (local $k i32) (local $selected i32) (local $n i32)
     (global.set $dt (local.get $dt))
+    (global.set $time_ok (i32.const 0))
+    ;; Every object's transform from the host in one call; each object's reads and writes use it.
+    (local.set $n (call $frame_get (global.get $frame_at) (global.get $slots)))
+    (global.set $in_frame (i32.le_u (local.get $n) (global.get $slots)))
     (block $all (loop $each
       (br_if $all (i32.ge_u (local.get $k) (global.get $slots)))
-      (if (call $slot_select (local.get $k))
+      (local.set $selected (call $slot_select (local.get $k)))
+      (if (local.get $selected)
         (then
           (call $slot_load (local.get $k))
+          (global.set $frame_cur (i32.add (global.get $frame_at) (i32.mul (local.get $k) (i32.const 64))))
+          ;; Its properties changed since last read: the host says so at select, or in the frame.
+          (if (i32.or (i32.eq (local.get $selected) (i32.const 2))
+                (i32.and (global.get $in_frame) (i32.ne (i32.and (i32.load offset=36 (global.get $frame_cur)) (i32.const 2)) (i32.const 0))))
+            (then (call $properties_forget)))
       {fresh}{update}          (call $slot_save (local.get $k))))
       (local.set $k (i32.add (local.get $k) (i32.const 1)))
-      (br $each))))"
+      (br $each)))
+    ;; The changed transforms back in one call.
+    (if (global.get $in_frame)
+      (then (global.set $in_frame (i32.const 0)) (call $frame_set (global.get $frame_at) (local.get $n)))))"
         );
         if let Some(message) = message {
             let _ = writeln!(
                 out,
-                "  (func (export \"bayleaf_message_slot\") (param $k i32) (param $value f32)\n    (call $slot_load (local.get $k))\n{fresh}    (global.set $message (local.get $value))\n{message}    (call $slot_save (local.get $k)))"
+                "  (func (export \"bayleaf_message_slot\") (param $k i32) (param $value f32)\n    (call $slot_load (local.get $k))\n{forget}{fresh}    (global.set $message (local.get $value))\n{message}    (call $slot_save (local.get $k)))"
             );
         }
         out
     }
+}
+
+/// A property the script reads with a constant name, whose value a module that runs many objects
+/// keeps per object as last read: where its name is, and how it is read.
+pub(super) struct Cached {
+    at: u32,
+    len: u32,
+    kind: CacheKind,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum CacheKind {
+    Number,
+    Whole,
+    Vector,
+}
+
+impl CacheKind {
+    /// How the event code reads it, before the name's place.
+    fn call(self) -> &'static str {
+        match self {
+            CacheKind::Number => "(call $property (i32.const ",
+            CacheKind::Whole => "(call $property_whole (i32.const ",
+            CacheKind::Vector => "(call $property_part (i32.const ",
+        }
+    }
+
+    fn tag(self) -> &'static str {
+        match self {
+            CacheKind::Number => "f",
+            CacheKind::Whole => "w",
+            CacheKind::Vector => "v",
+        }
+    }
+}
+
+/// The properties `code` reads by constant names (`(call $property (i32.const AT) (i32.const LEN))`
+/// and the like), each once.
+pub(super) fn cached_properties(code: &str) -> Vec<Cached> {
+    let mut found: Vec<Cached> = Vec::new();
+    for kind in [CacheKind::Number, CacheKind::Whole, CacheKind::Vector] {
+        let call = kind.call();
+        let mut rest = code;
+        while let Some(start) = rest.find(call) {
+            let after = &rest[start + call.len()..];
+            rest = after;
+            let Some((at, after)) = after.split_once(") (i32.const ") else { continue };
+            let Some((len, _)) = after.split_once(')') else { continue };
+            let (Ok(at), Ok(len)) = (at.parse::<u32>(), len.parse::<u32>()) else { continue };
+            if !found.iter().any(|c| c.kind == kind && c.at == at) {
+                found.push(Cached { at, len, kind });
+            }
+        }
+    }
+    found
+}
+
+/// The globals that keep each cached property per object (part of what a slot keeps).
+pub(super) fn cache_globals(cached: &[Cached]) -> String {
+    let mut out = String::new();
+    for c in cached {
+        let tag = c.kind.tag();
+        let _ = writeln!(out, "  (global $pc{tag}_{}_ok (mut i32) (i32.const 0))", c.at);
+        match c.kind {
+            CacheKind::Number => {
+                let _ = writeln!(out, "  (global $pc{tag}_{} (mut f32) (f32.const 0))", c.at);
+            }
+            CacheKind::Whole => {
+                let _ = writeln!(out, "  (global $pc{tag}_{} (mut i32) (i32.const 0))", c.at);
+            }
+            CacheKind::Vector => {
+                for i in 0..3 {
+                    let _ = writeln!(out, "  (global $pc{tag}_{}_{i} (mut f32) (f32.const 0))", c.at);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The module, for running many objects: every read of this object's transform, position, the time
+/// and the cached properties goes to the frame and the caches instead of the host, while an update of
+/// all runs; then the helpers that do it.
+pub(super) fn rewrite(module: &str, cached: &[Cached]) -> String {
+    let mut out = module
+        .replace("(call $transform_get ", "(call $frame_transform_get ")
+        .replace("(call $transform_set ", "(call $frame_transform_set ")
+        .replace("(call $position_get_of (call $self_handle) ", "(call $frame_position_get ")
+        .replace("(call $position_set_of (call $self_handle) ", "(call $frame_position_set ")
+        .replace("(call $time)", "(call $time_kept)")
+        .replace("(call $property_set ", "(call $property_set_forgetting ")
+        .replace("(call $property_set_text ", "(call $property_set_text_forgetting ");
+    for c in cached {
+        let from = format!("{}{}) (i32.const {})", c.kind.call(), c.at, c.len);
+        let to = format!("(call $pc{}_{}", c.kind.tag(), c.at);
+        // The read's own closing parenthesis stays: `(call $pcf_AT)`, `(call $pcv_AT (i32.const i))`.
+        out = out.replace(&from, &to);
+    }
+    out
+}
+
+/// The helpers [`rewrite`] calls, and the reset of the cached properties.
+pub(super) fn helpers(cached: &[Cached]) -> String {
+    let mut out = String::from(
+        r#"  (global $in_frame (mut i32) (i32.const 0))
+  (global $frame_cur (mut i32) (i32.const 0))
+  (global $time_ok (mut i32) (i32.const 0))
+  (global $time_value (mut f64) (f64.const 0))
+  (func $frame_changed
+    (i32.store offset=36 (global.get $frame_cur) (i32.or (i32.load offset=36 (global.get $frame_cur)) (i32.const 4))))
+  (func $frame_transform_get (param $out i32)
+    (if (global.get $in_frame)
+      (then (memory.copy (local.get $out) (global.get $frame_cur) (i32.const 36)))
+      (else (call $transform_get (local.get $out)))))
+  (func $frame_transform_set (param $ptr i32)
+    (if (global.get $in_frame)
+      (then (memory.copy (global.get $frame_cur) (local.get $ptr) (i32.const 36)) (call $frame_changed))
+      (else (call $transform_set (local.get $ptr)))))
+  (func $frame_position_get (param $out i32)
+    (if (global.get $in_frame)
+      (then (memory.copy (local.get $out) (i32.add (global.get $frame_cur) (i32.const 40)) (i32.const 24)))
+      (else (call $position_get_of (call $self_handle) (local.get $out)))))
+  (func $frame_position_set (param $ptr i32)
+    (if (global.get $in_frame)
+      (then
+        (memory.copy (i32.add (global.get $frame_cur) (i32.const 40)) (local.get $ptr) (i32.const 24))
+        (f32.store (global.get $frame_cur) (f32.demote_f64 (f64.load (local.get $ptr))))
+        (f32.store offset=4 (global.get $frame_cur) (f32.demote_f64 (f64.load offset=8 (local.get $ptr))))
+        (f32.store offset=8 (global.get $frame_cur) (f32.demote_f64 (f64.load offset=16 (local.get $ptr))))
+        (call $frame_changed))
+      (else (call $position_set_of (call $self_handle) (local.get $ptr)))))
+  (func $time_kept (result f64)
+    (if (i32.eqz (global.get $time_ok))
+      (then (global.set $time_value (call $time)) (global.set $time_ok (i32.const 1))))
+    (global.get $time_value))
+  (func $property_set_forgetting (param $a i32) (param $l i32) (param $x f32) (param $y f32) (param $z f32) (result i32)
+    (call $properties_forget)
+    (call $property_set (local.get $a) (local.get $l) (local.get $x) (local.get $y) (local.get $z)))
+  (func $property_set_text_forgetting (param $a i32) (param $l i32) (param $t i32) (param $tl i32) (result i32)
+    (call $properties_forget)
+    (call $property_set_text (local.get $a) (local.get $l) (local.get $t) (local.get $tl)))
+"#,
+    );
+    let mut forget = String::new();
+    for c in cached {
+        let (tag, at, len) = (c.kind.tag(), c.at, c.len);
+        let _ = writeln!(forget, "    (global.set $pc{tag}_{at}_ok (i32.const 0))");
+        let fill = |out: &mut String, read: &str| {
+            let _ = writeln!(out, "    (if (i32.eqz (global.get $pc{tag}_{at}_ok))\n      (then {read} (global.set $pc{tag}_{at}_ok (i32.const 1))))");
+        };
+        match c.kind {
+            CacheKind::Number => {
+                let _ = writeln!(out, "  (func $pc{tag}_{at} (result f32)");
+                fill(&mut out, &format!("(global.set $pc{tag}_{at} (call $property (i32.const {at}) (i32.const {len})))"));
+                let _ = writeln!(out, "    (global.get $pc{tag}_{at}))");
+            }
+            CacheKind::Whole => {
+                let _ = writeln!(out, "  (func $pc{tag}_{at} (result i32)");
+                fill(&mut out, &format!("(global.set $pc{tag}_{at} (call $property_whole (i32.const {at}) (i32.const {len})))"));
+                let _ = writeln!(out, "    (global.get $pc{tag}_{at}))");
+            }
+            CacheKind::Vector => {
+                let read = format!(
+                    "(drop (call $property_vector (i32.const {at}) (i32.const {len}) (i32.const 192))) (global.set $pc{tag}_{at}_0 (f32.load (i32.const 192))) (global.set $pc{tag}_{at}_1 (f32.load (i32.const 196))) (global.set $pc{tag}_{at}_2 (f32.load (i32.const 200)))"
+                );
+                let _ = writeln!(out, "  (func $pc{tag}_{at} (param $i i32) (result f32)");
+                fill(&mut out, &read);
+                let _ = writeln!(
+                    out,
+                    "    (if (result f32) (i32.eqz (local.get $i)) (then (global.get $pc{tag}_{at}_0)) (else (if (result f32) (i32.eq (local.get $i) (i32.const 1)) (then (global.get $pc{tag}_{at}_1)) (else (global.get $pc{tag}_{at}_2))))))"
+                );
+            }
+        }
+    }
+    let _ = writeln!(out, "  (func $properties_forget\n{forget}  )");
+    out
 }

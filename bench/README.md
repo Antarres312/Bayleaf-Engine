@@ -235,16 +235,16 @@ single runs (`target\release\bayleaf-bench.exe`, milliseconds per step, mean):
 | Rust, compiled, script step, 20,000 | no fit | | 29.4 |
 | Rust, compiled, whole play step, 5000 | did not load | | 8.0 median, 16.5 mean |
 | Visual, compiled, script step, 1000 | 26.8 | 6.8 | 3.1 |
-| Visual, compiled, script step, 5000 | | | 24.0 |
-| Visual, interpreted, script step, 5000 | | | 22.8 |
-| Visual, compiled, script step, 20,000 | no fit | | 120.7 |
+| Visual, compiled, script step, 5000 | | | 24.0, then 9.0 to 10.8 with the frame |
+| Visual, interpreted, script step, 5000 | | | 22.8, then 13.6 with the frame |
+| Visual, compiled, script step, 20,000 | no fit | | 120.7, then 58.1 with the frame |
 
 What changed: the world view keeps what changes only with the scene's structure; a Rust script's
 module runs every object of its file in one instance with one call per step, its objects'
 transforms going in and out in one frame, its properties and the time kept as last read, and the
 host selected only before a call that needs it (`docs/script-abi.md`, "Modules that run many
 objects"). The whole play step's mean includes reloading's check of module files, now once per file.
-Visual scripts run every object of their file in one instance too (each object's variables kept in a slot), but still reach their transforms, properties and the time through a host call each (about 22 per object here); native scripts still run one call per object.
+Visual scripts run every object of their file in one instance too (each object's variables kept in a slot), and their own transform, properties and the time come from the frame and what each object last read; native scripts still run one call per object. Runs of the same case vary: Rust at 5000 objects measured from 5.4 to 8.0 over the day.
 
 ## Cheapest ways to close the gap (not done here)
 

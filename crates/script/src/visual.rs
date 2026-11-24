@@ -1406,6 +1406,9 @@ struct Compiler<'g> {
     globals: Vec<String>,
     /// Each text variable's buffer and starting length, by name.
     text_vars: std::collections::BTreeMap<String, (u32, u32)>,
+    /// Where each property's name is placed, once per name, so a module that runs many objects can
+    /// keep each property's value as last read.
+    property_keys: std::collections::BTreeMap<String, (u32, u32)>,
 }
 
 /// Compiles a visual script into a WebAssembly module.
@@ -1559,6 +1562,7 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
         properties: Vec::new(),
         globals: Vec::new(),
         text_vars: std::collections::BTreeMap::new(),
+        property_keys: std::collections::BTreeMap::new(),
     };
     declare_storage(&mut c);
     let mut problems = Vec::new();
@@ -1662,6 +1666,9 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     };
     // Everything from here to the memory is what the script keeps per object.
     let kept_from = out.len();
+    // The properties it reads by name, each kept per object as last read when it runs many objects.
+    let cached = batch::cached_properties(&format!("{init}{start}{update}{message}{functions}"));
+    out.push_str(&batch::cache_globals(&cached));
     let number = |v: &serde_json::Value| v.as_f64().unwrap_or(0.0) as f32;
     for (name, start) in named(VariableType::Number, "count") {
         let _ = writeln!(out, "  (global $var_{name} (mut f32) (f32.const {:?}))", number(&start));
@@ -1707,8 +1714,15 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
     );
     out.push_str(&entry_points(graph, layout.as_ref(), heap, &fresh, [&init, &start, &update, &message]));
     out.push_str(&functions);
+    let mut out = without_unused_fields(out);
+    // Running many objects, this object's transform, the time and the properties come from the
+    // frame and the caches during an update of all.
+    if layout.is_some() {
+        out = batch::rewrite(&out, &cached);
+        out.push_str(&batch::helpers(&cached));
+    }
     out.push_str(")\n");
-    Ok(without_unused_fields(out))
+    Ok(out)
 }
 
 /// Where each text variable's starting text is kept (a copy placed now), so a module that runs many
@@ -1804,6 +1818,16 @@ impl Compiler<'_> {
     /// Places bytes in the module's memory and returns their address and length.
     fn text(&mut self, bytes: &[u8]) -> (u32, u32) {
         self.reserve(bytes, 0)
+    }
+
+    /// A property's name placed in memory, once per name.
+    fn property_key(&mut self, name: &str) -> (u32, u32) {
+        if let Some(key) = self.property_keys.get(name) {
+            return *key;
+        }
+        let key = self.text(name.as_bytes());
+        self.property_keys.insert(name.to_owned(), key);
+        key
     }
 
     /// Text placed in memory, as a text value.
@@ -2623,7 +2647,7 @@ impl Compiler<'_> {
             }
             "property" | "wholeProperty" | "flagProperty" | "vectorProperty" | "colorProperty" | "textProperty" | "objectProperty" => {
                 let name = self.property_of(node)?;
-                let (at, len) = self.text(name.as_bytes());
+                let (at, len) = self.property_key(&name);
                 let key = format!("(i32.const {at}) (i32.const {len})");
                 match n.kind.as_str() {
                     "property" => Val::F(format!("(call $property {key})")),
@@ -3318,6 +3342,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "map_next_text" (func $map_next_text (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "event_keep" (func $event_keep (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "slot_select" (func $slot_select (param i32) (result i32)))
+  (import "bayleaf" "frame_get" (func $frame_get (param i32 i32) (result i32)))
+  (import "bayleaf" "frame_set" (func $frame_set (param i32 i32)))
   (import "bayleaf" "particles_play" (func $particles_play (param i32) (result i32)))
   (import "bayleaf" "particles_stop" (func $particles_stop (param i32) (result i32)))
   (import "bayleaf" "particles_burst" (func $particles_burst (param i32 i32) (result i32)))

@@ -2334,7 +2334,15 @@ fn link_frames(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
             if let Some(view) = state.slot_view(slot)
                 && *view.running
             {
-                *view.position = merged_position(&values, *view.position);
+                // The entry's precise position, when the module set it (it narrows to the single-
+                // precision one); else the single-precision one, keeping the old where it agrees.
+                let precise: [f64; 3] = std::array::from_fn(|i| f64::from_le_bytes(std::array::from_fn(|b| entry[40 + i * 8 + b])));
+                let narrowed = precise.map(|p| p as f32);
+                *view.position = if narrowed == [values[0], values[1], values[2]] && precise.iter().all(|p| p.is_finite()) {
+                    precise
+                } else {
+                    merged_position(&values, *view.position)
+                };
                 *view.transform = values;
                 *view.changed = true;
             }
