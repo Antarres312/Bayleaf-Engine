@@ -82,6 +82,13 @@ const HOST_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("event_vector", "i32 i32", "f32"),
     ("event_object", "i32", "i32"),
     ("event_text", "i32 i32 i32", "i32"),
+    ("script_component", "i32 i32 i32", "i32"),
+    ("self_component", "", "i32"),
+    ("event_send_to", "i32 i32 i32 i32 i32 i32", "i32"),
+    ("event_subscribe", "i32 i32 i32 i32", "i32"),
+    ("event_unsubscribe", "i32 i32 i32 i32", "i32"),
+    ("event_source", "", "i32"),
+    ("event_source_component", "", "i32"),
 ];
 
 /// Pages of exchange memory (64 KiB each) a native script's calls copy their texts and numbers through.

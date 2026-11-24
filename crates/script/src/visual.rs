@@ -45,7 +45,7 @@ const fn contact(kind: &'static str, label: &'static str, description: &'static 
 
 /// Whether an event node runs on a message: On Message, the interface's events and contacts.
 fn takes_messages(kind: &str) -> bool {
-    matches!(kind, "message" | "interfacePressed" | "interfaceChanged" | "eventStart") || contact_message(kind).is_some()
+    matches!(kind, "message" | "interfacePressed" | "interfaceChanged" | "eventStart" | "componentEventStart") || contact_message(kind).is_some()
 }
 
 /// The message the physics step sends for a contact event node.
@@ -129,6 +129,17 @@ pub(crate) const EVENT_SETTINGS: [SettingDef; 2] =
     [SettingDef { name: "event", label: "Event", kind: SettingKind::Name("") }, SettingDef { name: "params", label: "Values", kind: SettingKind::Names }];
 /// The node kinds that name an event in their `event` setting.
 pub const EVENT_KINDS: [&str; 2] = ["eventStart", "triggerEvent"];
+/// A component input: a script on an object, from a Get Component that names a script or This
+/// Component.
+pub(crate) const COMPONENT_IN: PinDef = pin("component", "Component", PinType::Component);
+/// The script whose event a node names (its name as the Inspector shows it), the event, and its
+/// values' pins (`name:type`). The Graph panel picks the event from the script's own list.
+pub(crate) const COMPONENT_EVENT_SETTINGS: [SettingDef; 3] =
+    [SettingDef { name: "script", label: "Script", kind: SettingKind::Text("") }, EVENT_SETTINGS[0], EVENT_SETTINGS[1]];
+/// The node kinds that name another script's event, with values: triggering it, and hearing it.
+pub const COMPONENT_EVENT_KINDS: [&str; 2] = ["triggerComponentEvent", "componentEventStart"];
+/// Every node kind that names another script's event (subscribing too).
+pub const SCRIPT_EVENT_KINDS: [&str; 4] = ["triggerComponentEvent", "componentEventStart", "subscribeEvent", "unsubscribeEvent"];
 const OBJECT_NAME: SettingDef = SettingDef { name: "object", label: "Object Name", kind: SettingKind::Text("") };
 /// The interface element a node works on, by its name.
 const ELEMENT: SettingDef = SettingDef { name: "element", label: "Element", kind: SettingKind::Text("Start") };
@@ -535,6 +546,62 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[RUN, TARGET],
             outputs: &[THEN],
             settings: &[EVENT_SETTINGS[0], EVENT_SETTINGS[1], OBJECT_NAME],
+            unique: false,
+        },
+        node(
+            "thisComponent",
+            "This Component",
+            "Find",
+            "This script, as a component of its object: what other scripts trigger events on and subscribe to.",
+            &[],
+            &[pin("component", "Component", PinType::Component)],
+        ),
+        node(
+            "componentObject",
+            "Object of Component",
+            "Find",
+            "The object a component is on, or none.",
+            &[COMPONENT_IN],
+            &[pin("object", "Object", PinType::Object)],
+        ),
+        NodeDef {
+            kind: "triggerComponentEvent",
+            label: "Trigger Component Event",
+            category: "Actions",
+            description: "Triggers an event its script declares on one component (a script on an object), with its values; the script's On Event, and the scripts subscribed to it, run after this step. The event is picked from the script's own list.",
+            inputs: &[RUN, COMPONENT_IN],
+            outputs: &[THEN],
+            settings: &COMPONENT_EVENT_SETTINGS,
+            unique: false,
+        },
+        NodeDef {
+            kind: "subscribeEvent",
+            label: "Subscribe to Event",
+            category: "Actions",
+            description: "From now on, this script hears the event whenever it happens on the component, with On Component Event; once per component and event.",
+            inputs: &[RUN, COMPONENT_IN],
+            outputs: &[THEN],
+            settings: &COMPONENT_EVENT_SETTINGS,
+            unique: false,
+        },
+        NodeDef {
+            kind: "unsubscribeEvent",
+            label: "Unsubscribe from Event",
+            category: "Actions",
+            description: "Stops this script hearing the event of the component it subscribed to.",
+            inputs: &[RUN, COMPONENT_IN],
+            outputs: &[THEN],
+            settings: &COMPONENT_EVENT_SETTINGS,
+            unique: false,
+        },
+        NodeDef {
+            kind: "componentEventStart",
+            label: "On Component Event",
+            category: "Events",
+            description: "Runs when the event happens on a component this script subscribed to; Source is that component, and the other outputs are the values the event brings.",
+            inputs: &[],
+            outputs: &[THEN],
+            settings: &COMPONENT_EVENT_SETTINGS,
             unique: false,
         },
         node("position", "Position", "Object", "The object's position, relative to its parent.", &[], &[pin("position", "Position", Vec3)]),
@@ -1184,6 +1251,8 @@ enum Val {
     T(String),
     /// A whole number (`i32`).
     I(String),
+    /// A script on an object: `i64` of the object's handle << 32 | the script's place plus one (0 for none).
+    C(String),
 }
 
 /// What a Get, Try Get or Set Component node works on.
@@ -1380,6 +1449,8 @@ pub fn to_wat(graph: &Graph) -> Result<String, Vec<Problem>> {
                     "interfacePressed" => format!("pressed:{}", c.setting_text(event.id, "element", "Start")),
                     "interfaceChanged" => format!("changed:{}", c.setting_text(event.id, "element", "Start")),
                     "eventStart" => c.setting_text(event.id, "event", ""),
+                    // A subscribed component's event arrives as `<its script>/<event>`.
+                    "componentEventStart" => format!("{}/{}", c.setting_text(event.id, "script", ""), c.setting_text(event.id, "event", "")),
                     kind => contact_message(kind).map_or_else(|| c.setting_text(event.id, "message", "hit"), str::to_owned),
                 };
                 let (at, len) = c.text(name.as_bytes());
@@ -1584,6 +1655,25 @@ impl Compiler<'_> {
 
     /// The handle of the object a node works on: its linked Object, else the first object named in
     /// its Object Name, else `otherwise` (WebAssembly), or the problem `otherwise` holds.
+    /// This Component, Object of Component, and On Component Event's outputs.
+    fn component_output(&mut self, node: u32, pin: &str) -> Result<Val, Problem> {
+        let kind = self.graph.node(node).map(|n| n.kind.clone()).unwrap_or_default();
+        Ok(match (kind.as_str(), pin) {
+            ("thisComponent", _) => Val::C(component_value("(call $self_handle)", "(call $self_component)")),
+            ("componentObject", _) => {
+                let component = self.input(node, "component").and_then(|v| as_component(node, v))?;
+                Val::O(component_handle(&component))
+            }
+            (_, "source") => {
+                if self.scope.as_deref() != Some(event_scope(node).as_str()) {
+                    return Err(Problem::on(node, "the outputs of an On Component Event are read only on its own actions"));
+                }
+                Val::C(component_value("(call $event_source)", "(call $event_source_component)"))
+            }
+            _ => self.event_value(node, pin)?,
+        })
+    }
+
     /// An On Event's value `pin`, read from the event being delivered; only on its own actions.
     fn event_value(&self, node: u32, pin: &str) -> Result<Val, Problem> {
         if self.scope.as_deref() != Some(event_scope(node).as_str()) {
@@ -1618,13 +1708,47 @@ impl Compiler<'_> {
 
     /// Trigger Event: its values listed for `event_send` (per value a kind and three words, in
     /// memory taken for this call), then the event sent.
+    /// The component linked into `node`'s `component` input, kept once in a global for this call:
+    /// the global's name.
+    fn component_of_input(&mut self, node: u32, indent: &str, code: &mut String) -> Result<String, Problem> {
+        if self.graph.link_into(node, "component").is_none() {
+            return Err(Problem::on(node, "link the component: a Get Component that names a script, or This Component"));
+        }
+        let value = self.input(node, "component").and_then(|v| as_component(node, v))?;
+        let kept = format!("$component_{node}");
+        self.global(format!("(global {kept} (mut i64) (i64.const 0))"));
+        let _ = writeln!(code, "{indent}(global.set {kept} {value})");
+        Ok(format!("(global.get {kept})"))
+    }
+
+    /// Subscribe to Event and Unsubscribe from Event: the component's event, for this script.
+    fn subscribe(&mut self, node: u32, add: bool, indent: &str, code: &mut String) -> Result<(), Problem> {
+        let name = self.setting_text(node, "event", "");
+        if name.is_empty() {
+            return Err(Problem::on(node, "choose the event"));
+        }
+        let (at, len) = self.text(name.as_bytes());
+        let component = self.component_of_input(node, indent, code)?;
+        let call = if add { "$event_subscribe" } else { "$event_unsubscribe" };
+        let _ =
+            writeln!(code, "{indent}(drop (call {call} {} {} (i32.const {at}) (i32.const {len})))", component_handle(&component), component_script(&component));
+        Ok(())
+    }
+
     fn trigger_event(&mut self, node: u32, indent: &str, code: &mut String) -> Result<(), Problem> {
         let name = self.setting_text(node, "event", "");
         if name.is_empty() {
             return Err(Problem::on(node, "choose the event to trigger"));
         }
         let (at, len) = self.text(name.as_bytes());
-        let handle = self.target(node, Ok("(i32.const -1)"))?;
+        // To one component, or to an object (else every object).
+        let to_component = self.graph.node(node).is_some_and(|n| n.kind == "triggerComponentEvent");
+        let send = if to_component {
+            let component = self.component_of_input(node, indent, code)?;
+            format!("(call $event_send_to {} {}", component_handle(&component), component_script(&component))
+        } else {
+            format!("(call $event_send {}", self.target(node, Ok("(i32.const -1)"))?)
+        };
         let params = self.event_params(node);
         let list = format!("$events_{node}");
         self.global(format!("(global {list} (mut i32) (i32.const 0))"));
@@ -1669,8 +1793,7 @@ impl Compiler<'_> {
                 }
             }
         }
-        let _ =
-            writeln!(code, "{indent}(drop (call $event_send {handle} (i32.const {at}) (i32.const {len}) (global.get {list}) (i32.const {})))", params.len());
+        let _ = writeln!(code, "{indent}(drop {send} (i32.const {at}) (i32.const {len}) (global.get {list}) (i32.const {})))", params.len());
         Ok(())
     }
 
@@ -1977,7 +2100,9 @@ impl Compiler<'_> {
                 let [x, y, z] = vec3(self, input)?;
                 let _ = writeln!(code, "{indent}(drop (call {call} {handle} {x} {y} {z}))");
             }
-            "triggerEvent" => self.trigger_event(next, &indent, &mut code)?,
+            "triggerEvent" | "triggerComponentEvent" => self.trigger_event(next, &indent, &mut code)?,
+            "subscribeEvent" => self.subscribe(next, true, &indent, &mut code)?,
+            "unsubscribeEvent" => self.subscribe(next, false, &indent, &mut code)?,
             "sendMessage" => {
                 let name = self.setting_text(next, "message", "hit");
                 let (at, len) = self.text(name.as_bytes());
@@ -2153,7 +2278,7 @@ impl Compiler<'_> {
                             Val::F(b) => Val::F(format!("(call $math_pow {b} {e})")),
                             Val::I(b) => Val::F(format!("(call $math_pow (f32.convert_i32_s {b}) {e})")),
                             Val::V(v) => Val::V(v.map(|c| format!("(call $math_pow {c} {e})"))),
-                            Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Power needs a number or a vector")),
+                            Val::B(_) | Val::O(_) | Val::T(_) | Val::C(_) => return Err(Problem::on(node, "Power needs a number or a vector")),
                         }
                     }
                 }
@@ -2164,7 +2289,7 @@ impl Compiler<'_> {
                     Val::F(v) => Val::F(root(&v)),
                     Val::I(i) => Val::F(root(&format!("(f32.convert_i32_s {i})"))),
                     Val::V(v) => Val::V(v.map(|c| root(&c))),
-                    Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Square Root needs a number or a vector")),
+                    Val::B(_) | Val::O(_) | Val::T(_) | Val::C(_) => return Err(Problem::on(node, "Square Root needs a number or a vector")),
                 }
             }
             _ => {
@@ -2293,6 +2418,9 @@ impl Compiler<'_> {
                 let component = self.component_target(n, node)?;
                 let handle = self.target(node, Ok("(call $self_handle)"))?;
                 let (c_at, c_len) = self.text(component.name.as_bytes());
+                if pin == "component" {
+                    return Ok(Val::C(format!("(call $component_of {handle} (i32.const {c_at}) (i32.const {c_len}))")));
+                }
                 if pin == "found" {
                     // An empty field asks whether the object has the component.
                     Val::B(format!("(call $component_get {handle} (i32.const {c_at}) (i32.const {c_len}) (i32.const 0) (i32.const 0) (i32.const 160))"))
@@ -2382,6 +2510,7 @@ impl Compiler<'_> {
                 }
             }
             "thisObject" => Val::O("(call $self_handle)".to_owned()),
+            "thisComponent" | "componentObject" | "componentEventStart" => self.component_output(node, pin)?,
             "findNamed" => {
                 let found = if graph.link_into(node, "named").is_some() {
                     format!("(call $find_text {})", self.input(node, "named").and_then(|v| as_text(node, v))?)
@@ -2490,7 +2619,7 @@ impl Compiler<'_> {
                 Val::F(v) => Val::F(format!("(call $sin {v})")),
                 Val::V(v) => Val::V(v.map(|c| format!("(call $sin {c})"))),
                 Val::I(i) => Val::F(format!("(call $sin (f32.convert_i32_s {i}))")),
-                Val::B(_) | Val::O(_) | Val::T(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
+                Val::B(_) | Val::O(_) | Val::T(_) | Val::C(_) => return Err(Problem::on(node, "Sine needs a number or a vector")),
             },
             "power" | "squareRoot" | "vectorLength" => self.power_and_roots(node, &n.kind)?,
             "normalize" => {
@@ -2675,11 +2804,15 @@ fn description(graph: &Graph, properties: &[(String, PropertyType, serde_json::V
 /// An event node's chain. An On Event's compiles in its own scope, where its values are read, once
 /// it names an event the script declares.
 fn event_chain(c: &mut Compiler<'_>, graph: &Graph, event: &bayleaf_graph::Node) -> Result<String, Problem> {
-    if event.kind != "eventStart" {
-        return c.chain(event.id, "then", 1);
-    }
-    if graph.event(&c.setting_text(event.id, "event", "")).is_none() {
-        return Err(Problem::on(event.id, "this On Event names no event this script declares; add it under Events"));
+    match event.kind.as_str() {
+        "eventStart" if graph.event(&c.setting_text(event.id, "event", "")).is_none() => {
+            return Err(Problem::on(event.id, "this On Event names no event this script declares; add it under Events"));
+        }
+        "componentEventStart" if c.setting_text(event.id, "script", "").is_empty() || c.setting_text(event.id, "event", "").is_empty() => {
+            return Err(Problem::on(event.id, "choose the event: a script's, from the list"));
+        }
+        "eventStart" | "componentEventStart" => {}
+        _ => return c.chain(event.id, "then", 1),
     }
     c.scope = Some(event_scope(event.id));
     let chained = c.chain(event.id, "then", 1);
@@ -2697,6 +2830,7 @@ fn is_event(kind: &str) -> bool {
     matches!(kind, "init" | "start" | "update" | "message" | "keyPressed" | "actionPressed" | "timer" | "interfacePressed" | "interfaceChanged")
         || contact_message(kind).is_some()
         || kind == "eventStart"
+        || kind == "componentEventStart"
 }
 
 fn as_float(node: u32, value: Val) -> Result<String, Problem> {
@@ -2706,6 +2840,7 @@ fn as_float(node: u32, value: Val) -> Result<String, Problem> {
         Val::V(_) => Err(Problem::on(node, "this input takes a number but gets a vector; use Split Vector")),
         Val::B(_) => Err(Problem::on(node, "this input takes a number but gets true/false; use Choose")),
         Val::O(_) => Err(Problem::on(node, "this input takes a number but gets an object; use Position Of")),
+        Val::C(_) => Err(Problem::on(node, "this input takes a number but gets a component")),
         Val::T(_) => Err(Problem::on(node, "this input takes a number but gets text; use Text to Number")),
     }
 }
@@ -2720,6 +2855,7 @@ fn as_vec(node: u32, value: Val) -> Result<[String; 3], Problem> {
         Val::F(f) => Ok([f.clone(), f.clone(), f]),
         Val::B(_) => Err(Problem::on(node, "this input takes a vector but gets true/false")),
         Val::O(_) => Err(Problem::on(node, "this input takes a vector but gets an object; use Position Of")),
+        Val::C(_) => Err(Problem::on(node, "this input takes a vector but gets a component")),
         Val::T(_) => Err(Problem::on(node, "this input takes a vector but gets text")),
     }
 }
@@ -2745,6 +2881,28 @@ fn as_text(node: u32, value: Val) -> Result<String, Problem> {
         Val::T(text) => Ok(text),
         _ => Err(Problem::on(node, "this input takes text; use To Text or Name Of")),
     }
+}
+
+fn as_component(node: u32, value: Val) -> Result<String, Problem> {
+    match value {
+        Val::C(component) => Ok(component),
+        _ => Err(Problem::on(node, "this input takes a component: a Get Component that names a script, or This Component")),
+    }
+}
+
+/// A component value from its object's handle and its script's place plus one.
+fn component_value(handle: &str, script: &str) -> String {
+    format!("(i64.or (i64.shl (i64.extend_i32_u {handle}) (i64.const 32)) (i64.extend_i32_u {script}))")
+}
+
+/// A component's object handle.
+fn component_handle(component: &str) -> String {
+    format!("(i32.wrap_i64 (i64.shr_u {component} (i64.const 32)))")
+}
+
+/// A component's script place plus one (0 for none).
+fn component_script(component: &str) -> String {
+    format!("(i32.wrap_i64 {component})")
 }
 
 fn as_object(node: u32, value: Val) -> Result<String, Problem> {
@@ -2808,6 +2966,13 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "event_vector" (func $event_vector (param i32 i32) (result f32)))
   (import "bayleaf" "event_object" (func $event_object (param i32) (result i32)))
   (import "bayleaf" "event_text" (func $event_text (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "script_component" (func $script_component (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "self_component" (func $self_component (result i32)))
+  (import "bayleaf" "event_send_to" (func $event_send_to (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "event_subscribe" (func $event_subscribe (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "event_unsubscribe" (func $event_unsubscribe (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "event_source" (func $event_source (result i32)))
+  (import "bayleaf" "event_source_component" (func $event_source_component (result i32)))
   (import "bayleaf" "state_get" (func $state_get (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "state_set" (func $state_set (param i32 i32 i32 i32 f64) (result i32)))
   (import "bayleaf" "game_end" (func $game_end (param i32) (result i32)))
@@ -3127,6 +3292,10 @@ const PRELUDE: &str = r#"(module
     (drop (call $property_text (local.get $a) (local.get $l) (local.get $p) (local.get $n)))
     (call $mk (local.get $p) (local.get $n)))
   ;; The name of the object with handle $h.
+  ;; The script named by $p, $l on the object with handle $h, as a component (its script's place 0: none).
+  (func $component_of (param $h i32) (param $p i32) (param $l i32) (result i64)
+    (i64.or (i64.shl (i64.extend_i32_u (local.get $h)) (i64.const 32))
+      (i64.extend_i32_u (call $script_component (local.get $h) (local.get $p) (local.get $l)))))
   ;; Text value $k of the event being delivered.
   (func $event_string (param $k i32) (result i64) (local $n i32) (local $p i32)
     (local.set $n (call $event_text (local.get $k) (i32.const 0) (i32.const 0)))

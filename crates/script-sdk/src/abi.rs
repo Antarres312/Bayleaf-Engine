@@ -77,6 +77,13 @@ mod raw {
         pub fn event_vector(index: i32, part: i32) -> f32;
         pub fn event_object(index: i32) -> i32;
         pub fn event_text(index: i32, out: *mut u8, cap: usize) -> i32;
+        pub fn script_component(handle: i32, name_ptr: *const u8, name_len: usize) -> i32;
+        pub fn self_component() -> i32;
+        pub fn event_send_to(handle: i32, script: i32, name_ptr: *const u8, name_len: usize, values: *const u8, count: i32) -> i32;
+        pub fn event_subscribe(handle: i32, script: i32, name_ptr: *const u8, name_len: usize) -> i32;
+        pub fn event_unsubscribe(handle: i32, script: i32, name_ptr: *const u8, name_len: usize) -> i32;
+        pub fn event_source() -> i32;
+        pub fn event_source_component() -> i32;
     }
 }
 
@@ -171,6 +178,17 @@ mod raw {
             let at = x.put(text)?;
             let mut args = vec![at, len(text.len())];
             args.extend_from_slice(more);
+            x.call(name, &args)?.i32()
+        })
+        .unwrap_or(0)
+    }
+
+    /// A call with numbers first, then one text, returning a whole number (0 without a host).
+    fn numbers_then_text(name: &'static str, before: &[crate::native::Value], text: &[u8]) -> i32 {
+        run(|x| {
+            let at = x.put(text)?;
+            let mut args = before.to_vec();
+            args.extend([at, len(text.len())]);
             x.call(name, &args)?.i32()
         })
         .unwrap_or(0)
@@ -593,8 +611,35 @@ mod raw {
         // SAFETY: the safe wrappers pass a live slice.
         text_call("input_map_set", unsafe { bytes(ptr, n) }, &[I32(handle)])
     }
+    pub unsafe fn script_component(handle: i32, ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        numbers_then_text("script_component", &[I32(handle)], unsafe { bytes(ptr, n) })
+    }
+    pub unsafe fn self_component() -> i32 {
+        plain("self_component", &[])
+    }
+    pub unsafe fn event_subscribe(handle: i32, script: i32, ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        numbers_then_text("event_subscribe", &[I32(handle), I32(script)], unsafe { bytes(ptr, n) })
+    }
+    pub unsafe fn event_unsubscribe(handle: i32, script: i32, ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        numbers_then_text("event_unsubscribe", &[I32(handle), I32(script)], unsafe { bytes(ptr, n) })
+    }
+    pub unsafe fn event_source() -> i32 {
+        plain("event_source", &[])
+    }
+    pub unsafe fn event_source_component() -> i32 {
+        plain("event_source_component", &[])
+    }
+
     /// Texts go into the exchange memory first, and the values list where they went.
     pub fn event_send(handle: i32, name: &[u8], values: &[super::EventSlot<'_>]) -> i32 {
+        event_send_to(handle, None, name, values)
+    }
+
+    /// [`event_send`], to one script of the object when `script` is given.
+    pub fn event_send_to(handle: i32, script: Option<i32>, name: &[u8], values: &[super::EventSlot<'_>]) -> i32 {
         run(|x| {
             let at = x.put(name)?;
             let mut places = Vec::new();
@@ -607,7 +652,10 @@ mod raw {
             let mut places = places.into_iter();
             let listed = super::encode_event(values, |_| places.next())?;
             let list = x.put(&listed)?;
-            x.call("event_send", &[I32(handle), at, len(name.len()), list, len(values.len())])?.i32()
+            match script {
+                Some(script) => x.call("event_send_to", &[I32(handle), I32(script), at, len(name.len()), list, len(values.len())])?.i32(),
+                None => x.call("event_send", &[I32(handle), at, len(name.len()), list, len(values.len())])?.i32(),
+            }
         })
         .unwrap_or(0)
     }
@@ -1150,4 +1198,49 @@ pub(crate) fn event_text(index: i32) -> String {
     // SAFETY: `bytes` has exactly `len` writable bytes, at most what the host writes.
     unsafe { raw::event_text(index, bytes.as_mut_ptr(), bytes.len()) };
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+pub(crate) fn script_component(handle: i32, name: &str) -> i32 {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::script_component(handle, name.as_ptr(), name.len()) }
+}
+
+pub(crate) fn self_component() -> i32 {
+    // SAFETY: no arguments; a plain number out.
+    unsafe { raw::self_component() }
+}
+
+pub(crate) fn event_send_to(handle: i32, script: i32, name: &str, values: &[EventSlot<'_>]) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let Some(listed) = encode_event(values, |text| u32::try_from(text.as_ptr() as usize).ok()) else { return false };
+        // SAFETY: the pointers and lengths describe `name` and `listed`, and each text in the list
+        // lives for this call; the host only reads.
+        unsafe { raw::event_send_to(handle, script, name.as_ptr(), name.len(), listed.as_ptr(), values.len() as i32) != 0 }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        raw::event_send_to(handle, Some(script), name.as_bytes(), values) != 0
+    }
+}
+
+pub(crate) fn event_subscribe(handle: i32, script: i32, name: &str, add: bool) -> bool {
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe {
+        if add {
+            raw::event_subscribe(handle, script, name.as_ptr(), name.len()) != 0
+        } else {
+            raw::event_unsubscribe(handle, script, name.as_ptr(), name.len()) != 0
+        }
+    }
+}
+
+pub(crate) fn event_source() -> i32 {
+    // SAFETY: no arguments; a plain number out.
+    unsafe { raw::event_source() }
+}
+
+pub(crate) fn event_source_component() -> i32 {
+    // SAFETY: no arguments; a plain number out.
+    unsafe { raw::event_source_component() }
 }

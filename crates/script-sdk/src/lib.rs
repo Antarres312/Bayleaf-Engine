@@ -216,6 +216,12 @@ impl Object {
         (handle != 0 && handle as f32 == value).then_some(Self(handle))
     }
 
+    /// The script named `name` on this object (as the Inspector shows it, or its file's name), as a
+    /// component; `None` when it has none.
+    pub fn component(self, name: &str) -> Option<Component> {
+        Some(Component { object: self, script: abi::script_component(self.0, name) }).filter(|c| c.script != 0)
+    }
+
     /// The object this script is on.
     pub fn this() -> Option<Self> {
         Some(abi::self_handle()).filter(|h| *h != 0).map(Self)
@@ -425,6 +431,91 @@ pub mod contact {
     pub const COLLISION_END: &str = "collisionEnd";
 }
 
+/// What a value of an event holds, as a script declares it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueKind {
+    Number,
+    Whole,
+    Flag,
+    Vector,
+    Color,
+    Text,
+    Object,
+}
+
+impl ValueKind {
+    fn code(self) -> &'static str {
+        match self {
+            ValueKind::Number => "number",
+            ValueKind::Whole => "whole",
+            ValueKind::Flag => "bool",
+            ValueKind::Vector => "vector",
+            ValueKind::Color => "color",
+            ValueKind::Text => "text",
+            ValueKind::Object => "object",
+        }
+    }
+}
+
+/// An event a script declares ([`Script::EVENTS`]): its name and its values, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Event {
+    pub name: &'static str,
+    pub values: &'static [(&'static str, ValueKind)],
+}
+
+/// A script on an object, Rust or visual alike: what events are triggered on and subscribed to.
+/// Like an [`Object`], it lasts for one step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Component {
+    object: Object,
+    /// The script's place among its object's scripts, plus one.
+    script: i32,
+}
+
+impl Component {
+    /// This script, as a component of its object.
+    pub fn this() -> Option<Self> {
+        Some(Self { object: Object::this()?, script: abi::self_component() }).filter(|c| c.script != 0)
+    }
+
+    /// The object it is on.
+    pub fn object(self) -> Object {
+        self.object
+    }
+
+    /// Triggers its script's event `name` with `values` on it alone, after this step; the scripts
+    /// subscribed to it hear it too. False when this call already sent too many.
+    pub fn trigger_event(self, name: &str, values: &[EventValue<'_>]) -> bool {
+        abi::event_send_to(self.object.0, self.script, name, &event_slots(values))
+    }
+
+    /// From now on this script hears the event `name` whenever it happens on this component, in
+    /// [`Script::message`] as `<its script>/<name>`, with [`event::source`] saying where.
+    pub fn subscribe(self, name: &str) -> bool {
+        abi::event_subscribe(self.object.0, self.script, name, true)
+    }
+
+    /// Stops this script hearing the event it subscribed to.
+    pub fn unsubscribe(self, name: &str) -> bool {
+        abi::event_subscribe(self.object.0, self.script, name, false)
+    }
+}
+
+fn event_slots<'a>(values: &[EventValue<'a>]) -> Vec<abi::EventSlot<'a>> {
+    values
+        .iter()
+        .map(|value| match *value {
+            EventValue::Number(v) => abi::EventSlot::Number(v),
+            EventValue::Whole(v) => abi::EventSlot::Whole(v),
+            EventValue::Flag(v) => abi::EventSlot::Flag(v),
+            EventValue::Vector(v) => abi::EventSlot::Vector(v),
+            EventValue::Text(t) => abi::EventSlot::Text(t),
+            EventValue::Object(o) => abi::EventSlot::Object(o.map_or(0, |o| o.0)),
+        })
+        .collect()
+}
+
 /// A value an event brings: what a visual script's Trigger Event sends and On Event gives.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EventValue<'a> {
@@ -441,18 +532,7 @@ pub enum EventValue<'a> {
 /// [`Script::message`] under the event's name, reading its values with [`event`]. False when this
 /// call already sent too many.
 pub fn trigger_event(to: Option<Object>, name: &str, values: &[EventValue<'_>]) -> bool {
-    let slots: Vec<abi::EventSlot<'_>> = values
-        .iter()
-        .map(|value| match *value {
-            EventValue::Number(v) => abi::EventSlot::Number(v),
-            EventValue::Whole(v) => abi::EventSlot::Whole(v),
-            EventValue::Flag(v) => abi::EventSlot::Flag(v),
-            EventValue::Vector(v) => abi::EventSlot::Vector(v),
-            EventValue::Text(t) => abi::EventSlot::Text(t),
-            EventValue::Object(o) => abi::EventSlot::Object(o.map_or(0, |o| o.0)),
-        })
-        .collect();
-    abi::event_send(to.map_or(-1, |o| o.0), name, &slots)
+    abi::event_send(to.map_or(-1, |o| o.0), name, &event_slots(values))
 }
 
 /// The values of the event being delivered, by position, read in [`Script::message`]. A value of
@@ -486,6 +566,13 @@ pub mod event {
 
     pub fn object(index: usize) -> Option<Object> {
         Some(abi::event_object(at(index))).filter(|h| *h != 0).map(Object)
+    }
+
+    /// The component a subscribed event happened on, while this script hears it; `None` otherwise.
+    pub fn source() -> Option<super::Component> {
+        let object = Object(abi::event_source());
+        let script = abi::event_source_component();
+        (object.0 != 0 && script != 0).then_some(super::Component { object, script })
     }
 }
 
@@ -643,6 +730,9 @@ pub trait Script: Default + Send + 'static {
     /// How the properties show in the Inspector: groups, labels, sliders, buttons and more (see
     /// [`Layout`]). Empty for one row each, in the order of [`Script::PROPERTIES`].
     const INSPECTOR: &'static [Layout] = &[];
+    /// Events this script declares: what other scripts (Rust or visual) and the interface can
+    /// trigger on its component, and subscribe to. They arrive in [`Script::message`] under their name.
+    const EVENTS: &'static [Event] = &[];
 
     /// Runs once when the script's object is ready: every script loaded with it (all of a scene
     /// when play starts) runs `init` before any runs `start`.
@@ -685,8 +775,14 @@ macro_rules! script {
         #[unsafe(no_mangle)]
         pub extern "C" fn bayleaf_describe() -> u64 {
             static DESCRIPTION: ::std::sync::OnceLock<String> = ::std::sync::OnceLock::new();
-            let text = DESCRIPTION
-                .get_or_init(|| $crate::describe(<$ty as $crate::Script>::PROPERTIES, <$ty as $crate::Script>::MENU, <$ty as $crate::Script>::INSPECTOR));
+            let text = DESCRIPTION.get_or_init(|| {
+                $crate::describe(
+                    <$ty as $crate::Script>::PROPERTIES,
+                    <$ty as $crate::Script>::MENU,
+                    <$ty as $crate::Script>::INSPECTOR,
+                    <$ty as $crate::Script>::EVENTS,
+                )
+            });
             $crate::pack(text)
         }
 
@@ -726,7 +822,7 @@ macro_rules! script {
 
 /// The `bayleaf_describe` text for `properties` (used by [`script!`]).
 #[doc(hidden)]
-pub fn describe(properties: &[Property], menu: &str, inspector: &[Layout]) -> String {
+pub fn describe(properties: &[Property], menu: &str, inspector: &[Layout], events: &[Event]) -> String {
     let number = |v: f32| if v.is_finite() { v } else { 0.0 };
     let three = |v: [f32; 3]| format!("[{:?}, {:?}, {:?}]", number(v[0]), number(v[1]), number(v[2]));
     let entries: Vec<String> = properties
@@ -747,7 +843,19 @@ pub fn describe(properties: &[Property], menu: &str, inspector: &[Layout]) -> St
     let menu = if menu.is_empty() { String::new() } else { format!(", \"menu\": \"{}\"", escape(menu)) };
     let inspector =
         if inspector.is_empty() { String::new() } else { format!(", \"inspector\": [{}]", inspector.iter().map(Layout::json).collect::<Vec<_>>().join(", ")) };
-    format!("{{\"properties\": [{}]{menu}{inspector}}}", entries.join(", "))
+    let events = if events.is_empty() {
+        String::new()
+    } else {
+        let listed: Vec<String> = events
+            .iter()
+            .map(|e| {
+                let values: Vec<String> = e.values.iter().map(|(name, kind)| format!("\"{}:{}\"", escape(name), kind.code())).collect();
+                format!("{{\"name\": \"{}\", \"params\": [{}]}}", escape(e.name), values.join(", "))
+            })
+            .collect();
+        format!(", \"events\": [{}]", listed.join(", "))
+    };
+    format!("{{\"properties\": [{}]{menu}{inspector}{events}}}", entries.join(", "))
 }
 
 /// Text inside a JSON string: quotes and backslashes escaped, control characters left out.
@@ -773,10 +881,13 @@ mod tests {
 
     #[test]
     fn descriptions_are_json_the_host_can_read() {
-        let text = super::describe(&[Property::Number("speed", 90.0), Property::Text("odd \"name\"", "a\\b"), Property::Object("target")], "", &[]);
+        let text = super::describe(&[Property::Number("speed", 90.0), Property::Text("odd \"name\"", "a\\b"), Property::Object("target")], "", &[], &[]);
         assert_eq!(text, r#"{"properties": [["speed", 90.0, "number"], ["odd \"name\"", "a\\b", "text"], ["target", "", "object"]]}"#);
-        let text = super::describe(&[], "Light/\"Flicker\"", &[]);
+        let text = super::describe(&[], "Light/\"Flicker\"", &[], &[]);
         assert_eq!(text, r#"{"properties": [], "menu": "Light/\"Flicker\""}"#);
+        let events = [super::Event { name: "Died", values: &[("by", super::ValueKind::Object), ("amount", super::ValueKind::Number)] }];
+        let text = super::describe(&[], "", &[], &events);
+        assert_eq!(text, r#"{"properties": [], "events": [{"name": "Died", "params": ["by:object", "amount:number"]}]}"#, "events as visual scripts list them");
     }
 
     #[test]

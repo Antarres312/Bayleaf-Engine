@@ -95,6 +95,11 @@ this: there is no list property type yet.
 | `event_number`, `event_whole`, `event_flag`, `event_object` | `(index: i32) -> f32 / i32` | during `bayleaf_message`, value `index` of the event being delivered: a number (a whole number converts), a whole number, `1` for true, an object's handle (`0` once it is gone); zero for a value of another kind or none |
 | `event_vector` | `(index, part: i32) -> f32` | part `0`, `1` or `2` of vector value `index` |
 | `event_text` | `(index, out, cap: i32) -> i32` | writes up to `cap` bytes of text value `index` and returns its full length |
+| `script_component` | `(handle, name_ptr, name_len: i32) -> i32` | the place plus one of the first script named `name` (as the Inspector shows it) on the object with `handle`: with the handle, a *component*; `0` for none |
+| `self_component` | `() -> i32` | this script's place plus one among its object's scripts |
+| `event_send_to` | `(handle, script, name_ptr, name_len, values_ptr, count: i32) -> i32` | as `event_send`, to that one script of the object (`script`: its place plus one); nothing when the component is none or gone |
+| `event_subscribe`, `event_unsubscribe` | `(handle, script, name_ptr, name_len: i32) -> i32` | from now on, this script hears event `name` whenever it happens on the component, until it unsubscribes; it arrives in `bayleaf_message` as `<the component's script>/<name>`, with the event's values |
+| `event_source`, `event_source_component` | `() -> i32` | while a subscriber hears an event, the handle of the object it happened on and its script's place plus one; `0` otherwise |
 | `math_pow` | `(base: f32, exponent: f32) -> f32` | `base` to the power of `exponent`, for visual scripts' Power (WebAssembly has no instruction for it); Rust scripts use `f32::powf` |
 | `pointer_over_interface` | `() -> i32` | `1` while the pointer is over an interface element that takes it (its mouse buttons then read `0` here); Rust: `pointer_over_interface()` |
 | `apply_impulse` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | pushes the object's dynamic physics body by an impulse in world space, after the step; `1` when asked, `0` when this call already asked 64 times |
@@ -118,7 +123,11 @@ this: there is no list property type yet.
 A script declares its events in `bayleaf_describe` as `"events": [{"name": "Damaged", "params":
 ["amount:number", "by:object"]}]`, so the editor offers them to other scripts and the interface; an
 event arrives in `bayleaf_message` under its name like any message (value `0`), its values read with
-`event_*`. In the Rust SDK `trigger_event` sends one and `event::number(0)` and the others read it.
+`event_*`. In the Rust SDK `trigger_event` sends one and `event::number(0)` and the others read it. Every
+script, Rust or visual, is a *component* of its object: in the Rust SDK `Object::component(name)`
+and `Component::this()` give one, `trigger_event`, `subscribe` and `unsubscribe` act on it,
+`event::source()` says where a subscribed event happened, and `Script::EVENTS` declares a Rust
+script's events as visual scripts declare theirs.
 
 In a build with physics, contacts arrive as messages to both objects' scripts after the physics
 step: `collision` and `collisionEnd` when colliders start and stop touching, `triggerEnter` and

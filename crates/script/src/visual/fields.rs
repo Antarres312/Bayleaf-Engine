@@ -175,6 +175,9 @@ pub fn script_fields(node: &Node) -> Option<Vec<String>> {
     Some(names.iter().filter_map(|n| n.as_str().map(str::to_owned)).collect())
 }
 
+/// A script's Get Component also gives the script itself, as a component.
+const COMPONENT_OUT: PinDef = PinDef::new("component", "Component", PinType::Component);
+
 /// Most distinct script pin sets kept at once; each is made once and kept for the program's life.
 const MAX_SCRIPT_VARIANTS: usize = 1024;
 
@@ -217,12 +220,12 @@ fn script_variant(node: &Node, fields: Vec<String>) -> Option<&'static NodeDef> 
             category: "Find",
             description: GET,
             inputs: &[TARGET],
-            outputs: Box::leak(pins(PinDefault::None).into_boxed_slice()),
+            outputs: Box::leak([vec![COMPONENT_OUT], pins(PinDefault::None)].concat().into_boxed_slice()),
             settings: &[COMPONENT, FIELDS],
             unique: false,
         },
         "tryGetComponent" => {
-            let mut outputs = vec![PinDef::new("found", "Found", Bool)];
+            let mut outputs = vec![PinDef::new("found", "Found", Bool), COMPONENT_OUT];
             outputs.extend(pins(PinDefault::None));
             NodeDef {
                 kind: "tryGetComponent",
@@ -264,6 +267,9 @@ pub fn variant(node: &Node) -> Option<&'static NodeDef> {
         return function_variant(node);
     }
     if super::EVENT_KINDS.contains(&node.kind.as_str()) {
+        return function_variant(node);
+    }
+    if super::COMPONENT_EVENT_KINDS.contains(&node.kind.as_str()) {
         return function_variant(node);
     }
     if !matches!(node.kind.as_str(), "getComponent" | "tryGetComponent" | "setComponent") {
@@ -313,7 +319,11 @@ pub(super) fn function_variant(node: &Node) -> Option<&'static NodeDef> {
     };
     // An event node keeps its values as `params`: the inputs of a Trigger Event, the outputs of an
     // On Event.
-    let (inputs, outputs) = if super::EVENT_KINDS.contains(&node.kind.as_str()) { (list("params"), Vec::new()) } else { (list("inputs"), list("outputs")) };
+    let (inputs, outputs) = if super::EVENT_KINDS.contains(&node.kind.as_str()) || super::COMPONENT_EVENT_KINDS.contains(&node.kind.as_str()) {
+        (list("params"), Vec::new())
+    } else {
+        (list("inputs"), list("outputs"))
+    };
     let mut made = FUNCTION_VARIANTS.lock().ok()?;
     if let Some((_, _, _, def)) = made.iter().find(|(kind, i, o, _)| *kind == node.kind && *i == inputs && *o == outputs) {
         return Some(def);
@@ -350,6 +360,16 @@ pub(super) fn function_variant(node: &Node) -> Option<&'static NodeDef> {
             let mut ins = vec![RUN, super::TARGET];
             ins.extend(typed_pins(&inputs, true));
             NodeDef { inputs: leak_pins(ins), ..*base }
+        }
+        "triggerComponentEvent" => {
+            let mut ins = vec![RUN, super::COMPONENT_IN];
+            ins.extend(typed_pins(&inputs, true));
+            NodeDef { inputs: leak_pins(ins), ..*base }
+        }
+        "componentEventStart" => {
+            let mut outs = vec![THEN, PinDef::new("source", "Source", PinType::Component)];
+            outs.extend(typed_pins(&inputs, false));
+            NodeDef { outputs: leak_pins(outs), ..*base }
         }
         _ => return None,
     };

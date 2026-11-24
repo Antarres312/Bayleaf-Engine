@@ -53,6 +53,9 @@ pub enum PinType {
     Text,
     /// A whole number (visual scripts): 32 bits, from -2147483648 to 2147483647.
     Int,
+    /// A script on an object (visual scripts): which one, on which object, or none. Rust scripts and
+    /// visual scripts alike are such components.
+    Component,
 }
 
 impl PinType {
@@ -68,6 +71,7 @@ impl PinType {
             PinType::Object => "Object",
             PinType::Text => "Text",
             PinType::Int => "Whole Number",
+            PinType::Component => "Component",
         }
     }
 
@@ -75,10 +79,10 @@ impl PinType {
     /// and colours; vectors and colours convert into each other. Whether an `Any` output really
     /// fits is checked when the graph is compiled.
     pub fn connects_to(self, to: PinType) -> bool {
-        use PinType::{Any, Bool, Color, Float, Flow, Int, Object, Text, Vec3};
+        use PinType::{Any, Bool, Color, Component, Float, Flow, Int, Object, Text, Vec3};
         match (self, to) {
-            (Flow, Flow) | (Bool, Bool) | (Object, Object) | (Text, Text) | (Int, Int) => true,
-            (Flow | Bool | Object | Text, _) | (_, Flow | Bool | Object | Text) => false,
+            (Flow, Flow) | (Bool, Bool) | (Object, Object) | (Text, Text) | (Int, Int) | (Component, Component) => true,
+            (Flow | Bool | Object | Text | Component, _) | (_, Flow | Bool | Object | Text | Component) => false,
             // A whole number widens to a number (and on to a vector); a number becomes whole only
             // through To Whole Number, which says how to round.
             (Int, Float | Vec3 | Color | Any) => true,
@@ -1411,6 +1415,7 @@ fn check_value(def: &NodeDef, name: &str, value: &Value) -> Result<(), GraphErro
         PinType::Bool if value.is_boolean() => Ok(()),
         PinType::Bool => Err(bad("true or false")),
         PinType::Object => Err(GraphError::Refused(format!("{} · {name} takes an object only from a link", def.label))),
+        PinType::Component => Err(GraphError::Refused(format!("{} · {name} takes a component only from a link", def.label))),
         PinType::Int => match value.as_i64() {
             Some(n) if i32::try_from(n).is_ok() => Ok(()),
             _ => Err(bad("a whole number from -2147483648 to 2147483647")),

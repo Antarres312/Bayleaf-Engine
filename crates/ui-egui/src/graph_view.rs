@@ -101,6 +101,8 @@ struct SearchChoices {
     components: Vec<&'static str>,
     /// The project's scripts by name, with the properties each declares (empty when they cannot be read).
     scripts: Vec<(String, Vec<String>)>,
+    /// The events each of the project's scripts declares, by the script's name.
+    events: Vec<(String, Vec<bayleaf_engine::script::DeclaredEvent>)>,
     tags: Vec<String>,
 }
 
@@ -138,11 +140,16 @@ fn script_name(module: &str) -> String {
 impl SearchChoices {
     fn gather(editor: &mut Editor) -> Self {
         let dir = editor.session.script_dir();
+        let mut events: Vec<(String, Vec<bayleaf_engine::script::DeclaredEvent>)> = Vec::new();
         let mut scripts: Vec<(String, Vec<String>)> = Vec::new();
         for module in editor.project.script_files() {
             let name = script_name(&module);
             if scripts.iter().any(|(n, _)| *n == name) {
                 continue;
+            }
+            let declared = editor.script_info.events(&dir.join(&module));
+            if !declared.is_empty() {
+                events.push((name.clone(), declared));
             }
             // A script that cannot be read (not built yet, or broken) is left out, so nodes keep its
             // last known properties.
@@ -166,7 +173,7 @@ impl SearchChoices {
             .collect();
         tags.sort_unstable();
         tags.dedup();
-        Self { components, scripts, tags }
+        Self { components, scripts, events, tags }
     }
 }
 
@@ -249,6 +256,7 @@ fn pin_color(t: &Tokens, ty: PinType) -> Color32 {
         PinType::Object => t.pin_object,
         PinType::Text => t.pin_text,
         PinType::Int => t.pin_int,
+        PinType::Component => t.pin_component,
     }
 }
 
@@ -1360,6 +1368,7 @@ fn pin_hint(pin: &PinDef) -> String {
         PinType::Object => "an object in the scene, or none",
         PinType::Text => "letters, words and numbers as written",
         PinType::Int => "a whole number",
+        PinType::Component => "a script on an object, or none",
     };
     crate::i18n::tf("{pin}: {type} ({meaning})", &[("pin", tl(pin.label)), ("type", tl(pin.ty.label())), ("meaning", meaning)])
 }
@@ -1447,7 +1456,7 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
             commit(&response, requests, || ("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": text })), key);
         }
         // An unlinked object input means the node's own choice (named in its settings, or this object).
-        PinType::Flow | PinType::Object => {}
+        PinType::Flow | PinType::Object | PinType::Component => {}
     }
 }
 
@@ -1502,6 +1511,23 @@ fn setting_row(
             bayleaf_engine::graph::VariableType::ALL.into_iter().find(|ty| bayleaf_engine::script::visual::variable_kinds(*ty).contains(&node.kind.as_str()))
     {
         variable_picker(ui, lists.graph, node, ty, setting, field, requests);
+        return;
+    }
+    // A node naming an event picks it from a list: this script's events, or (for another script's)
+    // the events of the script its component input names, else every script's.
+    if setting.name == "event" && bayleaf_engine::script::visual::EVENT_KINDS.contains(&node.kind.as_str()) {
+        own_event_picker(ui, lists.graph, node, setting, field, requests);
+        return;
+    }
+    if setting.name == "event" && bayleaf_engine::script::visual::SCRIPT_EVENT_KINDS.contains(&node.kind.as_str()) {
+        script_event_picker(ui, lists, node, setting, field, requests);
+        return;
+    }
+    // The script a node names another's event of follows the event chosen; it is shown, not typed.
+    if setting.name == "script" && bayleaf_engine::script::visual::SCRIPT_EVENT_KINDS.contains(&node.kind.as_str()) {
+        let shown = node.values.get("script").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("—").to_owned();
+        let response = ui.put(field, egui::Label::new(egui::RichText::new(shown.clone()).color(theme::tokens(ui).text_muted)).truncate());
+        labelled(ui, &response, &crate::i18n::tf("Script of node {id}: {current}", &[("id", &node.id.to_string()), ("current", &shown)]));
         return;
     }
     if setting.name == "function" && bayleaf_engine::script::visual::FUNCTION_KINDS.contains(&node.kind.as_str()) {
@@ -1792,6 +1818,89 @@ fn function_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayl
                             json!({ "node": node.id, "name": "outputs", "value": bayleaf_engine::graph::param_pins(&function.outputs) }),
                         );
                         requests.run("graph.node.set", json!({ "node": node.id, "name": "function", "value": function.name }));
+                    }
+                }
+            })
+            .response
+    });
+    labelled(
+        ui,
+        &response,
+        &crate::i18n::tf("{setting} of node {id}: {current}", &[("setting", tl(setting.label)), ("id", &node.id.to_string()), ("current", &current)]),
+    );
+}
+
+/// On Event and Trigger Event pick one of this script's events; the node's pins follow it.
+fn own_event_picker(ui: &mut egui::Ui, graph: &Graph, node: &Node, setting: &bayleaf_engine::graph::SettingDef, field: Rect, requests: &mut Requests) {
+    let current = node.values.get("event").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let shown = if current.is_empty() { tl("Choose an event").to_owned() } else { current.clone() };
+    let response = ui.put(field, |ui: &mut egui::Ui| {
+        craft_ui::ComboBox::from_id_salt(("event", node.id))
+            .width(field.width())
+            .truncate()
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if graph.events.is_empty() {
+                    ui.label(egui::RichText::new(tl("No events yet: Add Event in the panel beside the graph")).small());
+                }
+                for event in &graph.events {
+                    if ui.selectable_label(event.name == current, &event.name).clicked() && event.name != current {
+                        let key = format!("event {} {}", node.id, event.name);
+                        requests.merge(
+                            "graph.node.set",
+                            json!({ "node": node.id, "name": "params", "value": bayleaf_engine::graph::param_pins(&event.params) }),
+                            key.clone(),
+                        );
+                        requests.merge("graph.node.set", json!({ "node": node.id, "name": "event", "value": event.name }), key);
+                    }
+                }
+            })
+            .response
+    });
+    labelled(
+        ui,
+        &response,
+        &crate::i18n::tf("{setting} of node {id}: {current}", &[("setting", tl(setting.label)), ("id", &node.id.to_string()), ("current", &current)]),
+    );
+}
+
+/// A node naming another script's event picks it from that script's list: the script of the Get
+/// Component linked into its component input, else every script's events, by script. The node keeps
+/// the script, the event and its values' pins, as one undo step.
+fn script_event_picker(ui: &mut egui::Ui, lists: &Lists<'_>, node: &Node, setting: &bayleaf_engine::graph::SettingDef, field: Rect, requests: &mut Requests) {
+    let current = node.values.get("event").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let script = node.values.get("script").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let shown = if current.is_empty() { tl("Choose an event").to_owned() } else { format!("{current} · {script}") };
+    // The script of the component linked in, when a Get Component names one.
+    let linked = lists
+        .graph
+        .link_into(node.id, "component")
+        .and_then(|link| lists.graph.node(link.from.node))
+        .filter(|from| matches!(from.kind.as_str(), "getComponent" | "tryGetComponent"))
+        .and_then(|from| from.values.get("component").and_then(Value::as_str))
+        .map(str::to_owned);
+    let response = ui.put(field, |ui: &mut egui::Ui| {
+        craft_ui::ComboBox::from_id_salt(("script event", node.id))
+            .width(field.width())
+            .truncate()
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                let t = theme::tokens(ui);
+                let scripts: Vec<&(String, Vec<bayleaf_engine::script::DeclaredEvent>)> =
+                    lists.search.events.iter().filter(|(name, _)| linked.as_ref().is_none_or(|l| l.eq_ignore_ascii_case(name))).collect();
+                if scripts.is_empty() {
+                    ui.label(egui::RichText::new(tl("No script of the project declares an event")).small());
+                }
+                for (name, events) in scripts {
+                    ui.label(egui::RichText::new(name.as_str()).small().color(t.text_muted));
+                    for event in events {
+                        let picked = event.name == current && *name == script;
+                        if ui.selectable_label(picked, &event.name).clicked() && !picked {
+                            let key = format!("script event {} {} {}", node.id, name, event.name);
+                            requests.merge("graph.node.set", json!({ "node": node.id, "name": "params", "value": event.params }), key.clone());
+                            requests.merge("graph.node.set", json!({ "node": node.id, "name": "script", "value": name }), key.clone());
+                            requests.merge("graph.node.set", json!({ "node": node.id, "name": "event", "value": event.name }), key);
+                        }
                     }
                 }
             })

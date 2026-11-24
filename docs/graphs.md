@@ -247,6 +247,16 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   the hood an event is a message with values, so an interface element's **On Click** naming an event
   triggers it (its values read as zero), and On Message hears it too. `graph.event.add`, `.set` and
   `.remove` change the declaration; the nodes' pins follow it.
+- **Components.** Every script on an object, a Rust script or a visual script alike, is a component of
+  that object: it has a name (the one the Inspector shows), properties and events, which its
+  description lists. A **Component** pin carries one: **Get Component** naming a script gives it
+  (as well as its properties), **This Component** gives this script, and **Object of Component**
+  the object it is on. **Trigger Component Event** triggers an event on one component only; its
+  Event is picked from the list of the component's script (the script of the Get Component linked
+  in, else every script's events). **Subscribe to Event** makes this script hear that event
+  whenever it happens on the component, until **Unsubscribe from Event**; it arrives at **On
+  Component Event**, with **Source** (the component it happened on) and the event's values. A
+  subscription lasts while both scripts run; subscribing twice keeps one.
 
 `bayleaf_describe` is generated from the Property nodes. `cargo test -p bayleaf-script` builds a
 graph with every node kind and runs it.
@@ -326,8 +336,10 @@ numbers and text) and a property it shows only for (graph version 6, `properties
 functions with their inputs and outputs (**Add Function** declares one and places its Function and
 Return nodes; **Add Input** and **Add Output** of a type; **Call** places a Call Function node),
 **Events** lists the events with their values (**Add Event** declares one and places its On Event
-node; **Add Value** of a type; **On Event** and **Trigger** place their nodes; **Trigger Another
-Script's Event** places a Trigger Event for an event another script of the project declares), and
+node; **Add Value** of a type; **On Event** and **Trigger** place their nodes; **Other
+Scripts' Events** lists the events other scripts of the project declare: **Trigger** places a Get Component for the script
+and a Trigger Component Event, **Subscribe** a Get Component, Subscribe to Event and On Component
+Event), and
 **Script** has the **Menu path** field,
 which keeps what is typed and says why while it does not read right yet. On a variable node, Name is a list of the script's variables of that type (and names
 other nodes use without declaring them); **New Variable…** declares a new one and picks it.

@@ -3454,3 +3454,33 @@ fn events_are_declared_given_values_and_placed_from_the_script_panel() {
     assert_eq!(graph(&harness).value(trigger, "event"), Some(&json!(name)));
     assert!(harness.query_by_label_contains("this visual script compiles").is_some(), "{}", harness.state().status);
 }
+
+#[test]
+fn another_scripts_event_is_subscribed_to_from_the_script_panel_with_its_component_linked() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-subscribe-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let mut harness = harness();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    // Another script of the project declares Died, bringing an amount.
+    let health = json!({ "format": "bayleaf.graph", "version": 7, "domain": "script", "nodes": [],
+        "events": [{ "name": "Died", "params": [{ "name": "amount", "type": "number" }] }] });
+    std::fs::write(dir.join("scripts").join("health.bscript"), serde_json::to_string_pretty(&health).unwrap()).unwrap();
+    harness.state_mut().project.rescan_soon();
+    harness.run_steps(2);
+    harness.state_mut().dispatch("graph.new", &json!({ "domain": "script" }), None);
+    harness.run();
+    harness.get_by_label("Other Scripts' Events").click();
+    harness.run();
+    harness.get_by_label("Died · Health").click();
+    harness.run();
+    harness.get_by_label("Subscribe").click();
+    harness.run();
+    let g = graph(&harness);
+    let of = |kind: &str| g.nodes.iter().find(|n| n.kind == kind).unwrap_or_else(|| panic!("no {kind} node"));
+    assert_eq!(of("getComponent").values.get("component"), Some(&json!("Health")), "a Get Component names the script");
+    let subscribe = of("subscribeEvent");
+    assert_eq!((subscribe.values.get("script"), subscribe.values.get("event")), (Some(&json!("Health")), Some(&json!("Died"))));
+    assert_eq!(g.link_into(subscribe.id, "component").map(|l| l.from.node), Some(of("getComponent").id), "its component is linked");
+    assert_eq!(of("componentEventStart").values.get("params"), Some(&json!(["amount:number"])), "On Component Event brings the event's values");
+    std::fs::remove_dir_all(&dir).ok();
+}

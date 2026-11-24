@@ -318,7 +318,24 @@ struct Message {
     value: f32,
     /// What an event brings; empty for a plain message.
     args: Arc<[EventArg]>,
+    /// Only this script of the object (its place in the object's scripts), when the event was
+    /// triggered on one component.
+    script: Option<usize>,
+    /// The component an event happened on, when this is a subscriber's copy of it.
+    from: Option<(StableId, usize)>,
 }
+
+/// A script's subscription to an event of another component: when `event` happens on `publisher`
+/// (an object and the place of its script), `subscriber` hears it as `<publisher's script>/<event>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Subscription {
+    publisher: (StableId, usize),
+    event: String,
+    subscriber: (StableId, usize),
+}
+
+/// Most subscriptions one game keeps.
+pub const MAX_SUBSCRIPTIONS: usize = 65_536;
 
 /// The objects scripts can see during one step: names and local transforms as the step began.
 /// A handle is an object's position in this list plus one; 0 means none.
@@ -341,6 +358,8 @@ struct WorldView {
     kinds: Vec<Vec<String>>,
     /// Objects with Player Control, in hierarchy order.
     players: Vec<StableId>,
+    /// Each object's scripts in order, by the same index: each one's name as `kind_key` makes it.
+    script_names: Vec<Vec<String>>,
 }
 
 impl WorldView {
@@ -354,7 +373,16 @@ impl WorldView {
         let players = all.iter().map(|(id, _)| *id).filter(|id| scene.get::<bayleaf_scene::components::PlayerControl>(*id).is_some()).collect();
         let kinds = all.iter().map(|(id, _)| object_kinds(scene, *id)).collect();
         let fields = if with_fields { all.iter().map(|(id, _)| object_fields(scene, *id)).collect() } else { Vec::new() };
-        Arc::new(Self { objects, shapes, positions, players, kinds, fields, scripts: scripts.unwrap_or_default() })
+        let script_names = all
+            .iter()
+            .map(|(id, _)| {
+                scene
+                    .get::<bayleaf_scene::components::Scripts>(*id)
+                    .map(|s| s.0.iter().map(|script| kind_key(&script.display_name())).collect())
+                    .unwrap_or_default()
+            })
+            .collect();
+        Arc::new(Self { objects, shapes, positions, players, kinds, fields, scripts: scripts.unwrap_or_default(), script_names })
     }
 
     /// The nearest shape a ray hits within `max`, other than `skip`: its index and the distance.
@@ -391,6 +419,14 @@ impl WorldView {
     fn object(&self, handle: i32) -> Option<(StableId, usize)> {
         let index = usize::try_from(handle).ok()?.checked_sub(1)?;
         Some((self.objects.get(index)?.0, index))
+    }
+
+    /// The place (plus one) of the first script named `name` on the object with `handle`; 0 for none.
+    fn script_on(&self, handle: i32, name: &str) -> i32 {
+        let key = kind_key(name);
+        self.object(handle)
+            .and_then(|(_, index)| self.script_names.get(index)?.iter().position(|k| *k == key))
+            .map_or(0, |place| i32::try_from(place + 1).unwrap_or(0))
     }
 
     fn get(&self, handle: i32) -> Option<&(StableId, String, [f32; 9])> {
@@ -513,6 +549,12 @@ struct HostState<L> {
     message: Option<String>,
     /// What the message being delivered brings, when it is an event.
     message_args: Arc<[EventArg]>,
+    /// The component the event being delivered happened on, for a subscriber.
+    message_from: Option<(StableId, usize)>,
+    /// This script's place in its object's scripts.
+    index: usize,
+    /// Subscriptions this call asked for (true) or cancelled (false): the publisher and the event.
+    subscribing: Vec<(bool, (StableId, usize), String)>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
     /// Interface elements as they show, for `ui_value` and `ui_text`.
@@ -546,6 +588,9 @@ impl<L> HostState<L> {
             refs: Vec::new(),
             message: None,
             message_args: Arc::from([]),
+            message_from: None,
+            index: 0,
+            subscribing: Vec::new(),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
             interface: Arc::new(InterfaceValues::new()),

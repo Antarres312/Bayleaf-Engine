@@ -18,9 +18,10 @@ use super::{Error, LinkError, error, instantiate, limits, out_of_fuel, trap_mess
 use super::{from_val, to_val};
 use crate::{
     ABI_VERSION, DeclaredEvent, Description, EVERY_OBJECT, EventArg, FUEL_PER_CALL, GameState, Input, LogLine, MAX_DECLARED_EVENTS, MAX_DESCRIPTION_BYTES,
-    MAX_EVENT_ARGS, MAX_EVENT_TEXT, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME, MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS, MAX_REQUESTS_PER_CALL, Message,
-    Properties, PropertyWrite, Request, Scope, ScriptError, ScriptFault, ScriptValues, SharedState, Velocities, WorldView, actions, field_numbers, kind_key,
-    lock, menu_path, merged_position, module_bytes, read_position, read_transform, readable_component, script_keys, transform_from, visual,
+    MAX_EVENT_ARGS, MAX_EVENT_TEXT, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME, MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS, MAX_REQUESTS_PER_CALL,
+    MAX_SUBSCRIPTIONS, Message, Properties, PropertyWrite, Request, Scope, ScriptError, ScriptFault, ScriptValues, SharedState, Subscription, Velocities,
+    WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position, module_bytes, read_position, read_transform, readable_component,
+    script_keys, transform_from, visual,
 };
 use bayleaf_script_sdk::native::NativeObject;
 #[cfg(not(target_arch = "wasm32"))]
@@ -144,6 +145,8 @@ pub struct ScriptHost {
     requests: Vec<Request>,
     /// Messages sent and not yet delivered.
     messages: Vec<Message>,
+    /// Which scripts hear which components' events.
+    subscriptions: Vec<Subscription>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
     interface: Arc<crate::InterfaceValues>,
@@ -170,6 +173,7 @@ impl ScriptHost {
             logs: Vec::new(),
             requests: Vec::new(),
             messages: Vec::new(),
+            subscriptions: Vec::new(),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
             interface: Arc::new(crate::InterfaceValues::new()),
@@ -336,6 +340,7 @@ impl ScriptHost {
         self.reads_fields |= module.imports().any(|i| matches!(i.name(), "component_get" | "component_set"));
         let mut state = HostState::new(object, read_transform(scene, object), Properties::new(), time, input, limits());
         state.position = read_position(scene, object);
+        state.index = index;
         state.state = Arc::clone(&self.state);
         state.input_maps = Arc::clone(&self.input_maps);
         state.world = WorldView::of(scene, self.script_values());
@@ -524,8 +529,27 @@ impl ScriptHost {
         let mut later = Vec::new();
         let mut faults = Vec::new();
         let mut logs = Vec::new();
-        for message in messages {
-            for entry in self.instances.iter_mut().filter(|i| !i.stopped && message.to.is_none_or(|to| to == i.object)) {
+        self.take_subscribing();
+        // A subscriber's copy of an event goes after the event, in this same delivery; copies have no
+        // subscribers of their own, so nothing loops.
+        let mut queue: std::collections::VecDeque<Message> = messages.into();
+        while let Some(message) = queue.pop_front() {
+            let reaches = |i: &Instance| !i.stopped && message.to.is_none_or(|to| to == i.object) && message.script.is_none_or(|s| s == i.index);
+            if message.from.is_none() {
+                for entry in self.instances.iter().filter(|i| reaches(i)) {
+                    for sub in self.subscriptions.iter().filter(|s| s.publisher == (entry.object, entry.index) && s.event == message.name) {
+                        queue.push_back(Message {
+                            to: Some(sub.subscriber.0),
+                            name: format!("{}/{}", entry.script_name, message.name),
+                            value: message.value,
+                            args: Arc::clone(&message.args),
+                            script: Some(sub.subscriber.1),
+                            from: Some(sub.publisher),
+                        });
+                    }
+                }
+            }
+            for entry in self.instances.iter_mut().filter(|i| reaches(i)) {
                 let Some(on_message) = entry.on_message.as_ref().cloned() else { continue };
                 if !scene.contains(entry.object) {
                     continue;
@@ -545,10 +569,13 @@ impl ScriptHost {
                     state.state = Arc::clone(&self.state);
                     state.message = Some(message.name.clone());
                     state.message_args = Arc::clone(&message.args);
+                    state.message_from = message.from;
                 }
                 let result = call(entry, |store| on_message.call(store, message.value));
                 entry.store.data_mut().message = None;
                 entry.store.data_mut().message_args = Arc::from([]);
+                entry.store.data_mut().message_from = None;
+                take_subscribing_of(entry, &mut self.subscriptions);
                 let script = entry.script_name.clone();
                 logs.extend(entry.store.data_mut().logs.drain(..).map(|text| LogLine { object: entry.object, script: script.clone(), text }));
                 match result {
@@ -563,6 +590,16 @@ impl ScriptHost {
         self.messages = later;
         self.faults.extend(faults);
         self.push_logs(logs);
+    }
+
+    /// Subscriptions scripts asked for or cancelled since this was last asked; those of objects that
+    /// are gone go too.
+    fn take_subscribing(&mut self) {
+        for entry in &mut self.instances {
+            take_subscribing_of(entry, &mut self.subscriptions);
+        }
+        let live: HashSet<(StableId, usize)> = self.instances.iter().filter(|i| !i.stopped).map(|i| (i.object, i.index)).collect();
+        self.subscriptions.retain(|s| live.contains(&s.subscriber));
     }
 
     /// Reloads modules whose file changed since it was loaded. Returns the reloaded module names.
@@ -617,13 +654,13 @@ impl ScriptHost {
 
     /// Sends the scripts of `to` a message now (a button of the Inspector, `play.message`).
     pub fn send(&mut self, scene: &mut Scene, to: StableId, name: &str, value: f32, time: f64, input: &Arc<Input>) {
-        self.messages.push(Message { to: Some(to), name: name.to_owned(), value, args: Arc::from([]) });
+        self.messages.push(Message { to: Some(to), name: name.to_owned(), value, args: Arc::from([]), script: None, from: None });
         self.deliver(scene, time, input);
     }
 
     /// Sends a message to every script now, as `notify` does for one object.
     pub fn broadcast(&mut self, scene: &mut Scene, name: &str, value: f32, time: f64, input: &Arc<Input>) {
-        self.messages.push(Message { to: None, name: name.to_owned(), value, args: Arc::from([]) });
+        self.messages.push(Message { to: None, name: name.to_owned(), value, args: Arc::from([]), script: None, from: None });
         self.deliver(scene, time, input);
     }
 
@@ -651,7 +688,14 @@ impl ScriptHost {
         }
         let world = WorldView::of(scene, self.script_values());
         for (object, name, other) in contacts {
-            self.messages.push(Message { to: Some(*object), name: (*name).to_owned(), value: world.handle_of(*other) as f32, args: Arc::from([]) });
+            self.messages.push(Message {
+                to: Some(*object),
+                name: (*name).to_owned(),
+                value: world.handle_of(*other) as f32,
+                args: Arc::from([]),
+                script: None,
+                from: None,
+            });
         }
         self.deliver(scene, time, input);
     }
@@ -710,6 +754,19 @@ fn call(entry: &mut Instance, run: impl FnOnce(&mut Store<HostState>) -> Result<
 }
 
 /// Applies what a call changed: its own transform, other objects' transforms, and its requests.
+/// Applies the subscriptions one script asked for or cancelled.
+fn take_subscribing_of(entry: &mut Instance, subscriptions: &mut Vec<Subscription>) {
+    let subscriber = (entry.object, entry.index);
+    for (add, publisher, event) in entry.store.data_mut().subscribing.drain(..) {
+        let same = |s: &Subscription| s.publisher == publisher && s.event == event && s.subscriber == subscriber;
+        if !add {
+            subscriptions.retain(|s| !same(s));
+        } else if !subscriptions.iter().any(same) && subscriptions.len() < MAX_SUBSCRIPTIONS {
+            subscriptions.push(Subscription { publisher, event, subscriber });
+        }
+    }
+}
+
 fn after_call(scene: &mut Scene, entry: &mut Instance, requests: &mut Vec<Request>, messages: &mut Vec<Message>, properties: &mut Vec<PropertyWrite>) {
     write_transform(scene, entry);
     let state = entry.store.data_mut();
@@ -768,6 +825,62 @@ fn read_event_args(caller: &mut Caller<'_, HostState>, ptr: i32, count: i32) -> 
     Ok(args)
 }
 
+/// The object a component handle's value names, and which of its scripts: `None` when the object is
+/// gone or the component is none.
+fn component_at(caller: &Caller<'_, HostState>, handle: i32, script: i32) -> Option<(StableId, usize)> {
+    let (object, _, _) = caller.data().world.get(handle)?;
+    let script = usize::try_from(script).ok()?.checked_sub(1)?;
+    Some((*object, script))
+}
+
+/// A script's components: finding one on an object, triggering an event on it, subscribing to its
+/// events, and which component an event a subscriber hears happened on.
+fn link_components(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
+    linker.func_wrap("bayleaf", "script_component", |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32, len: i32| -> Result<i32, Error> {
+        let name = read_text(&mut caller, ptr, len, MAX_MESSAGE_NAME).map_err(|m| fault(&mut caller, format!("script_component: {m}")))?;
+        Ok(caller.data().world.script_on(handle, &name))
+    })?;
+    linker.func_wrap("bayleaf", "self_component", |caller: Caller<'_, HostState>| -> i32 { i32::try_from(caller.data().index + 1).unwrap_or(0) })?;
+    linker.func_wrap(
+        "bayleaf",
+        "event_send_to",
+        |mut caller: Caller<'_, HostState>, handle: i32, script: i32, ptr: i32, len: i32, args: i32, count: i32| -> Result<i32, Error> {
+            let name = read_text(&mut caller, ptr, len, MAX_MESSAGE_NAME).map_err(|m| fault(&mut caller, format!("event_send_to: {m}")))?;
+            if name.is_empty() {
+                return Err(fault(&mut caller, "event_send_to: give the event's name".to_owned()));
+            }
+            let values = read_event_args(&mut caller, args, count).map_err(|m| fault(&mut caller, format!("event_send_to: {m}")))?;
+            // A component that is none, or on an object that is gone, hears nothing.
+            let Some((object, script)) = component_at(&caller, handle, script) else { return Ok(0) };
+            let state = caller.data_mut();
+            if state.outbox.len() >= MAX_MESSAGES_PER_CALL {
+                return Ok(0);
+            }
+            state.outbox.push(Message { to: Some(object), name, value: 0.0, args: Arc::from(values), script: Some(script), from: None });
+            Ok(1)
+        },
+    )?;
+    for (export, add) in [("event_subscribe", true), ("event_unsubscribe", false)] {
+        linker.func_wrap("bayleaf", export, move |mut caller: Caller<'_, HostState>, handle: i32, script: i32, ptr: i32, len: i32| -> Result<i32, Error> {
+            let name = read_text(&mut caller, ptr, len, MAX_MESSAGE_NAME).map_err(|m| fault(&mut caller, format!("{export}: {m}")))?;
+            let Some(publisher) = component_at(&caller, handle, script).filter(|_| !name.is_empty()) else { return Ok(0) };
+            let state = caller.data_mut();
+            if state.subscribing.len() >= MAX_REQUESTS_PER_CALL {
+                return Ok(0);
+            }
+            state.subscribing.push((add, publisher, name));
+            Ok(1)
+        })?;
+    }
+    linker.func_wrap("bayleaf", "event_source", |caller: Caller<'_, HostState>| -> i32 {
+        caller.data().message_from.map_or(0, |(object, _)| caller.data().world.handle_of(object))
+    })?;
+    linker.func_wrap("bayleaf", "event_source_component", |caller: Caller<'_, HostState>| -> i32 {
+        caller.data().message_from.map_or(0, |(_, script)| i32::try_from(script + 1).unwrap_or(0))
+    })?;
+    Ok(())
+}
+
 /// Triggering events (`event_send`) and reading the values of the one being delivered.
 fn link_events(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
     linker.func_wrap(
@@ -791,10 +904,11 @@ fn link_events(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
             if state.outbox.len() >= MAX_MESSAGES_PER_CALL {
                 return Ok(0);
             }
-            state.outbox.push(Message { to, name, value: 0.0, args: Arc::from(values) });
+            state.outbox.push(Message { to, name, value: 0.0, args: Arc::from(values), script: None, from: None });
             Ok(1)
         },
     )?;
+    link_components(linker)?;
     let arg = |caller: &Caller<'_, HostState>, index: i32| usize::try_from(index).ok().and_then(|i| caller.data().message_args.get(i).cloned());
     linker.func_wrap("bayleaf", "event_number", move |caller: Caller<'_, HostState>, index: i32| -> f32 {
         match arg(&caller, index) {
@@ -1599,7 +1713,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             if state.outbox.len() >= MAX_MESSAGES_PER_CALL {
                 return Ok(0);
             }
-            state.outbox.push(Message { to, name, value, args: Arc::from([]) });
+            state.outbox.push(Message { to, name, value, args: Arc::from([]), script: None, from: None });
             Ok(1)
         })?;
         linker.func_wrap("bayleaf", "message_is", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> Result<i32, Error> {

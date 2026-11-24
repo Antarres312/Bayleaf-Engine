@@ -70,7 +70,7 @@ pub trait NativeObject: Send {
 
 impl<T: Script> NativeObject for T {
     fn describe(&self) -> String {
-        crate::describe(T::PROPERTIES, T::MENU, T::INSPECTOR)
+        crate::describe(T::PROPERTIES, T::MENU, T::INSPECTOR, T::EVENTS)
     }
 
     fn init(&mut self) {

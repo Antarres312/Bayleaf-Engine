@@ -372,8 +372,50 @@ mod natives {
         }
     }
 
+    /// Declares Ring with a level, and says when it rings.
+    #[derive(Default)]
+    pub struct Alarm;
+
+    impl Script for Alarm {
+        const EVENTS: &'static [bayleaf_script_sdk::Event] =
+            &[bayleaf_script_sdk::Event { name: "Ring", values: &[("level", bayleaf_script_sdk::ValueKind::Number)] }];
+
+        fn message(&mut self, name: &str, _value: f32) {
+            if name == "Ring" {
+                log(&format!("ring {}", bayleaf_script_sdk::event::number(0)));
+            }
+        }
+    }
+
+    /// Subscribes to the Bell's Alarm, rings it, and says what it heard and from where.
+    #[derive(Default)]
+    pub struct Listener;
+
+    impl Script for Listener {
+        fn start(&mut self) {
+            let alarm = bayleaf_script_sdk::Object::find("Bell").and_then(|bell| bell.component("Alarm"));
+            if let Some(alarm) = alarm {
+                alarm.subscribe("Ring");
+                alarm.trigger_event("Ring", &[bayleaf_script_sdk::EventValue::Number(2.0)]);
+            }
+        }
+
+        fn message(&mut self, name: &str, _value: f32) {
+            if name == "Alarm/Ring" {
+                let from = bayleaf_script_sdk::event::source().map(|c| c.object().name()).unwrap_or_default();
+                log(&format!("heard {from} {}", bayleaf_script_sdk::event::number(0)));
+            }
+        }
+    }
+
     pub mod spin {
         bayleaf_script_sdk::script!(super::Spin);
+    }
+    pub mod alarm {
+        bayleaf_script_sdk::script!(super::Alarm);
+    }
+    pub mod listener {
+        bayleaf_script_sdk::script!(super::Listener);
     }
     pub mod broken {
         bayleaf_script_sdk::script!(super::Broken);
@@ -388,6 +430,27 @@ fn load_native(host: &mut ScriptHost, scene: &mut Scene, object: StableId, path:
     let script =
         ScriptRef { module: path.into(), properties: scene.get::<Scripts>(object).and_then(|s| s.0.first().map(|s| s.properties.clone())).unwrap_or_default() };
     host.load_bytes(object, 0, Path::new(path), None, b"", &script, scene, 0.0, &Arc::new(Input::default()))
+}
+
+#[test]
+fn native_scripts_trigger_and_subscribe_to_a_components_event_as_visual_scripts_do() {
+    let mut host = super::test_host();
+    host.set_natives(vec![
+        (std::path::PathBuf::from("scripts/alarm.wasm"), natives::alarm::bayleaf_native()),
+        (std::path::PathBuf::from("scripts/listener.wasm"), natives::listener::bayleaf_native()),
+    ]);
+    let mut scene = Scene::new();
+    let bell = scene.create_object(None, "Bell").unwrap();
+    let ear = scene.create_object(None, "Ear").unwrap();
+    let script = |module: &str| ScriptRef { module: module.into(), properties: Default::default() };
+    scene.set(bell, Scripts(vec![script("game/scripts/alarm.wasm")])).unwrap();
+    scene.set(ear, Scripts(vec![script("game/scripts/listener.wasm")])).unwrap();
+    load_native(&mut host, &mut scene, bell, "game/scripts/alarm.wasm").unwrap();
+    load_native(&mut host, &mut scene, ear, "game/scripts/listener.wasm").unwrap();
+    host.update(&mut scene, 0.1, 0.0, &Arc::new(Input::default()));
+    assert!(host.take_faults().is_empty());
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["ring 2", "heard Bell 2"], "the alarm rings, and the listener hears it with where it rang");
 }
 
 #[test]
@@ -445,7 +508,7 @@ fn a_layout_the_sdk_writes_is_one_the_host_reads() {
         Layout::button("Jump now", "jump"),
         Layout::warning("Careful \"here\""),
     ];
-    let text = bayleaf_script_sdk::describe(&[Property::Number("speed", 3.0), Property::Number("boost", 1.0), Property::Whole("mode", 0)], "", LAYOUT);
+    let text = bayleaf_script_sdk::describe(&[Property::Number("speed", 3.0), Property::Number("boost", 1.0), Property::Whole("mode", 0)], "", LAYOUT, &[]);
     let bytes = text.as_bytes();
     let wat = format!(
         r#"(module (memory (export "memory") 1) (data (i32.const 0) "{}")

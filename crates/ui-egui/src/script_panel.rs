@@ -391,6 +391,39 @@ fn place_event(editor: &mut Editor, kind: &str, at: [f32; 2], name: &str, params
     }
 }
 
+/// For another script's event: a Get Component naming the script, then each node of `kinds` for the
+/// event, those with a component input linked to it.
+fn place_component_event(editor: &mut Editor, at: [f32; 2], module: &str, script: &str, event: &bayleaf_engine::script::DeclaredEvent, kinds: &[&str]) {
+    let path = editor.session.script_dir().join(module);
+    // The properties Get Component shows as pins, as the Graph panel keeps them.
+    let fields: Vec<String> = editor
+        .script_info
+        .properties(&path)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| match p.ty.code() {
+            "number" => Some(p.name),
+            "text" | "object" => None,
+            code => Some(format!("{}:{code}", p.name)),
+        })
+        .collect();
+    let Some(get) = editor.dispatch("graph.node.add", &json!({ "kind": "getComponent", "position": [at[0] - 260.0, at[1]] }), None) else { return };
+    let get = get["node"].clone();
+    editor.dispatch("graph.node.set", &json!({ "node": get, "name": "fields", "value": fields }), None);
+    editor.dispatch("graph.node.set", &json!({ "node": get, "name": "component", "value": script }), None);
+    for (row, kind) in kinds.iter().enumerate() {
+        let position = [at[0], at[1] + row as f32 * 180.0];
+        let Some(added) = editor.dispatch("graph.node.add", &json!({ "kind": kind, "position": position }), None) else { continue };
+        let node = added["node"].clone();
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "params", "value": event.params }), None);
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "script", "value": script }), None);
+        editor.dispatch("graph.node.set", &json!({ "node": node, "name": "event", "value": event.name }), None);
+        if *kind != "componentEventStart" {
+            editor.dispatch("graph.link.add", &json!({ "from": { "node": get, "pin": "component" }, "to": { "node": node, "pin": "component" } }), None);
+        }
+    }
+}
+
 /// The events other scripts of the project declare, by script: what a Trigger Event here can name.
 fn project_events(editor: &mut Editor, graph: &Graph) -> Vec<(String, bayleaf_engine::script::DeclaredEvent)> {
     let base = editor.session.script_dir();
@@ -504,17 +537,23 @@ fn events(editor: &mut Editor, ui: &mut egui::Ui, t: &Tokens, graph: &Graph, at:
             // Events other scripts declare, to trigger on their objects.
             let others = project_events(editor, graph);
             ui.add_enabled_ui(!others.is_empty(), |ui| {
-                ui.menu_button(tl("Trigger Another Script's Event"), |ui| {
+                ui.menu_button(tl("Other Scripts' Events"), |ui| {
                     for (module, event) in &others {
-                        let label = format!(
-                            "{} · {}",
-                            event.name,
-                            bayleaf_engine::scene::components::ScriptRef { module: module.clone(), properties: Default::default() }.display_name()
-                        );
-                        if ui.button(label).on_hover_text(module).clicked() {
-                            place_event(editor, "triggerEvent", at, &event.name, &json!(event.params));
-                            ui.close();
-                        }
+                        let script = bayleaf_engine::scene::components::ScriptRef { module: module.clone(), properties: Default::default() }.display_name();
+                        ui.menu_button(format!("{} · {script}", event.name), |ui| {
+                            if ui.button(tl("Trigger")).on_hover_text(tl("Place a Get Component for the script and a Trigger Component Event")).clicked() {
+                                place_component_event(editor, at, module, &script, event, &["triggerComponentEvent"]);
+                                ui.close();
+                            }
+                            if ui
+                                .button(tl("Subscribe"))
+                                .on_hover_text(tl("Place a Get Component for the script, Subscribe to Event, and On Component Event"))
+                                .clicked()
+                            {
+                                place_component_event(editor, at, module, &script, event, &["subscribeEvent", "componentEventStart"]);
+                                ui.close();
+                            }
+                        });
                     }
                 })
                 .response

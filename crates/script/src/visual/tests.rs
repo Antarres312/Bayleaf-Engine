@@ -577,6 +577,27 @@ fn every_node_kind_compiles_and_runs() {
     let heard = b.node("log", json!({ "message": "hit" }));
     b.link(on_hit, "then", heard, "run");
     b.link(on_hit, "power", heard, "value");
+    // This script as a component: subscribed to, triggered on, and heard; its object named.
+    let me_component = b.node("thisComponent", json!({}));
+    let my_object = b.node("componentObject", json!({}));
+    b.link(me_component, "component", my_object, "component");
+    let named = b.node("nameOf", json!({}));
+    b.link(my_object, "object", named, "target");
+    let subscribe = b.node("subscribeEvent", json!({ "script": "Test", "event": "Hit", "params": hit_pins }));
+    b.link(trigger_hit, "then", subscribe, "run");
+    b.link(me_component, "component", subscribe, "component");
+    let on_me = b.node("triggerComponentEvent", json!({ "script": "Test", "event": "Hit", "params": hit_pins }));
+    b.link(subscribe, "then", on_me, "run");
+    b.link(me_component, "component", on_me, "component");
+    let unsubscribe = b.node("unsubscribeEvent", json!({ "script": "Test", "event": "Hit", "params": hit_pins }));
+    b.link(on_me, "then", unsubscribe, "run");
+    b.link(me_component, "component", unsubscribe, "component");
+    let heard_from = b.node("componentEventStart", json!({ "script": "Test", "event": "Hit", "params": hit_pins }));
+    let from = b.node("componentObject", json!({}));
+    b.link(heard_from, "source", from, "component");
+    let heard_log = b.node("log", json!({ "message": "" }));
+    b.link(heard_from, "then", heard_log, "run");
+    b.link(named, "result", heard_log, "text");
     // Physics contacts: each names the other object (none arrive here).
     for kind in ["triggerEntered", "triggerLeft", "collisionStarted", "collisionEnded"] {
         let contact = b.node(kind, json!({}));
@@ -1862,4 +1883,75 @@ fn a_plain_message_such_as_an_interface_click_runs_on_event_with_its_values_at_z
     host.send(&mut scene, id, "SomethingElse", 0.0, 0.0, &Arc::new(Input::default()));
     let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
     assert_eq!(logs, ["open 0"], "the event runs once, for its own name, its value read as zero");
+}
+
+#[test]
+fn a_script_subscribes_to_a_components_event_hears_it_with_its_source_and_values_and_can_stop() {
+    use bayleaf_graph::Param;
+    use bayleaf_scene::components::Scripts;
+    let died = vec![Param { name: "amount".to_owned(), ty: VariableType::Number }];
+    let pins = bayleaf_graph::param_pins(&died);
+    // The publisher declares Died and logs when it happens on it.
+    let mut publisher = Builder::new();
+    publisher.0.add_event("Died").unwrap();
+    publisher.0.set_event(&CATALOG, "Died", None, Some(died.clone()), &super::EVENT_KINDS).unwrap();
+    let on = publisher.node("eventStart", json!({ "event": "Died", "params": pins }));
+    let said = publisher.node("log", json!({ "message": "died" }));
+    publisher.link(on, "then", said, "run");
+    publisher.link(on, "amount", said, "value");
+
+    // The subscriber finds the Publisher component, subscribes to Died, and triggers it there; a
+    // message later it cancels and triggers it again.
+    let mut subscriber = Builder::new();
+    let component = |b: &mut Builder| {
+        let found = b.node("findNamed", json!({ "name": "Boss" }));
+        let get = b.node("getComponent", json!({ "component": "Publisher", "fields": [] }));
+        b.link(found, "object", get, "target");
+        get
+    };
+    let start = subscriber.node("start", json!({}));
+    let get = component(&mut subscriber);
+    let subscribe = subscriber.node("subscribeEvent", json!({ "script": "Publisher", "event": "Died", "params": pins }));
+    subscriber.link(start, "then", subscribe, "run");
+    subscriber.link(get, "component", subscribe, "component");
+    let trigger = subscriber.node("triggerComponentEvent", json!({ "script": "Publisher", "event": "Died", "params": pins }));
+    subscriber.0.set_value(&CATALOG, trigger, "amount", json!(3.0)).unwrap();
+    subscriber.link(subscribe, "then", trigger, "run");
+    subscriber.link(get, "component", trigger, "component");
+    let heard = subscriber.node("componentEventStart", json!({ "script": "Publisher", "event": "Died", "params": pins }));
+    let source = subscriber.node("componentObject", json!({}));
+    subscriber.link(heard, "source", source, "component");
+    let name = subscriber.node("nameOf", json!({}));
+    subscriber.link(source, "object", name, "target");
+    let log = subscriber.node("log", json!({ "message": "heard" }));
+    subscriber.link(heard, "then", log, "run");
+    subscriber.link(name, "result", log, "text");
+    subscriber.link(heard, "amount", log, "value");
+    let stop = subscriber.node("message", json!({ "message": "stop" }));
+    let get_again = component(&mut subscriber);
+    let unsubscribe = subscriber.node("unsubscribeEvent", json!({ "script": "Publisher", "event": "Died", "params": pins }));
+    subscriber.link(stop, "then", unsubscribe, "run");
+    subscriber.link(get_again, "component", unsubscribe, "component");
+    let again = subscriber.node("triggerComponentEvent", json!({ "script": "Publisher", "event": "Died", "params": pins }));
+    subscriber.0.set_value(&CATALOG, again, "amount", json!(4.0)).unwrap();
+    subscriber.link(unsubscribe, "then", again, "run");
+    subscriber.link(get_again, "component", again, "component");
+
+    let mut scene = Scene::new();
+    let input = Arc::new(Input::default());
+    let boss = scene.create_object(None, "Boss").unwrap();
+    let watcher = scene.create_object(None, "Watcher").unwrap();
+    let script = |module: &str| ScriptRef { module: module.to_owned(), properties: BTreeMap::new() };
+    scene.set(boss, Scripts(vec![script("publisher.bscript")])).unwrap();
+    scene.set(watcher, Scripts(vec![script("watcher.bscript")])).unwrap();
+    let mut host = ScriptHost::new();
+    host.load_bytes(boss, 0, Path::new("publisher.bscript"), None, &publisher.bytes(), &script("publisher.bscript"), &mut scene, 0.0, &input).unwrap();
+    host.load_bytes(watcher, 0, Path::new("watcher.bscript"), None, &subscriber.bytes(), &script("watcher.bscript"), &mut scene, 0.0, &input).unwrap();
+    host.update(&mut scene, 0.1, 0.0, &input);
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["died 3", "heard Boss 3"], "the event runs on the component, then the subscriber hears it with where it happened");
+    host.send(&mut scene, watcher, "stop", 0.0, 0.0, &input);
+    host.update(&mut scene, 0.1, 0.1, &input);
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["died 4"], "after cancelling, the subscriber no longer hears it");
 }
