@@ -1,0 +1,4 @@
+# A 64 KiB stack instead of Rust's default 1 MiB, so each script instance's linear memory starts at a
+# few pages: the benchmark runs up to 60,000 instances. The scripts use far less stack than this.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=65536"]

@@ -5,3 +5,4 @@
 .cursor/
 /scripts/target
 /examples/**/scripts/*.wasm
+/bench/scripts/target

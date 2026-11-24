@@ -1,0 +1,22 @@
+[package]
+name = "bayleaf-bench"
+description = "L7: internal performance benchmark of the script step and the play step (see bench/README.md)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bayleaf-core = { workspace = true }
+bayleaf-scene = { workspace = true }
+bayleaf-script = { workspace = true, features = ["compiled"] }
+bayleaf-script-sdk = { workspace = true }
+# Without physics, gameplay, audio and streaming: the play step as the core runs it.
+bayleaf-engine = { workspace = true, features = ["compiled-scripts"] }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

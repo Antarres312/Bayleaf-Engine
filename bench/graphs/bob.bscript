@@ -1,0 +1,35 @@
+{
+  "format": "bayleaf.graph",
+  "version": 1,
+  "domain": "script",
+  "nodes": [
+    { "id": 1, "kind": "update", "position": [40.0, 40.0] },
+    { "id": 2, "kind": "time", "position": [0.0, 220.0] },
+    { "id": 3, "kind": "property", "position": [0.0, 320.0], "values": { "name": "speed", "default": 2.0 } },
+    { "id": 4, "kind": "multiply", "position": [260.0, 260.0] },
+    { "id": 5, "kind": "sine", "position": [500.0, 260.0] },
+    { "id": 6, "kind": "property", "position": [500.0, 380.0], "values": { "name": "height", "default": 0.5 } },
+    { "id": 7, "kind": "multiply", "position": [740.0, 280.0] },
+    { "id": 8, "kind": "property", "position": [740.0, 400.0], "values": { "name": "base", "default": 0.0 } },
+    { "id": 9, "kind": "add", "position": [980.0, 300.0] },
+    { "id": 10, "kind": "position", "position": [740.0, 120.0] },
+    { "id": 11, "kind": "split", "position": [980.0, 120.0] },
+    { "id": 12, "kind": "vector", "position": [1220.0, 160.0] },
+    { "id": 13, "kind": "setPosition", "position": [1460.0, 40.0] }
+  ],
+  "links": [
+    { "from": { "node": 2, "pin": "seconds" }, "to": { "node": 4, "pin": "a" } },
+    { "from": { "node": 3, "pin": "value" }, "to": { "node": 4, "pin": "b" } },
+    { "from": { "node": 4, "pin": "result" }, "to": { "node": 5, "pin": "value" } },
+    { "from": { "node": 5, "pin": "result" }, "to": { "node": 7, "pin": "a" } },
+    { "from": { "node": 6, "pin": "value" }, "to": { "node": 7, "pin": "b" } },
+    { "from": { "node": 7, "pin": "result" }, "to": { "node": 9, "pin": "a" } },
+    { "from": { "node": 8, "pin": "value" }, "to": { "node": 9, "pin": "b" } },
+    { "from": { "node": 10, "pin": "position" }, "to": { "node": 11, "pin": "vector" } },
+    { "from": { "node": 11, "pin": "x" }, "to": { "node": 12, "pin": "x" } },
+    { "from": { "node": 9, "pin": "result" }, "to": { "node": 12, "pin": "y" } },
+    { "from": { "node": 11, "pin": "z" }, "to": { "node": 12, "pin": "z" } },
+    { "from": { "node": 1, "pin": "then" }, "to": { "node": 13, "pin": "run" } },
+    { "from": { "node": 12, "pin": "vector" }, "to": { "node": 13, "pin": "position" } }
+  ]
+}

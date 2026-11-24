@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*", "xtask"]
-# Example game scripts build for WebAssembly in their own workspace (`cargo xtask scripts`).
-exclude = ["scripts"]
+members = ["crates/*", "apps/*", "xtask", "bench"]
+# Example game scripts build for WebAssembly in their own workspace (`cargo xtask scripts`), as do
+# the benchmark's scripts (bench/README.md).
+exclude = ["scripts", "bench/scripts"]
 
 [workspace.package]
 version = "0.3.0"

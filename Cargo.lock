@@ -540,6 +540,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bayleaf-bench"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "bayleaf-core",
+ "bayleaf-engine",
+ "bayleaf-scene",
+ "bayleaf-script",
+ "bayleaf-script-sdk",
+ "clap",
+ "serde_json",
+]
+
+[[package]]
 name = "bayleaf-cli"
 version = "0.3.0"
 dependencies = [
