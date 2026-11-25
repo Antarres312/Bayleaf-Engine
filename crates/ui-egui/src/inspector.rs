@@ -17,6 +17,11 @@ enum Pending {
     },
     Add(&'static str),
     Remove(&'static str),
+    /// Back to the defaults (or a prefab copy's file): a component, or one script of the list.
+    Reset {
+        component: &'static str,
+        script: Option<usize>,
+    },
     AddScript(String),
     RemoveScript(usize),
     ScriptProperty {
@@ -95,6 +100,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let mut open_material: Option<std::path::PathBuf> = None;
     let mut pending = None;
     let mut gesture_ended = false;
+    // Where a card's Reset takes its values from, read only while its menu is open.
+    let session = &editor.session;
+    let reset_source = |component: &'static str, script: Option<usize>| move || bayleaf_engine::prefab_cmds::reset_source(session, id, component, script);
 
     let panel = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(4.0);
@@ -123,7 +131,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         // A placed prefab says where it came from, and offers Apply, Revert and Unlink.
         if let Some((_, link)) = components.iter().find(|(n, _)| *n == "prefab") {
             let source = link["source"].as_str().unwrap_or_default().to_owned();
-            card(ui, t, "prefab card", "Prefab", Some(&source), CardMenu { removable: false, script: None }, |ui| {
+            card(ui, t, "prefab card", "Prefab", Some(&source), CardMenu { removable: false, script: None, reset: None }, |ui| {
                 ui.add(egui::Label::new(egui::RichText::new(&source).color(t.text_muted)).truncate());
                 // What this copy changed, which stays when the prefab file changes.
                 let overrides: Vec<String> = link["overrides"]
@@ -163,8 +171,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
 
         for (name, value) in components.iter().filter(|(n, _)| *n != "name" && *n != Scripts::NAME && *n != "prefab") {
             let Some(kind) = kinds.iter().find(|k| k.name == *name) else { continue };
-            let menu = CardMenu { removable: kind.removable, script: None };
-            card(ui, t, ("component card", *name), kind.label, None, menu, |ui| {
+            let source = reset_source(kind.name, None);
+            let menu = CardMenu { removable: kind.removable, script: None, reset: Some(&source) };
+            let chosen = card(ui, t, ("component card", *name), kind.label, None, menu, |ui| {
                 let mut edited = value.clone();
                 // File fields are picked from the project's files below, not typed.
                 let fields: Vec<&FileField> = file_fields.iter().filter(|f| f.component == *name).collect();
@@ -192,15 +201,20 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                         pending = Some(Pending::Set { component: kind.name, value });
                     }
                 }
-            })
-            .removed
-            .then(|| pending = Some(Pending::Remove(kind.name)));
+            });
+            if chosen.removed {
+                pending = Some(Pending::Remove(kind.name));
+            }
+            if chosen.reset {
+                pending = Some(Pending::Reset { component: kind.name, script: None });
+            }
         }
 
         for (index, card_data) in cards.iter().enumerate() {
             let title = card_data.script.display_name();
             let path = script_dir.join(&card_data.script.module);
-            let menu = CardMenu { removable: true, script: Some(editable_script(&path)) };
+            let source = reset_source("scripts", Some(index));
+            let menu = CardMenu { removable: true, script: Some(editable_script(&path)), reset: Some(&source) };
             let chosen = card(ui, t, ("script card", index), &title, Some(&card_data.script.module), menu, |ui| match &card_data.declared {
                 Err(message) => {
                     ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tf("Warning: {message}", &[("message", &message.to_string())])).color(t.warning)).wrap());
@@ -216,6 +230,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             }
             if chosen.edit {
                 pending = Some(Pending::EditScript(path));
+            }
+            if chosen.reset {
+                pending = Some(Pending::Reset { component: "scripts", script: Some(index) });
             }
         }
 
@@ -324,11 +341,14 @@ fn menu_tree(ui: &mut egui::Ui, entries: &[MenuEntry], indices: &[usize], depth:
 
 /// What a card's menu offers.
 #[derive(Clone, Copy)]
-struct CardMenu {
+struct CardMenu<'a> {
     removable: bool,
     /// A script card: whether there is something to edit (a visual script, or a Rust script with
     /// its source in the project).
     script: Option<bool>,
+    /// Reset, with where it takes the values from: a prefab file, or `None` for the defaults.
+    /// Asked only while the menu is open, as a prefab copy's file is read for it.
+    reset: Option<&'a dyn Fn() -> Option<String>>,
 }
 
 /// What was chosen on a card.
@@ -336,15 +356,28 @@ struct CardMenu {
 struct CardChoice {
     removed: bool,
     edit: bool,
+    reset: bool,
 }
 
-/// The card's menu: Edit Script on a script's card, and Remove.
-fn card_menu(ui: &mut egui::Ui, menu: CardMenu, chosen: &mut CardChoice) {
+/// The card's menu: Edit Script on a script's card, Reset (to Prefab on a prefab copy), and Remove.
+fn card_menu(ui: &mut egui::Ui, menu: CardMenu<'_>, chosen: &mut CardChoice) {
     if let Some(editable) = menu.script {
         let edit = ui.add_enabled(editable, egui::Button::new(tl("Edit Script")));
         let edit = edit.on_disabled_hover_text(tl("This script has no Rust source or graph in the project to edit."));
         if edit.clicked() {
             chosen.edit = true;
+            ui.close();
+        }
+    }
+    if let Some(source) = menu.reset {
+        // The label says which values come back.
+        let (label, hint) = match source() {
+            Some(file) => (tl("Reset to Prefab").to_owned(), crate::i18n::tf("Put every value back to the one in {file}", &[("file", &file)])),
+            None if menu.script.is_some() => (tl("Reset").to_owned(), tl("Put every property back to the script's default").to_owned()),
+            None => (tl("Reset").to_owned(), tl("Put every field back to its default").to_owned()),
+        };
+        if ui.button(label).on_hover_text(hint).clicked() {
+            chosen.reset = true;
             ui.close();
         }
     }
@@ -378,7 +411,7 @@ fn edit_script(editor: &mut Editor, module: &std::path::Path) {
 }
 
 /// A collapsible card with a title, an optional muted subtitle, and a menu (its title right-clicked,
-/// or the … button) with Edit Script on a script's card and Remove. Returns what
+/// or the … button) with Edit Script on a script's card, Reset and Remove. Returns what
 /// was chosen.
 fn card(
     ui: &mut egui::Ui,
@@ -386,7 +419,7 @@ fn card(
     salt: impl std::hash::Hash + std::fmt::Debug,
     title: &str,
     subtitle: Option<&str>,
-    menu: CardMenu,
+    menu: CardMenu<'_>,
     body: impl FnOnce(&mut egui::Ui),
 ) -> CardChoice {
     let mut chosen = CardChoice::default();
@@ -396,8 +429,8 @@ fn card(
         ui.spacing_mut().interact_size.y = theme::SECTION_TITLE;
         ui.spacing_mut().item_spacing.y = 4.0;
         let state_id = ui.make_persistent_id(salt);
-        // A card with nothing to choose (Transform) has no menu.
-        let has_menu = menu.removable || menu.script.is_some();
+        // A card with nothing to choose (the prefab link's) has no menu.
+        let has_menu = menu.removable || menu.script.is_some() || menu.reset.is_some();
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true)
             .show_header(ui, |ui| {
                 // Right-clicking the title, or the free space beside it, opens the card's menu.
@@ -575,6 +608,15 @@ fn apply(editor: &mut Editor, id: bayleaf_core::StableId, pending: Option<Pendin
         }
         Some(Pending::Remove(component)) => {
             editor.dispatch("scene.component.remove", &json!({ "id": id, "component": component }), None);
+        }
+        Some(Pending::Reset { component, script }) => {
+            let result = editor.dispatch("scene.component.reset", &json!({ "id": id, "component": component, "script": script }), None);
+            // Say which values came back.
+            if let Some(source) = result.as_ref().and_then(|r| r["source"].as_str()) {
+                editor.status = crate::i18n::tf("Reset to the values in {file}", &[("file", source)]);
+            } else if result.is_some() {
+                editor.status = tl("Reset to the defaults").to_owned();
+            }
         }
         Some(Pending::AddScript(module)) => {
             editor.dispatch("scene.script.add", &json!({ "id": id, "module": module }), None);

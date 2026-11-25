@@ -292,6 +292,19 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             enabled: always,
             run: component_remove,
         },
+        CommandSpec {
+            id: "scene.component.reset",
+            label: "Reset Component",
+            menu: "",
+            shortcut: "",
+            params: "{id, component, script?}: puts every field back to its default; with script (an index, component \"scripts\") \
+                     only that script's properties, to their declared defaults. On a prefab copy the prefab file's values are used \
+                     instead, where the file has them. Returns {from: \"defaults\"} or {from: \"prefab\", source}",
+            prompt: Prompt::SelectedObject,
+            mutates: Mutates::Scene,
+            enabled: always,
+            run: component_reset,
+        },
     ]
 }
 
@@ -738,6 +751,62 @@ fn component_remove(session: &mut Session, params: &Value) -> Result<Value, Comm
     session.scene.remove_component(p.id, &p.component)?;
     crate::prefab_cmds::note_override(&mut session.scene, p.id, &p.component);
     Ok(json!({}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResetParams {
+    id: StableId,
+    component: String,
+    /// One script of the `scripts` list, by index.
+    #[serde(default)]
+    script: Option<usize>,
+}
+
+fn component_reset(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: ResetParams = parse(params)?;
+    if p.component == "prefab" {
+        return Err(CommandError::BadParams("the prefab link has no defaults: use scene.prefab.revert or scene.component.remove".to_owned()));
+    }
+    if p.script.is_some() && p.component != "scripts" {
+        return Err(CommandError::BadParams("script is an index into the \"scripts\" component".to_owned()));
+    }
+    let current = session.scene.component(p.id, &p.component)?;
+    let from_prefab = crate::prefab_cmds::reset_values(session, p.id, &p.component, p.script);
+    let value = match p.script {
+        None => match &from_prefab {
+            Some((_, theirs)) => theirs.clone(),
+            None => session.scene.registry().find(&p.component).map(|kind| kind.default_value()).unwrap_or_default(),
+        },
+        Some(index) => {
+            let mut scripts = scripts_of(session, p.id)?;
+            let count = scripts.0.len();
+            let script =
+                scripts.0.get_mut(index).ok_or_else(|| CommandError::BadParams(format!("the object has {count} scripts; there is no index {index}")))?;
+            script.properties = match &from_prefab {
+                Some((_, theirs)) => serde_json::from_value::<ScriptRef>(theirs.clone()).map(|s| s.properties).unwrap_or_default(),
+                None => Default::default(),
+            };
+            serde_json::to_value(scripts).map_err(|e| CommandError::Failed(e.to_string()))?
+        }
+    };
+    let changed = value != current;
+    if changed {
+        session.scene.set_component(p.id, &p.component, value)?;
+    }
+    match from_prefab {
+        Some((source, _)) => {
+            // Back to the file's values: the copy follows the file again.
+            crate::prefab_cmds::forget_override(session, p.id, &p.component);
+            Ok(json!({ "from": "prefab", "source": source }))
+        }
+        None => {
+            if changed {
+                crate::prefab_cmds::note_override(&mut session.scene, p.id, &p.component);
+            }
+            Ok(json!({ "from": "defaults" }))
+        }
+    }
 }
 
 fn yes() -> bool {
