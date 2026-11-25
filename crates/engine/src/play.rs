@@ -376,6 +376,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     if let Some(problem) = saved_problem {
         session.log(Level::Error, format!("Saved values could not be read, so play starts without them and they are not saved: {problem}"));
     }
+    crate::animation::start(session);
     #[cfg(feature = "gameplay")]
     spawn_player(session);
     drain(session);
@@ -585,6 +586,7 @@ fn stop(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
     keep_saved(session);
     let play = session.play.take().ok_or_else(|| CommandError::Failed("play mode is not running".to_owned()))?;
     session.scene = Scene::from_doc(&play.snapshot)?;
+    session.animation.clear();
     session.log(Level::Info, format!("Play mode stopped after {:.2} s; the scene is back as it was.", play.time));
     Ok(json!({ "time": play.time }))
 }
@@ -735,6 +737,7 @@ fn step_parts(session: &mut Session, dt: f32) {
         play.host.update(&mut session.scene, dt, play.time, &input);
         session.profiler.add(Part::Scripts, scripts.elapsed());
         apply_requests(session);
+        crate::animation::step(session, dt);
         timed(session, Part::Particles, |session| {
             if let Some(play) = session.play.as_mut() {
                 play.particles.step(&session.scene, dt);

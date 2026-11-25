@@ -23,6 +23,7 @@ bayleaf-graph = { path = "crates/graph" }
 bayleaf-interface = { path = "crates/interface" }
 bayleaf-assets = { path = "crates/assets" }
 bayleaf-render = { path = "crates/render" }
+bayleaf-animation = { path = "crates/animation" }
 bayleaf-script = { path = "crates/script" }
 bayleaf-script-sdk = { path = "crates/script-sdk" }
 bayleaf-particles = { path = "crates/particles" }

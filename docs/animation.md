@@ -1,0 +1,70 @@
+# Skeletal animation
+
+A glTF model with a skeleton (skinned parts, or parts on nodes that its animations move) is drawn by
+its skin: each vertex follows up to four joints by its weights. Its animations are its **clips**.
+This page says how clips play: on the GPU, faded and mixed, in layers, through animation states,
+with clip events and root motion, and from scripts and commands. The code is in `crates/animation`
+(clips, motions, players, animation states), `crates/assets/src/skeleton.rs` (poses and skins),
+`crates/render` (GPU skinning) and `crates/engine/src/animation.rs` (players in the session and the
+`animation.*` commands).
+
+Behaviour is learned from public descriptions of skeletal animation (linear blend skinning,
+cross-fades, one-dimensional blends, masked layers, state machines); no other engine's code, file
+layout or wording is used.
+
+## Skinning on the GPU
+
+The renderer keeps one copy of a skinned model on the GPU, in its bound pose, with each vertex's four
+joints and weights. Each frame it writes the matrices of every skinned object into one joint texture
+(four texels a matrix, 256 matrices a row), and the vertex shader moves each vertex by its joints'
+matrices; the shadow, outline and selection passes do the same. So many objects showing one model
+share its vertices, and objects of one model and material are drawn in one call however differently
+they are posed.
+
+A model with a skeleton that nothing animates stands in its rest pose. The CPU path stays: a device
+without the sixteen vertex inputs GPU skinning needs moves the vertices on the CPU and uploads them
+per object, as `Renderer::set_cpu_skinning(true)` does for tests; both give the same picture. A
+posed model's box (for picking, framing and shadows) is each joint's own box moved by its joint, put
+together, so it is never smaller than the model.
+
+## Clips
+
+A clip is anything that poses named parts over time (`ClipSource` in `crates/animation/src/clip.rs`):
+its length, where it puts the parts it moves at a moment, and the moments it marks. A model's own
+animations are clips under their names. A clip made elsewhere (a timeline) becomes one by
+implementing `ClipSource`, or by filling a `NamedClip` (keys of translation, rotation and scale for
+parts by name, which are found in the skeleton by their node names); adding it to an object's
+`Clips` under a name lets motions, animation states, scripts and commands play it like any other.
+
+## Fades, mixes and layers
+
+What plays is a **motion**:
+- a **clip**, at a speed (0 to 10), looping or once (holding its last moment);
+- a **mix** of motions by a number: each motion has a point, and the number picks the two points
+  round it, each by how near it is (walk at 1 and run at 3, by speed; aim down at -45 and up at 45,
+  by angle); before the first point the first motion alone, past the last the last alone. The motions
+  of a mix play in step: each reaches its end when the mix does. The number is typed in or names a
+  parameter;
+- a **layer**: one motion over another on a joint and every joint under it only (a wave on the arm
+  while the legs walk), by a weight from 0 to 1.
+
+An object plays motions in layers: the base layer covers the whole skeleton, and each further layer
+plays on a joint and the joints under it, over the base. Playing a motion on a layer fades it in over
+the time chosen (0 to 60 seconds) from what played there; stopping the base layer fades to the rest
+pose, and stopping another layer fades it out.
+
+## Commands
+
+| Command | Params | |
+|---|---|---|
+| `animation.get` | `{id}` | the object's clips (`{name, duration}`), joints, layers (`{joint, motion, time, fading}`), parameters and whether it plays |
+| `animation.play` | `{id, clip? \| mix?: [{clip, at}], by?, layer?, fade?, loop?, speed?}` | plays a clip or a mix on the base layer, or on `layer` (a joint's name); `by` is a number or a parameter's name; `fade` defaults to 0.25 seconds |
+| `animation.stop` | `{id, layer?, fade?}` | |
+| `animation.parameter.set` | `{id, name, value}` | a number or true/false |
+| `animation.trigger` | `{id, name}` | sets a trigger |
+
+In play mode every object with a Model Animation component gets a player when play starts (or when
+it is spawned), which plays the component's clip; the commands then change what plays. Outside play
+mode a command makes a player for the object (the Inspector's preview uses them); the scene file
+never changes, and play mode starts and ends with none. Each command refuses a clip or joint the
+model does not have, naming the ones it has.

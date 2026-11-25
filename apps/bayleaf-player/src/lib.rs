@@ -136,7 +136,10 @@ impl Player {
         let effects = render::Effects { show: true, allowed: self.effects, camera: render::camera_object(scene) };
         let options = FrameOptions { show_grid: false, selected: None, time: self.session.play_time() as f32, shadows: self.shadows, effects };
         let gathering = bayleaf_core::time::Instant::now();
-        let mut frame = render::extract_with(scene, camera, options, &mut assets);
+        let mut frame = {
+            let mut posed = bayleaf_engine::animation::Posed { assets: &mut assets, poses: self.session.animation_poses() };
+            render::extract_with(scene, camera, options, &mut posed)
+        };
         if let Some(particles) = self.session.particles() {
             frame.items.extend(particles.draw_items(scene, &frame.camera, &mut assets));
         }

@@ -446,7 +446,10 @@ fn scene_render(session: &mut Session, params: &Value) -> Result<Value, CommandE
     };
     let effects = bayleaf_render::Effects { show: true, allowed: graphics.effects.render(), camera: camera_object };
     let options = bayleaf_render::FrameOptions { show_grid: p.grid, selected: None, time: 0.0, shadows: graphics.shadows(), effects };
-    let frame = bayleaf_render::extract_with(scene, camera, options, &mut assets);
+    let frame = {
+        let mut posed = crate::animation::Posed { assets: &mut assets, poses: session.animation_poses() };
+        bayleaf_render::extract_with(scene, camera, options, &mut posed)
+    };
     let warnings = assets.warnings;
     let gpu = bayleaf_render::HeadlessGpu::new().map_err(|e| CommandError::Failed(e.to_string()))?;
     let image = gpu.render_with_samples(&frame, p.width, p.height, graphics.samples()).map_err(|e| CommandError::Failed(e.to_string()))?;

@@ -384,7 +384,10 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let allow = |path: &std::path::Path| Ok(path.to_path_buf());
     let mut assets = bayleaf_render::FileAssets { base, materials: &mut view.materials, cache: &mut view.assets, allow: &allow, warnings: Vec::new() };
     let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time, shadows, effects };
-    let mut frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut assets);
+    let mut frame = {
+        let mut posed = bayleaf_engine::animation::Posed { assets: &mut assets, poses: editor.session.animation_poses() };
+        bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut posed)
+    };
     add_particles(&view.preview, editor, &mut frame, &mut assets);
     frame.highlighted = editor.also_selected.clone();
     // The object a dragged script would go to is outlined too.

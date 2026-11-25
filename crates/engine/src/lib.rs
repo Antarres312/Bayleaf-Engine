@@ -5,6 +5,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod animation;
 pub mod asset_cmds;
 pub mod asset_info;
 mod builtin;
@@ -32,6 +33,7 @@ pub mod web_export;
 #[cfg(feature = "streaming")]
 pub use bayleaf_streaming as streaming;
 
+pub use bayleaf_animation as anim;
 pub use bayleaf_graph as graph;
 pub use bayleaf_particles as particles;
 pub use bayleaf_render as render;
@@ -158,6 +160,8 @@ pub struct Session {
     prefab_edits: Vec<prefab_cmds::PrefabEdit>,
     /// Play steps' times by part, while it records.
     profiler: profiler::Profiler,
+    /// Animation players and the poses the views draw.
+    animation: animation::Animation,
 }
 
 /// How important a console line is.
@@ -576,6 +580,7 @@ impl CommandRegistry {
         commands.extend(import::commands());
         commands.extend(interface::commands());
         commands.extend(input_cmds::commands());
+        commands.extend(animation::commands());
         Self { commands }
     }
 
