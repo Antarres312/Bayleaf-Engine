@@ -94,6 +94,92 @@ pub fn property_object(name: &str) -> Option<Object> {
     Some(abi::property_object(name)).filter(|h| *h != 0).map(Object)
 }
 
+/// A data file of the project (`.bdata`), by its path from the project folder (`data/goblin.bdata`).
+/// Its fields read as the file was saved when play started, each the shape's default where the
+/// file sets none; play never writes them. A field of another type reads as `None`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Data {
+    path: String,
+}
+
+/// The data file at `path`, from the project folder. Reading a file the project lacks gives `None`
+/// for every field.
+pub fn data(path: &str) -> Data {
+    Data { path: path.to_owned() }
+}
+
+/// The data file a data file property ([`Property::Data`]) names, if one is chosen.
+pub fn property_data(name: &str) -> Option<Data> {
+    Some(property_text(name)).filter(|p| !p.is_empty()).map(|path| Data { path })
+}
+
+impl Data {
+    /// Its path from the project folder.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// A number field; a whole number or true/false reads as a number too.
+    pub fn number(&self, field: &str) -> Option<f32> {
+        abi::data_get(&self.path, field).map(|v| v[0])
+    }
+
+    /// A whole-number field (a number rounded).
+    pub fn whole(&self, field: &str) -> Option<i32> {
+        self.number(field).map(|v| v.round() as i32)
+    }
+
+    /// A true/false field.
+    pub fn flag(&self, field: &str) -> Option<bool> {
+        self.number(field).map(|v| v != 0.0)
+    }
+
+    /// A vector or colour field.
+    pub fn vector(&self, field: &str) -> Option<[f32; 3]> {
+        abi::data_get(&self.path, field)
+    }
+
+    /// A text field, an object field's object name, or a file field's path (empty for none).
+    pub fn text(&self, field: &str) -> Option<String> {
+        abi::data_text_of(&self.path, field)
+    }
+
+    /// The data file a data file field names, if one is chosen.
+    pub fn data(&self, field: &str) -> Option<Data> {
+        self.text(field).filter(|p| !p.is_empty()).map(|path| Data { path })
+    }
+
+    /// How many items a list field has, or entries a map field.
+    pub fn len(&self, field: &str) -> Option<usize> {
+        abi::data_len(&self.path, field)
+    }
+
+    /// Item `index` (from 0) of a list field of numbers, vectors or colours (a number in the first place).
+    pub fn number_at(&self, field: &str, index: usize) -> Option<[f32; 3]> {
+        abi::data_item(&self.path, field, index)
+    }
+
+    /// Item `index` of a list field of texts, objects or files.
+    pub fn text_at(&self, field: &str, index: usize) -> Option<String> {
+        abi::data_item_text(&self.path, field, index)
+    }
+
+    /// The `index`-th key (from 0, in order) of a map field, as text: `3`, `true`, `1,2,3`, a name.
+    pub fn key_at(&self, field: &str, index: usize) -> Option<String> {
+        abi::data_key(&self.path, field, index)
+    }
+
+    /// The value under `key` (as [`Data::key_at`] writes keys) of a map field of numbers, vectors or colours.
+    pub fn number_for(&self, field: &str, key: &str) -> Option<[f32; 3]> {
+        abi::data_entry(&self.path, field, key)
+    }
+
+    /// The value under `key` of a map field of texts, objects or files.
+    pub fn text_for(&self, field: &str, key: &str) -> Option<String> {
+        abi::data_entry_text(&self.path, field, key)
+    }
+}
+
 /// Sets a number property of this script on this object, for the rest of play. A whole-number
 /// property takes it rounded, a true/false one non-zero as true. False when there is no such
 /// property of a number type.
@@ -139,6 +225,15 @@ pub enum Property {
     Text(&'static str, &'static str),
     /// An object of the scene, chosen per object; none by default.
     Object(&'static str),
+    /// A prefab file of the project, chosen per object; none by default.
+    Prefab(&'static str),
+    /// A sound file of the project, chosen per object; none by default.
+    Sound(&'static str),
+    /// A material of the project, chosen per object; none by default.
+    Material(&'static str),
+    /// A data file of the project ([`Data`]), chosen per object; none by default. Read it with
+    /// [`property_data`].
+    Data(&'static str),
 }
 
 /// Seconds since play mode started.
@@ -1130,6 +1225,10 @@ pub fn describe(properties: &[Property], menu: &str, inspector: &[Layout], event
                 Property::Color(name, v) => (name, three(v.map(|c| c.clamp(0.0, 1.0))), "color"),
                 Property::Text(name, v) => (name, format!("\"{}\"", escape(v)), "text"),
                 Property::Object(name) => (name, "\"\"".to_owned(), "object"),
+                Property::Prefab(name) => (name, "\"\"".to_owned(), "prefab"),
+                Property::Sound(name) => (name, "\"\"".to_owned(), "sound"),
+                Property::Material(name) => (name, "\"\"".to_owned(), "material"),
+                Property::Data(name) => (name, "\"\"".to_owned(), "data"),
             };
             format!("[\"{}\", {default}, \"{ty}\"]", escape(name))
         })

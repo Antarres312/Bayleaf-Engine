@@ -87,6 +87,15 @@ mod raw {
         pub fn slot_select(slot: i32) -> i32;
         pub fn frame_get(out: *mut u8, cap: i32) -> i32;
         pub fn frame_set(ptr: *const u8, count: i32);
+        pub fn data_get(f_ptr: *const u8, f_len: usize, n_ptr: *const u8, n_len: usize, out: *mut f32) -> i32;
+        pub fn data_text(f_ptr: *const u8, f_len: usize, n_ptr: *const u8, n_len: usize, out: *mut u8, cap: usize) -> i32;
+        pub fn data_len(f_ptr: *const u8, f_len: usize, n_ptr: *const u8, n_len: usize) -> i32;
+        pub fn data_item(f_ptr: *const u8, f_len: usize, n_ptr: *const u8, n_len: usize, index: i32, out: *mut f32) -> i32;
+        pub fn data_item_text(f_ptr: *const u8, f_len: usize, n_ptr: *const u8, n_len: usize, index: i32, out: *mut u8, cap: usize) -> i32;
+        pub fn data_key(f_ptr: *const u8, f_len: usize, n_ptr: *const u8, n_len: usize, index: i32, out: *mut u8, cap: usize) -> i32;
+        pub fn data_entry(f_ptr: *const u8, f_len: usize, n_ptr: *const u8, n_len: usize, k_ptr: *const u8, k_len: usize, out: *mut f32) -> i32;
+        pub fn data_entry_text(f_ptr: *const u8, f_len: usize, n_ptr: *const u8, n_len: usize, k_ptr: *const u8, k_len: usize, out: *mut u8, cap: usize)
+        -> i32;
     }
 }
 
@@ -691,6 +700,90 @@ mod raw {
             unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), out, data.len()) };
         }
         full
+    }
+    /// A data import's texts (the file's path, the field's name, a key) put in the exchange memory,
+    /// each as a pointer and a length, then `extra`.
+    fn data_args(x: &mut Exchange, texts: &[&[u8]], extra: &[crate::native::Value]) -> Option<Vec<crate::native::Value>> {
+        let mut args = Vec::new();
+        for text in texts {
+            let at = x.put(text)?;
+            args.extend([at, len(text.len())]);
+        }
+        args.extend_from_slice(extra);
+        Some(args)
+    }
+
+    /// A data import that writes three numbers; returns whether it found them (0 without a host).
+    ///
+    /// # Safety
+    /// `out` points to room for 3 f32.
+    unsafe fn data_numbers(name: &'static str, texts: &[&[u8]], extra: &[crate::native::Value], out: *mut f32) -> i32 {
+        let (found, data) = run(|x| {
+            let args = data_args(x, texts, extra)?;
+            let (found, data) = with_out::<f32>(name, &args, 3, x)?;
+            Some((found.i32()?, data))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: the caller promises room for 3 f32.
+        unsafe { numbers_out(out, &data) }
+        found
+    }
+
+    /// A data import that copies a text; returns its whole length (-1 for none, or without a host).
+    ///
+    /// # Safety
+    /// `out` points to `cap` writable bytes (any pointer when `cap` is 0).
+    unsafe fn data_text_call(name: &'static str, texts: &[&[u8]], extra: &[crate::native::Value], out: *mut u8, cap: usize) -> i32 {
+        let (full, data) = run(|x| {
+            let mut args = data_args(x, texts, extra)?;
+            let room = x.room(cap)?;
+            args.extend([room, len(cap)]);
+            let full = x.call(name, &args)?.i32()?;
+            let got = usize::try_from(full).unwrap_or(0).min(cap);
+            Some((full, x.get(room, got)?))
+        })
+        .unwrap_or((-1, Vec::new()));
+        // SAFETY: the caller promises `cap` writable bytes at `out`.
+        unsafe { bytes_out(out, cap, &data) }
+        full
+    }
+
+    pub unsafe fn data_get(f: *const u8, fl: usize, n: *const u8, nl: usize, out: *mut f32) -> i32 {
+        // SAFETY: the safe wrappers pass live slices and room for 3 f32.
+        unsafe { data_numbers("data_get", &[bytes(f, fl), bytes(n, nl)], &[], out) }
+    }
+    pub unsafe fn data_text(f: *const u8, fl: usize, n: *const u8, nl: usize, out: *mut u8, cap: usize) -> i32 {
+        // SAFETY: the safe wrappers pass live slices and `cap` writable bytes at `out`.
+        unsafe { data_text_call("data_text", &[bytes(f, fl), bytes(n, nl)], &[], out, cap) }
+    }
+    pub unsafe fn data_len(f: *const u8, fl: usize, n: *const u8, nl: usize) -> i32 {
+        // SAFETY: the safe wrappers pass live slices.
+        let texts = unsafe { [bytes(f, fl), bytes(n, nl)] };
+        run(|x| {
+            let args = data_args(x, &texts, &[])?;
+            x.call("data_len", &args)?.i32()
+        })
+        .unwrap_or(-1)
+    }
+    pub unsafe fn data_item(f: *const u8, fl: usize, n: *const u8, nl: usize, index: i32, out: *mut f32) -> i32 {
+        // SAFETY: the safe wrappers pass live slices and room for 3 f32.
+        unsafe { data_numbers("data_item", &[bytes(f, fl), bytes(n, nl)], &[I32(index)], out) }
+    }
+    pub unsafe fn data_item_text(f: *const u8, fl: usize, n: *const u8, nl: usize, index: i32, out: *mut u8, cap: usize) -> i32 {
+        // SAFETY: the safe wrappers pass live slices and `cap` writable bytes at `out`.
+        unsafe { data_text_call("data_item_text", &[bytes(f, fl), bytes(n, nl)], &[I32(index)], out, cap) }
+    }
+    pub unsafe fn data_key(f: *const u8, fl: usize, n: *const u8, nl: usize, index: i32, out: *mut u8, cap: usize) -> i32 {
+        // SAFETY: the safe wrappers pass live slices and `cap` writable bytes at `out`.
+        unsafe { data_text_call("data_key", &[bytes(f, fl), bytes(n, nl)], &[I32(index)], out, cap) }
+    }
+    pub unsafe fn data_entry(f: *const u8, fl: usize, n: *const u8, nl: usize, k: *const u8, kl: usize, out: *mut f32) -> i32 {
+        // SAFETY: the safe wrappers pass live slices and room for 3 f32.
+        unsafe { data_numbers("data_entry", &[bytes(f, fl), bytes(n, nl), bytes(k, kl)], &[], out) }
+    }
+    pub unsafe fn data_entry_text(f: *const u8, fl: usize, n: *const u8, nl: usize, k: *const u8, kl: usize, out: *mut u8, cap: usize) -> i32 {
+        // SAFETY: the safe wrappers pass live slices and `cap` writable bytes at `out`.
+        unsafe { data_text_call("data_entry_text", &[bytes(f, fl), bytes(n, nl), bytes(k, kl)], &[], out, cap) }
     }
 }
 
@@ -1359,4 +1452,66 @@ pub(crate) fn frame_set(buffer: &[u8], count: usize) {
     let count = i32::try_from(count.min(buffer.len() / 64)).unwrap_or(0);
     // SAFETY: the host reads `count` entries of 64 bytes, which `buffer` holds.
     unsafe { raw::frame_set(buffer.as_ptr(), count) }
+}
+
+/// Three numbers of a data field (`data_get`, `data_item`, `data_entry`), when there are some.
+fn data_numbers(call: impl FnOnce(*mut f32) -> i32) -> Option<[f32; 3]> {
+    crate::batch::sync();
+    let mut out = [0.0f32; 3];
+    (call(out.as_mut_ptr()) != 0).then_some(out)
+}
+
+/// A text of a data field (`data_text`, `data_item_text`, `data_key`, `data_entry_text`): asked for
+/// its length first, then copied. `None` when there is no such text.
+fn data_text(call: impl Fn(*mut u8, usize) -> i32) -> Option<String> {
+    crate::batch::sync();
+    let len = usize::try_from(call(std::ptr::null_mut(), 0)).ok()?;
+    let mut bytes = vec![0u8; len];
+    call(bytes.as_mut_ptr(), bytes.len());
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub(crate) fn data_get(file: &str, field: &str) -> Option<[f32; 3]> {
+    // SAFETY: the pointers and lengths describe `file` and `field`, which the host only reads; `out`
+    // is 3 writable f32, exactly what the host writes.
+    data_numbers(|out| unsafe { raw::data_get(file.as_ptr(), file.len(), field.as_ptr(), field.len(), out) })
+}
+
+pub(crate) fn data_text_of(file: &str, field: &str) -> Option<String> {
+    // SAFETY: the texts are read only; the room is `cap` writable bytes at `out` (none with a null pointer and 0).
+    data_text(|out, cap| unsafe { raw::data_text(file.as_ptr(), file.len(), field.as_ptr(), field.len(), out, cap) })
+}
+
+pub(crate) fn data_len(file: &str, field: &str) -> Option<usize> {
+    crate::batch::sync();
+    // SAFETY: the pointers and lengths describe `file` and `field`; the host only reads.
+    usize::try_from(unsafe { raw::data_len(file.as_ptr(), file.len(), field.as_ptr(), field.len()) }).ok()
+}
+
+pub(crate) fn data_item(file: &str, field: &str, index: usize) -> Option<[f32; 3]> {
+    let index = i32::try_from(index).ok()?;
+    // SAFETY: as `data_get`.
+    data_numbers(|out| unsafe { raw::data_item(file.as_ptr(), file.len(), field.as_ptr(), field.len(), index, out) })
+}
+
+pub(crate) fn data_item_text(file: &str, field: &str, index: usize) -> Option<String> {
+    let index = i32::try_from(index).ok()?;
+    // SAFETY: as `data_text_of`.
+    data_text(|out, cap| unsafe { raw::data_item_text(file.as_ptr(), file.len(), field.as_ptr(), field.len(), index, out, cap) })
+}
+
+pub(crate) fn data_key(file: &str, field: &str, index: usize) -> Option<String> {
+    let index = i32::try_from(index).ok()?;
+    // SAFETY: as `data_text_of`.
+    data_text(|out, cap| unsafe { raw::data_key(file.as_ptr(), file.len(), field.as_ptr(), field.len(), index, out, cap) })
+}
+
+pub(crate) fn data_entry(file: &str, field: &str, key: &str) -> Option<[f32; 3]> {
+    // SAFETY: as `data_get`, with `key` read only too.
+    data_numbers(|out| unsafe { raw::data_entry(file.as_ptr(), file.len(), field.as_ptr(), field.len(), key.as_ptr(), key.len(), out) })
+}
+
+pub(crate) fn data_entry_text(file: &str, field: &str, key: &str) -> Option<String> {
+    // SAFETY: as `data_text_of`, with `key` read only too.
+    data_text(|out, cap| unsafe { raw::data_entry_text(file.as_ptr(), file.len(), field.as_ptr(), field.len(), key.as_ptr(), key.len(), out, cap) })
 }

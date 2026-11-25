@@ -37,8 +37,7 @@ property, labels and names have 1 to 64 characters, hints and notes up to 512, a
 items. A layout that breaks these rules stops the module loading, with the reason. In Rust,
 `Script::INSPECTOR` lists `Layout` items (`Layout::property("speed").slider(0.0, 20.0)`,
 `Layout::foldout`, `Layout::button`, `Layout::warning`, `.when("mode", Is::Whole(1))`); visual
-scripts set each property's options in their panel. Properties with list values are not part of
-this: there is no list property type yet.
+scripts set each property's options in their panel.
 
 ## Imports (module `bayleaf`, the host provides)
 
@@ -118,6 +117,14 @@ this: there is no list property type yet.
 | `set_velocity` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | sets the body's velocity (world units per second) after the step; `1` or `0` as above |
 | `action` | `(name_ptr: i32, name_len: i32) -> f32` | an input action's value by its kind: a trigger `1` in the step it goes down, held `1` while down, value how far it is pressed, 0 to 1 (the strongest of its key, mouse, gamepad button and stick bindings; sticks past a dead zone of 0.15). Name it `Jump` for the active map or `Player/Jump`; an action of a map that is not active, or an unknown one, reads `0`. The script's object's own Input Map (an Input Map component) answers before the project's |
 | `input_map_set` | `(handle: i32, name_ptr: i32, name_len: i32) -> i32` | makes a map active: the project's Input Map (`handle` 0) or an object's own; `1` when it has that map, else `0`. Only the active map's actions read |
+| `data_get` | `(file_ptr: i32, file_len: i32, field_ptr: i32, field_len: i32, out: i32) -> i32` | writes 3 `f32` of a field of a data file (see Data files): a number, whole number or true/false in the first, a vector or colour in all three. `1` when the file has that field holding one value of those types, else `0` (and zeros) |
+| `data_text` | `(file_ptr, file_len, field_ptr, field_len, out: i32, cap: i32) -> i32` | copies at most `cap` bytes of a text field (text, an object's name, a file's path) and returns its whole length; `-1` when there is no such text field |
+| `data_len` | `(file_ptr, file_len, field_ptr, field_len) -> i32` | how many items a list field has, or entries a map field; `-1` for none |
+| `data_item` | `(file_ptr, file_len, field_ptr, field_len, index: i32, out: i32) -> i32` | as `data_get`, for item `index` (from 0) of a list field |
+| `data_item_text` | `(file_ptr, file_len, field_ptr, field_len, index: i32, out: i32, cap: i32) -> i32` | as `data_text`, for item `index` of a list field |
+| `data_key` | `(file_ptr, file_len, field_ptr, field_len, index: i32, out: i32, cap: i32) -> i32` | as `data_text`, the `index`-th key (in order) of a map field, as the scene writes keys (`3`, `true`, `1,2,3`, text) |
+| `data_entry` | `(file_ptr, file_len, field_ptr, field_len, key_ptr: i32, key_len: i32, out: i32) -> i32` | as `data_get`, for the value under a key of a map field |
+| `data_entry_text` | `(file_ptr, file_len, field_ptr, field_len, key_ptr: i32, key_len: i32, out: i32, cap: i32) -> i32` | as `data_text`, for the value under a key of a map field |
 | `character_walk` | `(handle: i32, x: f32, y: f32, z: f32) -> i32` | sets the object's Character walking velocity (world units per second) after the step; it keeps walking until changed. `1` when asked, `0` when this call already asked 64 times |
 | `character_jump` | `(handle: i32, speed: f32) -> i32` | makes the Character jump with an upward speed after the step, if it stands on something |
 | `character_grounded` | `(handle: i32) -> i32` | `1` while the Character stands on something (as the step began), else `0` |
@@ -129,6 +136,26 @@ this: there is no list property type yet.
 | `state_get` | `(scope: i32, handle: i32, name_ptr: i32, name_len: i32, out: i32) -> i32` | reads a value of the game's state (`scope` 0), a player's (`scope` 1: the player object's handle, `0` for the first player, `-1` for none) or a saved one (`scope` 2, `handle` 0): writes one `f64` and returns `1` when it is set, else `0` (and writes 0). The game's and players' state start empty when play starts; saved values come from the project's `saves/progress.json` |
 | `state_set` | `(scope: i32, handle: i32, name_ptr: i32, name_len: i32, value: f64) -> i32` | sets a value at once, seen by every script; `1` when set, `0` for an empty name, a number that is not finite, a state already holding 1024 values, or no such player (handle `-1`, or an object without Player Control); a name over 64 bytes is a fault. Saved values are written to the project when play stops or the game ends |
 | `game_end` | `(won: i32) -> i32` | ends the game, won (`1`) or lost (`0`); `1` when this ended it, `0` when it had already ended. Every script then gets the message `gameWon` or `gameLost` |
+
+### Data files
+
+A data file (`.bdata`) holds values that scripts and scenes share instead of copying them into
+every object: an enemy type's settings, a weapon's numbers, a level's list of waves. Its shape
+(`.bshape`) declares the fields, each with a name, a type (the property types below, lists and maps
+of them) and a default; the file keeps the values that differ from the defaults. The `data_*`
+imports name a data file by its path from the project folder (`data/goblin.bdata`; `\` reads as
+`/`) and a field by its name. Every data file of the project is read when play starts, as it was
+saved; a field the file does not set, or sets to a value that no longer fits it, reads as the
+shape's default. Play never writes data files, and a file changed while playing is read at the next
+start. A file the project lacks, or a field its shape lacks, reads as nothing (`0`, `-1`). Rust:
+`data(path)` and `property_data(name)` give a `Data`, whose `number`, `whole`, `flag`, `vector`,
+`text`, `data`, `len`, `number_at`, `text_at`, `key_at`, `number_for` and `text_for` read fields.
+
+Besides number, whole, bool, vector, color, text and object, a property (and a field) may be of
+type `prefab`, `sound`, `material` or `data`: a path from the project folder of a file of that kind
+(`.bprefab`, a sound, `.bmaterial`, `.bdata`), or `""` for none. Scripts read it as text
+(`property_text`); the Inspector chooses it from the project's files of that kind. Rust:
+`Property::Prefab`, `Property::Sound`, `Property::Material`, `Property::Data`.
 
 ### Messages
 

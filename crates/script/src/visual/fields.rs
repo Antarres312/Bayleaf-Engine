@@ -18,6 +18,13 @@ pub(super) const COMPONENT: bayleaf_graph::SettingDef =
 /// The properties of the script a node names, kept by the node.
 pub(super) const FIELDS: bayleaf_graph::SettingDef = bayleaf_graph::SettingDef { name: "fields", label: "Fields", kind: bayleaf_graph::SettingKind::Names };
 
+/// The data shape whose fields a Data File node shows (`.bshape`), chosen in the editor.
+pub(super) const DATA_SHAPE: bayleaf_graph::SettingDef =
+    bayleaf_graph::SettingDef { name: "shape", label: "Shape", kind: bayleaf_graph::SettingKind::Text("") };
+/// The data file a Data File node reads, by its path in the project (or linked text).
+pub(super) const DATA_FILE: PinDef = PinDef::new("file", "File", PinType::Text);
+pub(super) const DATA: &str = "The fields of a data file (.bdata) as it was saved when play started, each the shape's default where the file sets none. The fields are the chosen shape's; lists and maps have no pin.";
+
 pub(super) const GET: &str = "The fields of a component on the linked object (else this object), as the step began. A missing component reads as zeros; Try Get Component says whether it was found.";
 pub(super) const TRY_GET: &str = "The fields of a component on the linked object (else this object), as the step began, and whether the object has it.";
 pub(super) const SET: &str =
@@ -259,6 +266,57 @@ fn script_variant(node: &Node, fields: Vec<String>) -> Option<&'static NodeDef> 
     Some(def)
 }
 
+/// Data File pin sets made so far, by their fields.
+static DATA_VARIANTS: std::sync::Mutex<Vec<(Vec<String>, &'static NodeDef)>> = std::sync::Mutex::new(Vec::new());
+
+/// The pin type a data field of type `code` reads as; `None` for a list or map (no pin).
+pub(super) fn data_pin_type(code: &str) -> Option<PinType> {
+    Some(match code {
+        "number" => Float,
+        "whole" => PinType::Int,
+        "bool" => Bool,
+        "vector" => Vec3,
+        "color" => Color,
+        "object" => PinType::Object,
+        "text" | "prefab" | "sound" | "material" | "data" => PinType::Text,
+        _ => return None,
+    })
+}
+
+/// The pins of a Data File node: one output per field of its shape, as the node keeps them in its
+/// `fields` setting (`name:type`, the editor keeps it in step with the shape).
+fn data_variant(node: &Node) -> Option<&'static NodeDef> {
+    let fields: Vec<String> =
+        node.values.get("fields").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|n| n.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+    let mut made = DATA_VARIANTS.lock().ok()?;
+    if let Some((_, def)) = made.iter().find(|(names, _)| *names == fields) {
+        return Some(def);
+    }
+    if made.len() >= MAX_SCRIPT_VARIANTS {
+        return None;
+    }
+    let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
+    let outputs: Vec<PinDef> = fields
+        .iter()
+        .filter_map(|entry| {
+            let (name, code) = entry.split_once(':')?;
+            Some(PinDef { name: leak(name.to_owned()), label: leak(super::title(name)), ty: data_pin_type(code)?, default: PinDefault::None })
+        })
+        .collect();
+    let def: &'static NodeDef = Box::leak(Box::new(NodeDef {
+        kind: "dataFile",
+        label: "Data File",
+        category: "Values",
+        description: DATA,
+        inputs: &[DATA_FILE],
+        outputs: Box::leak(outputs.into_boxed_slice()),
+        settings: &[DATA_SHAPE, FIELDS],
+        unique: false,
+    }));
+    made.push((fields, def));
+    Some(def)
+}
+
 /// The pins of a node whose pins depend on its settings: a Get Component, Try Get Component or
 /// Set Component node (its component's fields, or the properties of the script it names), or a
 /// Function, Return or Call Function node (its function's inputs and outputs).
@@ -274,6 +332,9 @@ pub fn variant(node: &Node) -> Option<&'static NodeDef> {
     }
     if super::COMPONENT_EVENT_KINDS.contains(&node.kind.as_str()) {
         return function_variant(node);
+    }
+    if node.kind == "dataFile" {
+        return data_variant(node);
     }
     if !matches!(node.kind.as_str(), "getComponent" | "tryGetComponent" | "setComponent") {
         return None;

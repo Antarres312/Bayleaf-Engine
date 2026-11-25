@@ -397,6 +397,9 @@ pub(crate) struct PropertyRow<'a> {
     /// The value differs from the script's default (a reset button shows).
     pub(crate) changed: bool,
     pub(crate) objects: &'a [(bayleaf_core::StableId, String)],
+    /// The project's files a file property may name (prefabs, sounds, materials, data files), as
+    /// paths from the project folder; each field lists those of its kind.
+    pub(crate) files: &'a [String],
     pub(crate) layout: Option<&'a bayleaf_engine::scene::inspector::PropertyLayout>,
 }
 
@@ -426,7 +429,7 @@ pub(crate) fn named_property(
                 }
                 let field_width = (ui.available_width() - 1.0).max(40.0);
                 // A read-only value shows, greyed, and takes no edits.
-                ui.add_enabled_ui(!read_only, |ui| property_field(ui, property.ty, value, property.objects, label, field_width, layout)).inner
+                ui.add_enabled_ui(!read_only, |ui| property_field(ui, property.ty, value, (property.objects, property.files), label, field_width, layout)).inner
             })
             .inner
         })
@@ -505,7 +508,7 @@ pub(crate) fn shaped_property(
                                         gone = Some(i);
                                     }
                                     let width = (ui.available_width() - 1.0).max(40.0);
-                                    outcome.merge(property_field(ui, ty, item, property.objects, label, width, None));
+                                    outcome.merge(property_field(ui, ty, item, (property.objects, property.files), label, width, None));
                                 });
                             });
                         });
@@ -543,7 +546,7 @@ pub(crate) fn shaped_property(
                                         gone = Some(key.clone());
                                     }
                                     let width = (ui.available_width() - 1.0).max(40.0);
-                                    outcome.merge(property_field(ui, ty, item, property.objects, field.id, width, None));
+                                    outcome.merge(property_field(ui, ty, item, (property.objects, property.files), field.id, width, None));
                                 });
                             });
                         });
@@ -602,7 +605,7 @@ fn property_field(
     ui: &mut egui::Ui,
     ty: PropertyType,
     value: &mut PropertyValue,
-    objects: &[(bayleaf_core::StableId, String)],
+    (objects, files): (&[(bayleaf_core::StableId, String)], &[String]),
     label: egui::Id,
     width: f32,
     layout: Option<&bayleaf_engine::scene::inspector::PropertyLayout>,
@@ -689,6 +692,7 @@ fn property_field(
                 _ => Outcome::default(),
             }
         }
+        (file, PropertyValue::Text(chosen)) if file.is_file() => file_choice(ui, file, chosen, files, label, width),
         // A saved value of another shape than the script declares: start from the type's zero.
         _ => {
             if ui.add_sized([width, ROW_HEIGHT], egui::Button::new(tl("Not this type: reset"))).labelled_by(label).clicked() {
@@ -742,5 +746,39 @@ mod tests {
         assert!(is_color("color", &json!([0.1, 0.2, 0.3, 1.0])));
         assert!(!is_color("color", &json!([0.1, 2.0, 0.3])));
         assert!(!is_color("position", &json!([0.1, 0.2, 0.3])));
+    }
+}
+
+/// A file property's field: None or one of the project's files of its kind; a file of that kind
+/// dragged from the Project panel and dropped on it chooses it too.
+fn file_choice(ui: &mut egui::Ui, ty: PropertyType, chosen: &mut String, files: &[String], label: egui::Id, width: f32) -> Outcome {
+    let fits = |path: &str| PropertyValue::Text(path.to_owned()).fits(ty);
+    let shown = if chosen.is_empty() { tl("None").to_owned() } else { chosen.clone() };
+    let mut picked = None;
+    let combo = egui::ComboBox::from_id_salt(("file", ty.code())).selected_text(shown).width(width).truncate().show_ui(ui, |ui| {
+        if ui.selectable_label(chosen.is_empty(), tl("None")).clicked() {
+            picked = Some(String::new());
+        }
+        let mut any = false;
+        for path in files.iter().filter(|p| fits(p)) {
+            any = true;
+            if ui.selectable_label(chosen == path, path).clicked() {
+                picked = Some(path.clone());
+            }
+        }
+        if !any {
+            ui.label(tl("No files of this kind in the project."));
+        }
+    });
+    let response = combo.response.labelled_by(label);
+    if let Some(dropped) = file_drop(ui, &response, fits) {
+        picked = Some(dropped);
+    }
+    match picked {
+        Some(path) if path != *chosen => {
+            *chosen = path;
+            Outcome { changed: true, ended: true }
+        }
+        _ => Outcome::default(),
     }
 }

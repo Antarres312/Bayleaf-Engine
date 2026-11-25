@@ -770,3 +770,64 @@ fn an_error_in_an_update_of_all_is_reported_on_the_object_the_frame_marks() {
     assert_eq!(faults.len(), 1);
     assert_eq!(faults[0].object, other, "the object being updated, not the one selected last");
 }
+
+/// The data files a test plays with: `data/goblin.bdata` with a number, a list, a map and a text.
+fn goblin_data() -> std::collections::HashMap<String, crate::DataValues> {
+    use bayleaf_scene::components::PropertyShape;
+    let mut values = crate::DataValues::new();
+    values.insert("hp".to_owned(), (PropertyType::Number, PropertyShape::Single, PropertyValue::Number(40.0)));
+    values.insert(
+        "waves".to_owned(),
+        (PropertyType::WholeNumber, PropertyShape::List, PropertyValue::List { list: vec![PropertyValue::Number(3.0), PropertyValue::Number(7.0)] }),
+    );
+    let drops = BTreeMap::from([("gold".to_owned(), PropertyValue::Number(5.0))]);
+    values.insert("drops".to_owned(), (PropertyType::Number, PropertyShape::Map(PropertyType::Text), PropertyValue::Map { map: drops }));
+    values.insert("name".to_owned(), (PropertyType::Text, PropertyShape::Single, PropertyValue::Text("Gob".to_owned())));
+    std::collections::HashMap::from([("data/goblin.bdata".to_owned(), values)])
+}
+
+#[test]
+fn scripts_read_data_files_fields_lists_and_maps_and_nothing_from_files_that_are_not_there() {
+    let text = r#"(module
+        (import "bayleaf" "transform_get" (func $get (param i32)))
+        (import "bayleaf" "transform_set" (func $set (param i32)))
+        (import "bayleaf" "data_get" (func $dget (param i32 i32 i32 i32 i32) (result i32)))
+        (import "bayleaf" "data_text" (func $dtext (param i32 i32 i32 i32 i32 i32) (result i32)))
+        (import "bayleaf" "data_len" (func $dlen (param i32 i32 i32 i32) (result i32)))
+        (import "bayleaf" "data_item" (func $ditem (param i32 i32 i32 i32 i32 i32) (result i32)))
+        (import "bayleaf" "data_entry" (func $dentry (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (data (i32.const 200) "data/goblin.bdata")
+        (data (i32.const 220) "data\5cother.bdata")
+        (data (i32.const 240) "hp")
+        (data (i32.const 250) "waves")
+        (data (i32.const 260) "drops")
+        (data (i32.const 270) "gold")
+        (data (i32.const 280) "name")
+        (func (export "bayleaf_abi") (result i32) i32.const 1)
+        (func (export "bayleaf_update") (param $dt f32)
+          (call $get (i32.const 0))
+          (drop (call $dget (i32.const 200) (i32.const 17) (i32.const 240) (i32.const 2) (i32.const 64)))
+          (f32.store (i32.const 0) (f32.load (i32.const 64)))
+          (f32.store (i32.const 4) (f32.convert_i32_s (call $dlen (i32.const 200) (i32.const 17) (i32.const 250) (i32.const 5))))
+          (drop (call $ditem (i32.const 200) (i32.const 17) (i32.const 250) (i32.const 5) (i32.const 1) (i32.const 64)))
+          (f32.store (i32.const 8) (f32.load (i32.const 64)))
+          (drop (call $dentry (i32.const 200) (i32.const 17) (i32.const 260) (i32.const 5) (i32.const 270) (i32.const 4) (i32.const 64)))
+          (f32.store (i32.const 12) (f32.load (i32.const 64)))
+          (f32.store (i32.const 16) (f32.convert_i32_s (call $dtext (i32.const 200) (i32.const 17) (i32.const 280) (i32.const 4) (i32.const 0) (i32.const 0))))
+          ;; A file the project lacks: nothing found, and the length reads -1.
+          (f32.store (i32.const 20) (f32.convert_i32_s
+            (i32.add (call $dget (i32.const 220) (i32.const 16) (i32.const 240) (i32.const 2) (i32.const 64))
+                     (call $dlen (i32.const 220) (i32.const 16) (i32.const 250) (i32.const 5)))))
+          (call $set (i32.const 0))))"#;
+    let bytes = wat::parse_str(text).unwrap();
+    let (mut scene, id, script) = setup(&[]);
+    let mut host = super::test_host();
+    host.set_data(goblin_data());
+    load(&mut host, &mut scene, id, &script, &bytes).unwrap();
+    host.update(&mut scene, 0.1, 1.0, &Arc::new(Input::default()));
+    assert!(host.take_faults().is_empty());
+    let t = scene.get::<Transform>(id).unwrap();
+    assert_eq!(t.position, [40.0, 2.0, 7.0], "a number, a list's length and its second item");
+    assert_eq!(&t.rotation, &[5.0, 3.0, -1.0], "a map's value by key, a text's length, and a file that is not there");
+}

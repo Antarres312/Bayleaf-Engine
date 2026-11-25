@@ -38,6 +38,13 @@ pub(crate) struct Inspected {
     import: Option<Result<ImportSettings, String>>,
     /// An interface style file as read (and being edited), or why it could not be.
     style: Option<Result<bayleaf_interface::StyleSheet, String>>,
+    /// A data shape as read (and being edited), or why it could not be.
+    shape: Option<Result<bayleaf_engine::scene::data::DataShape, String>>,
+    /// A data file as read, or why it could not be.
+    data: Option<Result<bayleaf_engine::scene::data::DataFile, String>>,
+    /// The shape a data file names, as read, and its time on disk; `None` when it names none.
+    data_shape: Option<Result<bayleaf_engine::scene::data::DataShape, String>>,
+    data_shape_modified: Option<SystemTime>,
 }
 
 impl Inspected {
@@ -54,13 +61,25 @@ impl Inspected {
             post: None,
             import: None,
             style: None,
+            shape: None,
+            data: None,
+            data_shape: None,
+            data_shape_modified: None,
         }
+    }
+
+    /// The file a data file's shape is in, when it names one.
+    fn data_shape_path(&self, editor_session: &bayleaf_engine::Session) -> Option<PathBuf> {
+        let Some(Ok(data)) = &self.data else { return None };
+        (!data.shape.is_empty()).then(|| editor_session.script_dir().join(&data.shape))
     }
 
     /// Reads the file again when it changed since it was last read.
     fn refresh(&mut self, editor_session: &bayleaf_engine::Session) {
         let modified = std::fs::metadata(&self.path).and_then(|m| m.modified()).ok();
-        if self.info.kind.is_empty() || modified != self.modified {
+        // A data file shows again when its shape changes, too.
+        let shape_modified = self.data_shape_path(editor_session).and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+        if self.info.kind.is_empty() || modified != self.modified || shape_modified != self.data_shape_modified {
             self.info = asset_info::describe(editor_session, &self.path);
             self.modified = modified;
             self.texture = None;
@@ -74,6 +93,14 @@ impl Inspected {
             self.import = ImportSettings::defaults_for(&self.path).map(|defaults| ImportSettings::read_for(&self.path).map(|s| s.unwrap_or(defaults)));
             let is_style = self.path.extension().is_some_and(|e| e == bayleaf_interface::STYLE_EXTENSION);
             self.style = is_style.then(|| bayleaf_interface::StyleSheet::load(&self.path));
+            let extension = self.path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+            let data = bayleaf_engine::scene::data::DataFile::load;
+            let shape = bayleaf_engine::scene::data::DataShape::load;
+            self.shape = (extension == bayleaf_engine::scene::data::SHAPE_EXTENSION).then(|| shape(&self.path).map_err(|e| e.to_string()));
+            self.data = (extension == bayleaf_engine::scene::data::DATA_EXTENSION).then(|| data(&self.path).map_err(|e| e.to_string()));
+            let shape_path = self.data_shape_path(editor_session);
+            self.data_shape = shape_path.as_ref().map(|p| shape(p).map_err(|e| e.to_string()));
+            self.data_shape_modified = shape_path.and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
         }
     }
 }
@@ -99,6 +126,12 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let mut make_lookup = false;
     let mut changed_style = None;
     let mut changed_import = None;
+    let mut changed_shape = None;
+    let mut data_edit = None;
+    // The files a data file's fields may name, and the project's shapes.
+    let files: Vec<String> =
+        [editor.project.prefab_files(), editor.project.sound_files(), editor.project.material_files(), editor.project.data_files()].concat();
+    let shapes = editor.project.shape_files();
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(4.0);
@@ -142,6 +175,31 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             && crate::style_editor::show(ui, style)
         {
             changed_style = Some(style.clone());
+        }
+
+        // A data shape's fields are edited here; every data file naming it reads them.
+        match file.shape.as_mut() {
+            Some(Ok(shape)) => {
+                changed_shape = crate::data_editor::shape_editor(ui, shape, &files);
+                ui.add_space(theme::SECTION_GAP);
+            }
+            Some(Err(problem)) => {
+                ui.add(egui::Label::new(crate::i18n::tf("This data shape does not read: {problem}", &[("problem", problem)])).wrap());
+                ui.add_space(theme::SECTION_GAP);
+            }
+            None => {}
+        }
+        // A data file's values are edited here; every script and scene naming it reads them.
+        match file.data.as_ref() {
+            Some(Ok(data)) => {
+                data_edit = crate::data_editor::data_editor(ui, data, file.data_shape.as_ref(), &shapes, &files);
+                ui.add_space(theme::SECTION_GAP);
+            }
+            Some(Err(problem)) => {
+                ui.add(egui::Label::new(crate::i18n::tf("This data file does not read: {problem}", &[("problem", problem)])).wrap());
+                ui.add_space(theme::SECTION_GAP);
+            }
+            None => {}
         }
 
         // How a model or image is read; saved beside it, and every scene using it reads it again.
@@ -266,6 +324,29 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         && editor.dispatch("post.set", &serde_json::json!({ "path": file.path, "post": post }), None).is_some()
     {
         file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
+    }
+    // An edited shape is written; its time on disk is taken, so the edits stay as typed.
+    if let Some(shape) = changed_shape
+        && editor.dispatch("data.shape.set", &serde_json::json!({ "path": file.path, "shape": shape }), None).is_some()
+    {
+        file.modified = std::fs::metadata(&file.path).and_then(|m| m.modified()).ok();
+    }
+    // A data file's change is written, and the file read again with what it now holds.
+    if let Some(edit) = data_edit {
+        let written = match (edit, file.data.as_ref()) {
+            (crate::data_editor::DataEdit::Shape(shape), Some(Ok(data))) => {
+                let mut data = data.clone();
+                data.shape = shape;
+                editor.dispatch("data.set", &serde_json::json!({ "path": file.path, "data": data }), None)
+            }
+            (crate::data_editor::DataEdit::Field(name, value), _) => {
+                editor.dispatch("data.field.set", &serde_json::json!({ "path": file.path, "name": name, "value": value }), None)
+            }
+            _ => None,
+        };
+        if written.is_some() {
+            file.modified = None;
+        }
     }
     if let Some(settings) = changed_import {
         let mut given = serde_json::Map::new();

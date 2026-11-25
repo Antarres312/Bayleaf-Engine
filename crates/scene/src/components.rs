@@ -464,13 +464,24 @@ pub enum PropertyType {
     Text,
     /// An object of the scene, by its name; empty for none.
     Object,
+    /// A prefab file (`.bprefab`), by its path in the project; empty for none.
+    Prefab,
+    /// A sound file ([`SOUND_EXTENSIONS`]), by its path in the project; empty for none.
+    Sound,
+    /// A material graph (`.bmaterial`), by its path in the project; empty for none.
+    Material,
+    /// A data file (`.bdata`, see [`crate::data`]), by its path in the project; empty for none.
+    Data,
 }
 
 /// Longest text (and object name) a script property holds, in bytes.
 pub const MAX_PROPERTY_TEXT: usize = 1024;
 
+/// Longest path a file property holds, in bytes.
+pub const MAX_PROPERTY_PATH: usize = 512;
+
 impl PropertyType {
-    pub const ALL: [PropertyType; 7] = [
+    pub const ALL: [PropertyType; 11] = [
         PropertyType::Number,
         PropertyType::WholeNumber,
         PropertyType::TrueFalse,
@@ -478,7 +489,32 @@ impl PropertyType {
         PropertyType::Color,
         PropertyType::Text,
         PropertyType::Object,
+        PropertyType::Prefab,
+        PropertyType::Sound,
+        PropertyType::Material,
+        PropertyType::Data,
     ];
+
+    /// The file extensions a file type's paths end in; empty for the other types.
+    pub fn extensions(self) -> &'static [&'static str] {
+        match self {
+            PropertyType::Prefab => &["bprefab"],
+            PropertyType::Sound => SOUND_EXTENSIONS,
+            PropertyType::Material => &["bmaterial"],
+            PropertyType::Data => &[crate::data::DATA_EXTENSION],
+            _ => &[],
+        }
+    }
+
+    /// Whether values of this type name a file of the project (a path, empty for none).
+    pub fn is_file(self) -> bool {
+        !self.extensions().is_empty()
+    }
+
+    /// Whether the type's values are text: text, an object's name or a file's path.
+    pub fn is_text(self) -> bool {
+        matches!(self, PropertyType::Text | PropertyType::Object) || self.is_file()
+    }
 
     /// English name shown to people.
     pub fn label(self) -> &'static str {
@@ -490,11 +526,15 @@ impl PropertyType {
             PropertyType::Color => "Color",
             PropertyType::Text => "Text",
             PropertyType::Object => "Object",
+            PropertyType::Prefab => "Prefab",
+            PropertyType::Sound => "Sound",
+            PropertyType::Material => "Material",
+            PropertyType::Data => "Data File",
         }
     }
 
     /// The word scripts declare it with (`bayleaf_describe`): `number`, `whole`, `bool`, `vector`,
-    /// `color`, `text` or `object`.
+    /// `color`, `text`, `object`, `prefab`, `sound`, `material` or `data`.
     pub fn code(self) -> &'static str {
         match self {
             PropertyType::Number => "number",
@@ -504,6 +544,10 @@ impl PropertyType {
             PropertyType::Color => "color",
             PropertyType::Text => "text",
             PropertyType::Object => "object",
+            PropertyType::Prefab => "prefab",
+            PropertyType::Sound => "sound",
+            PropertyType::Material => "material",
+            PropertyType::Data => "data",
         }
     }
 
@@ -525,6 +569,9 @@ impl PropertyType {
                 let parts: Vec<&str> = key.split(',').collect();
                 parts.len() == 3 && parts.iter().all(|p| number(p))
             }
+            PropertyType::Prefab | PropertyType::Sound | PropertyType::Material | PropertyType::Data => {
+                !key.is_empty() && PropertyValue::Text(key.to_owned()).fits(self)
+            }
         }
     }
 
@@ -532,6 +579,8 @@ impl PropertyType {
     /// text and objects, `0`, `1`… for numbers, `false` then `true`, `0,0,0`, `1,0,0`… for vectors.
     pub fn fresh_key(self, taken: impl Fn(&str) -> bool) -> Option<String> {
         let candidates: Vec<String> = match self {
+            // A file's path names one file; there is no path to make up.
+            PropertyType::Prefab | PropertyType::Sound | PropertyType::Material | PropertyType::Data => Vec::new(),
             PropertyType::Text | PropertyType::Object => {
                 (1..=MAX_PROPERTY_ITEMS + 1).map(|n| if n == 1 { "key".to_owned() } else { format!("key{n}") }).collect()
             }
@@ -549,7 +598,9 @@ impl PropertyType {
             PropertyType::TrueFalse => PropertyValue::Flag(false),
             PropertyType::Vector => PropertyValue::Triple([0.0; 3]),
             PropertyType::Color => PropertyValue::Triple([1.0; 3]),
-            PropertyType::Text | PropertyType::Object => PropertyValue::Text(String::new()),
+            PropertyType::Text | PropertyType::Object | PropertyType::Prefab | PropertyType::Sound | PropertyType::Material | PropertyType::Data => {
+                PropertyValue::Text(String::new())
+            }
         }
     }
 
@@ -638,6 +689,10 @@ impl PropertyValue {
             (PropertyType::Vector, PropertyValue::Triple(v)) => v.iter().all(|n| n.is_finite()),
             (PropertyType::Color, PropertyValue::Triple(v)) => v.iter().all(|n| (0.0..=1.0).contains(n)),
             (PropertyType::Text | PropertyType::Object, PropertyValue::Text(t)) => t.len() <= MAX_PROPERTY_TEXT && !t.contains('\0'),
+            (file, PropertyValue::Text(t)) if file.is_file() => {
+                let lower = t.to_ascii_lowercase();
+                t.is_empty() || (t.len() <= MAX_PROPERTY_PATH && !t.contains('\0') && file.extensions().iter().any(|e| lower.ends_with(&format!(".{e}"))))
+            }
             _ => false,
         }
     }
@@ -709,7 +764,9 @@ impl PropertyValue {
             PropertyType::TrueFalse => PropertyValue::Flag(x != 0.0),
             PropertyType::Vector => PropertyValue::Triple([x, y, z]),
             PropertyType::Color => PropertyValue::Triple([x, y, z].map(|c| c.clamp(0.0, 1.0))),
-            PropertyType::Text | PropertyType::Object => return None,
+            PropertyType::Text | PropertyType::Object | PropertyType::Prefab | PropertyType::Sound | PropertyType::Material | PropertyType::Data => {
+                return None;
+            }
         };
         value.fits(ty).then_some(value)
     }

@@ -80,6 +80,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         let scene = editor.session.scene();
         scene.world_matrices().into_iter().map(|(o, _)| (o, scene.name(o).unwrap_or_default().to_owned())).filter(|(_, n)| !n.is_empty()).collect()
     };
+    // The project's files a file property may name: prefabs, sounds, materials and data files.
+    let files: Vec<String> =
+        [editor.project.prefab_files(), editor.project.sound_files(), editor.project.material_files(), editor.project.data_files()].concat();
     let cards: Vec<ScriptCard> = scripts
         .into_iter()
         .map(|script| {
@@ -206,7 +209,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                     ui.add(egui::Label::new(egui::RichText::new(crate::i18n::tf("Warning: {message}", &[("message", &message.to_string())])).color(t.warning)).wrap());
                 }
                 Ok(declared) => {
-                    let card = Card { index, script: &card_data.script, declared, layout: &card_data.layout, objects: &objects, playing };
+                    let card = Card { index, script: &card_data.script, declared, layout: &card_data.layout, objects: &objects, files: &files, playing };
                     let outcome = script_properties(ui, &card, &mut pending);
                     gesture_ended |= outcome.ended;
                 }
@@ -440,6 +443,8 @@ struct Card<'a> {
     declared: &'a [DeclaredProperty],
     layout: &'a [InspectorItem],
     objects: &'a [(bayleaf_core::StableId, String)],
+    /// The project's files file properties may name.
+    files: &'a [String],
     /// Buttons send their messages only while the game plays.
     playing: bool,
 }
@@ -469,7 +474,7 @@ fn property_row(ui: &mut egui::Ui, card: &Card<'_>, name: &str, layout: Option<&
         },
     };
     let shape = declared.map_or(bayleaf_engine::scene::components::PropertyShape::Single, |p| p.shape);
-    let row = value_editor::PropertyRow { name, ty, shape, changed, objects: card.objects, layout };
+    let row = value_editor::PropertyRow { name, ty, shape, changed, objects: card.objects, files: card.files, layout };
     let salt = ("script property", card.index, name);
     // A list or map edits item by item; one value in one row.
     let (outcome, reset) = if declared.is_some_and(|p| p.shape != bayleaf_engine::scene::components::PropertyShape::Single) {

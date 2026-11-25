@@ -2973,3 +2973,75 @@ fn a_maps_key_type_changes_and_its_nodes_and_start_follow() {
     let (_, def) = graph.node_def(&bayleaf_script::visual::CATALOG, id).unwrap();
     assert_eq!(def.input("key").map(|p| p.ty), Some(bayleaf_graph::PinType::Int), "and its Key pin takes one");
 }
+
+/// Moves its object to x = the `hp` field of `Goblin.bdata`, each step.
+fn data_reader_wasm() -> Vec<u8> {
+    wat::parse_str(
+        r#"(module
+            (import "bayleaf" "transform_get" (func $get (param i32)))
+            (import "bayleaf" "transform_set" (func $set (param i32)))
+            (import "bayleaf" "data_get" (func $data (param i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 100) "Goblin.bdata")
+            (data (i32.const 120) "hp")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param $dt f32)
+              (call $get (i32.const 0))
+              (drop (call $data (i32.const 100) (i32.const 12) (i32.const 120) (i32.const 2) (i32.const 64)))
+              (f32.store (i32.const 0) (f32.load (i32.const 64)))
+              (call $set (i32.const 0))))"#,
+    )
+    .unwrap()
+}
+
+#[test]
+fn data_files_change_through_commands_and_play_reads_them_as_saved_never_writing() {
+    let (registry, mut session, id, dir) = scripted_scene("data", &data_reader_wasm());
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params);
+    let x = |session: &Session| {
+        let id = bayleaf_core::StableId::parse_hex(&id).unwrap();
+        session.scene().component(id, "transform").unwrap()["position"][0].as_f64().unwrap()
+    };
+    run(&mut session, "asset.create", json!({"kind": "dataShape", "folder": ".", "name": "Enemy"})).unwrap();
+    run(&mut session, "data.shape.set", json!({"path": "Enemy.bshape", "shape": {"fields": [{"name": "hp", "type": "number", "default": 100.0}]}})).unwrap();
+    run(&mut session, "asset.create", json!({"kind": "dataFile", "folder": ".", "name": "Goblin"})).unwrap();
+    run(&mut session, "data.set", json!({"path": "Goblin.bdata", "data": {"shape": "Enemy.bshape"}})).unwrap();
+    let read = run(&mut session, "data.get", json!({"path": "Goblin.bdata"})).unwrap();
+    assert_eq!((read["fields"][0]["value"].clone(), read["fields"][0]["set"].clone()), (json!(100.0), json!(false)), "the shape's default, not set");
+    run(&mut session, "data.field.set", json!({"path": "Goblin.bdata", "name": "hp", "value": 40.0})).unwrap();
+    assert!(run(&mut session, "data.field.set", json!({"path": "Goblin.bdata", "name": "speed", "value": 1.0})).is_err(), "a field the shape lacks");
+    assert!(run(&mut session, "data.field.set", json!({"path": "Goblin.bdata", "name": "hp", "value": "lots"})).is_err(), "a value of another type");
+    assert!(
+        run(&mut session, "data.shape.set", json!({"path": "Enemy.bshape", "shape": {"fields": [{"name": "hp", "type": "number", "default": "x"}]}})).is_err()
+    );
+
+    // Play reads the file as it was saved when play started; a change while playing waits for the
+    // next play, and play itself never writes the file.
+    run(&mut session, "play.start", Value::Null).unwrap();
+    run(&mut session, "play.step", json!({"seconds": 0.1})).unwrap();
+    assert_eq!(x(&session), 40.0);
+    run(&mut session, "data.field.set", json!({"path": "Goblin.bdata", "name": "hp", "value": 7.0})).unwrap();
+    let saved = std::fs::read_to_string(dir.join("Goblin.bdata")).unwrap();
+    run(&mut session, "play.step", json!({"seconds": 0.1})).unwrap();
+    assert_eq!(x(&session), 40.0, "still the value play started with");
+    run(&mut session, "play.stop", Value::Null).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("Goblin.bdata")).unwrap(), saved, "play wrote nothing");
+    run(&mut session, "play.start", Value::Null).unwrap();
+    run(&mut session, "play.step", json!({"seconds": 0.1})).unwrap();
+    assert_eq!(x(&session), 7.0, "the next play reads the change");
+    run(&mut session, "play.stop", Value::Null).unwrap();
+
+    run(&mut session, "data.field.set", json!({"path": "Goblin.bdata", "name": "hp", "value": null})).unwrap();
+    assert_eq!(run(&mut session, "data.get", json!({"path": "Goblin.bdata"})).unwrap()["fields"][0]["value"], json!(100.0), "back to the default");
+
+    // Agents read inside their read folders and write only inside their write folders.
+    let elsewhere = dir.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    session.set_confinement(Some(crate::confine::Confinement::new(std::slice::from_ref(&dir), std::slice::from_ref(&elsewhere)).unwrap()));
+    let before = std::fs::read_to_string(dir.join("Goblin.bdata")).unwrap();
+    assert!(run(&mut session, "data.get", json!({"path": dir.join("Goblin.bdata")})).is_ok());
+    assert!(run(&mut session, "data.field.set", json!({"path": dir.join("Goblin.bdata"), "name": "hp", "value": 1.0})).is_err());
+    assert!(run(&mut session, "data.shape.set", json!({"path": dir.join("Enemy.bshape"), "shape": {"fields": []}})).is_err());
+    assert_eq!(std::fs::read_to_string(dir.join("Goblin.bdata")).unwrap(), before, "a refused write changes nothing");
+    std::fs::remove_dir_all(&dir).ok();
+}

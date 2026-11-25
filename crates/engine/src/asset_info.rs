@@ -91,6 +91,8 @@ pub fn describe(session: &Session, path: &Path) -> Info {
         "binput" => input_map(session, path),
         "bui" => interface(session, path),
         "bstyle" => interface_style(path),
+        "bshape" => data_shape(path),
+        "bdata" => data_file(session, path),
         e if TEXT_EXTENSIONS.contains(&e) || name.starts_with('.') => text(path, "Text"),
         _ => Info { kind: "File", ..Info::default() },
     };
@@ -267,6 +269,36 @@ fn input_map(session: &Session, path: &Path) -> Info {
             info.row("Actions", asset.action_count());
         }
         Err(problem) => info.problems.push(problem),
+    }
+    info
+}
+
+/// A data shape: how many fields it declares, and their names.
+fn data_shape(path: &Path) -> Info {
+    let mut info = Info { kind: "Data Shape", ..Info::default() };
+    match bayleaf_scene::data::DataShape::load(path) {
+        Ok(shape) => {
+            info.row("Fields", shape.fields.len());
+            info.row("Names", shape.fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", "));
+        }
+        Err(problem) => info.problems.push(problem.to_string()),
+    }
+    info
+}
+
+/// A data file: its shape, how many values it sets, and what does not read as written.
+fn data_file(session: &Session, path: &Path) -> Info {
+    let mut info = Info { kind: "Data File", ..Info::default() };
+    match bayleaf_scene::data::DataFile::load(path) {
+        Ok(data) => {
+            info.row("Shape", if data.shape.is_empty() { "None".to_owned() } else { data.shape.clone() });
+            info.row("Values set", data.values.len());
+            match crate::data_cmds::shape_of(session, &data) {
+                Ok(shape) => info.problems.extend(data.problems(&shape)),
+                Err(problem) => info.problems.push(problem),
+            }
+        }
+        Err(problem) => info.problems.push(problem.to_string()),
     }
     info
 }

@@ -783,6 +783,16 @@ pub const CATALOG: Catalog = Catalog {
         },
         node("thisObject", "This Object", "Find", "The object this script runs on.", &[], &[pin("object", "Object", PinType::Object)]),
         NodeDef {
+            kind: "dataFile",
+            label: "Data File",
+            category: "Values",
+            description: fields::DATA,
+            inputs: &[fields::DATA_FILE],
+            outputs: &[],
+            settings: &[fields::DATA_SHAPE, fields::FIELDS],
+            unique: false,
+        },
+        NodeDef {
             kind: "findNamed",
             label: "Find Object Named",
             category: "Find",
@@ -2777,6 +2787,28 @@ impl Compiler<'_> {
                 }
             }
             "thisObject" => Val::O("(call $self_handle)".to_owned()),
+            "dataFile" => {
+                let file = self.input(node, "file").and_then(|v| as_text(node, v))?;
+                let fields = n.values.get("fields").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let code = fields
+                    .iter()
+                    .filter_map(|f| f.as_str()?.split_once(':'))
+                    .find(|(name, _)| *name == pin)
+                    .map(|(_, code)| code.to_owned())
+                    .ok_or_else(|| Problem::on(node, format!("the shape has no field {pin}; choose the shape again")))?;
+                let (at, len) = self.text(pin.as_bytes());
+                let key = format!("{file} (i32.const {at}) (i32.const {len})");
+                let part = |i: u32| format!("(call $data_part {key} (i32.const {i}))");
+                match code.as_str() {
+                    "number" => Val::F(part(0)),
+                    "whole" => Val::I(format!("(i32.trunc_sat_f32_s {})", part(0))),
+                    "bool" => Val::B(format!("(f32.ne {} (f32.const 0))", part(0))),
+                    "vector" | "color" => Val::V([0, 1, 2].map(part)),
+                    "object" => Val::O(format!("(call $find_text (call $data_string {key}))")),
+                    "text" | "prefab" | "sound" | "material" | "data" => Val::T(format!("(call $data_string {key})")),
+                    _ => return Err(Problem::on(node, format!("{pin} is a list or map, which has no pin"))),
+                }
+            }
             "thisComponent" | "componentObject" | "componentEventStart" => self.component_output(node, pin)?,
             "findNamed" => {
                 let found = if graph.link_into(node, "named").is_some() {
@@ -3290,6 +3322,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "count_with" (func $count_with (param i32 i32) (result i32)))
   (import "bayleaf" "component_get" (func $component_get (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "component_set" (func $component_set (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "data_get" (func $data_get (param i32 i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "data_text" (func $data_text (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "name_of" (func $name_of (param i32 i32 i32) (result i32)))
   (import "bayleaf" "scene_load" (func $scene_load (param i32 i32 i32) (result i32)))
   (import "bayleaf" "sound_play" (func $sound_play (param i32) (result i32)))
@@ -3645,6 +3679,17 @@ const PRELUDE: &str = r#"(module
     (local.set $v (call $parse (local.get $t)))
     (select (local.get $v) (f32.const 0) (f32.eq (local.get $v) (local.get $v))))
   ;; Part $i (0, 1 or 2) of a vector or colour property, read through bytes 192..204.
+  ;; Part $i (0, 1 or 2) of field $a, $l of the data file named by text $f, read through bytes 224..236.
+  (func $data_part (param $f i64) (param $a i32) (param $l i32) (param $i i32) (result f32)
+    (drop (call $data_get (call $tp (local.get $f)) (call $tl (local.get $f)) (local.get $a) (local.get $l) (i32.const 224)))
+    (f32.load (i32.add (i32.const 224) (i32.shl (local.get $i) (i32.const 2)))))
+  ;; Text field $a, $l of the data file named by text $f, copied onto the heap (empty for none).
+  (func $data_string (param $f i64) (param $a i32) (param $l i32) (result i64) (local $n i32) (local $p i32)
+    (local.set $n (call $data_text (call $tp (local.get $f)) (call $tl (local.get $f)) (local.get $a) (local.get $l) (i32.const 0) (i32.const 0)))
+    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))
+    (local.set $p (call $alloc (local.get $n)))
+    (drop (call $data_text (call $tp (local.get $f)) (call $tl (local.get $f)) (local.get $a) (local.get $l) (local.get $p) (local.get $n)))
+    (call $mk (local.get $p) (local.get $n)))
   (func $property_part (param $a i32) (param $l i32) (param $i i32) (result f32)
     (drop (call $property_vector (local.get $a) (local.get $l) (i32.const 192)))
     (f32.load (i32.add (i32.const 192) (i32.shl (local.get $i) (i32.const 2)))))

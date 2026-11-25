@@ -162,6 +162,18 @@ light around everything, fog and a sun for scenes without a Directional Light: `
 (`{path}`) reads one and `lighting.set` (`{path, lighting}`) writes it, inside the write roots;
 `asset.create` with kind `lighting` makes one.
 
+Data files (`.bdata`) and their shapes (`.bshape`) hold values scripts share (`docs/script-abi.md`,
+Data files). `asset.create` with kind `dataShape` makes a shape with one number field and kind
+`dataFile` a data file with no shape yet. `data.shape.get` (`{path}`) reads a shape's fields (each
+`{name, type, default, label?, hint?, range?, slider?, group?}`, `type` as scripts declare property
+types: `number`, `list:whole`, `map:text:number`, `prefab`, `data`…) and `data.shape.set`
+(`{path, shape}`) writes them. `data.get` (`{path}`) returns a data file (`{shape, values}`), every
+field of its shape as it reads (`fields: [{name, type, value, set}]`) and what does not read as
+written (`problems`); `data.set` (`{path, data}`) writes a whole data file and `data.field.set`
+(`{path, name, value}`) one field, refusing a name the shape lacks or a value that does not fit it
+(`value: null` returns the field to its default). All of them stay inside the read and write roots,
+and none records an undo step. Play reads every data file when it starts and never writes them.
+
 `settings.graphics` in `project.settings.set` sets how every scene's shadows are drawn, in the
 editor's views, `scene.render` and the exported game: `shadowResolution` (texels per side of each
 shadow map: 512, 1024, 2048 or 4096), `shadowCascades` (how many maps a sun's shadow is split

@@ -77,6 +77,10 @@ enum Kind {
     Interface,
     /// A style file for game interfaces (`.bstyle`).
     InterfaceStyle,
+    /// A data shape (`.bshape`): the fields data files have.
+    DataShape,
+    /// A data file (`.bdata`): values of a shape's fields, shared by scripts and scenes.
+    DataFile,
     Image,
     /// A sound file an Audio Source plays.
     Sound,
@@ -97,6 +101,8 @@ impl Kind {
             Some(bayleaf_engine::scene::post::EXTENSION) => Kind::PostProcessing,
             Some(bayleaf_interface::LAYOUT_EXTENSION) => Kind::Interface,
             Some(bayleaf_interface::STYLE_EXTENSION) => Kind::InterfaceStyle,
+            Some(bayleaf_engine::scene::data::SHAPE_EXTENSION) => Kind::DataShape,
+            Some(bayleaf_engine::scene::data::DATA_EXTENSION) => Kind::DataFile,
             Some("png" | "jpg" | "jpeg" | "exr" | "webp" | "ktx2") => Kind::Image,
             Some(ext) if bayleaf_engine::render::assets::MODEL_EXTENSIONS.contains(&ext) => Kind::Model,
             Some(ext) if bayleaf_engine::scene::components::SOUND_EXTENSIONS.contains(&ext) => Kind::Sound,
@@ -120,6 +126,8 @@ impl Kind {
             Kind::PostProcessing => "Post-processing",
             Kind::Interface => "Interface",
             Kind::InterfaceStyle => "Interface Style",
+            Kind::DataShape => "Data Shape",
+            Kind::DataFile => "Data File",
             Kind::Image => "Image",
             Kind::Sound => "Sound",
             Kind::Other => "File",
@@ -267,6 +275,16 @@ impl ProjectView {
         self.files_of(&[Kind::Interface])
     }
 
+    /// Every data shape (`.bshape`) in the project.
+    pub(crate) fn shape_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::DataShape])
+    }
+
+    /// Every data file (`.bdata`) in the project.
+    pub(crate) fn data_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::DataFile])
+    }
+
     /// Every 3D model (`.glb`, `.gltf`) in the project.
     pub(crate) fn model_files(&self) -> Vec<String> {
         self.files_of(&[Kind::Model])
@@ -338,7 +356,7 @@ impl ProjectView {
 }
 
 /// What the Create panel offers: the kind, its name, what it is, and the name a new one starts with.
-const CREATABLE: [(AssetKind, &str, &str, &str); 10] = [
+const CREATABLE: [(AssetKind, &str, &str, &str); 12] = [
     (AssetKind::Folder, "Folder", "A folder to sort files into", "New Folder"),
     (AssetKind::Scene, "Scene", "A level or screen, with a camera and a light", "New Scene"),
     (AssetKind::Material, "Material", "How a surface looks, as a graph", "New Material"),
@@ -349,6 +367,8 @@ const CREATABLE: [(AssetKind, &str, &str, &str); 10] = [
     (AssetKind::PostProcessing, "Post-processing", "Bloom, tone mapping, colour, vignette and more, for a scene or a camera", "New Post-processing"),
     (AssetKind::Interface, "Interface", "A game's menu or display: panels, text, buttons and more", "New Interface"),
     (AssetKind::InterfaceStyle, "Interface Style", "How interfaces look: rules for kinds, classes and names", "New Interface Style"),
+    (AssetKind::DataShape, "Data Shape", "The fields data files have: names, types and defaults", "New Data Shape"),
+    (AssetKind::DataFile, "Data File", "Values that scripts and scenes share, such as an enemy type's settings", "New Data File"),
 ];
 
 /// The lowercase name of a kind, for "New â¦" prompts.
@@ -364,6 +384,8 @@ fn kind_name(kind: AssetKind) -> &'static str {
         AssetKind::PostProcessing => "post-processing",
         AssetKind::Interface => "interface",
         AssetKind::InterfaceStyle => "interface style",
+        AssetKind::DataShape => "data shape",
+        AssetKind::DataFile => "data file",
     }
 }
 
@@ -380,6 +402,8 @@ fn kind_icon(kind: AssetKind) -> Kind {
         AssetKind::PostProcessing => Kind::PostProcessing,
         AssetKind::Interface => Kind::Interface,
         AssetKind::InterfaceStyle => Kind::InterfaceStyle,
+        AssetKind::DataShape => Kind::DataShape,
+        AssetKind::DataFile => Kind::DataFile,
     }
 }
 
@@ -767,7 +791,7 @@ fn create(editor: &mut Editor, naming: &Naming, name: &str) -> Result<PathBuf, S
         AssetKind::Material | AssetKind::VisualScript => editor.open_graph(&path),
         AssetKind::Script => editor.build_script(&path),
         // An Input Map opens in the Inspector, where its actions are edited.
-        AssetKind::InputMap | AssetKind::Lighting | AssetKind::PostProcessing | AssetKind::InterfaceStyle => {
+        AssetKind::InputMap | AssetKind::Lighting | AssetKind::PostProcessing | AssetKind::InterfaceStyle | AssetKind::DataShape | AssetKind::DataFile => {
             editor.inspect_file(path.clone());
         }
         AssetKind::Interface => editor.open_interface(&path),
@@ -1342,7 +1366,7 @@ fn default_action(entry: &Entry) -> Option<Action> {
     let path = entry.path.clone();
     match entry.kind {
         // A click already shows an Input Map in the Inspector, where it is edited.
-        Kind::Folder | Kind::InputMap | Kind::Lighting | Kind::PostProcessing | Kind::InterfaceStyle => None,
+        Kind::Folder | Kind::InputMap | Kind::Lighting | Kind::PostProcessing | Kind::InterfaceStyle | Kind::DataShape | Kind::DataFile => None,
         Kind::Interface => Some(Action::OpenInterface(path)),
         Kind::Scene | Kind::Project => Some(Action::OpenScene(path)),
         Kind::Material | Kind::VisualScript => Some(Action::OpenGraph(path)),
@@ -1463,6 +1487,8 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
         | Kind::PostProcessing
         | Kind::Interface
         | Kind::InterfaceStyle
+        | Kind::DataShape
+        | Kind::DataFile
         | Kind::Image
         | Kind::Sound
         | Kind::Other => {
@@ -1477,6 +1503,7 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                 Kind::Lighting => t.warning,
                 Kind::PostProcessing => t.pin_vector,
                 Kind::Interface | Kind::InterfaceStyle => t.pin_object,
+                Kind::DataShape | Kind::DataFile => t.pin_number,
                 Kind::Image => t.axis_y,
                 Kind::Sound => t.pin_text,
                 _ => t.text_muted,
@@ -1507,6 +1534,20 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                     painter.rect_filled(bar, 1.0, accent);
                     let button = egui::Rect::from_center_size(inner.center() + egui::vec2(0.0, inner.height() * 0.2), inner.size() * egui::vec2(0.55, 0.24));
                     painter.rect_stroke(button, 2.0, stroke(accent), egui::StrokeKind::Inside);
+                }
+                Kind::DataShape | Kind::DataFile if s >= 24.0 => {
+                    // Rows of a table: a name and a value each; a shape's values are hollow.
+                    for i in 0..3 {
+                        let y = inner.top() + inner.height() * (0.12 + 0.32 * i as f32);
+                        let name = egui::Rect::from_min_size(egui::pos2(inner.left(), y), egui::vec2(inner.width() * 0.38, inner.height() * 0.2));
+                        let value = egui::Rect::from_min_size(egui::pos2(inner.left() + inner.width() * 0.5, y), egui::vec2(inner.width() * 0.5, inner.height() * 0.2));
+                        painter.rect_filled(name, 1.0, accent);
+                        if kind == Kind::DataFile {
+                            painter.rect_filled(value, 1.0, accent.gamma_multiply(0.6));
+                        } else {
+                            painter.rect_stroke(value, 1.0, stroke(accent), egui::StrokeKind::Inside);
+                        }
+                    }
                 }
                 Kind::InterfaceStyle if s >= 24.0 => {
                     // Lines of rules, indented.

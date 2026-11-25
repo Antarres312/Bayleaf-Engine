@@ -51,6 +51,8 @@ struct AddMenu {
 
 /// The graph editor's own state, kept between frames.
 pub(crate) struct GraphView {
+    /// The data shapes and data files Data File nodes name, read again when they change on disk.
+    data_files: FileCache,
     /// The part of the canvas in view.
     pub(crate) scene_rect: Rect,
     /// The visual script's panel of variables, properties and menu path.
@@ -132,6 +134,52 @@ fn refresh_script_fields(editor: &mut Editor, graph: &Graph, search: &SearchChoi
     }
 }
 
+/// Files read for the graph's nodes, each kept until it changes on disk.
+#[derive(Default)]
+struct FileCache(std::collections::HashMap<std::path::PathBuf, (Option<std::time::SystemTime>, Option<String>)>);
+
+impl FileCache {
+    fn text(&mut self, path: &std::path::Path) -> Option<String> {
+        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        let entry = self.0.entry(path.to_path_buf()).or_insert((None, None));
+        if entry.0 != modified || (modified.is_none() && entry.1.is_some()) {
+            *entry = (modified, std::fs::read_to_string(path).ok());
+        }
+        entry.1.clone()
+    }
+}
+
+/// Keeps the pins of Data File nodes in step with their shape: the shape the node names, else the
+/// one its data file names (which the node then names too). One edit per node that changed, so it
+/// undoes; links to fields the shape dropped go away.
+fn refresh_data_fields(editor: &mut Editor, graph: &Graph, files: &mut FileCache) {
+    use bayleaf_engine::scene::data::{DataFile, DataShape};
+    let dir = editor.session.script_dir();
+    for node in graph.nodes.iter().filter(|n| n.kind == "dataFile") {
+        let text = |key: &str| node.values.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+        let mut shape = text("shape");
+        let file = text("file");
+        if shape.is_empty() && !file.is_empty() {
+            let named = files.text(&dir.join(&file)).and_then(|t| DataFile::from_text(&t).ok()).map(|d| d.shape).filter(|s| !s.is_empty());
+            if let Some(named) = named
+                && editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "shape", "value": named }), None).is_some()
+            {
+                shape = named;
+            }
+        }
+        if shape.is_empty() {
+            continue;
+        }
+        let Some(read) = files.text(&dir.join(&shape)).and_then(|t| DataShape::from_text(&t).ok()) else { continue };
+        let fields: Vec<String> = read.fields.iter().map(|f| format!("{}:{}", f.name, f.code)).collect();
+        let kept: Vec<String> =
+            node.values.get("fields").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+        if kept != fields && editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "fields", "value": fields }), None).is_some() {
+            editor.status = crate::i18n::tf("Node {id}: the fields of {shape} changed, so its pins did too.", &[("id", &node.id.to_string()), ("shape", &shape)]);
+        }
+    }
+}
+
 /// The name a search uses for a script file: the name the Inspector shows for it.
 fn script_name(module: &str) -> String {
     bayleaf_engine::scene::components::ScriptRef { module: module.to_owned(), properties: Default::default() }.display_name()
@@ -198,6 +246,7 @@ impl Default for GraphView {
             editing_comment: None,
             focus_comment: None,
             show_preview: true,
+            data_files: FileCache::default(),
             preview: None,
             search: SearchChoices::default(),
         }
@@ -328,6 +377,9 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui, gpu: Option<&egui_wgp
         SearchChoices::default()
     };
     refresh_script_fields(editor, &doc.graph, &view.search);
+    if doc.graph.nodes.iter().any(|n| n.kind == "dataFile") {
+        refresh_data_fields(editor, &doc.graph, &mut view.data_files);
+    }
     let problems = bayleaf_engine::problems(&doc.graph);
 
     toolbar(editor, ui, &doc, catalog, &mut view);
@@ -1623,12 +1675,13 @@ fn setting_row(
             let accepts = |path: &str| match setting.name {
                 "scene" => path.ends_with(".bscene"),
                 "prefab" => path.ends_with(".bprefab"),
+                "shape" => path.ends_with(".bshape"),
                 "sound" => {
                     path.rsplit_once('.').is_some_and(|(_, e)| bayleaf_engine::scene::components::SOUND_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
                 }
                 _ => false,
             };
-            if matches!(setting.name, "scene" | "prefab" | "sound")
+            if matches!(setting.name, "scene" | "prefab" | "sound" | "shape")
                 && let Some(path) = crate::value_editor::file_drop(ui, &response, accepts)
             {
                 requests.run("graph.node.set", json!({ "node": node.id, "name": setting.name, "value": path }));
