@@ -162,13 +162,8 @@ struct Instance {
     store: Shared,
     /// Its object's slot in the store (0 in a store of its own).
     slot: usize,
-    /// The module's instance, to attach more objects of the same file to it.
+    /// The module's instance, to read its frame when an update of all fails.
     module: rt::Instance,
-    /// Which module bytes it runs, so objects of the same file share a batched module only while
-    /// the file is the same.
-    key: u64,
-    /// What it declares, kept for objects attached to the same batched module.
-    description: Arc<Description>,
     calls: Calls,
     /// Stopped after an error; it no longer runs.
     stopped: bool,
@@ -256,6 +251,11 @@ pub struct ScriptHost {
     view_mark: u64,
     /// The transforms scripts set during a step, until it ends.
     poses: Poses,
+    /// Which places (an object and a script's place on it) have an instance, so a load looks through
+    /// the instances for one to replace only when there is one.
+    placed: bayleaf_core::hash::IdSet<(StableId, usize)>,
+    /// The modules that run many objects, by their bytes' key and file, for more objects to join.
+    shared: HashMap<u64, Vec<(PathBuf, SharedModule)>>,
     /// Counts instances coming, going and stopping, so the step's grouping is made again only then.
     version: u64,
     groups: Groups,
@@ -289,6 +289,8 @@ impl ScriptHost {
             view: Arc::default(),
             view_mark: 0,
             poses: Poses::default(),
+            placed: Default::default(),
+            shared: HashMap::new(),
             version: 0,
             groups: Groups::default(),
         }
@@ -304,11 +306,12 @@ impl ScriptHost {
     /// recorded as faults; the other scripts still load.
     pub fn load_scene(&mut self, scene: &mut Scene, base_dir: &Path, time: f64, input: &Arc<Input>) {
         let objects: Vec<StableId> = scene.world_matrices().into_iter().map(|(id, _)| id).collect();
+        let mut ready = HashMap::new();
         for object in objects {
             let scripts = scene.get::<Scripts>(object).cloned().unwrap_or_default();
             for (index, script) in scripts.0.iter().enumerate() {
                 let path = base_dir.join(&script.module);
-                if let Err(error) = self.instantiate_file(object, index, &path, script, scene, time, input) {
+                if let Err(error) = self.instantiate_file(object, index, &path, script, scene, time, input, &mut ready) {
                     self.faults.push(ScriptFault { object, script: script.display_name(), error });
                 }
             }
@@ -330,8 +333,9 @@ impl ScriptHost {
         input: &Arc<Input>,
     ) -> Vec<(StableId, usize, ScriptError)> {
         let mut failed = Vec::new();
+        let mut ready = HashMap::new();
         for (object, index, path, script) in scripts {
-            if let Err(error) = self.instantiate_file(*object, *index, path, script, scene, time, input) {
+            if let Err(error) = self.instantiate_file(*object, *index, path, script, scene, time, input, &mut ready) {
                 failed.push((*object, *index, error));
             }
         }
@@ -356,7 +360,8 @@ impl ScriptHost {
         self.load_bytes(object, index, path, modified, &bytes, script, scene, time, input)
     }
 
-    /// Loads one module file without running its `bayleaf_start` (see `run_starts`).
+    /// Loads one module file without running its `bayleaf_start` (see `run_starts`). `ready` keeps
+    /// each file as made ready, so many objects with the same script read and compile it once.
     #[allow(clippy::too_many_arguments)]
     fn instantiate_file(
         &mut self,
@@ -367,10 +372,15 @@ impl ScriptHost {
         scene: &mut Scene,
         time: f64,
         input: &Arc<Input>,
+        ready: &mut HashMap<PathBuf, Ready>,
     ) -> Result<(), ScriptError> {
-        let bytes = module_bytes(path)?;
-        let modified = bayleaf_core::files::modified(path);
-        self.instantiate(object, index, path, modified, &bytes, script, scene, time, input)
+        if !ready.contains_key(path) {
+            let bytes = module_bytes(path)?;
+            let made = self.prepare(path, bayleaf_core::files::modified(path), &bytes)?;
+            ready.insert(path.to_path_buf(), made);
+        }
+        let Some(made) = ready.get(path) else { return Ok(()) };
+        self.instantiate_ready(object, index, path, made, script, scene, time, input)
     }
 
     /// The properties a module declares, with their defaults, in declaration order. Runs no script
@@ -432,6 +442,13 @@ impl ScriptHost {
         time: f64,
         input: &Arc<Input>,
     ) -> Result<(), ScriptError> {
+        let ready = self.prepare(path, modified, bytes)?;
+        self.instantiate_ready(object, index, path, &ready, script, scene, time, input)
+    }
+
+    /// Makes a module ready to load on objects: compiled (once for the same bytes), with what the
+    /// host asks of it each time it loads. Loading a scene does this once per file, not per object.
+    fn prepare(&mut self, path: &Path, modified: Option<SystemTime>, bytes: &[u8]) -> Result<Ready, ScriptError> {
         let module_name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         // A script built into the game runs natively behind the trampoline module.
         let native = crate::native::find(&self.natives, path);
@@ -448,16 +465,34 @@ impl ScriptHost {
             }
         };
         self.reads_fields |= module.imports().any(|i| matches!(i.name(), "component_get" | "component_set"));
-        let key = bytes_key(bytes);
-        // Replace an earlier instance in the same place (hot reload).
-        for gone in self.instances.iter().filter(|i| i.object == object && i.index == index) {
-            gone.release();
-        }
-        self.instances.retain(|i| !(i.object == object && i.index == index));
-        self.version += 1;
         // A module that runs many objects in one instance: every object of the same file shares it.
         let batched = native.is_none() && module.exports().any(|e| e.name() == "bayleaf_update_all");
-        let shared = self.instances.iter().find(|i| batched && i.batched() && i.key == key && i.path == path);
+        Ok(Ready { module_name, native, module, key: bytes_key(bytes), batched, modified })
+    }
+
+    /// Loads a module made ready as script `index` of `object`, without running its `bayleaf_start`.
+    #[allow(clippy::too_many_arguments)]
+    fn instantiate_ready(
+        &mut self,
+        object: StableId,
+        index: usize,
+        path: &Path,
+        ready: &Ready,
+        script: &ScriptRef,
+        scene: &mut Scene,
+        time: f64,
+        input: &Arc<Input>,
+    ) -> Result<(), ScriptError> {
+        let Ready { module_name, native, module, key, batched, modified } = ready.clone();
+        // Replace an earlier instance in the same place (hot reload).
+        if self.placed.contains(&(object, index)) {
+            for gone in self.instances.iter().filter(|i| i.object == object && i.index == index) {
+                gone.release();
+            }
+            self.instances.retain(|i| !(i.object == object && i.index == index));
+        }
+        self.version += 1;
+        let shared = if batched { self.shared.get(&key).and_then(|files| files.iter().find(|(file, _)| file == path)).map(|(_, module)| module) } else { None };
         let (store, slot, instance, description) = match shared {
             Some(other) => {
                 let store = Arc::clone(&other.store);
@@ -471,7 +506,12 @@ impl ScriptHost {
             }
             None => {
                 let (store, instance, description) = self.new_store(object, index, &module, &module_name, native, scene, time, input)?;
-                (Arc::new(std::sync::Mutex::new(store)), 0, instance, Arc::new(description))
+                let (store, description) = (Arc::new(std::sync::Mutex::new(store)), Arc::new(description));
+                if batched {
+                    let module = SharedModule { store: Arc::clone(&store), module: handle_copy(&instance), description: Arc::clone(&description) };
+                    self.shared.entry(key).or_default().push((path.to_path_buf(), module));
+                }
+                (store, 0, instance, description)
             }
         };
         let mut locked = store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -537,8 +577,6 @@ impl ScriptHost {
             store,
             slot,
             module: instance,
-            key,
-            description,
             calls,
             stopped: false,
             pending_init: init,
@@ -546,6 +584,7 @@ impl ScriptHost {
             view_index: 0,
             view_structure: u64::MAX,
         });
+        self.placed.insert((object, index));
         self.version += 1;
         Ok(())
     }
@@ -1298,6 +1337,26 @@ fn take_subscribing_of(store: &mut Store<HostState>, subscriptions: &mut Vec<Sub
             subscriptions.push(Subscription { publisher, event, subscriber });
         }
     }
+}
+
+/// A module ready to load on objects (see `ScriptHost::prepare`).
+#[derive(Clone)]
+struct Ready {
+    module_name: String,
+    native: Option<crate::NativeScript>,
+    module: Module,
+    /// Which bytes it is (`bytes_key`).
+    key: u64,
+    /// It runs every object of its file in one instance.
+    batched: bool,
+    modified: Option<SystemTime>,
+}
+
+/// A module that runs many objects, as loaded: what another object of the same file joins.
+struct SharedModule {
+    store: Shared,
+    module: rt::Instance,
+    description: Arc<Description>,
 }
 
 /// A module that runs many objects, for the step: its running objects' instances (their places),
