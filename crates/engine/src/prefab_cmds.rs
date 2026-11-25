@@ -118,8 +118,16 @@ fn prefab_open(session: &mut Session, params: &Value) -> Result<Value, CommandEr
         return Err(CommandError::Failed(format!("prefabs open inside one another at most {MAX_NESTING} deep")));
     }
     let objects = read_prefab(session, &source)?;
-    let mut scene = Scene::new();
-    let root = *scene.import(&objects, None, None)?.first().ok_or_else(|| CommandError::Failed("the prefab is empty".to_owned()))?;
+    // The objects keep their ids from the file, so saving keeps them too and what names them
+    // (a keyframe animation's parts) stays valid.
+    let root = objects.first().map(|o| o.id).ok_or_else(|| CommandError::Failed("the prefab is empty".to_owned()))?;
+    let doc = bayleaf_scene::doc::SceneDoc {
+        format: bayleaf_scene::doc::FORMAT.to_owned(),
+        version: bayleaf_scene::doc::VERSION,
+        settings: bayleaf_scene::lighting::SceneSettings::default(),
+        objects,
+    };
+    let mut scene = Scene::from_doc(&doc)?;
     // Around the origin: copies keep their own transform anyway.
     if let Some(mut transform) = scene.get::<Transform>(root).cloned() {
         transform.position = [0.0; 3];
@@ -181,7 +189,7 @@ fn prefab_close(session: &mut Session, params: &Value) -> Result<Value, CommandE
 }
 
 /// `path` as stored in a link: relative to the project folder when inside it, with `/`.
-fn link_path(session: &Session, path: &Path) -> String {
+pub(crate) fn link_path(session: &Session, path: &Path) -> String {
     let base = session.script_dir();
     let base = std::fs::canonicalize(&base).unwrap_or(base);
     let full = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
