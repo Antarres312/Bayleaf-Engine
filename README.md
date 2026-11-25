@@ -93,7 +93,7 @@ Every feature below works both in the editor and through commands.
 | **Model animation**<br>glTF nodes and skins | A model's animations play by name, looping or held at the end, at any speed. |
 | **Particles**<br>Particle Emitter | Sprites or meshes from a point, shape or a mesh's surface, with size and colour curves. |
 | **Game interfaces**<br>`.bui`, `.bstyle` | Layouts of panels, text, buttons, toggles, sliders, fields and lists, with style files and reusable parts; on the screen or standing in the world, driven by gamepad, keyboard or pointer. See [interfaces](docs/interface.md). |
-| **Physics** (`physics`)<br>Rapier | Rigid bodies, colliders, characters, joints with motors, raycasts. Precision can be single or double. |
+| **Physics** (`physics`)<br>Rapier | Rigid bodies, colliders, characters, joints with motors, raycasts. Precision can be single or double. On desktops each step spreads over the processor's cores with the same results as on one. |
 | **Sound** (`audio`)<br>craft-audio, cpal | Audio Sources heard from the camera, sounds that scripts play at a position, and long music read from its file as it plays. |
 | **Gameplay** (`gameplay`)<br>opt-in roles | Input Maps, player control, game rules and saved values. |
 | **World streaming** (`streaming`)<br>Streamed Areas | Parts of the world load in the background as the camera nears them; one command splits a scene into grid cells. |

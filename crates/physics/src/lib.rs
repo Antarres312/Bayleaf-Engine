@@ -5,6 +5,11 @@
 //! kinematic bodies to their objects' transforms, writes dynamic bodies' places back to the scene,
 //! and returns the collisions and trigger contacts that began or ended. Objects that appear or
 //! disappear during play are picked up on the next step.
+//!
+//! On desktops a step runs on a pool of worker threads that every world shares ([`threads`]:
+//! the processor's threads up to [`MAX_THREADS`], or [`THREADS_VARIABLE`]); the web player steps
+//! on its one thread. Rapier's parallel step gives the same results, bit for bit, whatever the
+//! number of threads and with or without it, so replays and tests read the same everywhere.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -22,6 +27,53 @@ pub const STEP: f32 = 1.0 / 60.0;
 pub const MAX_STEPS_PER_FRAME: u32 = 5;
 /// Earth's gravity, in metres per second squared, pointing down.
 pub const GRAVITY: [f64; 3] = [0.0, -9.81, 0.0];
+
+/// Most worker threads physics takes by default, however many the processor has.
+pub const MAX_THREADS: usize = 8;
+/// Most worker threads anyone may ask for.
+pub const THREADS_LIMIT: usize = 64;
+/// The environment variable that sets how many worker threads the shared pool has (1 to
+/// [`THREADS_LIMIT`]), read when the first world is built.
+pub const THREADS_VARIABLE: &str = "BAYLEAF_PHYSICS_THREADS";
+
+/// The worker threads physics steps on by default: [`THREADS_VARIABLE`] when it holds a number,
+/// otherwise the processor's threads up to [`MAX_THREADS`]. Always 1 on the web.
+pub fn threads() -> usize {
+    if cfg!(target_arch = "wasm32") {
+        return 1;
+    }
+    let asked = std::env::var(THREADS_VARIABLE).ok().and_then(|v| v.trim().parse::<usize>().ok());
+    match asked {
+        Some(n) => n.clamp(1, THREADS_LIMIT),
+        None => std::thread::available_parallelism().map_or(1, usize::from).min(MAX_THREADS),
+    }
+}
+
+/// The pool of worker threads every world steps on, made once.
+#[cfg(not(target_arch = "wasm32"))]
+mod pool {
+    use std::sync::{Arc, OnceLock};
+
+    pub(crate) use rapier3d::rayon::ThreadPool;
+
+    static SHARED: OnceLock<Option<Arc<ThreadPool>>> = OnceLock::new();
+
+    /// The shared pool; `None` only if the system would not start threads, and then Rapier
+    /// steps on rayon's own pool.
+    pub(crate) fn shared() -> Option<Arc<ThreadPool>> {
+        SHARED.get_or_init(|| make(super::threads())).clone()
+    }
+
+    /// A pool of `threads` workers.
+    pub(crate) fn make(threads: usize) -> Option<Arc<ThreadPool>> {
+        rapier3d::rayon::ThreadPoolBuilder::new()
+            .num_threads(threads.clamp(1, super::THREADS_LIMIT))
+            .thread_name(|i| format!("bayleaf-physics-{i}"))
+            .build()
+            .ok()
+            .map(Arc::new)
+    }
+}
 
 /// What began or ended between two objects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,6 +190,25 @@ impl Physics {
             Precision::Double => Backend::Double(Box::new(double::World::build(scene, gravity))),
         };
         Self { backend }
+    }
+
+    /// Steps this world on its own pool of `threads` workers (1 to [`THREADS_LIMIT`]) instead of
+    /// the shared one, and returns how many it now has. The results stay the same; only the time
+    /// changes. On the web there is one thread and this does nothing.
+    pub fn set_threads(&mut self, threads: usize) -> usize {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let made = pool::make(threads);
+            both!(mut self, w => w.set_pool(made.clone()));
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = threads;
+        self.threads()
+    }
+
+    /// The worker threads a step of this world runs on.
+    pub fn threads(&self) -> usize {
+        both!(self, w => w.threads())
     }
 
     pub fn precision(&self) -> Precision {
