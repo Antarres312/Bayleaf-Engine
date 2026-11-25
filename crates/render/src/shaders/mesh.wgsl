@@ -20,6 +20,8 @@ struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(11) uv: vec2<f32>,
+    @location(13) joints: vec4<u32>,
+    @location(14) weights: vec4<f32>,
 };
 
 struct InstanceIn {
@@ -35,6 +37,8 @@ struct InstanceIn {
     @location(10) params: vec4<f32>,
     // The part of the images shown: offset xy, size zw (a flipbook's frame).
     @location(12) uv_rect: vec4<f32>,
+    // x: the first of its skin's matrices, y: 1 when skinned.
+    @location(15) skin: vec4<f32>,
 };
 
 struct VertexOut {
@@ -50,11 +54,12 @@ struct VertexOut {
 fn vs_main(v: VertexIn, i: InstanceIn) -> VertexOut {
     let model = mat4x4<f32>(i.model_0, i.model_1, i.model_2, i.model_3);
     let normal_matrix = mat3x3<f32>(i.normal_0.xyz, i.normal_1.xyz, i.normal_2.xyz);
-    let world = model * vec4<f32>(v.position, 1.0);
+    let skin = bl_skin(v.joints, v.weights, i.skin);
+    let world = model * skin * vec4<f32>(v.position, 1.0);
     var out: VertexOut;
     out.clip = globals.view_proj * world;
     out.world_pos = world.xyz;
-    out.normal = normal_matrix * v.normal;
+    out.normal = normal_matrix * (mat3x3<f32>(skin[0].xyz, skin[1].xyz, skin[2].xyz) * v.normal);
     out.color = i.color;
     out.params = i.params;
     out.uv = v.uv * i.uv_rect.zw + i.uv_rect.xy;
@@ -434,8 +439,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
 fn vs_outline(v: VertexIn, i: InstanceIn) -> VertexOut {
     let model = mat4x4<f32>(i.model_0, i.model_1, i.model_2, i.model_3);
     let normal_matrix = mat3x3<f32>(i.normal_0.xyz, i.normal_1.xyz, i.normal_2.xyz);
-    var world = model * vec4<f32>(v.position, 1.0);
-    let normal = normalize(normal_matrix * v.normal);
+    let skin = bl_skin(v.joints, v.weights, i.skin);
+    var world = model * skin * vec4<f32>(v.position, 1.0);
+    let normal = normalize(normal_matrix * (mat3x3<f32>(skin[0].xyz, skin[1].xyz, skin[2].xyz) * v.normal));
     world = vec4<f32>(world.xyz + normal * OUTLINE.w, 1.0);
     var out: VertexOut;
     out.clip = globals.view_proj * world;

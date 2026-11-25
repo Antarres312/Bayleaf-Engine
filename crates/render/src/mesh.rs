@@ -10,6 +10,17 @@ pub(crate) struct Vertex {
     pub normal: [f32; 3],
     /// Texture coordinates: 0..1 across a face, (0, 0) at the top left of an image.
     pub uv: [f32; 2],
+    /// A skinned model's vertex: the four bindings it follows (indices into its skin's matrices)
+    /// and their weights. Unused (zero weights) for shapes and models drawn as they are.
+    pub joints: [u16; 4],
+    pub weights: [f32; 4],
+}
+
+impl Vertex {
+    /// A vertex that follows no joints.
+    pub fn new(position: [f32; 3], normal: [f32; 3], uv: [f32; 2]) -> Self {
+        Self { position, normal, uv, joints: [0; 4], weights: [0.0; 4] }
+    }
 }
 
 pub(crate) struct MeshData {
@@ -29,7 +40,7 @@ pub(crate) fn build(shape: Shape) -> MeshData {
 /// One square face of side 1 with normal `normal`; `place` maps (u, v) in −0.5..0.5 to a position.
 fn square(normal: [f32; 3], place: impl Fn(f32, f32) -> [f32; 3]) -> MeshData {
     let corners = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)];
-    let vertices = corners.iter().map(|&(u, v)| Vertex { position: place(u, v), normal, uv: [u + 0.5, 0.5 - v] }).collect();
+    let vertices = corners.iter().map(|&(u, v)| Vertex::new(place(u, v), normal, [u + 0.5, 0.5 - v])).collect();
     MeshData { vertices, indices: vec![0, 1, 2, 0, 2, 3] }
 }
 
@@ -49,7 +60,7 @@ fn cube() -> MeshData {
         let base = vertices.len() as u32;
         for (su, sv) in [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)] {
             let position = [0, 1, 2].map(|i| n[i] * 0.5 + u[i] * su + v[i] * sv);
-            vertices.push(Vertex { position, normal: n, uv: [su + 0.5, 0.5 - sv] });
+            vertices.push(Vertex::new(position, n, [su + 0.5, 0.5 - sv]));
         }
         indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
@@ -69,7 +80,7 @@ fn sphere(segments: u32, rings: u32) -> MeshData {
         for segment in 0..=segments {
             let phi = std::f32::consts::TAU * segment as f32 / segments as f32;
             let normal = [sin_t * phi.cos(), cos_t, -sin_t * phi.sin()];
-            vertices.push(Vertex { position: normal.map(|c| c * 0.5), normal, uv: [segment as f32 / segments as f32, ring as f32 / rings as f32] });
+            vertices.push(Vertex::new(normal.map(|c| c * 0.5), normal, [segment as f32 / segments as f32, ring as f32 / rings as f32]));
         }
     }
     let mut indices = Vec::new();

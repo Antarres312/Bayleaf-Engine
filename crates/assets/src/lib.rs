@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+pub mod fixtures;
 pub mod import;
 mod neutral;
 pub mod skeleton;
@@ -644,7 +645,8 @@ fn rig_skeleton(
         }
         animations.push(skeleton::Animation { name, duration, channels });
     }
-    Ok(skeleton::Skeleton {
+    let names = gltf.nodes().map(|n| n.name().map_or_else(|| format!("Node {}", n.index() + 1), str::to_owned)).collect();
+    let mut skeleton = skeleton::Skeleton {
         nodes,
         order,
         bindings: rig.bindings,
@@ -654,7 +656,11 @@ fn rig_skeleton(
         normals: rig.normals,
         root,
         animations,
-    })
+        names,
+        binding_bounds: Vec::new(),
+    };
+    skeleton.binding_bounds = skeleton.bounds_of_bindings();
+    Ok(skeleton)
 }
 
 fn add_node(node: &gltf::Node<'_>, parent: glam::Mat4, gathered: &mut Gathered<'_>, depth: usize) -> Result<(), String> {

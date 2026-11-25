@@ -314,6 +314,7 @@ impl WorldInterfaces {
                 part: None,
                 additive: false,
                 uv_rect: bayleaf_render::WHOLE_IMAGE,
+                skin: None,
             });
         }
         blocked
