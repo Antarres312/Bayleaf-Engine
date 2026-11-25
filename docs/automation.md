@@ -204,10 +204,12 @@ writes one that changes no colour, to recolour in an image editor; it returns `{
 does not write over a file.
 
 A Model Animation component (`modelAnimation`, scene format 23: `{animation, playing, looping,
-speed}`) plays one of the animations of the object's glTF model, by name (empty for the first), from
-when the view's clock starts: nodes move by their translation, rotation and scale keys, parts
-without a skin follow their node and skinned parts their joints (up to four a vertex), posed on the
-CPU each frame. Cubic spline keys are joined in straight lines; shape blending (morph targets) is
+speed}`; format 25 adds `states`, `rootMotion`, `rootJoint` and `events`) plays one of the animations
+of the object's glTF model, by name (empty for the first), from when the view's clock starts: nodes
+move by their translation, rotation and scale keys, parts without a skin follow their node and
+skinned parts their joints (up to four a vertex), skinned on the GPU. In play mode, and with the
+`animation.*` commands, clips also fade, mix, play in layers, run as animation states, mark events
+and move the object by root motion (`docs/animation.md`). Cubic spline keys are joined in straight lines; shape blending (morph targets) is
 left out and the model's asset info says so. `asset.info` lists a model's animations and their
 lengths.
 

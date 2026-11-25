@@ -213,6 +213,9 @@ fn first_point(field: &str) -> Option<Value> {
         Some(serde_json::json!({ "at": 0.5, "size": 1.0 }))
     } else if field.contains("colorKeys") {
         Some(serde_json::json!({ "at": 0.5, "color": [1.0, 1.0, 1.0, 1.0] }))
+    } else if field == "events" {
+        // A Model Animation's marked moment.
+        Some(serde_json::json!({ "clip": "", "time": 0.0, "event": "footstep" }))
     } else {
         None
     }

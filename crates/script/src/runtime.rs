@@ -202,6 +202,10 @@ impl ScriptHost {
         each!(&mut self.0, host => host.notify(scene, contacts, time, input))
     }
 
+    pub fn trigger_events(&mut self, scene: &mut Scene, events: &[(StableId, String)], time: f64, input: &Arc<Input>) {
+        each!(&mut self.0, host => host.trigger_events(scene, events, time, input))
+    }
+
     pub fn take_requests(&mut self) -> Vec<Request> {
         each!(&mut self.0, host => host.take_requests())
     }

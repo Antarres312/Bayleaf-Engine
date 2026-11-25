@@ -1015,6 +1015,19 @@ impl ScriptHost {
         self.deliver(scene, time, input);
     }
 
+    /// Triggers the event `name` on the scripts of each `(object, name)` now, bringing the object
+    /// as its one value: what a clip's marked moments (a footstep) become.
+    pub fn trigger_events(&mut self, scene: &mut Scene, events: &[(StableId, String)], time: f64, input: &Arc<Input>) {
+        if events.is_empty() {
+            return;
+        }
+        for (object, name) in events {
+            let args: Arc<[EventArg]> = Arc::from([EventArg::Object(Some(*object))]);
+            self.messages.push(Message { to: Some(*object), name: name.clone(), value: 0.0, args, script: None, from: None });
+        }
+        self.deliver(scene, time, input);
+    }
+
     /// The input maps scripts read with `action` and switch with `input_map_set`: the project's and
     /// objects' own. The engine fills them when play starts and steps them each step.
     pub fn with_input<T>(&self, change: impl FnOnce(&mut actions::InputSet) -> T) -> T {

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bayleaf_animation::states::{self, Machine};
-use bayleaf_animation::{Clips, Motion, Number, Parameter, Player};
+use bayleaf_animation::{ClipEvent, Clips, Motion, Number, Parameter, Player};
 use bayleaf_core::StableId;
 use bayleaf_core::math::Mat4;
 use bayleaf_render::assets::skeleton::Skeleton;
@@ -136,8 +136,17 @@ fn load_skeleton(session: &mut Session, id: StableId) -> Result<(String, Arc<Ske
 /// to play.
 fn new_animated(session: &mut Session, id: StableId, model: String, skeleton: Arc<Skeleton>, autoplay: bool) -> Animated {
     let settings = session.scene.get::<ModelAnimation>(id).cloned();
-    let clips = Clips::of_model(&skeleton, &[]);
+    let marks: Vec<(String, ClipEvent)> =
+        settings.iter().flat_map(|s| s.events.iter().map(|m| (m.clip.clone(), ClipEvent { time: m.time, name: m.event.clone() }))).collect();
+    let clips = Clips::of_model(&skeleton, &marks);
     let mut player = Player::new();
+    // Root motion moves the object only in play mode, where the scene is a copy.
+    if let Some(s) = settings.as_ref().filter(|s| autoplay && s.root_motion) {
+        player.root = if s.root_joint.is_empty() { bayleaf_animation::default_root(&skeleton) } else { skeleton.node_named(&s.root_joint) };
+        if player.root.is_none() {
+            session.log(Level::Error, format!("Root motion: the model has no joint named \"{}\"", s.root_joint));
+        }
+    }
     match settings.filter(|_| autoplay) {
         // Animation states, when the component names some that read and compile.
         Some(settings) if !settings.states.is_empty() => match load_states(session, &settings.states) {
@@ -212,15 +221,47 @@ fn sync(session: &mut Session) {
     }
 }
 
-/// One play-mode step: every player moves on by `dt`, and its pose is kept for the views.
+/// One play-mode step: every player moves on by `dt` and its pose is kept for the views; root
+/// motion moves its object, and the clip events it passed go to the object's scripts.
 pub(crate) fn step(session: &mut Session, dt: f32) {
     sync(session);
     let ids: Vec<StableId> = session.animation.objects.keys().copied().collect();
+    let mut events: Vec<(StableId, String)> = Vec::new();
     for id in ids {
         let Some(a) = session.animation.objects.get_mut(&id) else { continue };
-        a.player.advance(&a.skeleton, &a.clips, dt);
+        let step = a.player.advance(&a.skeleton, &a.clips, dt);
         let world = Arc::new(a.world());
         session.animation.poses.insert(id, world);
+        events.extend(step.events.into_iter().map(|e| (id, e)));
+        if step.root.length_squared() > 0.0 {
+            move_by_root(session, id, step.root);
+        }
+    }
+    if events.is_empty() {
+        return;
+    }
+    let input = Arc::clone(&session.input);
+    if let Some(play) = session.play.as_mut() {
+        play.host.trigger_events(&mut session.scene, &events, play.time, &input);
+    }
+    crate::play::after_message(session);
+}
+
+/// Moves object `id` by `delta`, a move in its model (with the import scale and axes): through
+/// the object's own turn and scale into the world, then into its parent's space.
+fn move_by_root(session: &mut Session, id: StableId, delta: bayleaf_core::math::Vec3) {
+    let Some(world) = session.scene.world_matrix(id) else { return };
+    let in_world = world.transform_vector3(delta.as_dvec3());
+    let in_parent = match session.scene.parent(id).and_then(|p| session.scene.world_matrix(p)) {
+        Some(parent) => parent.inverse().transform_vector3(in_world),
+        None => in_world,
+    };
+    let Some(mut transform) = session.scene.get::<bayleaf_scene::components::Transform>(id).cloned() else { return };
+    for (axis, by) in transform.position.iter_mut().zip(in_parent.to_array()) {
+        *axis += by;
+    }
+    if transform.position.iter().all(|p| p.is_finite()) {
+        let _ = session.scene.set(id, transform);
     }
 }
 
@@ -640,6 +681,49 @@ mod tests {
         let missing = run(&mut session, "animation.state.set", json!({"id": id, "state": "Run"})).unwrap_err().to_string();
         assert!(missing.contains("Idle, Up"), "{missing}");
         run(&mut session, "play.stop", Value::Null).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A script that logs the name of each message or event its object gets.
+    fn listener_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+                (import "bayleaf" "log" (func $log (param i32 i32)))
+                (import "bayleaf" "message_name" (func $name (param i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (func (export "bayleaf_abi") (result i32) i32.const 1)
+                (func (export "bayleaf_message") (param $v f32)
+                  (call $log (i32.const 100) (call $name (i32.const 100) (i32.const 64)))))"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn clip_events_reach_scripts_and_root_motion_moves_the_object() {
+        let dir = std::env::temp_dir().join(format!("bayleaf-animation-events-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        bayleaf_render::assets::fixtures::skinned_arm(&dir).unwrap();
+        std::fs::write(dir.join("listen.wasm"), listener_wasm()).unwrap();
+        let registry = CommandRegistry::with_builtins();
+        let mut session = Session::default();
+        let run = |session: &mut Session, command: &str, params: Value| registry.execute(session, command, &params);
+        let mesh = json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "arm.gltf"});
+        let animation = json!({"animation": "Stretch", "playing": true, "looping": true, "speed": 1, "rootMotion": true,
+            "events": [{"clip": "Stretch", "time": 0.25, "event": "footstep"}]});
+        let components = json!({"mesh": mesh, "modelAnimation": animation, "scripts": [{"module": "listen.wasm"}]});
+        let created = run(&mut session, "scene.object.create", json!({"name": "Walker", "components": components})).unwrap();
+        let id = created["id"].as_str().unwrap().to_owned();
+        run(&mut session, "scene.saveAs", json!({"path": dir.join("walk.bscene")})).unwrap();
+        run(&mut session, "play.start", Value::Null).unwrap();
+        run(&mut session, "play.step", json!({"seconds": 0.1, "steps": 5})).unwrap();
+        let heard = session.console().iter().filter(|l| l.text.contains("footstep")).count();
+        assert_eq!(heard, 1, "the marked moment arrives once: {:?}", session.console().iter().map(|l| &l.text).collect::<Vec<_>>());
+        let position = session.scene().component(bayleaf_core::StableId::parse_hex(&id).unwrap(), "transform").unwrap()["position"][0].as_f64().unwrap();
+        assert!((position - 0.75).abs() < 0.01, "half of Stretch carries the object 0.75 along: {position}");
+        assert!(arm_joint(&session, &id).x.abs() < 1e-3, "and its root joint is drawn in place");
+        run(&mut session, "play.stop", Value::Null).unwrap();
+        let back = session.scene().component(bayleaf_core::StableId::parse_hex(&id).unwrap(), "transform").unwrap()["position"][0].as_f64().unwrap();
+        assert!(back.abs() < 1e-9, "stopping play puts it back");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

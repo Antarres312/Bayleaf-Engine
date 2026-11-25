@@ -80,3 +80,18 @@ motion. Conditions read the object's parameters (numbers, true/false and trigger
 `animation.parameter.set` / `animation.trigger` set; a trigger is used up by the transition it lets
 through) and how long the state has played. A file that does not read or compile is reported in the
 console, and the object then plays nothing; a clip it names that the model lacks is reported too.
+
+## Clip events and root motion
+
+A Model Animation's **Events** mark moments of its clips: `{clip, time, event}`, up to 256. When a
+clip plays past one, the object's scripts get the script event of that name, with the object as its
+one value (On Event in visual scripts; `message_name` in the ABI). A mix marks the moments of its
+heaviest part; a layer those of its base and, at a weight of a half or more, of its top; a fading-out
+motion marks none.
+
+With **Root Motion** on, in play mode the root joint's movement along the ground (X and Z of the
+model, with its import scale and axes) moves the object instead, through its own turn and scale,
+and the joint is drawn where it stood at rest along the ground; its height stays in the pose. The
+root joint is **Root Joint** by name, or else the first joint, parents first, that one of the model's
+clips moves. A looping clip carries the object on across each start over rather than back. Turns
+of the root joint stay in the pose.
