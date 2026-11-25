@@ -731,6 +731,19 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
             editable: true,
         });
     }
+    if let Some(animation) = scene.get::<bayleaf_engine::scene::components::ModelAnimation>(id) {
+        let missing = !animation.states.is_empty() && !base.join(&animation.states).is_file();
+        fields.push(FileField {
+            component: "modelAnimation",
+            field: "states",
+            label: "States",
+            none: "None (plays the animation above)",
+            no_files: "No .banim files in the project folder",
+            files: editor.project.animation_states_files(),
+            problem: missing.then(|| crate::i18n::tf("{file} is not there", &[("file", &animation.states.to_string())])),
+            editable: true,
+        });
+    }
     if let Some(camera) = camera {
         let missing = !camera.post_processing.is_empty() && !base.join(&camera.post_processing).is_file();
         fields.push(FileField {

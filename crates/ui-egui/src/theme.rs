@@ -55,6 +55,8 @@ pub(crate) struct Tokens {
     pub pin_text: Color32,
     pub pin_int: Color32,
     pub pin_component: Color32,
+    /// Motions in animation states.
+    pub pin_motion: Color32,
 }
 
 pub(crate) const DARK: Tokens = Tokens {
@@ -92,6 +94,7 @@ pub(crate) const DARK: Tokens = Tokens {
     pin_text: Color32::from_rgb(0xF2, 0x8F, 0xC6),
     pin_int: Color32::from_rgb(0xB5, 0xD9, 0x6A),
     pin_component: Color32::from_rgb(0xFF, 0xA8, 0x5C),
+    pin_motion: Color32::from_rgb(0x9C, 0xC8, 0xFF),
 };
 
 pub(crate) const LIGHT: Tokens = Tokens {
@@ -129,6 +132,7 @@ pub(crate) const LIGHT: Tokens = Tokens {
     pin_text: Color32::from_rgb(0xB0, 0x2E, 0x78),
     pin_int: Color32::from_rgb(0x4F, 0x6B, 0x12),
     pin_component: Color32::from_rgb(0xA8, 0x4A, 0x00),
+    pin_motion: Color32::from_rgb(0x1F, 0x55, 0xA8),
 };
 
 /// Corner radius of buttons and fields: nearly square, so short controls read as controls and not
@@ -330,6 +334,7 @@ mod tests {
             ("text", t.pin_text),
             ("whole", t.pin_int),
             ("component", t.pin_component),
+            ("motion", t.pin_motion),
         ];
         for (pin, color) in pins {
             // Pins sit on node cards; links run over the canvas backdrop.

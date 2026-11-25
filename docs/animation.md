@@ -57,14 +57,26 @@ pose, and stopping another layer fades it out.
 
 | Command | Params | |
 |---|---|---|
-| `animation.get` | `{id}` | the object's clips (`{name, duration}`), joints, layers (`{joint, motion, time, fading}`), parameters and whether it plays |
+| `animation.get` | `{id}` | the object's clips (`{name, duration}`), joints, layers (`{joint, motion, time, fading}`), parameters and whether it plays, and `state` and `states` when it runs animation states |
 | `animation.play` | `{id, clip? \| mix?: [{clip, at}], by?, layer?, fade?, loop?, speed?}` | plays a clip or a mix on the base layer, or on `layer` (a joint's name); `by` is a number or a parameter's name; `fade` defaults to 0.25 seconds |
 | `animation.stop` | `{id, layer?, fade?}` | |
 | `animation.parameter.set` | `{id, name, value}` | a number or true/false |
 | `animation.trigger` | `{id, name}` | sets a trigger |
+| `animation.state.set` | `{id, state, fade?}` | an object running animation states goes to that state now |
 
 In play mode every object with a Model Animation component gets a player when play starts (or when
 it is spawned), which plays the component's clip; the commands then change what plays. Outside play
 mode a command makes a player for the object (the Inspector's preview uses them); the scene file
 never changes, and play mode starts and ends with none. Each command refuses a clip or joint the
 model does not have, naming the ones it has.
+
+## Animation states
+
+A Model Animation component's **States** field names an animation states file (`.banim`, a graph
+domain of its own: see `docs/graphs.md`). In play mode the object then runs it on its base layer
+instead of playing the component's clip alone: it starts in the Start State, and each step takes the
+first transition out of the state it is in whose condition holds, fading into the next state's
+motion. Conditions read the object's parameters (numbers, true/false and triggers, which scripts and
+`animation.parameter.set` / `animation.trigger` set; a trigger is used up by the transition it lets
+through) and how long the state has played. A file that does not read or compile is reported in the
+console, and the object then plays nothing; a clip it names that the model lacks is reported too.

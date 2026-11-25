@@ -973,11 +973,15 @@ pub struct ModelAnimation {
     pub looping: bool,
     /// 1 as made; 0.5 half as fast.
     pub speed: f32,
+    /// Animation states (`.banim`, relative to the project folder) the object runs in play mode in
+    /// place of playing `animation` alone; empty for none (version 25).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub states: String,
 }
 
 impl Default for ModelAnimation {
     fn default() -> Self {
-        Self { animation: String::new(), playing: true, looping: true, speed: 1.0 }
+        Self { animation: String::new(), playing: true, looping: true, speed: 1.0, states: String::new() }
     }
 }
 
@@ -990,6 +994,9 @@ impl SceneComponent for ModelAnimation {
     fn validate(&self) -> Result<(), String> {
         if self.animation.len() > 256 {
             return Err("animation is longer than 256 bytes".to_owned());
+        }
+        if self.states.len() > 1024 || !(self.states.is_empty() || self.states.ends_with(".banim")) {
+            return Err("states must be a .banim file of at most 1024 bytes, or empty".to_owned());
         }
         if !(self.speed.is_finite() && (0.0..=10.0).contains(&self.speed)) {
             return Err("speed must be between 0 and 10".to_owned());

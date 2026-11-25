@@ -141,3 +141,118 @@ fn a_motion_names_what_the_model_lacks() {
     assert!(problems.iter().any(|p| p.contains("\"Elbow\"")), "{problems:?}");
     assert!(Motion::clip("Wave").problems(&skeleton, &clips).is_empty());
 }
+
+mod states {
+    use bayleaf_graph::{Graph, Link, PinRef};
+    use serde_json::json;
+
+    use crate::states::{CATALOG, compile};
+    use crate::{Parameter, Player};
+
+    struct Build(Graph);
+
+    impl Build {
+        fn node(&mut self, kind: &str, values: serde_json::Value) -> u32 {
+            let id = self.0.add_node(&CATALOG, kind, [0.0, 0.0]).unwrap();
+            for (name, value) in values.as_object().unwrap() {
+                self.0.set_value(&CATALOG, id, name, value.clone()).unwrap();
+            }
+            id
+        }
+
+        fn link(&mut self, from: u32, out: &str, to: u32, input: &str) {
+            self.0.connect(&CATALOG, Link { from: PinRef::new(from, out), to: PinRef::new(to, input) }).unwrap();
+        }
+    }
+
+    /// Idle mixes Stretch and Raise by "aim"; a "wave" trigger (unless "still") goes to Wave, a layer
+    /// of Wave on Hand over Stretch; after one run of Wave, or with aim past 5, back to Idle. It
+    /// uses every node kind.
+    fn every_node() -> Graph {
+        let mut b = Build(Graph::empty(&CATALOG));
+        b.node("entry", json!({"state": "Idle"}));
+        let idle = b.node("state", json!({"name": "Idle"}));
+        let (stretch, raise) = (b.node("clip", json!({"clip": "Stretch", "play": "Once"})), b.node("clip", json!({"clip": "Raise", "play": "Once"})));
+        let mix = b.node("mix", json!({"atA": 0.0, "atB": 1.0}));
+        let aim = b.node("number", json!({"name": "aim"}));
+        b.link(stretch, "motion", mix, "a");
+        b.link(raise, "motion", mix, "b");
+        b.link(aim, "value", mix, "by");
+        b.link(mix, "motion", idle, "motion");
+        let wave_state = b.node("state", json!({"name": "Wave"}));
+        let (base, wave) = (b.node("clip", json!({"clip": "Stretch"})), b.node("clip", json!({"clip": "Wave"})));
+        let layer = b.node("layer", json!({"joint": "Hand"}));
+        b.link(base, "motion", layer, "base");
+        b.link(wave, "motion", layer, "top");
+        b.link(layer, "motion", wave_state, "motion");
+        let go = b.node("transition", json!({"from": "Idle", "to": "Wave", "fade": 0.0}));
+        let (trigger, still) = (b.node("trigger", json!({"name": "wave"})), b.node("flag", json!({"name": "still"})));
+        let (and, not) = (b.node("and", json!({})), b.node("not", json!({})));
+        b.link(trigger, "value", and, "a");
+        b.link(still, "value", not, "in");
+        b.link(not, "result", and, "b");
+        b.link(and, "result", go, "when");
+        let back = b.node("transition", json!({"from": "Wave", "to": "Idle", "fade": 0.0}));
+        let time = b.node("stateTime", json!({}));
+        let (ran, aimed) = (b.node("compare", json!({"test": "At Least", "b": 1.0})), b.node("compare", json!({"test": "Greater", "b": 5.0})));
+        b.link(time, "runs", ran, "a");
+        let aim_again = b.node("number", json!({"name": "aim"}));
+        b.link(aim_again, "value", aimed, "a");
+        let or = b.node("or", json!({}));
+        b.link(ran, "result", or, "a");
+        b.link(aimed, "result", or, "b");
+        b.link(or, "result", back, "when");
+        b.0
+    }
+
+    #[test]
+    fn animation_states_with_every_node_kind_compile_and_run() {
+        let graph = every_node();
+        for def in CATALOG.nodes {
+            assert!(graph.nodes.iter().any(|n| n.kind == def.kind), "the test graph lacks {}", def.kind);
+        }
+        let machine = std::sync::Arc::new(compile(&graph).unwrap());
+        assert_eq!(machine.states.len(), 2);
+        assert_eq!(machine.parameters.len(), 3, "aim, wave and still: {:?}", machine.parameters);
+        let (skeleton, clips) = super::arm(&[]);
+        let mut player = Player::new();
+        player.run_states(machine);
+        player.advance(&skeleton, &clips, 0.1);
+        assert_eq!(player.state(), Some("Idle"));
+        player.set_parameter("wave", Parameter::Trigger(true)).unwrap();
+        player.advance(&skeleton, &clips, 0.1);
+        assert_eq!(player.state(), Some("Wave"), "the trigger lets the transition through");
+        assert_eq!(player.parameters.get("wave"), Some(&Parameter::Trigger(false)), "and is used up");
+        player.advance(&skeleton, &clips, 1.2);
+        player.advance(&skeleton, &clips, 0.01);
+        assert_eq!(player.state(), Some("Idle"), "after one run of Wave, back");
+        player.set_parameter("still", Parameter::Flag(true)).unwrap();
+        player.set_parameter("wave", Parameter::Trigger(true)).unwrap();
+        player.advance(&skeleton, &clips, 0.1);
+        assert_eq!(player.state(), Some("Idle"), "Not still stops it");
+        assert_eq!(player.parameters.get("wave"), Some(&Parameter::Trigger(true)), "a trigger no transition used stays set");
+        player.go_to("Wave", 0.0).unwrap();
+        assert_eq!(player.state(), Some("Wave"));
+        assert!(player.go_to("Run", 0.0).unwrap_err().contains("Idle, Wave"));
+    }
+
+    #[test]
+    fn broken_animation_states_name_their_problems_on_their_nodes() {
+        let mut b = Build(Graph::empty(&CATALOG));
+        let first = b.node("state", json!({"name": "Idle"}));
+        let twin = b.node("state", json!({"name": "Idle"}));
+        let nowhere = b.node("transition", json!({"from": "Idle", "to": "Run"}));
+        let mix = b.node("mix", json!({}));
+        b.link(mix, "motion", first, "motion");
+        let speed = b.node("number", json!({"name": "speed"}));
+        let flag = b.node("flag", json!({"name": "speed"}));
+        let problems = compile(&b.0).unwrap_err();
+        let on = |node: u32| problems.iter().filter(|p| p.node == Some(node)).map(|p| p.message.clone()).collect::<Vec<_>>();
+        assert!(!on(twin).is_empty() && !on(nowhere).is_empty() && !on(mix).is_empty(), "{problems:?}");
+        assert!(on(speed).len() + on(flag).len() >= 1, "one name, two kinds: {problems:?}");
+        // A motion goes only into a motion input.
+        let compare = b.node("compare", json!({}));
+        assert!(b.0.connect(&CATALOG, Link { from: PinRef::new(mix, "motion"), to: PinRef::new(compare, "a") }).is_err());
+        assert!(b.0.connect(&CATALOG, Link { from: PinRef::new(speed, "value"), to: PinRef::new(twin, "motion") }).is_err());
+    }
+}

@@ -5,8 +5,11 @@ use std::collections::BTreeMap;
 use bayleaf_assets::skeleton::{Pose, Skeleton};
 use bayleaf_core::math::Vec3;
 
+use std::sync::Arc;
+
 use crate::clip::Clips;
 use crate::motion::{Motion, Parameter, Rig, pin_root};
+use crate::states::{InState, Machine};
 
 /// Longest fade, in seconds.
 pub const MAX_FADE: f32 = 60.0;
@@ -106,6 +109,8 @@ pub struct Player {
     /// The joint whose movement along the ground moves the object, drawn in place: root motion.
     /// `None` plays every motion where it was made.
     pub root: Option<usize>,
+    /// The animation states it runs on the base layer, and the state it is in.
+    states: Option<(Arc<Machine>, usize)>,
 }
 
 impl Default for Player {
@@ -117,7 +122,7 @@ impl Default for Player {
 impl Player {
     /// A player with nothing playing: every node at rest.
     pub fn new() -> Self {
-        Self { layers: vec![Layer::new("")], parameters: BTreeMap::new(), root: None }
+        Self { layers: vec![Layer::new("")], parameters: BTreeMap::new(), root: None, states: None }
     }
 
     /// The base layer, then the layers over it.
@@ -184,6 +189,59 @@ impl Player {
         Ok(())
     }
 
+    /// Runs `machine` on the base layer from its start state (in place of what played there).
+    pub fn run_states(&mut self, machine: Arc<Machine>) {
+        let start = machine.start;
+        if let Some(state) = machine.states.get(start) {
+            let _ = self.play("", state.motion.clone(), 0.0);
+        }
+        self.states = Some((machine, start));
+    }
+
+    /// The animation states it runs, if any.
+    pub fn machine(&self) -> Option<&Arc<Machine>> {
+        self.states.as_ref().map(|(m, _)| m)
+    }
+
+    /// The name of the state it is in, when it runs animation states.
+    pub fn state(&self) -> Option<&str> {
+        let (machine, state) = self.states.as_ref()?;
+        machine.states.get(*state).map(|s| s.name.as_str())
+    }
+
+    /// Goes to the state called `name` now, fading over `fade` seconds.
+    pub fn go_to(&mut self, name: &str, fade: f32) -> Result<(), String> {
+        let Some((machine, _)) = self.states.clone() else { return Err("the object runs no animation states".to_owned()) };
+        let index = machine.state(name).ok_or_else(|| {
+            let names: Vec<&str> = machine.states.iter().map(|s| s.name.as_str()).collect();
+            format!("there is no state named \"{name}\"; there are {}", names.join(", "))
+        })?;
+        let motion = machine.states.get(index).map_or(Motion::Rest, |s| s.motion.clone());
+        self.play("", motion, fade)?;
+        self.states = Some((machine, index));
+        Ok(())
+    }
+
+    /// Takes the first transition out of the current state whose condition holds, using up the
+    /// triggers it read.
+    fn transition(&mut self, skeleton: &Skeleton, clips: &Clips) {
+        let Some((machine, current)) = self.states.clone() else { return };
+        let rig = Self::rig(skeleton, clips, &self.parameters);
+        let in_state = self.layers.first().and_then(Layer::current).map_or(InState::default(), |(motion, seconds)| {
+            let duration = motion.duration(&rig);
+            InState { seconds, runs: if duration > 0.0 { seconds / duration } else { 0.0 } }
+        });
+        let Some(transition) = machine.next(current, &self.parameters, in_state) else { return };
+        let mut used = Vec::new();
+        transition.when.triggers(&mut used);
+        for name in used {
+            self.parameters.insert(name, Parameter::Trigger(false));
+        }
+        let motion = machine.states.get(transition.to).map_or(Motion::Rest, |s| s.motion.clone());
+        let _ = self.play("", motion, transition.fade);
+        self.states = Some((Arc::clone(&machine), transition.to));
+    }
+
     fn rig<'a>(skeleton: &'a Skeleton, clips: &'a Clips, parameters: &'a BTreeMap<String, Parameter>) -> Rig<'a> {
         Rig { skeleton, clips, parameters }
     }
@@ -192,6 +250,7 @@ impl Player {
     /// main motion, and of layers over it) and, with root motion, how far the root joint moved.
     pub fn advance(&mut self, skeleton: &Skeleton, clips: &Clips, dt: f32) -> Step {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+        self.transition(skeleton, clips);
         let mut step = Step::default();
         let rig = Self::rig(skeleton, clips, &self.parameters);
         for (index, layer) in self.layers.iter_mut().enumerate() {

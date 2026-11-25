@@ -509,6 +509,8 @@ version = "0.3.0"
 dependencies = [
  "bayleaf-assets",
  "bayleaf-core",
+ "bayleaf-graph",
+ "serde_json",
 ]
 
 [[package]]

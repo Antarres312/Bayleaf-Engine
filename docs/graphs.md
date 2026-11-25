@@ -1,6 +1,6 @@
-# Graphs: materials and visual scripts
+# Graphs: materials, visual scripts and animation states
 
-Materials and visual scripts are both node graphs. They use the same model (`crates/graph`), the same
+Materials, visual scripts and animation states are all node graphs. They use the same model (`crates/graph`), the same
 file format, the same `graph.*` commands and the same editor panel (the **Graph** tab beside the
 scene view). What differs is the set of node kinds and what the graph compiles to:
 
@@ -8,6 +8,7 @@ scene view). What differs is the set of node kinds and what the graph compiles t
 |---|---|---|---|
 | `material` | `.bmaterial` | a WGSL `surface` function in the mesh shader | `crates/render/src/material.rs` |
 | `script` | `.bscript` | a WebAssembly module with script ABI v1 | `crates/script/src/visual.rs` |
+| `animation` | `.banim` | animation states: states, motions and transitions an object runs | `crates/animation/src/states.rs` |
 
 ## Model
 
@@ -107,6 +108,32 @@ preview in the canvas corner shows it on a sphere (Hide puts it away; Show Previ
 brings it back). A material
 that does not load or compile is reported in the Inspector, and `scene.render` lists it in
 `warnings`. Its meshes are drawn with their own colour, metallic and roughness.
+
+## Animation states
+
+Animation states (`.banim`, domain `animation`) say what a model plays and when it changes: **State**
+nodes, each named and playing the **Motion** linked into it (at rest when none is), and
+**Transition** nodes from one state (From; left empty, from any other) to another (To) while their
+When input is true, fading over Fade seconds (0 to 60). Transitions are tried in the order they were
+placed; one from any state never goes to the state already playing, and only one is taken a step.
+**Start State** names where the object starts (the first state without one).
+
+Motions come from **Clip** (one of the model's clips by name, at a speed from 0 to 10, Loop or
+Once), **Mix** (A and B by where By lies from At A to At B, both in step; a Mix linked into A or B
+mixes more) and **Layer** (Top over Base on the joint named Joint and every joint under it, by
+Weight). A motion's number (By, Weight) is typed in or comes from a **Number Parameter**.
+Conditions come from **True/False Parameter**, **Trigger Parameter** (true once a script triggers
+it, until a transition it lets through uses it up), **Compare** (Greater, Less, At Least, At Most,
+Equal, Not Equal, of numbers typed in or from a Number Parameter or **Time in State**: its Seconds,
+and Runs, the times the state's motion has played through) and **And**, **Or** and **Not**. A
+parameter's name holds one kind: the same name as a number and as a trigger is a problem.
+
+Motion pins (**Motion**) link only to motion inputs. The compiler (`crates/animation/src/states.rs`)
+names what is wrong on its node: a state or transition naming no state, two states of one name, a Mix
+or Layer missing a motion, a clip node without a clip. A Model Animation component names the file in
+its States field; in play mode the object then runs it, and `animation.get` (its `state`) and `animation.state.set`
+read and change its state (see `docs/animation.md`). `cargo test -p bayleaf-animation` builds a graph
+with every node kind and runs it.
 
 ## Visual scripts
 

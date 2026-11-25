@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use bayleaf_animation::states::{self, Machine};
 use bayleaf_animation::{Clips, Motion, Number, Parameter, Player};
 use bayleaf_core::StableId;
 use bayleaf_core::math::Mat4;
@@ -19,7 +20,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::confine::Access;
-use crate::{CommandError, CommandSpec, Mutates, Prompt, Session, always, parse};
+use crate::{CommandError, CommandSpec, Level, Mutates, Prompt, Session, always, parse};
 
 /// Longest clip or joint name, in bytes.
 const MAX_NAME: usize = 256;
@@ -137,13 +138,35 @@ fn new_animated(session: &mut Session, id: StableId, model: String, skeleton: Ar
     let settings = session.scene.get::<ModelAnimation>(id).cloned();
     let clips = Clips::of_model(&skeleton, &[]);
     let mut player = Player::new();
-    if let Some(settings) = settings.filter(|s| autoplay && s.playing) {
-        let index = skeleton.animation(&settings.animation);
-        if let Some(name) = index.and_then(|i| skeleton.animations.get(i)).map(|a| a.name.clone()) {
-            let _ = player.play("", Motion::Clip { clip: name, speed: settings.speed, looping: settings.looping }, 0.0);
+    match settings.filter(|_| autoplay) {
+        // Animation states, when the component names some that read and compile.
+        Some(settings) if !settings.states.is_empty() => match load_states(session, &settings.states) {
+            Ok(machine) => {
+                let problems: Vec<String> = machine.states.iter().flat_map(|s| s.motion.problems(&skeleton, &clips)).collect();
+                for problem in problems {
+                    session.log(Level::Error, format!("{}: {problem}", settings.states));
+                }
+                player.run_states(machine);
+            }
+            Err(problem) => session.log(Level::Error, format!("{}: {problem}; the object plays no animation states", settings.states)),
+        },
+        Some(settings) if settings.playing => {
+            let index = skeleton.animation(&settings.animation);
+            if let Some(name) = index.and_then(|i| skeleton.animations.get(i)).map(|a| a.name.clone()) {
+                let _ = player.play("", Motion::Clip { clip: name, speed: settings.speed, looping: settings.looping }, 0.0);
+            }
         }
+        _ => {}
     }
     Animated { model, skeleton, clips, player, paused: false }
+}
+
+/// Reads and compiles the animation states at `path` (relative to the project folder).
+fn load_states(session: &Session, path: &str) -> Result<Arc<Machine>, String> {
+    let full = session.allowed(&session.script_dir().join(path), Access::Read).map_err(|e| e.to_string())?;
+    let text = std::fs::read_to_string(&full).map_err(|e| format!("cannot be read: {e}"))?;
+    let graph = bayleaf_graph::Graph::from_json(&text, &states::CATALOG).map_err(|e| e.to_string())?;
+    states::compile(&graph).map(Arc::new).map_err(|problems| bayleaf_graph::summary(&problems))
 }
 
 /// Object `id`'s player, made when it has none (or its model changed).
@@ -208,7 +231,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         spec(
             "animation.get",
             "Read Animation",
-            "{id}: the object's animation: {clips: [{name, duration}], joints: [names], layers: [{joint, motion, time, fading}], parameters: {name: value}, playing}",
+            "{id}: the object's animation: {clips: [{name, duration}], joints: [names], layers: [{joint, motion, time, fading}], parameters: {name: value}, playing, state (the animation state it is in, or null), states (its states' names, or null)}",
             get,
         ),
         spec(
@@ -225,6 +248,12 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             parameter_set,
         ),
         spec("animation.trigger", "Trigger Animation Parameter", "{id, name}: sets a trigger, which the first transition that uses it uses up", trigger),
+        spec(
+            "animation.state.set",
+            "Go to Animation State",
+            "{id, state, fade?: seconds}: an object running animation states goes to that state now, fading over `fade` (default 0.25)",
+            state_set,
+        ),
     ]
 }
 
@@ -282,6 +311,8 @@ pub(crate) fn describe(a: &Animated) -> Value {
         "layers": layers,
         "parameters": parameters,
         "playing": a.player.is_playing(),
+        "state": a.player.state(),
+        "states": a.player.machine().map(|m| m.states.iter().map(|s| s.name.clone()).collect::<Vec<_>>()),
     })
 }
 
@@ -475,6 +506,28 @@ fn trigger(session: &mut Session, params: &Value) -> Result<Value, CommandError>
     set_parameter(session, p.id, &p.name, Parameter::Trigger(true))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StateParams {
+    id: StableId,
+    state: String,
+    #[serde(default = "default_fade")]
+    fade: f32,
+}
+
+fn state_set(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: StateParams = parse(params)?;
+    check_name("state", &p.state)?;
+    check_fade(p.fade)?;
+    let a = animated(session, p.id)?;
+    a.player.go_to(&p.state, p.fade).map_err(CommandError::Failed)?;
+    a.paused = false;
+    let world = Arc::new(a.world());
+    let out = describe(a);
+    session.animation.poses.insert(p.id, world);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -537,6 +590,56 @@ mod tests {
 
         run(&mut session, "play.stop", Value::Null).unwrap();
         assert!(session.animation_poses().is_empty(), "stopping play mode drops its players");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Animation states with Idle (Stretch) and Up (Raise), and a transition to Up on the trigger "up".
+    fn write_states(dir: &std::path::Path) {
+        use bayleaf_animation::states::CATALOG;
+        use bayleaf_graph::{Graph, Link, PinRef};
+        let mut graph = Graph::empty(&CATALOG);
+        let node = |graph: &mut Graph, kind: &str, values: Value| {
+            let id = graph.add_node(&CATALOG, kind, [0.0, 0.0]).unwrap();
+            for (name, value) in values.as_object().unwrap() {
+                graph.set_value(&CATALOG, id, name, value.clone()).unwrap();
+            }
+            id
+        };
+        let link = |graph: &mut Graph, from: u32, out: &str, to: u32, input: &str| {
+            graph.connect(&CATALOG, Link { from: PinRef::new(from, out), to: PinRef::new(to, input) }).unwrap();
+        };
+        let idle = node(&mut graph, "state", json!({"name": "Idle"}));
+        let up = node(&mut graph, "state", json!({"name": "Up"}));
+        let (stretch, raise) = (node(&mut graph, "clip", json!({"clip": "Stretch"})), node(&mut graph, "clip", json!({"clip": "Raise", "play": "Once"})));
+        link(&mut graph, stretch, "motion", idle, "motion");
+        link(&mut graph, raise, "motion", up, "motion");
+        let go = node(&mut graph, "transition", json!({"from": "Idle", "to": "Up", "fade": 0.0}));
+        let trigger = node(&mut graph, "trigger", json!({"name": "up"}));
+        link(&mut graph, trigger, "value", go, "when");
+        std::fs::write(dir.join("arm.banim"), graph.to_json()).unwrap();
+    }
+
+    #[test]
+    fn an_object_runs_the_animation_states_its_model_animation_names() {
+        let (registry, mut session, id, dir) = arm_scene("states");
+        write_states(&dir);
+        let run = |session: &mut Session, command: &str, params: Value| registry.execute(session, command, &params);
+        let animation = json!({"animation": "", "playing": true, "looping": true, "speed": 1, "states": "arm.banim"});
+        run(&mut session, "scene.component.set", json!({"id": id, "component": "modelAnimation", "value": animation})).unwrap();
+        run(&mut session, "play.start", Value::Null).unwrap();
+        run(&mut session, "play.step", json!({"seconds": 0.1})).unwrap();
+        let state = run(&mut session, "animation.get", json!({"id": id})).unwrap();
+        assert_eq!(state["state"], "Idle");
+        assert_eq!(state["states"], json!(["Idle", "Up"]));
+        run(&mut session, "animation.trigger", json!({"id": id, "name": "up"})).unwrap();
+        run(&mut session, "play.step", json!({"seconds": 1.0})).unwrap();
+        assert_eq!(run(&mut session, "animation.get", json!({"id": id})).unwrap()["state"], "Up");
+        assert!(arm_joint(&session, &id).y > 0.9, "Up plays Raise: {}", arm_joint(&session, &id));
+        run(&mut session, "animation.state.set", json!({"id": id, "state": "Idle", "fade": 0})).unwrap();
+        assert_eq!(run(&mut session, "animation.get", json!({"id": id})).unwrap()["state"], "Idle");
+        let missing = run(&mut session, "animation.state.set", json!({"id": id, "state": "Run"})).unwrap_err().to_string();
+        assert!(missing.contains("Idle, Up"), "{missing}");
+        run(&mut session, "play.stop", Value::Null).unwrap();
         std::fs::remove_dir_all(&dir).ok();
     }
 }

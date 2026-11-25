@@ -10,6 +10,8 @@ publish = false
 [dependencies]
 bayleaf-core = { workspace = true }
 bayleaf-assets = { workspace = true }
+bayleaf-graph = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

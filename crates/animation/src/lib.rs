@@ -8,7 +8,7 @@
 //!   legs walk).
 //! - A [`Player`] plays motions on an object: it fades one into the next, keeps layers, holds the
 //!   parameters that mixes and animation states read, and runs the object's animation states (a
-//!   machine, compiled from a `.banim` graph). Each step gives the clip
+//!   [`Machine`](states::Machine), compiled from a `.banim` graph). Each step gives the clip
 //!   events it passed and the root joint's movement.
 //!
 //! Behaviour follows public descriptions of skeletal animation (linear blend skinning, cross-fades,
@@ -19,6 +19,7 @@
 mod clip;
 mod motion;
 mod player;
+pub mod states;
 
 pub use clip::{ClipEvent, ClipSource, Clips, ModelClip, NamedClip, NamedTrack};
 pub use motion::{Motion, Number, Parameter, Rig, default_root, pin_root};

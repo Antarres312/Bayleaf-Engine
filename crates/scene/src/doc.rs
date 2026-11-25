@@ -21,8 +21,8 @@ pub const FORMAT: &str = "bayleaf.scene";
 /// version 20 added `interface`; version 21 interfaces in the world (`space`, `size`, `pointsPerUnit`,
 /// `faceCamera`); version 22 particles from a mesh's surface and size and colour curves (`sizeKeys`,
 /// `colorKeys`); version 23 the Model Animation component (`modelAnimation`); version 24 list and map script properties
-/// (`{"list": [...]}`, `{"map": {...}}`). Older files still load.
-pub const VERSION: u32 = 24;
+/// (`{"list": [...]}`, `{"map": {...}}`); version 25 skeletal animation (`modelAnimation.states`). Older files still load.
+pub const VERSION: u32 = 25;
 pub const EXTENSION: &str = "bscene";
 
 /// Whole scene as plain data. Also used for undo snapshots.

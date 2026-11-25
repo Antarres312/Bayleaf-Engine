@@ -167,6 +167,7 @@ fn asset_kind(path: &Path) -> &'static str {
         Some("bprefab") => "Prefab",
         Some("bmaterial") => "Material",
         Some("bscript") => "Visual Script",
+        Some("banim") => "Animation States",
         Some("wasm") => "Script",
         Some("binput") => "Input Map",
         Some("blight") => "Lighting",
