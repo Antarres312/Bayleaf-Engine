@@ -792,8 +792,76 @@ struct HostState<L> {
     frame_at: Option<(i32, usize)>,
     /// Each slot's object's handle in the view of this step, for the frame (0: not known).
     slot_handles: Vec<i32>,
+    /// The frame of the update of all that is running, and which slots it selected.
+    step: StepFrame,
+    /// Slots whose properties changed since their script last read them, for the next frame (a slot
+    /// may be listed after it was told; its own flag says).
+    properties_pending: Vec<usize>,
     /// The runtime's memory and instance limits for this store.
     limits: L,
+}
+
+/// Bytes of one object's entry in a frame (`frame_get`, `frame_set`): its transform (nine `f32`),
+/// a word of flags with its handle, and its position in double precision.
+const FRAME_ENTRY: usize = 64;
+/// Frame flags: the object runs; its properties changed since last asked; (from the script) its
+/// transform changed.
+const FRAME_RUNNING: u32 = 1;
+const FRAME_PROPERTIES: u32 = 2;
+const FRAME_CHANGED: u32 = 4;
+/// (From the script) the object being updated, so an error is reported on it.
+const FRAME_CURRENT: u32 = 8;
+/// The flags take the low bits of their word; the object's handle is the rest.
+const FRAME_HANDLE_SHIFT: u32 = 4;
+
+/// What an update of all keeps for its module's slots in one place, so the host does no work per
+/// object: the frame as the module gets it, the frame it gave back, and the slots the call selected
+/// (only those can have logs, or a transform set through the host).
+#[derive(Default)]
+struct StepFrame {
+    /// An update of all is running.
+    active: bool,
+    /// 64 bytes per slot, as `frame_get` writes them.
+    entries: Vec<u8>,
+    /// What `frame_set` took back, and how many entries.
+    returned: Vec<u8>,
+    returned_count: usize,
+    touched: Vec<usize>,
+    touched_flag: Vec<bool>,
+}
+
+impl StepFrame {
+    /// Starts an update of all of `slots` slots: an empty frame, nothing selected.
+    fn begin(&mut self, slots: usize) {
+        self.active = true;
+        self.entries.clear();
+        self.entries.resize(slots * FRAME_ENTRY, 0);
+        self.returned_count = 0;
+        self.touched.clear();
+        self.touched_flag.clear();
+        self.touched_flag.resize(slots, false);
+    }
+
+    /// The transform and position in the entry of `slot`, and its word of flags.
+    fn entry(bytes: &[u8], slot: usize) -> Option<([f32; 9], [f64; 3], u32)> {
+        let entry = bytes.as_chunks::<FRAME_ENTRY>().0.get(slot)?;
+        let word = |at: usize| [entry[at], entry[at + 1], entry[at + 2], entry[at + 3]];
+        let transform = std::array::from_fn(|i| f32::from_le_bytes(word(i * 4)));
+        let position = std::array::from_fn(|i| f64::from_le_bytes(std::array::from_fn(|b| entry[40 + i * 8 + b])));
+        Some((transform, position, u32::from_le_bytes(word(36))))
+    }
+
+    /// Writes the entry of `slot`.
+    fn set_entry(&mut self, slot: usize, transform: &[f32; 9], position: &[f64; 3], flags: u32) {
+        let Some(entry) = self.entries.as_chunks_mut::<FRAME_ENTRY>().0.get_mut(slot) else { return };
+        for (i, v) in transform.iter().enumerate() {
+            entry[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        entry[36..40].copy_from_slice(&flags.to_le_bytes());
+        for (i, v) in position.iter().enumerate() {
+            entry[40 + i * 8..48 + i * 8].copy_from_slice(&v.to_le_bytes());
+        }
+    }
 }
 
 /// One slot's transform and flags, borrowed from where they are (see [`HostState::slot_view`]).
@@ -867,12 +935,17 @@ impl<L> HostState<L> {
     /// Makes `slot` the object the host functions work on: what this store keeps for the one
     /// selected so far goes aside, and that object's comes in. False when there is no such slot.
     fn select(&mut self, slot: usize) -> bool {
-        if slot == self.current {
-            return true;
+        if slot != self.current {
+            if slot >= self.parked.len() {
+                return false;
+            }
+            self.swap_in(slot);
         }
-        if slot >= self.parked.len() {
-            return false;
-        }
+        self.touch();
+        true
+    }
+
+    fn swap_in(&mut self, slot: usize) {
         // The selected object's own values are in the fields; its parked place holds nothing.
         let mut here = std::mem::take(&mut self.parked[self.current]);
         self.swap_own(&mut here);
@@ -881,7 +954,48 @@ impl<L> HostState<L> {
         self.swap_own(&mut there);
         self.parked[slot] = there;
         self.current = slot;
-        true
+    }
+
+    /// During an update of all, the first time the call has the selected object: its transform is
+    /// the frame's, and it is listed among the slots the call selected.
+    fn touch(&mut self) {
+        if !self.step.active {
+            return;
+        }
+        let slot = self.current;
+        match self.step.touched_flag.get_mut(slot) {
+            Some(flag) if !*flag => *flag = true,
+            _ => return,
+        }
+        self.step.touched.push(slot);
+        if let Some((transform, position, flags)) = StepFrame::entry(&self.step.entries, slot)
+            && flags & FRAME_RUNNING != 0
+        {
+            self.transform = transform;
+            self.position = position;
+            self.transform_changed = false;
+        }
+    }
+
+    /// Sets the frame's flag for each slot whose properties changed and whose script was not told
+    /// yet; the list keeps only those.
+    fn flag_changed_properties(&mut self) {
+        let mut pending = std::mem::take(&mut self.properties_pending);
+        pending.sort_unstable();
+        pending.dedup();
+        pending.retain(|slot| self.slot_view(*slot).is_some_and(|view| *view.properties_changed));
+        for slot in &pending {
+            if let Some(entry) = self.step.entries.as_chunks_mut::<FRAME_ENTRY>().0.get_mut(*slot) {
+                entry[36] |= FRAME_PROPERTIES as u8;
+            }
+        }
+        self.properties_pending = pending;
+    }
+
+    /// The selected object's properties changed: its script is told at its next frame or select.
+    fn mark_properties_changed(&mut self) {
+        self.properties_changed = true;
+        self.properties_pending.push(self.current);
     }
 
     /// One slot's transform, position and flags, wherever they are now (in the fields for the
@@ -953,6 +1067,8 @@ impl<L> HostState<L> {
             current: 0,
             frame_at: None,
             slot_handles: Vec::new(),
+            step: StepFrame::default(),
+            properties_pending: Vec::new(),
         }
     }
 }

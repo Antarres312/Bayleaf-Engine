@@ -795,6 +795,63 @@ fn a_frame_names_each_object_by_its_handle_and_the_stamp_changes_with_the_struct
 }
 
 #[test]
+fn a_frame_tells_an_object_once_that_another_script_set_its_property() {
+    let input = Arc::new(Input::default());
+    let (mut scene, first, script) = setup(&[("speed", 1.0)]);
+    let other = scene.create_object(None, "Other").unwrap();
+    let setter = scene.create_object(None, "Setter").unwrap();
+    // Reads the frame only (never selects an object) and logs "told" for each entry whose flags say
+    // its properties changed.
+    let reader = format!(
+        r#"(module {IMPORTS}
+            (import "bayleaf" "frame_get" (func $frame_get (param i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 16) "told")
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_attach") (param i32))
+            (func (export "bayleaf_detach") (param i32))
+            (func (export "bayleaf_update_all") (param $dt f32) (local $n i32) (local $k i32)
+              (local.set $n (call $frame_get (i32.const 4096) (i32.const 16)))
+              (block $done (loop $next
+                (br_if $done (i32.ge_u (local.get $k) (local.get $n)))
+                (if (i32.and (i32.load offset=36 (i32.add (i32.const 4096) (i32.mul (local.get $k) (i32.const 64)))) (i32.const 2))
+                  (then (call $log (i32.const 16) (i32.const 4))))
+                (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                (br $next)))))"#
+    );
+    // In its first update, sets `speed` of the script `test` on the object named Other.
+    let writer = format!(
+        r#"(module {IMPORTS}
+            (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))
+            (import "bayleaf" "component_set" (func $component_set (param i32 i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 16) "Othertestspeed")
+            (global $done (mut i32) (i32.const 0))
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param $dt f32)
+              (if (i32.eqz (global.get $done))
+                (then
+                  (global.set $done (i32.const 1))
+                  (f32.store (i32.const 64) (f32.const 5))
+                  (drop (call $component_set (call $find (i32.const 16) (i32.const 5)) (i32.const 21) (i32.const 4) (i32.const 25) (i32.const 5) (i32.const 64)))))))"#
+    );
+    let mut host = super::test_host();
+    let reader = wat::parse_str(reader).unwrap();
+    load(&mut host, &mut scene, first, &script, &reader).unwrap();
+    load(&mut host, &mut scene, other, &script, &reader).unwrap();
+    let none = ScriptRef { module: "setter.wasm".into(), properties: BTreeMap::new() };
+    host.load_bytes(setter, 0, Path::new("setter.wasm"), None, &wat::parse_str(writer).unwrap(), &none, &mut scene, 0.0, &input).unwrap();
+    let mut step = |scene: &mut Scene| -> Vec<String> {
+        host.update(scene, 0.1, 0.0, &input);
+        host.take_logs().into_iter().map(|l| l.text).collect()
+    };
+    assert!(step(&mut scene).is_empty(), "nothing set before the step");
+    assert_eq!(step(&mut scene), ["told"], "the one object whose property was set, in the next frame");
+    assert!(step(&mut scene).is_empty(), "told once");
+    assert!(host.take_faults().is_empty());
+}
+
+#[test]
 fn an_error_in_an_update_of_all_is_reported_on_the_object_the_frame_marks() {
     let input = Arc::new(Input::default());
     let (mut scene, first, script) = setup(&[]);

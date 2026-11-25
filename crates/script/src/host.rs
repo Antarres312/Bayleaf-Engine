@@ -23,6 +23,7 @@ use crate::{
     ScriptFault, ScriptValues, SharedState, Stored, Subscription, Velocities, WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position,
     module_bytes, read_position, read_transform, readable_component, script_keys, transform_from, visual,
 };
+use crate::{FRAME_CHANGED, FRAME_CURRENT, FRAME_ENTRY, FRAME_HANDLE_SHIFT, FRAME_PROPERTIES, FRAME_RUNNING, StepFrame};
 use bayleaf_script_sdk::native::NativeObject;
 #[cfg(not(target_arch = "wasm32"))]
 use bayleaf_script_sdk::native::{Bridge, Value};
@@ -255,6 +256,9 @@ pub struct ScriptHost {
     view_mark: u64,
     /// The transforms scripts set during a step, until it ends.
     poses: Poses,
+    /// Counts instances coming, going and stopping, so the step's grouping is made again only then.
+    version: u64,
+    groups: Groups,
 }
 
 impl ScriptHost {
@@ -285,6 +289,8 @@ impl ScriptHost {
             view: Arc::default(),
             view_mark: 0,
             poses: Poses::default(),
+            version: 0,
+            groups: Groups::default(),
         }
     }
 
@@ -448,6 +454,7 @@ impl ScriptHost {
             gone.release();
         }
         self.instances.retain(|i| !(i.object == object && i.index == index));
+        self.version += 1;
         // A module that runs many objects in one instance: every object of the same file shares it.
         let batched = native.is_none() && module.exports().any(|e| e.name() == "bayleaf_update_all");
         let shared = self.instances.iter().find(|i| batched && i.batched() && i.key == key && i.path == path);
@@ -539,6 +546,7 @@ impl ScriptHost {
             view_index: 0,
             view_structure: u64::MAX,
         });
+        self.version += 1;
         Ok(())
     }
 
@@ -627,6 +635,7 @@ impl ScriptHost {
                 store.data_mut().running = false;
                 drop(store);
                 entry.stopped = true;
+                self.version += 1;
                 failed.push((entry.object, entry.index, error));
             }
         }
@@ -646,6 +655,12 @@ impl ScriptHost {
         let world = self.world_view(scene);
         let Some(layout) = world.layout.clone() else { return };
         self.poses.fit(layout.ids.len());
+        if !self.groups.fits(self.version, layout.structure) {
+            self.regroup(&layout);
+        }
+        // Taken out while the scripts run; a script that stops changes `version`, and the next step
+        // groups again.
+        let groups = std::mem::take(&mut self.groups);
         let shared = Shares {
             world: &world,
             time,
@@ -656,32 +671,10 @@ impl ScriptHost {
             input_maps: &self.input_maps,
             state: &self.state,
         };
-        // The batched modules, each once: the place of each of its objects' instances.
-        let mut batches: Vec<(Shared, TypedFunc<f32, ()>, Vec<usize>)> = Vec::new();
-        for (place, entry) in self.instances.iter_mut().enumerate().filter(|(_, i)| !i.stopped) {
-            // Where its object is in the view, found again only when the scene's structure changed.
-            if entry.view_structure != layout.structure {
-                let Some(index) = layout.index.get(&entry.object) else {
-                    entry.stopped = true;
-                    if entry.batched() {
-                        entry.store().data_mut().running = false;
-                    }
-                    continue;
-                };
-                entry.view_index = *index;
-                entry.view_structure = layout.structure;
-            }
-            let update = match &entry.calls {
-                Calls::Own { update: Some(update), .. } => handle_copy(update),
-                Calls::Own { update: None, .. } => continue,
-                Calls::Batch { update_all, .. } => {
-                    match batches.iter_mut().find(|(store, _, _)| Arc::ptr_eq(store, &entry.store)) {
-                        Some((_, _, places)) => places.push(place),
-                        None => batches.push((Arc::clone(&entry.store), handle_copy(update_all), vec![place])),
-                    }
-                    continue;
-                }
-            };
+        for &place in &groups.own {
+            let entry = &mut self.instances[place];
+            let Calls::Own { update: Some(update), .. } = &entry.calls else { continue };
+            let update = handle_copy(update);
             let mut store = entry.store();
             {
                 let state = store.data_mut();
@@ -709,72 +702,104 @@ impl ScriptHost {
                     release_view(state);
                     drop(store);
                     entry.stopped = true;
+                    self.version += 1;
                     faults.push(ScriptFault { object: entry.object, script: entry.script_name.clone(), error });
                 }
             }
         }
-        for (store, update_all, places) in batches {
-            let mut store = store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            shared.prepare_shared(store.data_mut());
-            // Each object's transform where it is kept, without selecting it.
-            for &place in &places {
-                let entry = &self.instances[place];
-                let Some(view) = store.data_mut().slot_view(entry.slot) else { continue };
-                (*view.transform, *view.position) = self.poses.get(&world, entry.view_index);
-                *view.changed = false;
-                *view.running = true;
-            }
+        for batch in &groups.batches {
+            let mut store = batch.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            // The frame, in one pass: each running object's transform, handle and flags.
             {
-                let handles = &mut store.data_mut().slot_handles;
-                handles.clear();
-                handles.resize(places.iter().map(|p| self.instances[*p].slot + 1).max().unwrap_or(0), 0);
-                for &place in &places {
-                    let entry = &self.instances[place];
-                    handles[entry.slot] = i32::try_from(entry.view_index + 1).unwrap_or(0);
+                let state = store.data_mut();
+                shared.prepare_shared(state);
+                let slots = state.parked.len();
+                state.step.begin(slots);
+                state.slot_handles.clear();
+                state.slot_handles.resize(slots, 0);
+                for (slot, view) in batch.slots.iter().zip(&batch.views) {
+                    let (transform, position) = self.poses.get(&world, *view as usize);
+                    let handle = *view + 1;
+                    state.step.set_entry(*slot as usize, &transform, &position, FRAME_RUNNING | handle << FRAME_HANDLE_SHIFT);
+                    if let Some(kept) = state.slot_handles.get_mut(*slot as usize) {
+                        *kept = handle as i32;
+                    }
                 }
+                state.flag_changed_properties();
+                // Host functions called before any select are about the object selected last.
+                state.touch();
             }
-            let Some(first) = places.first().map(|p| &self.instances[*p]) else { continue };
+            let Some(first) = batch.places.first().map(|p| &self.instances[*p]) else { continue };
             let (module_name, script_name) = (first.module_name.clone(), first.script_name.clone());
             let started = self.timing.then(bayleaf_core::time::Instant::now);
-            let fuel = FUEL_PER_CALL.saturating_mul(places.len() as u64);
-            let result = call(&mut store, &module_name, fuel, |store| update_all.call(store, dt));
+            let fuel = FUEL_PER_CALL.saturating_mul(batch.places.len() as u64);
+            let result = call(&mut store, &module_name, fuel, |store| batch.update_all.call(store, dt));
             if let Some(started) = started {
                 add_timing(&mut self.timings, &script_name, started.elapsed());
             }
             // The object whose update failed, if one did: the one its frame marks as being updated,
             // else the one selected when it stopped.
-            let failing = if result.is_err() { failing_object(&mut store, &first.module, &self.instances, &places) } else { store.data().object };
-            // What the call did for all its objects, then for each: its transform and its logs.
-            if result.is_ok() {
-                after_shared_posed(store.data_mut(), &layout, &mut self.poses, &mut self.requests, &mut self.messages, &mut self.property_writes);
-            } else {
-                store.data_mut().writes.clear();
-            }
-            for &place in &places {
-                let entry = &self.instances[place];
-                let Some(view) = store.data_mut().slot_view(entry.slot) else { continue };
-                if result.is_err() {
-                    *view.running = false;
-                } else if std::mem::take(view.changed) {
+            let failing = if result.is_err() { failing_object(&mut store, &first.module, &self.instances, &batch.places) } else { store.data().object };
+            let state = store.data_mut();
+            state.step.active = false;
+            // Only the objects the call selected can have logs, or a transform set through the host; in
+            // the order of their slots, which is the order they loaded in.
+            let mut touched = std::mem::take(&mut state.step.touched);
+            touched.sort_unstable();
+            for &slot in &touched {
+                let Some(entry) = batch.place_of.get(slot).and_then(|p| self.instances.get(*p as usize)) else { continue };
+                let Some(view) = state.slot_view(slot) else { continue };
+                if std::mem::take(view.changed) && result.is_ok() {
                     self.poses.put(entry.view_index, *view.transform, *view.position);
                 }
                 if !view.logs.is_empty() {
                     logs.extend(view.logs.drain(..).map(|text| LogLine { object: entry.object, script: entry.script_name.clone(), text }));
                 }
             }
-            release_view(store.data_mut());
+            state.step.touched = touched;
+            if result.is_ok() {
+                after_shared_posed(state, &layout, &mut self.poses, &mut self.requests, &mut self.messages, &mut self.property_writes);
+                // The frame the module gave back: each running object's changed transform.
+                for slot in 0..state.step.returned_count {
+                    let Some((values, precise, flags)) = StepFrame::entry(&state.step.returned, slot) else { break };
+                    if flags & FRAME_CHANGED == 0 {
+                        continue;
+                    }
+                    let Some((_, before, given)) = StepFrame::entry(&state.step.entries, slot) else { continue };
+                    let Some(view) = ((given >> FRAME_HANDLE_SHIFT) as usize).checked_sub(1).filter(|_| given & FRAME_RUNNING != 0) else { continue };
+                    // The entry's precise position, when the module set it (it narrows to the single-
+                    // precision one); else the single-precision one, keeping the old where it agrees.
+                    let narrowed = precise.map(|p| p as f32);
+                    let position = if narrowed == [values[0], values[1], values[2]] && precise.iter().all(|p| p.is_finite()) {
+                        precise
+                    } else {
+                        merged_position(&values, before)
+                    };
+                    self.poses.put(view, values, position);
+                }
+            } else {
+                state.writes.clear();
+                for slot in &batch.slots {
+                    if let Some(view) = state.slot_view(*slot as usize) {
+                        *view.running = false;
+                    }
+                }
+            }
+            release_view(state);
             drop(store);
             if let Err(error) = result {
                 // An error stops the module, and with it every object it runs: the error is the one
                 // object's whose update it was in.
-                for &place in &places {
+                for &place in &batch.places {
                     self.instances[place].stopped = true;
                 }
-                let others = places.len().saturating_sub(1);
+                self.version += 1;
+                let others = batch.places.len().saturating_sub(1);
                 let error = if others == 0 { error } else { with_others(error, others) };
                 faults.push(ScriptFault { object: failing, script: script_name, error });
             }
         }
+        self.groups = groups;
         drop(world);
         self.write_poses(scene);
         self.faults.extend(faults);
@@ -782,6 +807,53 @@ impl ScriptHost {
         self.apply_property_writes();
         self.deliver(scene, time, input);
         self.apply_property_writes();
+    }
+
+    /// Sorts the running instances for the step: those with a module of their own, and for each
+    /// module that runs many objects, its objects with their slots and places in the view. Kept
+    /// until an instance comes, goes or stops, or the scene's structure changes.
+    fn regroup(&mut self, layout: &crate::Layout) {
+        let mut groups = Groups { made: Some((self.version, layout.structure)), ..Groups::default() };
+        for (place, entry) in self.instances.iter_mut().enumerate().filter(|(_, i)| !i.stopped) {
+            // Where its object is in the view; an object that is gone stops its scripts.
+            if entry.view_structure != layout.structure {
+                let Some(index) = layout.index.get(&entry.object) else {
+                    entry.stopped = true;
+                    if entry.batched() {
+                        entry.store().data_mut().running = false;
+                    }
+                    continue;
+                };
+                entry.view_index = *index;
+                entry.view_structure = layout.structure;
+            }
+            match &entry.calls {
+                Calls::Own { update: Some(_), .. } => groups.own.push(place),
+                Calls::Own { update: None, .. } => {}
+                Calls::Batch { update_all, .. } => {
+                    let at = groups.batches.iter().position(|b| Arc::ptr_eq(&b.store, &entry.store)).unwrap_or_else(|| {
+                        groups.batches.push(Batch {
+                            store: Arc::clone(&entry.store),
+                            update_all: handle_copy(update_all),
+                            places: Vec::new(),
+                            slots: Vec::new(),
+                            views: Vec::new(),
+                            place_of: Vec::new(),
+                        });
+                        groups.batches.len() - 1
+                    });
+                    let batch = &mut groups.batches[at];
+                    batch.places.push(place);
+                    batch.slots.push(entry.slot as u32);
+                    batch.views.push(entry.view_index as u32);
+                    if batch.place_of.len() <= entry.slot {
+                        batch.place_of.resize(entry.slot + 1, u32::MAX);
+                    }
+                    batch.place_of[entry.slot] = place as u32;
+                }
+            }
+        }
+        self.groups = groups;
     }
 
     /// The view of the objects for a call: the one kept from the last, with what moved since read
@@ -854,7 +926,7 @@ impl ScriptHost {
                     && let Some(value) = PropertyValue::from_numbers(*ty, write.value)
                 {
                     *slot = value;
-                    state.properties_changed = true;
+                    state.mark_properties_changed();
                 }
             }
         }
@@ -943,6 +1015,7 @@ impl ScriptHost {
             }
             for place in stopped {
                 self.instances[place].stopped = true;
+                self.version += 1;
             }
         }
         self.messages = later;
@@ -1224,6 +1297,34 @@ fn take_subscribing_of(store: &mut Store<HostState>, subscriptions: &mut Vec<Sub
         } else if !subscriptions.iter().any(same) && subscriptions.len() < MAX_SUBSCRIPTIONS {
             subscriptions.push(Subscription { publisher, event, subscriber });
         }
+    }
+}
+
+/// A module that runs many objects, for the step: its running objects' instances (their places),
+/// each with its slot and its object's place in the view, and the instance of each slot.
+struct Batch {
+    store: Shared,
+    update_all: TypedFunc<f32, ()>,
+    places: Vec<usize>,
+    slots: Vec<u32>,
+    views: Vec<u32>,
+    /// By slot; `u32::MAX` where no instance runs.
+    place_of: Vec<u32>,
+}
+
+/// The running instances sorted for a step (see `ScriptHost::regroup`).
+#[derive(Default)]
+struct Groups {
+    /// The places of the instances with a module of their own and an update.
+    own: Vec<usize>,
+    batches: Vec<Batch>,
+    /// The host's version and the scene's structure they were made for.
+    made: Option<(u64, u64)>,
+}
+
+impl Groups {
+    fn fits(&self, version: u64, structure: u64) -> bool {
+        self.made == Some((version, structure))
     }
 }
 
@@ -2422,19 +2523,6 @@ fn seeded_key(world: &WorldView, ty: PropertyType, key: &str) -> Option<MapKey> 
     })
 }
 
-/// Bytes of one object's entry in a frame (`frame_get`, `frame_set`): its transform (nine `f32`),
-/// a word of flags, and its position in double precision.
-const FRAME_ENTRY: usize = 64;
-/// Frame flags: the object runs; its properties changed since last asked; (from the script) its
-/// transform changed.
-const FRAME_RUNNING: u32 = 1;
-const FRAME_PROPERTIES: u32 = 2;
-const FRAME_CHANGED: u32 = 4;
-/// (From the script) the object being updated, so an error is reported on it.
-const FRAME_CURRENT: u32 = 8;
-/// The flags take the low bits of their word; the object's handle is the rest.
-const FRAME_HANDLE_SHIFT: u32 = 4;
-
 /// The frame functions: a module that runs many objects reads every object's transform in one
 /// call before its update and writes the changed ones back in one call after it, instead of a call
 /// per object for each.
@@ -2445,6 +2533,21 @@ fn link_frames(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
         let count = state.parked.len();
         let room = usize::try_from(cap).unwrap_or(0);
         if room < count {
+            return Ok(count as i32);
+        }
+        if state.step.active {
+            // The frame the step made, in one copy; every slot whose properties changed is told now.
+            for slot in std::mem::take(&mut state.properties_pending) {
+                if let Some(view) = state.slot_view(slot) {
+                    *view.properties_changed = false;
+                }
+            }
+            let bytes = std::mem::take(&mut state.step.entries);
+            let written = write_guest(&mut caller, out, &bytes, "frame_get");
+            let state = caller.data_mut();
+            state.step.entries = bytes;
+            written?;
+            state.frame_at = Some((out, count));
             return Ok(count as i32);
         }
         let mut bytes = vec![0u8; count * FRAME_ENTRY];
@@ -2477,6 +2580,21 @@ fn link_frames(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
         }
         let bytes =
             read_guest(&mut caller, ptr, (count * FRAME_ENTRY) as i32, slots * FRAME_ENTRY).map_err(|m| fault(&mut caller, format!("frame_set: {m}")))?;
+        if caller.data().step.active {
+            // Checked here, applied when the call ends (`ScriptHost::update`).
+            for slot in 0..count {
+                if let Some((values, _, flags)) = StepFrame::entry(&bytes, slot)
+                    && flags & FRAME_CHANGED != 0
+                    && !values.iter().all(|v| v.is_finite())
+                {
+                    return Err(fault(&mut caller, "frame_set: values must be finite numbers".to_owned()));
+                }
+            }
+            let state = caller.data_mut();
+            state.step.returned = bytes;
+            state.step.returned_count = count;
+            return Ok(());
+        }
         for (slot, entry) in bytes.as_chunks::<FRAME_ENTRY>().0.iter().enumerate() {
             let word = |at: usize| [entry[at], entry[at + 1], entry[at + 2], entry[at + 3]];
             if u32::from_le_bytes(word(36)) & FRAME_CHANGED == 0 {
