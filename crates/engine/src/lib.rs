@@ -27,6 +27,7 @@ mod scene_cmds;
 mod sound;
 mod stream;
 pub mod timeline_cmds;
+mod timeline_play;
 pub mod web_export;
 
 /// Optional world streaming, present only with the `streaming` feature.
@@ -593,6 +594,7 @@ impl CommandRegistry {
         commands.extend(interface::commands());
         commands.extend(input_cmds::commands());
         commands.extend(timeline_cmds::commands());
+        commands.extend(timeline_play::commands());
         Self { commands }
     }
 

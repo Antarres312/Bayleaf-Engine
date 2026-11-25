@@ -2219,6 +2219,20 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
                 Ok(1)
             })?;
         }
+        for (name, play) in [("timeline_play", true), ("timeline_stop", false)] {
+            linker.func_wrap("bayleaf", name, move |mut caller: Caller<'_, HostState>, handle: i32| -> Result<i32, Error> {
+                let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
+                    return Err(fault(&mut caller, format!("{name}: there is no object with handle {handle}")));
+                };
+                let state = caller.data_mut();
+                if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+                    return Ok(0);
+                }
+                let by = state.object;
+                state.requests.push(Request::KeyframeAnimation { by, object, play });
+                Ok(1)
+            })?;
+        }
         linker.func_wrap(
             "bayleaf",
             "sound_play_at",

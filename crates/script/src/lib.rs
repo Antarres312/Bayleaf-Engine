@@ -194,6 +194,8 @@ pub enum Request {
     PlaySound { by: StableId, object: StableId },
     /// Stop the sounds the object plays.
     StopSound { by: StableId, object: StableId },
+    /// Play the object's Keyframe Animation from its start, or stop it where it is.
+    KeyframeAnimation { by: StableId, object: StableId, play: bool },
     /// Play a sound file once (relative to the project folder) from a world position, at a volume.
     PlaySoundAt { by: StableId, path: String, position: [f32; 3], volume: f32 },
     /// Load a scene file (relative to the project folder): in place of the playing one, or added to it.

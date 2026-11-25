@@ -864,6 +864,18 @@ pub const CATALOG: Catalog = Catalog {
         },
         action("playSound", "Play Sound", "Plays the Audio Source of the linked object (else this object), after this step.", &[RUN, TARGET]),
         action("stopSound", "Stop Sound", "Stops the sounds the linked object (else this object) plays, after this step.", &[RUN, TARGET]),
+        action(
+            "playKeyframes",
+            "Play Keyframe Animation",
+            "Plays the Keyframe Animation of the linked object (else this object) from its start, after this step.",
+            &[RUN, TARGET],
+        ),
+        action(
+            "stopKeyframes",
+            "Stop Keyframe Animation",
+            "Stops the Keyframe Animation of the linked object (else this object) where it is, after this step.",
+            &[RUN, TARGET],
+        ),
         NodeDef {
             kind: "playSoundAt",
             label: "Play Sound At",
@@ -2242,6 +2254,10 @@ impl Compiler<'_> {
                 let handle = self.target(next, Ok("(call $self_handle)"))?;
                 let _ = writeln!(code, "{indent}(drop (call $sound_{} {handle}))", if n.kind == "playSound" { "play" } else { "stop" });
             }
+            "playKeyframes" | "stopKeyframes" => {
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
+                let _ = writeln!(code, "{indent}(drop (call $timeline_{} {handle}))", if n.kind == "playKeyframes" { "play" } else { "stop" });
+            }
             "playSoundAt" => {
                 let sound = self.setting_text(next, "sound", "");
                 let extension = sound.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
@@ -3294,6 +3310,8 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "scene_load" (func $scene_load (param i32 i32 i32) (result i32)))
   (import "bayleaf" "sound_play" (func $sound_play (param i32) (result i32)))
   (import "bayleaf" "sound_stop" (func $sound_stop (param i32) (result i32)))
+  (import "bayleaf" "timeline_play" (func $timeline_play (param i32) (result i32)))
+  (import "bayleaf" "timeline_stop" (func $timeline_stop (param i32) (result i32)))
   (import "bayleaf" "sound_play_at" (func $sound_play_at (param i32 i32 f32 f32 f32 f32) (result i32)))
   (import "bayleaf" "scene_unload" (func $scene_unload (param i32 i32) (result i32)))
   (import "bayleaf" "object_ref" (func $object_ref (param i32) (result i32)))

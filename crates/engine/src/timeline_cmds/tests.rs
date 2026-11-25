@@ -237,3 +237,35 @@ fn a_confined_session_refuses_timeline_files_outside_its_roots() {
     std::fs::remove_dir_all(&outside).ok();
 }
 
+#[test]
+fn in_play_the_root_component_plays_its_timeline_on_the_copy_and_a_command_stops_it() {
+    let mut f = Fixture::new("play");
+    f.run("timeline.new", json!({"prefab": "lamp.bprefab", "length": 1.0, "path": f.dir.join("rise.btimeline")}));
+    f.run("timeline.key.set", json!({"part": f.bulb, "track": POSITION(), "time": 0.0, "value": [0, 0, 0], "ease": "linear"}));
+    f.run("timeline.key.set", json!({"part": f.bulb, "track": POSITION(), "time": 1.0, "value": [0, 2, 0]}));
+    f.run("timeline.save", json!({}));
+    // A second copy, placed from the file: its objects have ids of their own.
+    let copy = StableId::parse_hex(f.run("scene.prefab.place", json!({"path": "lamp.bprefab"}))["id"].as_str().unwrap()).unwrap();
+    f.run("scene.component.add", json!({"id": copy, "component": "keyframeAnimation"}));
+    f.run(
+        "scene.component.set",
+        json!({"id": copy, "component": "keyframeAnimation", "value": {"animation": "rise.btimeline", "playOnStart": true, "speed": 1.0}}),
+    );
+    let copy_bulb = f.session.scene().children(Some(copy))[0];
+    assert_ne!(copy_bulb, f.bulb);
+
+    f.run("play.start", json!({}));
+    f.run("play.step", json!({"seconds": 0.5}));
+    let half = f.position(copy_bulb);
+    assert!(half[1] > 0.5 && half[1] < 1.5, "the copy's part moves with the timeline: {half:?}");
+    assert_eq!(f.position(f.bulb), [0.0, 0.0, 0.0], "a copy without the component stays");
+    f.run("timeline.stop", json!({"id": copy}));
+    f.run("play.step", json!({"seconds": 0.25}));
+    assert_eq!(f.position(copy_bulb), half, "stopped where it was");
+    f.run("timeline.play", json!({"id": copy}));
+    f.run("play.step", json!({"seconds": 0.5, "steps": 6}));
+    assert_eq!(f.position(copy_bulb), [0.0, 2.0, 0.0], "played once, it stays at its end");
+    assert!(f.registry.execute(&mut f.session, "timeline.play", &json!({"id": f.lamp})).is_err(), "no Keyframe Animation there");
+    f.run("play.stop", json!({}));
+    assert_eq!(f.position(copy_bulb), [0.0, 0.0, 0.0], "stopping play mode restores the scene");
+}

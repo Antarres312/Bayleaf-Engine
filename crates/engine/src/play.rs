@@ -54,6 +54,8 @@ pub(crate) struct Play {
     /// Each Interface's layout as read this play (with its parts in place), by object, with the
     /// file it came from; `None` when it did not read.
     pub(crate) interface_roots: std::collections::HashMap<bayleaf_core::StableId, (String, Option<bayleaf_interface::Element>)>,
+    /// The Keyframe Animations playing.
+    pub(crate) timelines: crate::timeline_play::Players,
 }
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
@@ -352,6 +354,7 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         particles,
         interfaces: std::collections::HashMap::new(),
         interface_roots: std::collections::HashMap::new(),
+        timelines: crate::timeline_play::Players::default(),
         paused: false,
         since_reload_check: 0.0,
         loaded: Vec::new(),
@@ -366,6 +369,9 @@ fn start(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
         session.log(Level::Info, why);
     }
     for problem in crate::sound::start_sources(session, None) {
+        session.log(Level::Error, problem);
+    }
+    for problem in crate::timeline_play::start_under(session, None) {
         session.log(Level::Error, problem);
     }
     session.log(Level::Info, format!("Play mode started: {running} of {scripts} scripts running."));
@@ -449,6 +455,9 @@ pub(crate) fn add_scene(session: &mut Session, loaded: &Scene, parent: Option<ba
     for problem in crate::sound::start_sources(session, Some(&roots)) {
         session.log(Level::Error, problem);
     }
+    for problem in crate::timeline_play::start_under(session, Some(&roots)) {
+        session.log(Level::Error, problem);
+    }
     drain(session);
     Ok(roots)
 }
@@ -500,6 +509,9 @@ pub(crate) fn load_scene(session: &mut Session, relative: &str, additive: bool) 
     }
     session.log(Level::Info, format!("Loaded the scene {relative}."));
     for problem in crate::sound::start_sources(session, None) {
+        session.log(Level::Error, problem);
+    }
+    for problem in crate::timeline_play::start_under(session, None) {
         session.log(Level::Error, problem);
     }
     #[cfg(feature = "gameplay")]
@@ -735,6 +747,8 @@ fn step_parts(session: &mut Session, dt: f32) {
         play.host.update(&mut session.scene, dt, play.time, &input);
         session.profiler.add(Part::Scripts, scripts.elapsed());
         apply_requests(session);
+        // Keyframe Animations pose their parts after the scripts asked to play or stop them.
+        crate::timeline_play::step(session, dt);
         timed(session, Part::Particles, |session| {
             if let Some(play) = session.play.as_mut() {
                 play.particles.step(&session.scene, dt);
@@ -874,6 +888,13 @@ fn apply_requests(session: &mut Session) {
             Request::StopSound { by, object } => {
                 if let Err(error) = crate::sound::stop_object(session, object) {
                     sound_problem(session, by, object, &error);
+                }
+            }
+            Request::KeyframeAnimation { by, object, play } => {
+                if let Err(error) = crate::timeline_play::set_playing(session, object, play) {
+                    let who = session.scene.name(by).unwrap_or("Object").to_owned();
+                    let target = session.scene.name(object).unwrap_or("Object").to_owned();
+                    session.log(Level::Error, format!("[{who}] cannot {} the Keyframe Animation of {target}: {error}", if play { "play" } else { "stop" }));
                 }
             }
             Request::PlaySoundAt { by, path, position, volume } => {
@@ -1292,6 +1313,9 @@ fn spawn_with(session: &mut Session, prefab: &str, place: impl FnOnce(&mut bayle
     session.scene.set(id, bayleaf_scene::components::Prefab::new(prefab)).map_err(|e| e.to_string())?;
     start_scripts_of(session, &[id])?;
     for problem in crate::sound::start_sources(session, Some(&[id])) {
+        session.log(Level::Error, problem);
+    }
+    for problem in crate::timeline_play::start_under(session, Some(&[id])) {
         session.log(Level::Error, problem);
     }
     Ok(id)

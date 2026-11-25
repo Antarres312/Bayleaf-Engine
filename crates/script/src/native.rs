@@ -48,6 +48,8 @@ const HOST_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("sound_play", "i32", "i32"),
     ("sound_stop", "i32", "i32"),
     ("sound_play_at", "i32 i32 f32 f32 f32 f32", "i32"),
+    ("timeline_play", "i32", "i32"),
+    ("timeline_stop", "i32", "i32"),
     ("scene_unload", "i32 i32", "i32"),
     ("object_of", "i32", "i32"),
     ("component_get", "i32 i32 i32 i32 i32 i32", "i32"),
