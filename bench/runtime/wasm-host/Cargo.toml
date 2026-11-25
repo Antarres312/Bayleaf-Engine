@@ -1,0 +1,20 @@
+[package]
+name = "runtime-wasm-host"
+description = "Internal benchmark: times the small runtime of bench/README.md as one WebAssembly module."
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# The versions the engine workspace uses.
+[dependencies]
+wasmi = "2"
+wasmtime = { version = "51", default-features = false, features = ["runtime", "cranelift", "std"] }
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+
+# A workspace of its own, so its build does not depend on the engine's.
+[workspace]

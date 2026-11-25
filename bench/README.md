@@ -314,3 +314,74 @@ The Bayleaf numbers in this README were taken on `main` at 0.3.0. The benchmark 
 `develop`; a quick check there at 500 objects gave somewhat lower step times (interpreted Rust
 3.7 ms against 5.1), and the host paths described above are unchanged, but the full suite has not
 been run again on `develop`.
+
+## The same runtime in C++ and Rust (2026-11-25)
+
+The question: would the part of the engine that runs a game be faster in C++, or is the design what
+counts? `bench/runtime/` holds one small runtime written twice, the same way, in C++
+(`cpp/runtime.hpp`) and in Rust (`rust/src/runtime.rs`), running the same game (`cpp/game.cpp`,
+`rust/src/game.rs`): this benchmark's scene and its three scripts. The Rust sources also build as one
+WebAssembly module, runtime and game together, which `wasm-host/` runs under wasmtime and wasmi.
+
+The runtime is what a fast Bayleaf runtime would be at its core, not a bare loop: components in
+packed arrays, objects as an index with a generation that scripts check, objects found by id or name
+through hash maps at start, a write to a transform marking the object moved, world matrices worked
+out for the moved objects only, and the moved list read as a renderer would read it. Scripts come in
+two styles: *typed* (plain structs in one array per script type, one indirect call per type per
+step) and *virtual* (a heap object per script and a virtual call per object, as most
+entity-and-component code is written). It has no rendering, physics or file loading.
+
+Every version must print the same checksum after 100 steps, and does. Run with
+`bench\run-runtime.ps1` (results in `bench/results/2026-11-25-runtime.md`); milliseconds per step,
+median of three runs' means:
+
+| Script step | 5000 | 20,000 | 100,000 |
+|---|---:|---:|---:|
+| C++ (MSVC /O2), typed | 0.061 | 0.244 | 1.30 |
+| Rust 1.100, typed | 0.057 | 0.245 | 1.18 |
+| C++, virtual | 0.119 | 0.533 | 5.12 |
+| Rust, virtual | 0.127 | 0.650 | 10.30 |
+| One WebAssembly module, compiled, typed | 0.123 | 0.489 | 2.30 |
+| One WebAssembly module, interpreted, typed | 0.870 | 4.51 | 21.2 |
+| Bayleaf today (f3ba196), Rust scripts, compiled | 2.9 to 4.2 | 17.3 to 26.0 | 92.4 |
+| Bayleaf today, visual scripts, compiled | 4.5 to 5.3 | 18.9 to 26.2 | not run |
+
+| Script step, matrices of what moved, moved list | 5000 | 20,000 | 100,000 |
+|---|---:|---:|---:|
+| C++ (MSVC /O2), typed | 0.163 | 0.725 | 3.80 |
+| Rust 1.100, typed | 0.150 | 0.730 | 3.90 |
+| One WebAssembly module, compiled, typed | 0.351 | 1.55 | 6.76 |
+| The same, transforms copied in and out each step | 0.279 | 1.54 | 7.64 |
+
+Bayleaf's numbers are two days' runs on the same computer (the range), loading not counted; at
+100,000 objects its scene took 320 s to load.
+
+What it says:
+
+- **With the same design, C++ and Rust take the same time**: Rust is at 0.9 to 1.0 times C++ in the
+  typed style at every size, and at 1.0 with the matrices.
+- **The design is worth 50 to 100 times**: the small runtime runs 20,000 objects in 0.24 ms where
+  Bayleaf takes 17 to 26 ms, in either language.
+- **How scripts are kept matters more than the language**: a heap object and a virtual call per
+  script costs 2 times at 5000 objects and 4 times (C++) to 8 times (Rust) at 100,000, where the
+  objects no longer fit the processor's caches. In that style Rust was about 2 times slower than
+  C++ at 100,000; its run-to-run spread there was also wide (7.0 to 11.0 ms). The cause was not
+  looked into.
+- **WebAssembly costs about 2 times** when the runtime and the game are one module with no calls
+  out, compiled; interpreted it costs 14 to 18 times. Copying every transform in and out per step
+  adds little.
+
+Rebuilding after a change to one script, this small game, release builds (median of three):
+
+| | Seconds |
+|---|---:|
+| C++: compile `game.cpp` and link (without setting up the compiler's environment, 1.3 s more) | 0.7 |
+| Rust, native: `cargo build --release` | 1.8 |
+| Rust, the WebAssembly module | 0.7 |
+| Bayleaf today: one script's crate to WebAssembly | 0.6 |
+
+These are tiny programs; a real game's rebuild grows with its code in every case.
+
+Limits: one computer; MSVC only (clang was not installed, and Rust's compiler shares clang's code
+generator, not MSVC's); a runtime of 300 lines, which shows the cost of the core design and not of
+physics, rendering or a real game's scripts.

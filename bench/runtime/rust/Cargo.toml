@@ -1,0 +1,19 @@
+[package]
+name = "runtime-rust"
+description = "Internal benchmark: the small runtime of bench/README.md in Rust, native and as one WebAssembly module."
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+# The same optimisation as the workspace's release builds.
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+
+# A workspace of its own, so its build does not depend on the engine's.
+[workspace]
