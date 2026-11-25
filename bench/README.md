@@ -385,3 +385,21 @@ These are tiny programs; a real game's rebuild grows with its code in every case
 Limits: one computer; MSVC only (clang was not installed, and Rust's compiler shares clang's code
 generator, not MSVC's); a runtime of 300 lines, which shows the cost of the core design and not of
 physics, rendering or a real game's scripts.
+
+## The runtime rebuild (from 2026-11-25)
+
+`docs/runtime-rebuild.md` is the plan and says where each stage stands. Its figures come from runs
+in turns of the program before and after a change, because single runs on this computer differ by a
+third with other work going on. Script step at 20,000 objects, compiled, milliseconds:
+
+| Change | Three empty scripts | Rust scripts | Visual scripts |
+|---|---:|---:|---:|
+| Before the rebuild (c3d939d) | 9.1 | 20 to 27 | 26 to 28 |
+| The SDK serves reads of other objects (8cbfddf) | | 15 to 21 | |
+| The frame in one pass, only selected objects looked at (8efed7b) | 2.3 to 3.0 | 7.7 to 7.9 | 22.8 |
+| Visual scripts select an object only when needed | | | 7.1 |
+
+Rows were measured on different hours; compare along a row's own before and after (in
+`docs/runtime-rebuild.md`), not down a column. The benchmark prints `check`, a sum over the scene;
+with `--warmup 30 --min-frames 200 --max-frames 200 --seconds 0` it was the same before and after
+each change.

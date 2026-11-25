@@ -52,7 +52,18 @@ State: the host half is done. The step sorts its instances only when one comes, 
 module's frame is made in one pass, copied out and back as one block, and only the objects the call
 selected are looked at afterwards. Run in turns against the host before it, at 20,000 objects:
 three empty scripts 9.1 to 2.3-3.0 ms, Rust scripts 14.4 to 7.7-7.9 ms, visual scripts 26-28 to
-22.8 ms. Visual scripts still select every object; that is what is left of this stage.
+22.8 ms.
+
+Visual scripts then stopped selecting every object: the frame says which run and whose properties
+changed, every import but the frame's own goes through a wrapper that selects the object first, the
+object's handle comes from its frame entry, and the object a variable names is kept per object until
+`world_stamp` changes. Run in turns, 20,000 objects: 14.8 to 7.1 ms.
+
+The gates are not met yet. On a quiet computer the step at 20,000 objects is about 2 ms for three
+empty scripts and 7 to 8 ms for Rust and visual scripts (with other builds running, up to 11). What
+is left: the SDK's and the graphs' own work per object (selecting from the frame, loading and saving
+a slot, properties looked up by name), which is stage 4, and the frame's bytes written one value at
+a time.
 
 **Stage 3: loading.** A scene of 100,000 objects takes 320 s to start playing today. Find what
 grows faster than the scene and remove it. Gate: 100,000 objects load in under 10 s.

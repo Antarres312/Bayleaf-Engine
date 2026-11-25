@@ -2422,6 +2422,46 @@ fn objects_running_one_graph_see_another_object_where_they_last_moved_it() {
     );
 }
 
+#[test]
+fn objects_running_one_graph_lose_the_object_they_keep_when_it_goes() {
+    let mut b = Builder::new();
+    // At start, keep the object named Target; each step, log 1 while it is still there, else 0.
+    let start = b.node("start", json!({}));
+    let found = b.node("findNamed", json!({ "name": "Target" }));
+    let keep = b.node("setObjectVariable", json!({ "name": "target" }));
+    b.link(start, "then", keep, "run");
+    b.link(found, "object", keep, "value");
+    let update = b.node("update", json!({}));
+    let kept = b.node("objectVariable", json!({ "name": "target" }));
+    let there = b.node("choose", json!({ "a": 1.0, "b": 0.0 }));
+    b.link(kept, "found", there, "condition");
+    let said = b.node("log", json!({ "message": "" }));
+    b.link(update, "then", said, "run");
+    b.link(there, "result", said, "value");
+    let bytes = b.bytes();
+
+    let mut scene = Scene::new();
+    let watchers = [scene.create_object(None, "First").unwrap(), scene.create_object(None, "Second").unwrap()];
+    let target = scene.create_object(None, "Target").unwrap();
+    scene.create_object(None, "Bystander").unwrap();
+    let mut host = ScriptHost::new();
+    let input = Arc::new(Input::default());
+    let script = ScriptRef { module: "watch.bscript".into(), properties: BTreeMap::new() };
+    for id in watchers {
+        host.load_bytes(id, 0, Path::new("watch.bscript"), None, &bytes, &script, &mut scene, 0.0, &input).unwrap();
+    }
+    let step = |host: &mut ScriptHost, scene: &mut Scene| -> Vec<String> {
+        host.update(scene, 0.1, 0.0, &input);
+        host.take_logs().into_iter().map(|l| l.text).collect()
+    };
+    assert_eq!(step(&mut host, &mut scene), ["1", "1"]);
+    assert_eq!(step(&mut host, &mut scene), ["1", "1"], "kept from step to step");
+    // The object after it takes its place in the hierarchy; what each watcher keeps is still gone.
+    scene.delete_object(target).unwrap();
+    assert_eq!(step(&mut host, &mut scene), ["0", "0"]);
+    assert!(host.take_faults().is_empty());
+}
+
 /// The names a module exports.
 fn wat_exports(bytes: &[u8]) -> Vec<String> {
     let module = wasmi::Module::new(&wasmi::Engine::default(), bytes).unwrap();

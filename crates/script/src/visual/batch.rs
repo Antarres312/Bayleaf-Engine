@@ -126,26 +126,38 @@ impl Layout {
         slot_function("bayleaf_start_slot", start);
         let _ = writeln!(
             out,
-            "  (func (export \"bayleaf_update_all\") (param $dt f32) (local $k i32) (local $selected i32) (local $n i32)
+            "  (func (export \"bayleaf_update_all\") (param $dt f32) (local $k i32) (local $runs i32) (local $told i32) (local $n i32)
     (global.set $dt (local.get $dt))
     (global.set $time_ok (i32.const 0))
     ;; Every object's transform from the host in one call; each object's reads and writes use it.
     (local.set $n (call $frame_get (global.get $frame_at) (global.get $slots)))
     (global.set $in_frame (i32.le_u (local.get $n) (global.get $slots)))
-    (if (global.get $in_frame) (then (call $others_forget)))
+    (global.set $host_slot (i32.const -1))
+    (if (global.get $in_frame) (then (call $others_forget) (global.set $stamp (call $world_stamp))))
     (block $all (loop $each
       (br_if $all (i32.ge_u (local.get $k) (global.get $slots)))
-      (local.set $selected (call $slot_select (local.get $k)))
-      (call $object_forget)
-      (if (local.get $selected)
+      (global.set $slot_cur (local.get $k))
+      (global.set $frame_cur (i32.add (global.get $frame_at) (i32.mul (local.get $k) (i32.const 64))))
+      ;; Whether the object runs, and whether its properties changed since last read: the frame says,
+      ;; and the host selects the object only before a call that needs it (`$sync`); without the
+      ;; frame, the host is asked.
+      (if (global.get $in_frame)
+        (then
+          (local.set $runs (i32.and (i32.load offset=36 (global.get $frame_cur)) (i32.const 1)))
+          (local.set $told (i32.and (i32.load offset=36 (global.get $frame_cur)) (i32.const 2))))
+        (else
+          (local.set $runs (call $slot_select (local.get $k)))
+          (local.set $told (i32.eq (local.get $runs) (i32.const 2)))))
+      (if (local.get $runs)
         (then
           (call $slot_load (local.get $k))
-          (global.set $frame_cur (i32.add (global.get $frame_at) (i32.mul (local.get $k) (i32.const 64))))
-          ;; Its properties changed since last read: the host says so at select, or in the frame.
-          (if (i32.or (i32.eq (local.get $selected) (i32.const 2))
-                (i32.and (global.get $in_frame) (i32.ne (i32.and (i32.load offset=36 (global.get $frame_cur)) (i32.const 2)) (i32.const 0))))
-            (then (call $properties_forget)))
-      {fresh}{update}          (call $slot_save (local.get $k))))
+          (if (local.get $told) (then (call $properties_forget)))
+          ;; The frame marks the object being updated, so an error is reported on it.
+          (if (global.get $in_frame)
+            (then (i32.store offset=36 (global.get $frame_cur) (i32.or (i32.load offset=36 (global.get $frame_cur)) (i32.const 8)))))
+      {fresh}{update}          (call $slot_save (local.get $k))
+          (if (global.get $in_frame)
+            (then (i32.store offset=36 (global.get $frame_cur) (i32.and (i32.load offset=36 (global.get $frame_cur)) (i32.const -9)))))))
       (local.set $k (i32.add (local.get $k) (i32.const 1)))
       (br $each)))
     ;; The changed transforms back in one call.
@@ -219,7 +231,14 @@ pub(super) fn cached_properties(code: &str) -> Vec<Cached> {
 
 /// The globals that keep each cached property per object (part of what a slot keeps).
 pub(super) fn cache_globals(cached: &[Cached]) -> String {
-    let mut out = String::new();
+    // The object the script's last read object variable names, with the world's stamp it was found
+    // under (see `$object_of_kept`).
+    let mut out = String::from(
+        "  (global $ref_kept (mut i32) (i32.const 0))
+  (global $ref_h (mut i32) (i32.const 0))
+  (global $ref_stamp (mut i64) (i64.const 0))
+",
+    );
     for c in cached {
         let tag = c.kind.tag();
         let _ = writeln!(out, "  (global $pc{tag}_{}_ok (mut i32) (i32.const 0))", c.at);
@@ -263,6 +282,49 @@ pub(super) fn rewrite(module: &str, cached: &[Cached]) -> String {
         // The read's own closing parenthesis stays: `(call $pcf_AT)`, `(call $pcv_AT (i32.const i))`.
         out = out.replace(&from, &to);
     }
+    wrap_imports(&out)
+}
+
+/// Imports that are not about the selected object, or select one themselves: called as they are.
+const UNWRAPPED: [&str; 6] = ["slot_select", "frame_get", "frame_set", "world_stamp", "math_pow", "time"];
+
+/// Gives every other import a wrapper under its own name that has the host select the object being
+/// updated first (`$sync`); the import itself gets `__host` after its name.
+fn wrap_imports(module: &str) -> String {
+    let mut out = String::with_capacity(module.len() + 8192);
+    let mut wrappers = String::new();
+    for line in module.lines() {
+        let import = line.trim_start().strip_prefix("(import \"bayleaf\" \"").and_then(|rest| rest.split_once("\" (func $"));
+        let Some((name, rest)) = import.filter(|(name, _)| !UNWRAPPED.contains(name)) else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        // `ID (param a b) (result c)))`, `ID (param a)))`, `ID (result c)))` or `ID))`.
+        let id = rest.split([' ', ')']).next().unwrap_or_default();
+        let signature = rest[id.len()..].trim().trim_end_matches(')');
+        let params: Vec<&str> = signature.strip_prefix("(param ").and_then(|p| p.split(')').next()).map(|p| p.split_whitespace().collect()).unwrap_or_default();
+        let result = signature.rsplit_once("(result ").map(|(_, r)| r.trim());
+        let _ = writeln!(
+            out,
+            "  (import \"bayleaf\" \"{name}\" (func ${id}__host{}{signature}{}))",
+            if signature.is_empty() { "" } else { " " },
+            if signature.is_empty() { "" } else { ")" }
+        );
+        let _ = write!(wrappers, "  (func ${id}");
+        for ty in &params {
+            let _ = write!(wrappers, " (param {ty})");
+        }
+        if let Some(result) = result {
+            let _ = write!(wrappers, " (result {result})");
+        }
+        let _ = write!(wrappers, " (call $sync) (call ${id}__host");
+        for index in 0..params.len() {
+            let _ = write!(wrappers, " (local.get {index})");
+        }
+        wrappers.push_str("))\n");
+    }
+    out.push_str(&wrappers);
     out
 }
 
@@ -306,18 +368,22 @@ pub(super) fn helpers(cached: &[Cached]) -> String {
   (func $property_set_text_forgetting (param $a i32) (param $l i32) (param $t i32) (param $tl i32) (result i32)
     (call $properties_forget)
     (call $property_set_text (local.get $a) (local.get $l) (local.get $t) (local.get $tl)))
-  ;; While an update of all runs: this object's handle and the object its last read variable names,
-  ;; kept for the object's update; other objects' transforms, kept for the step in four entries of a
-  ;; handle and nine values after the frame, until the module sets one.
-  (global $self_h (mut i32) (i32.const 0))
-  (global $ref_ok (mut i32) (i32.const 0))
-  (global $ref_kept (mut i32) (i32.const 0))
-  (global $ref_h (mut i32) (i32.const 0))
+  ;; While an update of all runs, the host has the object selected only before a call that needs it:
+  ;; every import but the frame's own goes through a wrapper that calls this first.
+  (global $slot_cur (mut i32) (i32.const 0))
+  (global $host_slot (mut i32) (i32.const -1))
+  (func $sync
+    (if (i32.and (global.get $in_frame) (i32.ne (global.get $host_slot) (global.get $slot_cur)))
+      (then
+        (global.set $host_slot (global.get $slot_cur))
+        (if (i32.eq (call $slot_select (global.get $slot_cur)) (i32.const 2)) (then (call $properties_forget))))))
+  ;; This object's handle is in its frame entry. The object its last read variable names is kept per
+  ;; object (`$ref_kept`, `$ref_h`, `$ref_stamp`) until the world's stamp changes. Other objects'
+  ;; transforms are kept for the step in four entries of a handle and nine values after the frame,
+  ;; until the module sets one.
+  (global $stamp (mut i64) (i64.const 0))
   (global $others_at (mut i32) (i32.const 0))
   (global $others_next (mut i32) (i32.const 0))
-  (func $object_forget
-    (global.set $self_h (i32.const 0))
-    (global.set $ref_ok (i32.const 0)))
   (func $others_forget
     (i32.store (global.get $others_at) (i32.const 0))
     (i32.store offset=40 (global.get $others_at) (i32.const 0))
@@ -325,14 +391,14 @@ pub(super) fn helpers(cached: &[Cached]) -> String {
     (i32.store offset=120 (global.get $others_at) (i32.const 0)))
   (func $self_handle_kept (result i32)
     (if (i32.eqz (global.get $in_frame)) (then (return (call $self_handle))))
-    (if (i32.eqz (global.get $self_h)) (then (global.set $self_h (call $self_handle))))
-    (global.get $self_h))
+    (i32.shr_u (i32.load offset=36 (global.get $frame_cur)) (i32.const 4)))
   (func $object_of_kept (param $r i32) (result i32)
-    (if (i32.eqz (global.get $in_frame)) (then (return (call $object_of (local.get $r)))))
-    (if (i32.and (global.get $ref_ok) (i32.eq (global.get $ref_kept) (local.get $r))) (then (return (global.get $ref_h))))
+    (if (i32.or (i32.eqz (global.get $in_frame)) (i32.eqz (local.get $r))) (then (return (call $object_of (local.get $r)))))
+    (if (i32.and (i32.eq (global.get $ref_kept) (local.get $r)) (i64.eq (global.get $ref_stamp) (global.get $stamp)))
+      (then (return (global.get $ref_h))))
     (global.set $ref_h (call $object_of (local.get $r)))
     (global.set $ref_kept (local.get $r))
-    (global.set $ref_ok (i32.const 1))
+    (global.set $ref_stamp (global.get $stamp))
     (global.get $ref_h))
   (func $t_of_kept (param $h i32) (param $i i32) (result f32) (local $e i32) (local $end i32)
     ;; No object (0, or -1 for no player) goes to the host, which says so.

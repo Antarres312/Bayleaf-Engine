@@ -3344,6 +3344,7 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "slot_select" (func $slot_select (param i32) (result i32)))
   (import "bayleaf" "frame_get" (func $frame_get (param i32 i32) (result i32)))
   (import "bayleaf" "frame_set" (func $frame_set (param i32 i32)))
+  (import "bayleaf" "world_stamp" (func $world_stamp (result i64)))
   (import "bayleaf" "particles_play" (func $particles_play (param i32) (result i32)))
   (import "bayleaf" "particles_stop" (func $particles_stop (param i32) (result i32)))
   (import "bayleaf" "particles_burst" (func $particles_burst (param i32 i32) (result i32)))
