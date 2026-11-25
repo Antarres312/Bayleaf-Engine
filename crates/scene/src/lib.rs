@@ -12,6 +12,7 @@ pub mod inspector;
 pub mod lighting;
 pub mod post;
 pub mod registry;
+pub mod timeline;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
