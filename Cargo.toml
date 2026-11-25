@@ -79,6 +79,8 @@ png = "0.18"
 # Rigid-body physics (Apache-2.0).
 rapier3d = "0.36"
 rapier3d-f64 = "0.36"
+# Work-stealing thread pool for the ECS's `parallel` feature (MIT OR Apache-2.0).
+rayon = "1"
 # Gamepads (MIT OR Apache-2.0).
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 # The web player: its bridge to the browser. wasm-bindgen is held at the version of the

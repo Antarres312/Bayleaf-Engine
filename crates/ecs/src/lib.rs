@@ -3,12 +3,23 @@
 //! Entities with the same set of component types share an archetype. Each archetype stores one
 //! column per component type. Adding or removing a component moves the entity's row to the
 //! matching archetype. No `unsafe`: columns are type-erased behind [`std::any::Any`].
+//!
+//! Systems that declare an [`Access`] get a [`View`] of just those columns. Views of systems that
+//! do not conflict borrow disjoint columns, so the [`Schedule`] can run such systems at once, and a
+//! view's `for_each_mut` queries can split their rows over threads. Both need the `parallel`
+//! feature and [`World::set_parallel`]; it is off by default, and builds without the feature (and
+//! WebAssembly builds) run everything on the calling thread, with the same results.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod access;
+mod pool;
 mod schedule;
+mod view;
 
+pub use access::Access;
 pub use schedule::Schedule;
+pub use view::View;
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -108,12 +119,13 @@ pub struct World {
     free: Vec<u32>,
     archetypes: Vec<Archetype>,
     by_types: HashMap<Vec<TypeId>, usize>,
+    parallel: bool,
 }
 
 impl Default for World {
     fn default() -> Self {
         let empty = Archetype { columns: IdMap::default(), entities: Vec::new() };
-        Self { slots: Vec::new(), free: Vec::new(), archetypes: vec![empty], by_types: HashMap::from([(Vec::new(), 0)]) }
+        Self { slots: Vec::new(), free: Vec::new(), archetypes: vec![empty], by_types: HashMap::from([(Vec::new(), 0)]), parallel: false }
     }
 }
 
@@ -240,8 +252,47 @@ impl World {
             .flatten()
     }
 
+    /// Whether this build can run systems and queries on a thread pool (the `parallel` feature,
+    /// not on WebAssembly).
+    pub const PARALLEL_AVAILABLE: bool = pool::AVAILABLE;
+
+    /// Turns running on the thread pool on or off (off by default). Returns whether it is now on,
+    /// which it never is in a build without [`World::PARALLEL_AVAILABLE`].
+    pub fn set_parallel(&mut self, on: bool) -> bool {
+        self.parallel = on && Self::PARALLEL_AVAILABLE;
+        self.parallel
+    }
+
+    pub fn parallel(&self) -> bool {
+        self.parallel
+    }
+
+    /// A view of the columns `access` names, as a system with that access gets.
+    pub fn view(&mut self, access: &Access) -> Option<View<'_>> {
+        View::split(self, &[access]).pop()
+    }
+
+    /// Calls `f` for every entity that has a `T`, on the thread pool when parallel is on.
+    pub fn for_each_mut<T: Component>(&mut self, f: impl Fn(Entity, &mut T) + Send + Sync) {
+        if let Some(mut view) = self.view(&Access::new().write::<T>()) {
+            view.for_each_mut(f);
+        }
+    }
+
+    /// Calls `f` for every entity that has both a `W` and an `R`, on the thread pool when parallel
+    /// is on.
+    pub fn for_each_mut_with<W: Component, R: Component>(&mut self, f: impl Fn(Entity, &mut W, &R) + Send + Sync) {
+        if let Some(mut view) = self.view(&Access::new().write::<W>().read::<R>()) {
+            view.for_each_mut_with(f);
+        }
+    }
+
     fn location(&self, entity: Entity) -> Result<Location, EcsError> {
-        self.slots.get(entity.index as usize).filter(|s| s.generation == entity.generation).and_then(|s| s.location).ok_or(EcsError::NoSuchEntity(entity))
+        Self::location_in(&self.slots, entity)
+    }
+
+    fn location_in(slots: &[Slot], entity: Entity) -> Result<Location, EcsError> {
+        slots.get(entity.index as usize).filter(|s| s.generation == entity.generation).and_then(|s| s.location).ok_or(EcsError::NoSuchEntity(entity))
     }
 
     fn set_location(&mut self, entity: Entity, location: Option<Location>) {
@@ -327,3 +378,6 @@ fn two_mut<T>(items: &mut [T], a: usize, b: usize) -> Option<(&mut T, &mut T)> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod parallel_tests;
