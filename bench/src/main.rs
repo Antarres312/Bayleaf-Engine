@@ -265,6 +265,13 @@ fn measure(args: &Args, mut step: impl FnMut() -> anyhow::Result<()>) -> anyhow:
     Ok(times)
 }
 
+/// A sum over every object's position and turn: equal between two runs of the same number of steps
+/// (`--warmup`, `--min-frames` and `--max-frames` alike, `--seconds 0`) when the scripts did the
+/// same work.
+fn checksum(scene: &Scene) -> f64 {
+    scene.world_matrices().iter().filter_map(|(id, _)| scene.get::<Transform>(*id)).map(|t| t.position.iter().sum::<f64>() + f64::from(t.rotation[1])).sum()
+}
+
 /// The first scripted object's transform, to show the scripts moved it.
 fn probe(scene: &Scene) -> Option<Transform> {
     let first: StableId = *scene.children(None).get(1)?;
@@ -326,6 +333,7 @@ fn time_scripts(args: &Args, work: &Path, mut scene: Scene) -> anyhow::Result<se
     out["instances"] = json!(instances);
     out["running"] = json!(host.running());
     out["moved"] = json!(moved(&before, &probe(&scene)));
+    out["check"] = json!(checksum(&scene));
     out["stats"] = stats(&times);
     Ok(out)
 }

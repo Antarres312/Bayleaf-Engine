@@ -744,6 +744,57 @@ fn a_module_that_runs_many_objects_moves_them_all_through_one_frame() {
 }
 
 #[test]
+fn a_frame_names_each_object_by_its_handle_and_the_stamp_changes_with_the_structure() {
+    let input = Arc::new(Input::default());
+    let (mut scene, first, script) = setup(&[]);
+    let other = scene.create_object(None, "Other").unwrap();
+    // Logs the name of each entry's handle (the word of flags without its low four bits), then
+    // "same" or "changed" for the world's stamp against the step before.
+    let text = format!(
+        r#"(module {IMPORTS}
+            (import "bayleaf" "frame_get" (func $frame_get (param i32 i32) (result i32)))
+            (import "bayleaf" "world_stamp" (func $stamp (result i64)))
+            (import "bayleaf" "name_of" (func $name_of (param i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 16) "samechanged")
+            (global $before (mut i64) (i64.const 0))
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_attach") (param i32))
+            (func (export "bayleaf_detach") (param i32))
+            (func (export "bayleaf_update_all") (param $dt f32) (local $n i32) (local $k i32)
+              (local.set $n (call $frame_get (i32.const 4096) (i32.const 16)))
+              (block $done (loop $next
+                (br_if $done (i32.ge_u (local.get $k) (local.get $n)))
+                (call $log (i32.const 256)
+                  (call $name_of
+                    (i32.shr_u (i32.load offset=36 (i32.add (i32.const 4096) (i32.mul (local.get $k) (i32.const 64)))) (i32.const 4))
+                    (i32.const 256) (i32.const 64)))
+                (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                (br $next)))
+              (if (i64.eq (call $stamp) (global.get $before))
+                (then (call $log (i32.const 16) (i32.const 4)))
+                (else (call $log (i32.const 20) (i32.const 7))))
+              (global.set $before (call $stamp))))"#
+    );
+    let bytes = wat::parse_str(text).unwrap();
+    let mut host = super::test_host();
+    load(&mut host, &mut scene, first, &script, &bytes).unwrap();
+    load(&mut host, &mut scene, other, &script, &bytes).unwrap();
+    let mut step = |scene: &mut Scene| -> Vec<String> {
+        host.update(scene, 0.1, 0.0, &input);
+        host.take_logs().into_iter().map(|l| l.text).collect()
+    };
+    let _ = step(&mut scene);
+    assert_eq!(step(&mut scene).last().map(String::as_str), Some("same"), "nothing came or went");
+    // A new object before the others: every handle moves, and the stamp says so.
+    let new = scene.create_object(None, "New").unwrap();
+    scene.reparent(new, None, Some(0)).unwrap();
+    let logs = step(&mut scene);
+    assert_eq!(logs.last().map(String::as_str), Some("changed"));
+    assert!(logs.contains(&"Scripted".to_owned()) && logs.contains(&"Other".to_owned()), "each entry's handle still names its own object: {logs:?}");
+}
+
+#[test]
 fn an_error_in_an_update_of_all_is_reported_on_the_object_the_frame_marks() {
     let input = Arc::new(Input::default());
     let (mut scene, first, script) = setup(&[]);

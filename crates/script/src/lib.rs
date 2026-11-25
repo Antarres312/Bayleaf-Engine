@@ -790,6 +790,8 @@ struct HostState<L> {
     current: usize,
     /// Where the frame of the last `frame_get` is in the module's memory, and how many objects.
     frame_at: Option<(i32, usize)>,
+    /// Each slot's object's handle in the view of this step, for the frame (0: not known).
+    slot_handles: Vec<i32>,
     /// The runtime's memory and instance limits for this store.
     limits: L,
 }
@@ -950,6 +952,7 @@ impl<L> HostState<L> {
             parked: vec![Own::default()],
             current: 0,
             frame_at: None,
+            slot_handles: Vec::new(),
         }
     }
 }

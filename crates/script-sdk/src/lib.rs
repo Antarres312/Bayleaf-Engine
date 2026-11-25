@@ -878,6 +878,12 @@ pub mod batch {
     /// The object being updated, so the host knows whose update an error was in.
     #[cfg(target_arch = "wasm32")]
     const CURRENT: u32 = 8;
+    /// The flags take the low bits of their word; the object's handle is the rest.
+    #[cfg(target_arch = "wasm32")]
+    const HANDLE_SHIFT: u32 = 4;
+    /// Other objects' transforms kept during an update of all.
+    #[cfg(target_arch = "wasm32")]
+    const OTHERS: usize = 4;
 
     #[cfg(target_arch = "wasm32")]
     struct Frame {
@@ -893,11 +899,29 @@ pub mod batch {
         /// The object the host has selected, as far as this module knows: it is selected only before
         /// a call to the host needs it.
         host: Option<usize>,
+        /// Other objects' transforms read in this update of all, by handle (0: an empty place), and
+        /// the place the next one takes. Forgotten when this module sets another object's transform.
+        others: [(i32, [f32; 9]); OTHERS],
+        next_other: usize,
+        /// The handles of the objects each slot keeps, by what it keeps them as, found while the
+        /// world's stamp was `stamp`: handles name the same objects until it changes.
+        kept: Vec<Vec<(i32, i32)>>,
+        stamp: i64,
     }
 
     #[cfg(target_arch = "wasm32")]
-    static FRAME: std::sync::Mutex<Frame> =
-        std::sync::Mutex::new(Frame { data: Vec::new(), count: 0, current: None, time: None, properties: Vec::new(), host: None });
+    static FRAME: std::sync::Mutex<Frame> = std::sync::Mutex::new(Frame {
+        data: Vec::new(),
+        count: 0,
+        current: None,
+        time: None,
+        properties: Vec::new(),
+        host: None,
+        others: [(0, [0.0; 9]); OTHERS],
+        next_other: 0,
+        kept: Vec::new(),
+        stamp: 0,
+    });
 
     #[cfg(target_arch = "wasm32")]
     fn frame() -> std::sync::MutexGuard<'static, Frame> {
@@ -940,6 +964,17 @@ pub mod batch {
             frame.time = None;
             frame.current = None;
             frame.host = None;
+            frame.others = [(0, [0.0; 9]); OTHERS];
+            // Handles found under another structure of the world may name other objects now.
+            let stamp = crate::abi::world_stamp();
+            if stamp != frame.stamp {
+                frame.stamp = stamp;
+                frame.kept.iter_mut().for_each(Vec::clear);
+            }
+            if frame.kept.len() < frame.count {
+                let count = frame.count;
+                frame.kept.resize_with(count, Vec::new);
+            }
         }
     }
 
@@ -1014,11 +1049,96 @@ pub mod batch {
     /// A new object came to the module, in `slot`: it starts with no properties read.
     pub fn attached(slot: usize) {
         #[cfg(target_arch = "wasm32")]
-        if let Some(kept) = frame().properties.get_mut(slot) {
-            kept.clear();
+        {
+            let mut frame = frame();
+            if let Some(kept) = frame.properties.get_mut(slot) {
+                kept.clear();
+            }
+            if let Some(kept) = frame.kept.get_mut(slot) {
+                kept.clear();
+            }
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = slot;
+    }
+
+    /// The current object's handle from the frame, during an update of all.
+    pub(crate) fn own_handle() -> Option<i32> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let frame = frame();
+            let handle = flags(&frame, frame.current?) >> HANDLE_SHIFT;
+            (handle != 0).then_some(handle as i32)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        None
+    }
+
+    /// The handle of the object the current object keeps as `reference`: as found since the world's
+    /// structure last changed during an update of all, else `read`.
+    pub(crate) fn kept_object(reference: i32, read: impl FnOnce() -> i32) -> i32 {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let frame = frame();
+            let Some(slot) = frame.current else {
+                drop(frame);
+                return read();
+            };
+            if let Some((_, handle)) = frame.kept.get(slot).and_then(|kept| kept.iter().find(|(r, _)| *r == reference)) {
+                return *handle;
+            }
+            drop(frame);
+            let handle = read();
+            if let Some(kept) = self::frame().kept.get_mut(slot) {
+                kept.push((reference, handle));
+            }
+            handle
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = reference;
+            read()
+        }
+    }
+
+    /// Another object's transform: as read earlier in this update of all, else `read`. The current
+    /// object's own, asked by its handle, is the frame's.
+    pub(crate) fn other_transform(handle: i32, read: impl FnOnce() -> [f32; 9]) -> [f32; 9] {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let frame = frame();
+            let Some(slot) = frame.current.filter(|_| handle > 0) else {
+                drop(frame);
+                return read();
+            };
+            if flags(&frame, slot) >> HANDLE_SHIFT == handle as u32 {
+                drop(frame);
+                return transform().unwrap_or_else(read);
+            }
+            if let Some((_, values)) = frame.others.iter().find(|(h, _)| *h == handle) {
+                return *values;
+            }
+            drop(frame);
+            let values = read();
+            let mut frame = self::frame();
+            let at = frame.next_other;
+            frame.others[at] = (handle, values);
+            frame.next_other = (at + 1) % OTHERS;
+            values
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = handle;
+            read()
+        }
+    }
+
+    /// This module set another object's transform: what it read of others is read again.
+    pub(crate) fn forget_others() {
+        #[cfg(target_arch = "wasm32")]
+        {
+            frame().others = [(0, [0.0; 9]); OTHERS];
+        }
     }
 
     /// The current object's transform from the frame, during an update of all.
@@ -1061,13 +1181,17 @@ pub mod batch {
     pub(crate) fn property(name: &str, read: impl FnOnce() -> f32) -> f32 {
         #[cfg(target_arch = "wasm32")]
         {
-            let slot = frame().current;
-            let Some(slot) = slot else { return read() };
-            if let Some((_, value)) = frame().properties.get(slot).and_then(|kept| kept.iter().find(|(n, _)| n == name)) {
+            let frame = frame();
+            let Some(slot) = frame.current else {
+                drop(frame);
+                return read();
+            };
+            if let Some((_, value)) = frame.properties.get(slot).and_then(|kept| kept.iter().find(|(n, _)| n == name)) {
                 return *value;
             }
+            drop(frame);
             let value = read();
-            if let Some(kept) = frame().properties.get_mut(slot) {
+            if let Some(kept) = self::frame().properties.get_mut(slot) {
                 kept.push((name.to_owned(), value));
             }
             value

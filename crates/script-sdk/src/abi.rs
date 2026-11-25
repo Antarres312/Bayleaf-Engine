@@ -87,6 +87,7 @@ mod raw {
         pub fn slot_select(slot: i32) -> i32;
         pub fn frame_get(out: *mut u8, cap: i32) -> i32;
         pub fn frame_set(ptr: *const u8, count: i32);
+        pub fn world_stamp() -> i64;
     }
 }
 
@@ -880,6 +881,9 @@ pub(crate) fn mouse_down(button: i32) -> bool {
 }
 
 pub(crate) fn self_handle() -> i32 {
+    if let Some(handle) = crate::batch::own_handle() {
+        return handle;
+    }
     crate::batch::sync();
     // SAFETY: no arguments; the host returns a plain number.
     unsafe { raw::self_handle() }
@@ -1011,9 +1015,11 @@ pub(crate) fn object_ref(handle: i32) -> i32 {
 }
 
 pub(crate) fn object_of(reference: i32) -> i32 {
-    crate::batch::sync();
-    // SAFETY: plain numbers in and out.
-    unsafe { raw::object_of(reference) }
+    crate::batch::kept_object(reference, || {
+        crate::batch::sync();
+        // SAFETY: plain numbers in and out.
+        unsafe { raw::object_of(reference) }
+    })
 }
 
 pub(crate) fn name_of(handle: i32) -> String {
@@ -1043,14 +1049,17 @@ pub(crate) fn component_set(handle: i32, component: &str, field: &str, value: [f
 }
 
 pub(crate) fn transform_get_of(handle: i32) -> [f32; 9] {
-    crate::batch::sync();
-    let mut values = [0.0f32; 9];
-    // SAFETY: `values` is 9 writable f32, exactly what the host writes.
-    unsafe { raw::transform_get_of(handle, values.as_mut_ptr()) }
-    values
+    crate::batch::other_transform(handle, || {
+        crate::batch::sync();
+        let mut values = [0.0f32; 9];
+        // SAFETY: `values` is 9 writable f32, exactly what the host writes.
+        unsafe { raw::transform_get_of(handle, values.as_mut_ptr()) }
+        values
+    })
 }
 
 pub(crate) fn transform_set_of(handle: i32, values: &[f32; 9]) {
+    crate::batch::forget_others();
     crate::batch::sync();
     // SAFETY: `values` is 9 readable f32, exactly what the host reads.
     unsafe { raw::transform_set_of(handle, values.as_ptr()) }
@@ -1142,6 +1151,7 @@ pub(crate) fn position_get_of(handle: i32) -> [f64; 3] {
 }
 
 pub(crate) fn position_set_of(handle: i32, values: &[f64; 3]) {
+    crate::batch::forget_others();
     crate::batch::sync();
     // SAFETY: `values` is 3 readable f64, exactly what the host reads.
     unsafe { raw::position_set_of(handle, values.as_ptr()) }
@@ -1351,6 +1361,13 @@ pub(crate) fn frame_get(buffer: &mut [u8], room: usize) -> i32 {
     let room = i32::try_from(room.min(buffer.len() / 64)).unwrap_or(0);
     // SAFETY: the host writes at most `room` entries of 64 bytes, which `buffer` holds.
     unsafe { raw::frame_get(buffer.as_mut_ptr(), room) }
+}
+
+/// A number that stays the same while handles name the same objects (the world's structure).
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn world_stamp() -> i64 {
+    // SAFETY: no arguments; a plain number out.
+    unsafe { raw::world_stamp() }
 }
 
 /// Hands the frame back: the host applies the transforms marked changed.

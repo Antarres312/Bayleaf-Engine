@@ -724,6 +724,15 @@ impl ScriptHost {
                 *view.changed = false;
                 *view.running = true;
             }
+            {
+                let handles = &mut store.data_mut().slot_handles;
+                handles.clear();
+                handles.resize(places.iter().map(|p| self.instances[*p].slot + 1).max().unwrap_or(0), 0);
+                for &place in &places {
+                    let entry = &self.instances[place];
+                    handles[entry.slot] = i32::try_from(entry.view_index + 1).unwrap_or(0);
+                }
+            }
             let Some(first) = places.first().map(|p| &self.instances[*p]) else { continue };
             let (module_name, script_name) = (first.module_name.clone(), first.script_name.clone());
             let started = self.timing.then(bayleaf_core::time::Instant::now);
@@ -2423,11 +2432,14 @@ const FRAME_PROPERTIES: u32 = 2;
 const FRAME_CHANGED: u32 = 4;
 /// (From the script) the object being updated, so an error is reported on it.
 const FRAME_CURRENT: u32 = 8;
+/// The flags take the low bits of their word; the object's handle is the rest.
+const FRAME_HANDLE_SHIFT: u32 = 4;
 
 /// The frame functions: a module that runs many objects reads every object's transform in one
 /// call before its update and writes the changed ones back in one call after it, instead of a call
 /// per object for each.
 fn link_frames(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
+    linker.func_wrap("bayleaf", "world_stamp", |caller: Caller<'_, HostState>| -> i64 { caller.data().world.layout().map_or(0, |l| l.structure as i64) })?;
     linker.func_wrap("bayleaf", "frame_get", |mut caller: Caller<'_, HostState>, out: i32, cap: i32| -> Result<i32, Error> {
         let state = caller.data_mut();
         let count = state.parked.len();
@@ -2436,6 +2448,7 @@ fn link_frames(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
             return Ok(count as i32);
         }
         let mut bytes = vec![0u8; count * FRAME_ENTRY];
+        let handles = std::mem::take(&mut state.slot_handles);
         for (slot, entry) in bytes.as_chunks_mut::<FRAME_ENTRY>().0.iter_mut().enumerate() {
             let Some(view) = state.slot_view(slot) else { continue };
             for (i, v) in view.transform.iter().enumerate() {
@@ -2445,11 +2458,13 @@ fn link_frames(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
             if std::mem::take(view.properties_changed) {
                 flags |= FRAME_PROPERTIES;
             }
+            flags |= handles.get(slot).map_or(0, |h| (*h as u32) << FRAME_HANDLE_SHIFT);
             entry[36..40].copy_from_slice(&flags.to_le_bytes());
             for (i, v) in view.position.iter().enumerate() {
                 entry[40 + i * 8..48 + i * 8].copy_from_slice(&v.to_le_bytes());
             }
         }
+        caller.data_mut().slot_handles = handles;
         write_guest(&mut caller, out, &bytes, "frame_get")?;
         caller.data_mut().frame_at = Some((out, count));
         Ok(count as i32)
