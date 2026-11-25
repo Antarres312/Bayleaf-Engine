@@ -35,6 +35,7 @@ mod script_panel;
 mod style_editor;
 mod theme;
 mod thumbnails;
+mod timeline_view;
 mod value_editor;
 pub mod world_interface;
 
@@ -77,6 +78,8 @@ pub struct Editor {
     /// The other selected objects (Ctrl or Shift + click), in the order they were added.
     also_selected: Vec<StableId>,
     profiler_view: profiler_view::ProfilerView,
+    /// The Keyframes panel: the selected keys and where its keyboard is.
+    keyframes_view: timeline_view::KeyframesView,
     /// The selection of each level underneath an open prefab, the scene's first.
     prefab_selections: Vec<(Option<StableId>, Vec<StableId>)>,
     /// Bumped when an edit gesture (a drag, a text field) ends, so the next edit gets its own undo step.
@@ -168,6 +171,7 @@ impl Default for Editor {
             gesture: 0,
             prefab_selections: Vec::new(),
             profiler_view: profiler_view::ProfilerView::default(),
+            keyframes_view: timeline_view::KeyframesView::default(),
             title: String::new(),
             scene_view: scene_view::SceneView::new(),
             game_view: game_view::GameView::default(),
@@ -1010,7 +1014,10 @@ impl Editor {
         // Ctrl+S saves the graph while it is in use, also while typing in its panel; otherwise the scene.
         let graph_in_use = self.session.graph().is_some() && (self.graph_view.focused || self.graph_view.active);
         // With a prefab open on its own, Ctrl+S saves the prefab (unless the graph is in use).
+        // While the Keyframes panel has the keyboard, Ctrl+S saves its keyframe animation.
+        let keyframe_keys = self.keyframes_view.focused && self.session.timeline().is_some();
         if !graph_in_use
+            && !keyframe_keys
             && !self.session.open_prefabs().is_empty()
             && ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S)))
         {
@@ -1019,6 +1026,9 @@ impl Editor {
         if graph_in_use && ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S))) {
             graph_view::save_open(self);
         }
+        if keyframe_keys && ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S))) {
+            timeline_view::save(self);
+        }
         // Only typing blocks shortcuts; a focused button or the scene view does not.
         if ctx.text_edit_focused() {
             return;
@@ -1026,7 +1036,7 @@ impl Editor {
         // While a graph node or pin has focus, plain keys such as Delete and the arrows belong to the graph.
         let graph_keys = self.graph_view.focused || (self.graph_view.active && self.session.graph().is_some());
         // Likewise a file in the Project panel: Delete moves the file, not the selected object.
-        let panel_keys = graph_keys || self.project.focused;
+        let panel_keys = graph_keys || self.project.focused || keyframe_keys;
         // F2 renames the selected object in place, in the hierarchy.
         if let Some(id) = self.selected
             && !panel_keys
@@ -1051,6 +1061,9 @@ impl Editor {
         if graph_keys {
             let duplicate = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::D));
             graph_view::clipboard_keys(self, copy, cut, paste, duplicate);
+        } else if keyframe_keys {
+            // While a key or track has focus, the clipboard keys copy and paste keys.
+            timeline_view::clipboard_keys(self, copy, paste);
         } else {
             if copy || cut {
                 self.copy_selection(cut);
@@ -1068,9 +1081,12 @@ impl Editor {
             .filter_map(|c| parse_shortcut(c.shortcut).map(|s| (c.id, s)))
             .filter(|(_, s)| !(panel_keys && s.modifiers.is_none()))
             // A file in the Project panel takes Alt+Left and Alt+Right to go back and forth
-            // through its folders, not to move the selected object.
+            // through its folders, not to move the selected object; a key in the Keyframes panel
+            // takes them to move in time.
             .filter(|(_, s)| {
-                !(self.project.focused && s.modifiers == egui::Modifiers::ALT && matches!(s.logical_key, egui::Key::ArrowLeft | egui::Key::ArrowRight))
+                !((self.project.focused || keyframe_keys)
+                    && s.modifiers == egui::Modifiers::ALT
+                    && matches!(s.logical_key, egui::Key::ArrowLeft | egui::Key::ArrowRight))
             })
             .collect();
         for (id, shortcut) in shortcuts {
@@ -1170,6 +1186,9 @@ impl Editor {
                     && let Some(created) = result.get("id").and_then(Value::as_str).and_then(|s| StableId::parse_hex(s).ok())
                 {
                     self.selected = Some(created);
+                }
+                if matches!(id, "timeline.new" | "timeline.open") {
+                    self.show_panel(Panel::Keyframes);
                 }
                 if matches!(id, "graph.new" | "graph.open")
                     && let Some(open) = self.session.graph().map(|g| g.id)

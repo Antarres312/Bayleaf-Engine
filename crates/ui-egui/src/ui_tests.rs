@@ -6,6 +6,8 @@ use serde_json::json;
 
 use crate::Editor;
 
+mod keyframes;
+
 fn harness() -> Harness<'static, Editor> {
     // The size of a typical editor window, so panels have their real widths.
     let mut harness = Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(|ui, editor: &mut Editor| editor.ui(ui, None), Editor::default());
