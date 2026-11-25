@@ -5,6 +5,7 @@ use crate::i18n::tl;
 use bayleaf_engine::scene::components::{MAX_PROPERTY_ITEMS, MAX_PROPERTY_TEXT, PropertyType, PropertyValue};
 use serde_json::{Number, Value};
 
+use crate::drag_wrap::WrapDrag;
 use crate::theme::{self, GAP, LABEL_WIDTH, ROW_HEIGHT, Tokens};
 
 /// What happened to a value this frame.
@@ -173,7 +174,7 @@ fn edit_number(ui: &mut egui::Ui, n: &mut Number, label: egui::Id, width: f32) -
             // otherwise widen a narrow field past its row.
             ui.spacing_mut().interact_size.x = 0.0;
             ui.spacing_mut().button_padding.x = 3.0;
-            ui.add_sized([width, ROW_HEIGHT], drag)
+            ui.add_sized([width, ROW_HEIGHT], drag).wrap_drag()
         })
         .inner
         .labelled_by(label);
@@ -619,8 +620,8 @@ fn property_field(
                     ui.spacing_mut().slider_width = (width - 64.0).max(40.0);
                     ui.add(egui::Slider::new(n, low..=high).max_decimals(3))
                 }
-                Some((low, high)) => ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(n).speed(0.02).max_decimals(3).range(low..=high)),
-                None => ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(n).speed(0.02).max_decimals(3)),
+                Some((low, high)) => ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(n).speed(0.02).max_decimals(3).range(low..=high)).wrap_drag(),
+                None => ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(n).speed(0.02).max_decimals(3)).wrap_drag(),
             }
             .labelled_by(label);
             Outcome::from_response(&response)
@@ -633,7 +634,7 @@ fn property_field(
                     ui.spacing_mut().slider_width = (width - 64.0).max(40.0);
                     ui.add(egui::Slider::new(&mut whole, low..=high))
                 }
-                _ => ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(&mut whole).speed(0.1).range(low..=high)),
+                _ => ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(&mut whole).speed(0.1).range(low..=high)).wrap_drag(),
             }
             .labelled_by(label);
             *n = f64::from(whole);

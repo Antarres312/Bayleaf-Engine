@@ -10,6 +10,7 @@ use bayleaf_engine::asset_info::{self, Info};
 use bayleaf_render::assets::import::{ColorSpace, Compression, ImportSettings, UpAxis};
 
 use crate::Editor;
+use crate::drag_wrap::WrapDrag;
 use crate::theme::{self, ROW_HEIGHT};
 
 /// Largest preview, in points.
@@ -346,6 +347,7 @@ fn import_settings(ui: &mut egui::Ui, settings: &mut ImportSettings) -> bool {
                         [width.min(120.0), ROW_HEIGHT - 4.0],
                         egui::DragValue::new(&mut model.scale).speed(0.01).range(0.0001..=10_000.0).max_decimals(4),
                     )
+                    .wrap_drag()
                     .labelled_by(label)
                     .on_hover_text(tl("Every position times this: 0.01 for a model made in centimetres"));
                 done |= response.drag_stopped() || response.lost_focus() || (response.changed() && !response.dragged() && !response.has_focus());
