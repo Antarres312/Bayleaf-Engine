@@ -1,0 +1,1442 @@
+{
+  "domain": "material",
+  "extension": "bmaterial",
+  "fractional": [],
+  "label": "Material",
+  "nodes": [
+    {
+      "category": "Output",
+      "description": "What the surface looks like, lit by the engine. A material has one output: this or Custom Lighting Output.",
+      "inputs": [
+        {
+          "default": {
+            "color": [
+              0.800000011920929,
+              0.800000011920929,
+              0.800000011920929
+            ]
+          },
+          "label": "Base Color",
+          "name": "baseColor",
+          "type": "color"
+        },
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Metallic",
+          "name": "metallic",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 0.5
+          },
+          "label": "Roughness",
+          "name": "roughness",
+          "type": "float"
+        },
+        {
+          "default": {
+            "color": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "Emission",
+          "name": "emissive",
+          "type": "color"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Opacity",
+          "name": "opacity",
+          "type": "float"
+        }
+      ],
+      "kind": "output",
+      "label": "Material Output",
+      "outputs": [],
+      "settings": [
+        {
+          "kind": {
+            "float": 0.0
+          },
+          "label": "Outline Width",
+          "name": "outlineWidth"
+        },
+        {
+          "kind": {
+            "color": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "Outline Color",
+          "name": "outlineColor"
+        }
+      ],
+      "unique": true
+    },
+    {
+      "category": "Output",
+      "description": "The colour the surface shows, worked out by the graph itself (with Main Light and Other Lights) instead of the engine's lighting.",
+      "inputs": [
+        {
+          "default": {
+            "color": [
+              0.800000011920929,
+              0.800000011920929,
+              0.800000011920929
+            ]
+          },
+          "label": "Color",
+          "name": "color",
+          "type": "color"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Opacity",
+          "name": "alpha",
+          "type": "float"
+        }
+      ],
+      "kind": "customLighting",
+      "label": "Custom Lighting Output",
+      "outputs": [],
+      "settings": [
+        {
+          "kind": {
+            "float": 0.0
+          },
+          "label": "Outline Width",
+          "name": "outlineWidth"
+        },
+        {
+          "kind": {
+            "color": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "Outline Color",
+          "name": "outlineColor"
+        }
+      ],
+      "unique": true
+    },
+    {
+      "category": "Lights",
+      "description": "The main light at this point (the sun when there is one): the direction towards it, its colour and strength, and how much of it the shadows let through (1 lit).",
+      "inputs": [],
+      "kind": "mainLight",
+      "label": "Main Light",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Direction",
+          "name": "direction",
+          "type": "vec3"
+        },
+        {
+          "default": null,
+          "label": "Color",
+          "name": "color",
+          "type": "color"
+        },
+        {
+          "default": null,
+          "label": "Shadow",
+          "name": "shadow",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Lights",
+      "description": "The light every other light gives this point, added up (facing them, past shadows).",
+      "inputs": [],
+      "kind": "otherLights",
+      "label": "Other Lights",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Color",
+          "name": "color",
+          "type": "color"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Inputs",
+      "description": "From the point towards the camera.",
+      "inputs": [],
+      "kind": "viewDirection",
+      "label": "View Direction",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Direction",
+          "name": "direction",
+          "type": "vec3"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Inputs",
+      "description": "Where the pixel is on the screen, 0 to 1 from the top left, as a vector (x, y, 0).",
+      "inputs": [],
+      "kind": "screenPosition",
+      "label": "Screen Position",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Position",
+          "name": "position",
+          "type": "vec3"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "How much two directions agree: 1 the same, 0 at right angles, −1 opposite (for unit vectors).",
+      "inputs": [
+        {
+          "default": null,
+          "label": "A",
+          "name": "a",
+          "type": "vec3"
+        },
+        {
+          "default": null,
+          "label": "B",
+          "name": "b",
+          "type": "vec3"
+        }
+      ],
+      "kind": "dot",
+      "label": "Dot Product",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "The same direction with length 1.",
+      "inputs": [
+        {
+          "default": null,
+          "label": "Vector",
+          "name": "vector",
+          "type": "vec3"
+        }
+      ],
+      "kind": "normalize",
+      "label": "Normalize",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Vector",
+          "name": "vector",
+          "type": "vec3"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "0 below the edge, 1 from the edge up: a hard band.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.5
+          },
+          "label": "Edge",
+          "name": "edge",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Value",
+          "name": "value",
+          "type": "any"
+        }
+      ],
+      "kind": "step",
+      "label": "Step",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "0 below Low, 1 above High, a smooth curve between: a soft band.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Low",
+          "name": "low",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "High",
+          "name": "high",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 0.5
+          },
+          "label": "Value",
+          "name": "value",
+          "type": "any"
+        }
+      ],
+      "kind": "smoothstep",
+      "label": "Smooth Step",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "Cuts values from 0 to 1 into a number of flat bands (2 or more).",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Value",
+          "name": "value",
+          "type": "any"
+        },
+        {
+          "default": {
+            "float": 3.0
+          },
+          "label": "Bands",
+          "name": "steps",
+          "type": "float"
+        }
+      ],
+      "kind": "posterize",
+      "label": "Posterize",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "Moves a value from one range to another: From Low becomes To Low and From High To High.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.5
+          },
+          "label": "Value",
+          "name": "value",
+          "type": "any"
+        },
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "From Low",
+          "name": "fromLow",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "From High",
+          "name": "fromHigh",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "To Low",
+          "name": "toLow",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "To High",
+          "name": "toHigh",
+          "type": "float"
+        }
+      ],
+      "kind": "remap",
+      "label": "Remap",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Values",
+      "description": "A fixed number.",
+      "inputs": [],
+      "kind": "number",
+      "label": "Number",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Value",
+          "name": "value",
+          "type": "float"
+        }
+      ],
+      "settings": [
+        {
+          "kind": {
+            "float": 1.0
+          },
+          "label": "Value",
+          "name": "value"
+        }
+      ],
+      "unique": false
+    },
+    {
+      "category": "Values",
+      "description": "A fixed colour.",
+      "inputs": [],
+      "kind": "color",
+      "label": "Color",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Color",
+          "name": "color",
+          "type": "color"
+        }
+      ],
+      "settings": [
+        {
+          "kind": {
+            "color": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "label": "Color",
+          "name": "color"
+        }
+      ],
+      "unique": false
+    },
+    {
+      "category": "Values",
+      "description": "A vector from three numbers.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "X",
+          "name": "x",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Y",
+          "name": "y",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Z",
+          "name": "z",
+          "type": "float"
+        }
+      ],
+      "kind": "vector",
+      "label": "Make Vector",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Vector",
+          "name": "vector",
+          "type": "vec3"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Values",
+      "description": "The three numbers of a vector or colour.",
+      "inputs": [
+        {
+          "default": null,
+          "label": "Vector",
+          "name": "vector",
+          "type": "vec3"
+        }
+      ],
+      "kind": "split",
+      "label": "Split Vector",
+      "outputs": [
+        {
+          "default": null,
+          "label": "X",
+          "name": "x",
+          "type": "float"
+        },
+        {
+          "default": null,
+          "label": "Y",
+          "name": "y",
+          "type": "float"
+        },
+        {
+          "default": null,
+          "label": "Z",
+          "name": "z",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Inputs",
+      "description": "The colour set on the object's Mesh component.",
+      "inputs": [],
+      "kind": "objectColor",
+      "label": "Object Color",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Color",
+          "name": "color",
+          "type": "color"
+        },
+        {
+          "default": null,
+          "label": "Alpha",
+          "name": "alpha",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Inputs",
+      "description": "Seconds since the view started; animates the material.",
+      "inputs": [],
+      "kind": "time",
+      "label": "Time",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Seconds",
+          "name": "seconds",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Inputs",
+      "description": "Where the pixel is in the world.",
+      "inputs": [],
+      "kind": "position",
+      "label": "World Position",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Position",
+          "name": "position",
+          "type": "vec3"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Inputs",
+      "description": "Where on the shape's surface the pixel is: 0 to 1 across each face, as a vector (u, v, 0).",
+      "inputs": [],
+      "kind": "uv",
+      "label": "Texture Coordinates",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Coordinates",
+          "name": "uv",
+          "type": "vec3"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Inputs",
+      "description": "Colours from a PNG image, laid over the surface by its texture coordinates.",
+      "inputs": [
+        {
+          "default": {
+            "implicit": "uv"
+          },
+          "label": "Coordinates",
+          "name": "uv",
+          "type": "vec3"
+        }
+      ],
+      "kind": "texture",
+      "label": "Image",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Color",
+          "name": "color",
+          "type": "color"
+        },
+        {
+          "default": null,
+          "label": "Alpha",
+          "name": "alpha",
+          "type": "float"
+        }
+      ],
+      "settings": [
+        {
+          "kind": {
+            "text": ""
+          },
+          "label": "Image File",
+          "name": "image"
+        }
+      ],
+      "unique": false
+    },
+    {
+      "category": "Inputs",
+      "description": "Which way the surface faces, in world space.",
+      "inputs": [],
+      "kind": "normal",
+      "label": "Normal",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Normal",
+          "name": "normal",
+          "type": "vec3"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Inputs",
+      "description": "1 where the surface turns away from the viewer, 0 where it faces them.",
+      "inputs": [
+        {
+          "default": {
+            "float": 5.0
+          },
+          "label": "Sharpness",
+          "name": "power",
+          "type": "float"
+        }
+      ],
+      "kind": "fresnel",
+      "label": "Edge Glow",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Factor",
+          "name": "factor",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "A + B.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "A",
+          "name": "a",
+          "type": "any"
+        },
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "B",
+          "name": "b",
+          "type": "any"
+        }
+      ],
+      "kind": "add",
+      "label": "Add",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "A − B.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "A",
+          "name": "a",
+          "type": "any"
+        },
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "B",
+          "name": "b",
+          "type": "any"
+        }
+      ],
+      "kind": "subtract",
+      "label": "Subtract",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "A × B.",
+      "inputs": [
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "A",
+          "name": "a",
+          "type": "any"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "B",
+          "name": "b",
+          "type": "any"
+        }
+      ],
+      "kind": "multiply",
+      "label": "Multiply",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "A ÷ B.",
+      "inputs": [
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "A",
+          "name": "a",
+          "type": "any"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "B",
+          "name": "b",
+          "type": "any"
+        }
+      ],
+      "kind": "divide",
+      "label": "Divide",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "Linear interpolation (a blend): from A (factor 0) to B (factor 1) on a straight line; factors outside 0 to 1 go past A or B.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "A",
+          "name": "a",
+          "type": "any"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "B",
+          "name": "b",
+          "type": "any"
+        },
+        {
+          "default": {
+            "float": 0.5
+          },
+          "label": "Factor",
+          "name": "factor",
+          "type": "float"
+        }
+      ],
+      "kind": "blend",
+      "label": "Lerp",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "Where the value lies from A to B: 0 at A, 1 at B, 0.5 halfway, and past 0 or 1 beyond them; 0 when A and B are equal.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "A",
+          "name": "a",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "B",
+          "name": "b",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 0.5
+          },
+          "label": "Value",
+          "name": "value",
+          "type": "any"
+        }
+      ],
+      "kind": "inverseLerp",
+      "label": "Inverse Lerp",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "Base to the power of the exponent.",
+      "inputs": [
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Base",
+          "name": "base",
+          "type": "any"
+        },
+        {
+          "default": {
+            "float": 2.0
+          },
+          "label": "Exponent",
+          "name": "exponent",
+          "type": "float"
+        }
+      ],
+      "kind": "power",
+      "label": "Power",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "The number that times itself gives the input (0 below 0); for a vector, of each part.",
+      "inputs": [
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Value",
+          "name": "value",
+          "type": "any"
+        }
+      ],
+      "kind": "squareRoot",
+      "label": "Square Root",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "How long a vector is: the distance from 0 to the point it names.",
+      "inputs": [
+        {
+          "default": null,
+          "label": "Vector",
+          "name": "vector",
+          "type": "vec3"
+        }
+      ],
+      "kind": "vectorLength",
+      "label": "Vector Length",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Length",
+          "name": "length",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "1 − the input.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Value",
+          "name": "value",
+          "type": "any"
+        }
+      ],
+      "kind": "oneMinus",
+      "label": "One Minus",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "Keeps the input between 0 and 1.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Value",
+          "name": "value",
+          "type": "any"
+        }
+      ],
+      "kind": "clamp",
+      "label": "Clamp 0 to 1",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Math",
+      "description": "The sine of the input, in radians.",
+      "inputs": [
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Value",
+          "name": "value",
+          "type": "any"
+        }
+      ],
+      "kind": "sine",
+      "label": "Sine",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Result",
+          "name": "result",
+          "type": "any"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Patterns",
+      "description": "Alternating 0 and 1 cubes in space.",
+      "inputs": [
+        {
+          "default": {
+            "implicit": "position"
+          },
+          "label": "Position",
+          "name": "position",
+          "type": "vec3"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Cells per Unit",
+          "name": "scale",
+          "type": "float"
+        }
+      ],
+      "kind": "checker",
+      "label": "Checker",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Value",
+          "name": "value",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Patterns",
+      "description": "Smooth random values between 0 and 1.",
+      "inputs": [
+        {
+          "default": {
+            "implicit": "position"
+          },
+          "label": "Position",
+          "name": "position",
+          "type": "vec3"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Scale",
+          "name": "scale",
+          "type": "float"
+        }
+      ],
+      "kind": "noise",
+      "label": "Noise",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Value",
+          "name": "value",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Patterns",
+      "description": "Noise in layers, each finer and fainter than the one before: Smooth for clouds and terrain, Ridged for sharp crests, Billowy for puffy shapes. Detail is how many layers (1 to 8), Roughness how strong each finer one is, Lacunarity how much finer.",
+      "inputs": [
+        {
+          "default": {
+            "implicit": "position"
+          },
+          "label": "Position",
+          "name": "position",
+          "type": "vec3"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Scale",
+          "name": "scale",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 4.0
+          },
+          "label": "Detail",
+          "name": "detail",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 0.5
+          },
+          "label": "Roughness",
+          "name": "roughness",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 2.0
+          },
+          "label": "Lacunarity",
+          "name": "lacunarity",
+          "type": "float"
+        }
+      ],
+      "kind": "fractalNoise",
+      "label": "Fractal Noise",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Value",
+          "name": "value",
+          "type": "float"
+        }
+      ],
+      "settings": [
+        {
+          "kind": {
+            "choice": [
+              "Smooth",
+              "Ridged",
+              "Billowy"
+            ]
+          },
+          "label": "Kind",
+          "name": "kind"
+        }
+      ],
+      "unique": false
+    },
+    {
+      "category": "Patterns",
+      "description": "Cells round scattered points: Distance to the nearest point (0 at it), Edge (0 on a border between cells), and a random value 0 to 1 for each cell. Randomness 0 lines the points up in a grid.",
+      "inputs": [
+        {
+          "default": {
+            "implicit": "position"
+          },
+          "label": "Position",
+          "name": "position",
+          "type": "vec3"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Scale",
+          "name": "scale",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Randomness",
+          "name": "randomness",
+          "type": "float"
+        }
+      ],
+      "kind": "voronoi",
+      "label": "Voronoi",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Distance",
+          "name": "distance",
+          "type": "float"
+        },
+        {
+          "default": null,
+          "label": "Edge",
+          "name": "edge",
+          "type": "float"
+        },
+        {
+          "default": null,
+          "label": "Cell Value",
+          "name": "cell",
+          "type": "float"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    },
+    {
+      "category": "Patterns",
+      "description": "Soft stripes from 0 to 1: Bands along X, or Rings round the centre. Distortion bends them with noise.",
+      "inputs": [
+        {
+          "default": {
+            "implicit": "position"
+          },
+          "label": "Position",
+          "name": "position",
+          "type": "vec3"
+        },
+        {
+          "default": {
+            "float": 1.0
+          },
+          "label": "Scale",
+          "name": "scale",
+          "type": "float"
+        },
+        {
+          "default": {
+            "float": 0.0
+          },
+          "label": "Distortion",
+          "name": "distortion",
+          "type": "float"
+        }
+      ],
+      "kind": "waves",
+      "label": "Waves",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Value",
+          "name": "value",
+          "type": "float"
+        }
+      ],
+      "settings": [
+        {
+          "kind": {
+            "choice": [
+              "Bands",
+              "Rings"
+            ]
+          },
+          "label": "Kind",
+          "name": "kind"
+        }
+      ],
+      "unique": false
+    },
+    {
+      "category": "Patterns",
+      "description": "0 to 1 across the coordinates: Linear along X, Quadratic (eased), Spherical (1 at the middle, 0 half a unit away) or Radial (round the middle); the middle is X and Y 0.5, the centre of texture coordinates.",
+      "inputs": [
+        {
+          "default": {
+            "implicit": "uv"
+          },
+          "label": "Coordinates",
+          "name": "uv",
+          "type": "vec3"
+        }
+      ],
+      "kind": "gradient",
+      "label": "Gradient",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Value",
+          "name": "value",
+          "type": "float"
+        }
+      ],
+      "settings": [
+        {
+          "kind": {
+            "choice": [
+              "Linear",
+              "Quadratic",
+              "Spherical",
+              "Radial"
+            ]
+          },
+          "label": "Kind",
+          "name": "kind"
+        }
+      ],
+      "unique": false
+    },
+    {
+      "category": "Patterns",
+      "description": "A different random value 0 to 1 for every point (white noise), and a random colour; Scale sets how fine.",
+      "inputs": [
+        {
+          "default": {
+            "implicit": "position"
+          },
+          "label": "Position",
+          "name": "position",
+          "type": "vec3"
+        },
+        {
+          "default": {
+            "float": 100.0
+          },
+          "label": "Scale",
+          "name": "scale",
+          "type": "float"
+        }
+      ],
+      "kind": "random",
+      "label": "Random",
+      "outputs": [
+        {
+          "default": null,
+          "label": "Value",
+          "name": "value",
+          "type": "float"
+        },
+        {
+          "default": null,
+          "label": "Color",
+          "name": "color",
+          "type": "color"
+        }
+      ],
+      "settings": [],
+      "unique": false
+    }
+  ],
+  "starter": [
+    [
+      "output",
+      [
+        360.0,
+        40.0
+      ]
+    ]
+  ]
+}

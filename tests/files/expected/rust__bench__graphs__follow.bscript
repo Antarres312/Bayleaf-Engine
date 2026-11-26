@@ -92,7 +92,6 @@
         800.0
       ],
       "values": {
-        "default": 0.5,
         "name": "rate"
       }
     },
@@ -317,6 +316,13 @@
         "node": 15,
         "pin": "position"
       }
+    }
+  ],
+  "properties": [
+    {
+      "name": "rate",
+      "type": "number",
+      "default": 0.5
     }
   ]
 }

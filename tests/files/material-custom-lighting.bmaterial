@@ -1,0 +1,29 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "material",
+  "nodes": [
+    { "id": 1, "kind": "customLighting", "position": [600, 0], "values": { "outlineWidth": 0.05, "outlineColor": [0.1, 0.1, 0.2] } },
+    { "id": 2, "kind": "mainLight", "position": [0, 0] },
+    { "id": 3, "kind": "normal", "position": [0, 80] },
+    { "id": 4, "kind": "dot", "position": [150, 40] },
+    { "id": 5, "kind": "multiply", "position": [450, 0] },
+    { "id": 6, "kind": "number", "position": [450, 120], "values": { "value": 0.5 } },
+    { "id": 7, "kind": "posterize", "position": [300, 40] },
+    { "id": 8, "kind": "otherLights", "position": [0, 160] },
+    { "id": 9, "kind": "add", "position": [300, 160] },
+    { "id": 10, "kind": "number", "position": [150, 120] }
+  ],
+  "links": [
+    { "from": { "node": 2, "pin": "direction" }, "to": { "node": 4, "pin": "a" } },
+    { "from": { "node": 3, "pin": "normal" }, "to": { "node": 4, "pin": "b" } },
+    { "from": { "node": 4, "pin": "result" }, "to": { "node": 7, "pin": "value" } },
+    { "from": { "node": 10, "pin": "value" }, "to": { "node": 7, "pin": "steps" } },
+    { "from": { "node": 2, "pin": "color" }, "to": { "node": 9, "pin": "a" } },
+    { "from": { "node": 8, "pin": "color" }, "to": { "node": 9, "pin": "b" } },
+    { "from": { "node": 7, "pin": "result" }, "to": { "node": 5, "pin": "a" } },
+    { "from": { "node": 9, "pin": "result" }, "to": { "node": 5, "pin": "b" } },
+    { "from": { "node": 5, "pin": "result" }, "to": { "node": 1, "pin": "color" } },
+    { "from": { "node": 6, "pin": "value" }, "to": { "node": 1, "pin": "alpha" } }
+  ]
+}

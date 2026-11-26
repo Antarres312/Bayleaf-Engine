@@ -1,0 +1,452 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "script",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "update",
+      "position": [
+        40.0,
+        200.0
+      ]
+    },
+    {
+      "id": 7,
+      "kind": "property",
+      "position": [
+        0.1,
+        -0.0
+      ],
+      "values": {
+        "name": "speed"
+      }
+    },
+    {
+      "id": 3,
+      "kind": "setPosition",
+      "position": [
+        123456.79,
+        -999999.9
+      ]
+    },
+    {
+      "id": 8,
+      "kind": "number",
+      "position": [
+        0.0,
+        300.0
+      ],
+      "values": {
+        "value": 1e-7
+      }
+    },
+    {
+      "id": 9,
+      "kind": "setVariable",
+      "position": [
+        0.0,
+        400.0
+      ],
+      "values": {
+        "name": "ratio",
+        "value": 18446744073709551615
+      }
+    },
+    {
+      "id": 10,
+      "kind": "wholeNumber",
+      "position": [
+        0.0,
+        500.0
+      ],
+      "values": {
+        "value": 12
+      }
+    },
+    {
+      "id": 11,
+      "kind": "text",
+      "position": [
+        0.0,
+        600.0
+      ],
+      "values": {
+        "value": "tab\there \"quoted\" back\\slash \u0001 😀 é"
+      }
+    },
+    {
+      "id": 12,
+      "kind": "log",
+      "position": [
+        0.0,
+        700.0
+      ],
+      "values": {
+        "message": "🌿 leaf\u001f"
+      }
+    },
+    {
+      "id": 13,
+      "kind": "number",
+      "position": [
+        0.0,
+        800.0
+      ],
+      "values": {
+        "value": 1e-300
+      }
+    },
+    {
+      "id": 14,
+      "kind": "vector",
+      "position": [
+        0.0,
+        900.0
+      ],
+      "values": {
+        "x": 1500.0,
+        "y": 0.30000000000000004,
+        "z": -0.0
+      }
+    },
+    {
+      "id": 15,
+      "kind": "number",
+      "position": [
+        0.0,
+        1000.0
+      ],
+      "values": {
+        "value": 1.8446744073709552e+19
+      }
+    },
+    {
+      "id": 16,
+      "kind": "number",
+      "position": [
+        0.0,
+        1100.0
+      ],
+      "values": {
+        "value": -9.223372036854776e+18
+      }
+    },
+    {
+      "id": 17,
+      "kind": "wholeNumber",
+      "position": [
+        0.0,
+        1200.0
+      ],
+      "values": {
+        "value": -2147483648
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": {
+        "node": 1,
+        "pin": "then"
+      },
+      "to": {
+        "node": 3,
+        "pin": "run"
+      }
+    },
+    {
+      "from": {
+        "node": 7,
+        "pin": "value"
+      },
+      "to": {
+        "node": 3,
+        "pin": "position"
+      }
+    }
+  ],
+  "comments": [
+    {
+      "id": 2,
+      "text": "Moves \"up\"\nand down 😀",
+      "position": [
+        1e-7,
+        1000000.0
+      ],
+      "size": [
+        120.0,
+        60.5
+      ]
+    }
+  ],
+  "variables": [
+    {
+      "name": "ratio",
+      "type": "number",
+      "start": 1e+20
+    },
+    {
+      "name": "small",
+      "type": "number",
+      "start": 1e-7
+    },
+    {
+      "name": "zero",
+      "type": "number",
+      "start": -0.0
+    },
+    {
+      "name": "count",
+      "type": "wholeNumber",
+      "start": -2147483648
+    },
+    {
+      "name": "aim",
+      "type": "vector",
+      "start": [
+        0.1,
+        0.2,
+        3
+      ]
+    },
+    {
+      "name": "tint",
+      "type": "color",
+      "start": [
+        1,
+        0.5,
+        0.25
+      ]
+    },
+    {
+      "name": "on",
+      "type": "trueFalse",
+      "start": true
+    },
+    {
+      "name": "say",
+      "type": "text",
+      "start": "🌿 leaf\u001f"
+    },
+    {
+      "name": "target",
+      "type": "object",
+      "start": null
+    },
+    {
+      "name": "scores",
+      "type": "wholeNumber",
+      "shape": "list",
+      "start": [
+        3,
+        -4,
+        2147483647
+      ]
+    },
+    {
+      "name": "byLevel",
+      "type": "number",
+      "shape": "map",
+      "key": "wholeNumber",
+      "start": {
+        " 3": 0.5,
+        "+4": -1,
+        "1": 2,
+        "2": 1.5
+      }
+    },
+    {
+      "name": "byWeight",
+      "type": "text",
+      "shape": "map",
+      "key": "number",
+      "start": {
+        "-0": "none",
+        ".5": "half",
+        "1e3": "kilo",
+        "7.": "seven"
+      }
+    },
+    {
+      "name": "byPlace",
+      "type": "trueFalse",
+      "shape": "map",
+      "key": "vector",
+      "start": {
+        " 0, -1 ,2.5": false,
+        "1,2,3": true
+      }
+    },
+    {
+      "name": "byFlag",
+      "type": "color",
+      "shape": "map",
+      "key": "trueFalse",
+      "start": {
+        "false": [
+          0,
+          0,
+          0
+        ],
+        "true": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "named",
+      "type": "object",
+      "shape": "map",
+      "start": {
+        "a": null,
+        "b": null
+      }
+    },
+    {
+      "name": "plain",
+      "type": "number",
+      "start": 2
+    }
+  ],
+  "menu": "Movement/Bob 🌿",
+  "functions": [
+    {
+      "name": "jump",
+      "inputs": [
+        {
+          "name": "height",
+          "type": "number"
+        },
+        {
+          "name": "heights",
+          "type": "number",
+          "shape": "list"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "landed",
+          "type": "trueFalse"
+        }
+      ]
+    },
+    {
+      "name": "rest",
+      "inputs": [],
+      "outputs": []
+    },
+    {
+      "name": "tally",
+      "inputs": [
+        {
+          "name": "byName",
+          "type": "wholeNumber",
+          "shape": "map",
+          "key": "object"
+        }
+      ],
+      "outputs": []
+    }
+  ],
+  "events": [
+    {
+      "name": "hit",
+      "params": [
+        {
+          "name": "damage",
+          "type": "number"
+        },
+        {
+          "name": "from",
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "name": "reset",
+      "params": []
+    }
+  ],
+  "properties": [
+    {
+      "name": "speed",
+      "type": "number",
+      "default": 2.5,
+      "inspector": {
+        "label": "Speed",
+        "hint": "How fast it bobs, in \"cycles\" per second",
+        "group": "Motion",
+        "range": [
+          0.0,
+          1e+20
+        ],
+        "slider": true,
+        "readOnly": true,
+        "choices": [
+          "slow",
+          "fast"
+        ],
+        "showIf": [
+          "mode",
+          "fast"
+        ]
+      }
+    },
+    {
+      "name": "mode",
+      "type": "text",
+      "default": "fast",
+      "inspector": {
+        "showIf": [
+          "on",
+          true
+        ]
+      }
+    },
+    {
+      "name": "follow",
+      "type": "object",
+      "default": null
+    },
+    {
+      "name": "steps",
+      "type": "vector",
+      "shape": "list",
+      "default": [
+        [
+          1,
+          2,
+          3
+        ],
+        [
+          0.5,
+          -0.0,
+          1e-7
+        ]
+      ]
+    },
+    {
+      "name": "costs",
+      "type": "wholeNumber",
+      "shape": "map",
+      "default": {
+        "a": 2,
+        "z": 1
+      }
+    },
+    {
+      "name": "range",
+      "type": "number",
+      "default": 1,
+      "inspector": {
+        "range": [
+          -1.5,
+          2.0
+        ]
+      }
+    }
+  ]
+}

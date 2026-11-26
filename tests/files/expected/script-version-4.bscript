@@ -1,0 +1,225 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "script",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "property",
+      "position": [
+        0.0,
+        0.0
+      ],
+      "values": {
+        "name": "speed"
+      }
+    },
+    {
+      "id": 2,
+      "kind": "flagProperty",
+      "position": [
+        0.0,
+        60.0
+      ],
+      "values": {
+        "name": "on"
+      }
+    },
+    {
+      "id": 3,
+      "kind": "textProperty",
+      "position": [
+        0.0,
+        120.0
+      ],
+      "values": {
+        "name": "label"
+      }
+    },
+    {
+      "id": 4,
+      "kind": "wholeProperty",
+      "position": [
+        0.0,
+        180.0
+      ],
+      "values": {
+        "name": "count"
+      }
+    },
+    {
+      "id": 5,
+      "kind": "vectorProperty",
+      "position": [
+        0.0,
+        240.0
+      ],
+      "values": {
+        "name": "aim"
+      }
+    },
+    {
+      "id": 6,
+      "kind": "colorProperty",
+      "position": [
+        0.0,
+        300.0
+      ],
+      "values": {
+        "name": "tint"
+      }
+    },
+    {
+      "id": 7,
+      "kind": "objectProperty",
+      "position": [
+        0.0,
+        360.0
+      ],
+      "values": {
+        "name": "target"
+      }
+    },
+    {
+      "id": 8,
+      "kind": "property",
+      "position": [
+        0.0,
+        420.0
+      ],
+      "values": {
+        "name": "speed"
+      }
+    },
+    {
+      "id": 9,
+      "kind": "flagProperty",
+      "position": [
+        0.0,
+        480.0
+      ],
+      "values": {
+        "name": "lit"
+      }
+    },
+    {
+      "id": 10,
+      "kind": "setVectorProperty",
+      "position": [
+        0.0,
+        540.0
+      ],
+      "values": {
+        "name": "push"
+      }
+    },
+    {
+      "id": 11,
+      "kind": "setWholeProperty",
+      "position": [
+        0.0,
+        600.0
+      ],
+      "values": {
+        "name": "lives"
+      }
+    },
+    {
+      "id": 12,
+      "kind": "textProperty",
+      "position": [
+        0.0,
+        660.0
+      ],
+      "values": {
+        "name": "kept"
+      }
+    },
+    {
+      "id": 13,
+      "kind": "property",
+      "position": [
+        0.0,
+        720.0
+      ],
+      "values": {
+        "name": "far"
+      }
+    }
+  ],
+  "links": [],
+  "properties": [
+    {
+      "name": "kept",
+      "type": "text",
+      "default": "old"
+    },
+    {
+      "name": "speed",
+      "type": "number",
+      "default": 45.0
+    },
+    {
+      "name": "on",
+      "type": "trueFalse",
+      "default": true
+    },
+    {
+      "name": "label",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "name": "count",
+      "type": "wholeNumber",
+      "default": 3
+    },
+    {
+      "name": "aim",
+      "type": "vector",
+      "default": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "name": "tint",
+      "type": "color",
+      "default": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "name": "target",
+      "type": "object",
+      "default": null
+    },
+    {
+      "name": "lit",
+      "type": "trueFalse",
+      "default": false
+    },
+    {
+      "name": "push",
+      "type": "vector",
+      "default": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "lives",
+      "type": "wholeNumber",
+      "default": -4
+    },
+    {
+      "name": "far",
+      "type": "number",
+      "default": 1.0
+    }
+  ]
+}

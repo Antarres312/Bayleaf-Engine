@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L3: the renderer's GPU-independent part for now: material graphs (.bmaterial), their node kinds
+       and the compiler that turns a graph into the WGSL surface function the mesh shader takes, and
+       the library that reads and keeps compiled materials, lighting and post-processing files.
+       The WebGPU renderer, extraction and the shaders come with stage 3 (docs/csharp-redesign.md). -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Render</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+    <ProjectReference Include="..\Bayleaf.Graph\Bayleaf.Graph.csproj" />
+    <ProjectReference Include="..\Bayleaf.Scene\Bayleaf.Scene.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Render.Tests" />
+  </ItemGroup>
+
+</Project>

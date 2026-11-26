@@ -6,6 +6,8 @@
     <Project Path="src/Bayleaf.Interface/Bayleaf.Interface.csproj" />
     <Project Path="src/Bayleaf.Assets/Bayleaf.Assets.csproj" />
     <Project Path="src/Bayleaf.Scene/Bayleaf.Scene.csproj" />
+    <Project Path="src/Bayleaf.Render/Bayleaf.Render.csproj" />
+    <Project Path="src/Bayleaf.Script/Bayleaf.Script.csproj" />
     <Project Path="src/Bayleaf.Streaming/Bayleaf.Streaming.csproj" />
     <Project Path="src/Bayleaf.Engine/Bayleaf.Engine.csproj" />
   </Folder>
@@ -19,6 +21,8 @@
     <Project Path="tests/Bayleaf.Graph.Tests/Bayleaf.Graph.Tests.csproj" />
     <Project Path="tests/Bayleaf.Interface.Tests/Bayleaf.Interface.Tests.csproj" />
     <Project Path="tests/Bayleaf.Scene.Tests/Bayleaf.Scene.Tests.csproj" />
+    <Project Path="tests/Bayleaf.Render.Tests/Bayleaf.Render.Tests.csproj" />
+    <Project Path="tests/Bayleaf.Script.Tests/Bayleaf.Script.Tests.csproj" />
     <Project Path="tests/Bayleaf.Streaming.Tests/Bayleaf.Streaming.Tests.csproj" />
     <Project Path="tests/Bayleaf.Engine.Tests/Bayleaf.Engine.Tests.csproj" />
     <Project Path="tests/Bayleaf.Cli.Tests/Bayleaf.Cli.Tests.csproj" />

@@ -27,7 +27,6 @@
         470.0
       ],
       "values": {
-        "default": 2.0,
         "name": "speed"
       }
     },
@@ -55,7 +54,6 @@
         520.0
       ],
       "values": {
-        "default": 0.4,
         "name": "height"
       }
     },
@@ -231,6 +229,18 @@
         "node": 13,
         "pin": "position"
       }
+    }
+  ],
+  "properties": [
+    {
+      "name": "speed",
+      "type": "number",
+      "default": 2.0
+    },
+    {
+      "name": "height",
+      "type": "number",
+      "default": 0.4000000059604645
     }
   ]
 }

@@ -3,16 +3,17 @@ using Bayleaf.Core;
 namespace Bayleaf.Graph.Tests;
 
 /// <summary>
-/// Every graph file of the examples, the benchmark and <c>tests/files</c> reads and writes back as
-/// the Rust engine reads and writes it (docs/csharp-redesign.md). The Rust engine's test
-/// (<c>rust/crates/graph/src/tests.rs</c>) writes what it gives into <c>tests/files/expected</c>;
+/// Every animation states file of the examples, the benchmark and <c>tests/files</c> reads and
+/// writes back as the Rust engine reads and writes it (docs/csharp-redesign.md). The Rust engine's
+/// test (<c>rust/crates/graph/src/tests.rs</c>) writes what it gives into <c>tests/files/expected</c>;
 /// this test checks the C# engine gives the same. Both read a file by the graph format's own rules,
-/// with none of its domain's node kinds (those come with the projects that compile each domain),
-/// so nodes and links are read and written but not checked against a catalog.
+/// with none of the domain's node kinds (they come with the animation port), so nodes and links are
+/// read and written but not checked against a catalog. Material and visual script files are checked
+/// against their real catalogs by the tests of <c>Bayleaf.Render</c> and <c>Bayleaf.Script</c>.
 /// </summary>
 public class SharedFilesTests
 {
-    private static readonly string[] Kinds = ["bmaterial", "bscript", "banim"];
+    private static readonly string[] Kinds = ["banim"];
 
     internal static string RepositoryRoot()
     {
@@ -24,13 +25,8 @@ public class SharedFilesTests
         return dir?.FullName ?? throw new DirectoryNotFoundException("the repository root is above the test's folder");
     }
 
-    /// <summary>The catalog of a graph file's domain, by its extension, with none of the domain's node kinds.</summary>
-    private static Catalog FormatCatalog(string extension) => extension switch
-    {
-        "bmaterial" => new() { Domain = "material", Label = "Material", Extension = extension },
-        "bscript" => new() { Domain = "script", Label = "Visual Script", Extension = extension },
-        _ => new() { Domain = "animation", Label = "Animation States", Extension = extension },
-    };
+    /// <summary>The catalog of animation states files, with none of the domain's node kinds.</summary>
+    private static Catalog FormatCatalog(string extension) => new() { Domain = "animation", Label = "Animation States", Extension = extension };
 
     /// <summary>What the C# engine writes back after reading <paramref name="path"/> as <see cref="Graph.FromJson"/> does, its nodes and links aside, or <c>refused</c>.</summary>
     private static string Rewrite(string path)
@@ -73,7 +69,7 @@ public class SharedFilesTests
     }
 
     [Fact]
-    public void TheSharedFilesAreThere() => Assert.True(SharedFiles().Count > 10);
+    public void TheSharedFilesAreThere() => Assert.True(SharedFiles().Count >= 2);
 
     [Theory]
     [MemberData(nameof(SharedFiles))]

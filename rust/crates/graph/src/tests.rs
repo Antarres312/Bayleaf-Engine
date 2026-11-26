@@ -163,17 +163,21 @@ fn comments_keep_their_limits_and_survive_a_file_round_trip() {
     assert!(graph.remove_comment(id).is_err());
 }
 
-/// The catalog of a graph file's domain, by its extension, with none of the domain's node kinds:
-/// the graph format's own rules. The node kinds live with the crates that compile each domain
-/// (render, script, animation), which this crate cannot use.
+/// The catalog of an animation states file, with none of the domain's node kinds: the graph
+/// format's own rules. The node kinds live with `bayleaf-animation`, which this crate cannot use.
+/// Material and visual script files are checked against their real catalogs by the parity tests of
+/// `bayleaf-render` and `bayleaf-script`.
 fn format_catalog(extension: &str) -> Option<Catalog> {
-    let (domain, label, extension) = match extension {
-        "bmaterial" => ("material", "Material", "bmaterial"),
-        "bscript" => ("script", "Visual Script", "bscript"),
-        "banim" => ("animation", "Animation States", "banim"),
-        _ => return None,
-    };
-    Some(Catalog { domain, label, extension, nodes: &[], starter: &[], variant: crate::no_variant, upgrade: crate::no_upgrade, fractional: &[] })
+    (extension == "banim").then_some(Catalog {
+        domain: "animation",
+        label: "Animation States",
+        extension: "banim",
+        nodes: &[],
+        starter: &[],
+        variant: crate::no_variant,
+        upgrade: crate::no_upgrade,
+        fractional: &[],
+    })
 }
 
 /// What this crate writes back after reading the graph file at `path` as [`Graph::from_json`]
@@ -211,7 +215,7 @@ fn files_below(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// The C# engine must read and write every graph file of the examples, the benchmark and
+/// The C# engine must read and write every animation states file of the examples, the benchmark and
 /// `tests/files` as this one does (docs/csharp-redesign.md). Both engines' tests compare their
 /// rewrite of each file with `tests/files/expected/`, which this test writes when `BAYLEAF_BLESS=1`
 /// is set.
@@ -238,5 +242,5 @@ fn the_shared_graph_files_rewrite_as_the_expected_files_say() {
         assert_eq!(written, expected, "{} rewrites differently from {}", input.display(), expected_path.display());
         checked += 1;
     }
-    assert!(checked > 10, "only {checked} shared graph files were found");
+    assert!(checked >= 2, "only {checked} shared animation states files were found");
 }

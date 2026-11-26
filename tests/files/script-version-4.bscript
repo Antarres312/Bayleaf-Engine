@@ -1,0 +1,22 @@
+{
+  "format": "bayleaf.graph",
+  "version": 4,
+  "domain": "script",
+  "nodes": [
+    { "id": 1, "kind": "property", "position": [0, 0], "values": { "name": "speed", "default": 45.0 } },
+    { "id": 2, "kind": "flagProperty", "position": [0, 60], "values": { "name": "on", "default": "True" } },
+    { "id": 3, "kind": "textProperty", "position": [0, 120] },
+    { "id": 4, "kind": "wholeProperty", "position": [0, 180], "values": { "default": 2.5 } },
+    { "id": 5, "kind": "vectorProperty", "position": [0, 240], "values": { "name": "aim", "default": [1, 2, 3] } },
+    { "id": 6, "kind": "colorProperty", "position": [0, 300], "values": { "default": "red" } },
+    { "id": 7, "kind": "objectProperty", "position": [0, 360], "values": { "default": "Player" } },
+    { "id": 8, "kind": "property", "position": [0, 420], "values": { "name": "speed", "default": 99 } },
+    { "id": 9, "kind": "flagProperty", "position": [0, 480], "values": { "name": "lit", "default": true } },
+    { "id": 10, "kind": "setVectorProperty", "position": [0, 540], "values": { "name": "push" } },
+    { "id": 11, "kind": "setWholeProperty", "position": [0, 600], "values": { "name": "lives", "default": -3.5 } },
+    { "id": 12, "kind": "textProperty", "position": [0, 660], "values": { "name": "kept", "default": "new" } },
+    { "id": 13, "kind": "property", "position": [0, 720], "values": { "name": "far", "default": "x" } }
+  ],
+  "links": [],
+  "properties": [{ "name": "kept", "type": "text", "default": "old" }]
+}

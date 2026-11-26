@@ -1,0 +1,38 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "material",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "output",
+      "position": [
+        300.0,
+        0.0
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "texture",
+      "position": [
+        0.0,
+        0.0
+      ],
+      "values": {
+        "image": "   "
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": {
+        "node": 2,
+        "pin": "color"
+      },
+      "to": {
+        "node": 1,
+        "pin": "baseColor"
+      }
+    }
+  ]
+}
