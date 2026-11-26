@@ -32,6 +32,13 @@ mod raw {
         pub fn particles_play(handle: i32) -> i32;
         pub fn particles_stop(handle: i32) -> i32;
         pub fn particles_burst(handle: i32, count: i32) -> i32;
+        pub fn animation_play(handle: i32, ptr: *const u8, len: usize, fade: f32, looping: i32) -> i32;
+        pub fn animation_stop(handle: i32, fade: f32) -> i32;
+        pub fn animation_number(handle: i32, ptr: *const u8, len: usize, value: f32) -> i32;
+        pub fn animation_flag(handle: i32, ptr: *const u8, len: usize, value: i32) -> i32;
+        pub fn animation_trigger(handle: i32, ptr: *const u8, len: usize) -> i32;
+        pub fn animation_state(handle: i32, out: *mut u8, cap: usize) -> i32;
+        pub fn joint_transform(handle: i32, ptr: *const u8, len: usize, out: *mut f32) -> i32;
         pub fn ui_set_text(handle: i32, name_ptr: *const u8, name_len: usize, text_ptr: *const u8, text_len: usize) -> i32;
         pub fn ui_set_value(handle: i32, name_ptr: *const u8, name_len: usize, value: f64) -> i32;
         pub fn ui_show(handle: i32, name_ptr: *const u8, name_len: usize, visible: i32) -> i32;
@@ -197,6 +204,19 @@ mod raw {
         .unwrap_or(0)
     }
 
+    /// A call with numbers, then one text, then more numbers, returning a whole number (0 without a
+    /// host).
+    fn around_text(name: &'static str, text: &[u8], before: &[crate::native::Value], after: &[crate::native::Value]) -> i32 {
+        run(|x| {
+            let at = x.put(text)?;
+            let mut args = before.to_vec();
+            args.extend([at, len(text.len())]);
+            args.extend_from_slice(after);
+            x.call(name, &args)?.i32()
+        })
+        .unwrap_or(0)
+    }
+
     /// A call with plain numbers, returning a whole number (0 without a host).
     fn plain(name: &'static str, args: &[crate::native::Value]) -> i32 {
         run(|x| x.call(name, args)?.i32()).unwrap_or(0)
@@ -354,6 +374,50 @@ mod raw {
     }
     pub unsafe fn particles_burst(handle: i32, count: i32) -> i32 {
         plain("particles_burst", &[I32(handle), I32(count)])
+    }
+    pub unsafe fn animation_play(handle: i32, ptr: *const u8, n: usize, fade: f32, looping: i32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        around_text("animation_play", unsafe { bytes(ptr, n) }, &[I32(handle)], &[F32(fade), I32(looping)])
+    }
+    pub unsafe fn animation_stop(handle: i32, fade: f32) -> i32 {
+        plain("animation_stop", &[I32(handle), F32(fade)])
+    }
+    pub unsafe fn animation_number(handle: i32, ptr: *const u8, n: usize, value: f32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        around_text("animation_number", unsafe { bytes(ptr, n) }, &[I32(handle)], &[F32(value)])
+    }
+    pub unsafe fn animation_flag(handle: i32, ptr: *const u8, n: usize, value: i32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        around_text("animation_flag", unsafe { bytes(ptr, n) }, &[I32(handle)], &[I32(value)])
+    }
+    pub unsafe fn animation_trigger(handle: i32, ptr: *const u8, n: usize) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        around_text("animation_trigger", unsafe { bytes(ptr, n) }, &[I32(handle)], &[])
+    }
+    pub unsafe fn animation_state(handle: i32, out: *mut u8, cap: usize) -> i32 {
+        let (full, data) = run(|x| {
+            let room = x.room(cap)?;
+            let full = x.call("animation_state", &[I32(handle), room, len(cap)])?.i32()?;
+            let got = usize::try_from(full).unwrap_or(0).min(cap);
+            Some((full, x.get(room, got)?))
+        })
+        .unwrap_or((-1, Vec::new()));
+        // SAFETY: callers pass `cap` writable bytes at `out`.
+        unsafe { bytes_out(out, cap, &data) }
+        full
+    }
+    pub unsafe fn joint_transform(handle: i32, ptr: *const u8, n: usize, out: *mut f32) -> i32 {
+        // SAFETY: the safe wrappers pass a live slice.
+        let name = unsafe { bytes(ptr, n) };
+        let (found, data) = run(|x| {
+            let at = x.put(name)?;
+            let (found, data) = with_out::<f32>("joint_transform", &[I32(handle), at, len(name.len())], 9, x)?;
+            Some((found.i32()?, data))
+        })
+        .unwrap_or((0, Vec::new()));
+        // SAFETY: callers pass room for 9 f32.
+        unsafe { numbers_out(out, &data) }
+        found
     }
     pub unsafe fn ui_set_text(handle: i32, name_ptr: *const u8, name_len: usize, text_ptr: *const u8, text_len: usize) -> i32 {
         // SAFETY: the safe wrappers pass live slices.
@@ -919,6 +983,55 @@ pub(crate) fn particles_burst(handle: i32, count: u32) -> bool {
     crate::batch::sync();
     // SAFETY: plain numbers in and out.
     unsafe { raw::particles_burst(handle, i32::try_from(count).unwrap_or(i32::MAX)) != 0 }
+}
+
+pub(crate) fn animation_play(handle: i32, clip: &str, fade: f32, looping: bool) -> bool {
+    crate::batch::sync();
+    // SAFETY: the pointer and length describe `clip`; the host only reads.
+    unsafe { raw::animation_play(handle, clip.as_ptr(), clip.len(), fade, i32::from(looping)) != 0 }
+}
+
+pub(crate) fn animation_stop(handle: i32, fade: f32) -> bool {
+    crate::batch::sync();
+    // SAFETY: plain numbers in and out.
+    unsafe { raw::animation_stop(handle, fade) != 0 }
+}
+
+pub(crate) fn animation_number(handle: i32, name: &str, value: f32) -> bool {
+    crate::batch::sync();
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::animation_number(handle, name.as_ptr(), name.len(), value) != 0 }
+}
+
+pub(crate) fn animation_flag(handle: i32, name: &str, value: bool) -> bool {
+    crate::batch::sync();
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::animation_flag(handle, name.as_ptr(), name.len(), i32::from(value)) != 0 }
+}
+
+pub(crate) fn animation_trigger(handle: i32, name: &str) -> bool {
+    crate::batch::sync();
+    // SAFETY: the pointer and length describe `name`; the host only reads.
+    unsafe { raw::animation_trigger(handle, name.as_ptr(), name.len()) != 0 }
+}
+
+pub(crate) fn animation_state(handle: i32) -> Option<String> {
+    crate::batch::sync();
+    // SAFETY: a null pointer with no room only asks for the length.
+    let len = unsafe { raw::animation_state(handle, std::ptr::null_mut(), 0) };
+    let len = usize::try_from(len).ok()?;
+    let mut bytes = vec![0u8; len];
+    // SAFETY: `bytes` has exactly `len` writable bytes, at most what the host writes.
+    unsafe { raw::animation_state(handle, bytes.as_mut_ptr(), bytes.len()) };
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub(crate) fn joint_transform(handle: i32, joint: &str) -> Option<[f32; 9]> {
+    crate::batch::sync();
+    let mut out = [0.0f32; 9];
+    // SAFETY: the pointer and length describe `joint`; `out` is 9 writable f32, what the host writes.
+    let found = unsafe { raw::joint_transform(handle, joint.as_ptr(), joint.len(), out.as_mut_ptr()) };
+    (found != 0).then_some(out)
 }
 
 pub(crate) fn ui_set_text(handle: i32, element: &str, text: &str) -> bool {

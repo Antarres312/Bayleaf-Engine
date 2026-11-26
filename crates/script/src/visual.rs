@@ -195,6 +195,8 @@ const fn map_node(kind: &'static str, label: &'static str, description: &'static
     NodeDef { kind, label, category: "Maps", description, inputs, outputs, settings: &MAP_SETTINGS, unique: false }
 }
 const OBJECT_NAME: SettingDef = SettingDef { name: "object", label: "Object Name", kind: SettingKind::Text("") };
+/// The parameter an animation node sets.
+const ANIMATION_PARAMETER: SettingDef = SettingDef { name: "parameter", label: "Parameter", kind: SettingKind::Name("speed") };
 /// The interface element a node works on, by its name.
 const ELEMENT: SettingDef = SettingDef { name: "element", label: "Element", kind: SettingKind::Text("Start") };
 /// What a search looks for: a component (Point Light, Character), a tag, or a script (by its name).
@@ -976,6 +978,82 @@ pub const CATALOG: Catalog = Catalog {
             inputs: &[RUN, TARGET, PinDef::with("count", "Count", PinType::Int, PinDefault::Int(20))],
             outputs: &[THEN],
             settings: &[OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "playClip",
+            label: "Play Clip",
+            category: "Animation",
+            description: "Plays the clip named in Clip on the model of the linked object, else the first object named in Object Name, else this object, fading from what played over Fade seconds (0 to 60). After this step.",
+            inputs: &[
+                RUN,
+                TARGET,
+                PinDef::with("clip", "Clip", PinType::Text, PinDefault::Text("")),
+                PinDef::with("fade", "Fade", PinType::Float, PinDefault::Float(0.25)),
+                PinDef::with("loop", "Loop", Bool, PinDefault::Bool(true)),
+            ],
+            outputs: &[THEN],
+            settings: &[OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "stopClip",
+            label: "Stop Clip",
+            category: "Animation",
+            description: "Fades the model to its rest pose over Fade seconds. Which object: as Play Clip.",
+            inputs: &[RUN, TARGET, PinDef::with("fade", "Fade", PinType::Float, PinDefault::Float(0.25))],
+            outputs: &[THEN],
+            settings: &[OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setAnimationNumber",
+            label: "Set Animation Number",
+            category: "Animation",
+            description: "Sets the number parameter named in Parameter, which mixes and animation states read. Which object: as Play Clip.",
+            inputs: &[RUN, TARGET, PinDef::with("value", "Value", PinType::Float, PinDefault::Float(0.0))],
+            outputs: &[THEN],
+            settings: &[ANIMATION_PARAMETER, OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "setAnimationFlag",
+            label: "Set Animation Flag",
+            category: "Animation",
+            description: "Sets the true/false parameter named in Parameter. Which object: as Play Clip.",
+            inputs: &[RUN, TARGET, PinDef::with("value", "Value", Bool, PinDefault::Bool(false))],
+            outputs: &[THEN],
+            settings: &[ANIMATION_PARAMETER, OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "triggerAnimation",
+            label: "Trigger Animation",
+            category: "Animation",
+            description: "Sets the trigger named in Parameter, which the first transition it lets through uses up. Which object: as Play Clip.",
+            inputs: &[RUN, TARGET],
+            outputs: &[THEN],
+            settings: &[ANIMATION_PARAMETER, OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "animationState",
+            label: "Animation State",
+            category: "Animation",
+            description: "The animation state the object is in, as of the last step (empty, and In States false, when it runs none). Which object: as Play Clip.",
+            inputs: &[TARGET],
+            outputs: &[pin("state", "State", PinType::Text), pin("running", "In States", Bool)],
+            settings: &[OBJECT_NAME],
+            unique: false,
+        },
+        NodeDef {
+            kind: "jointPosition",
+            label: "Joint Position",
+            category: "Animation",
+            description: "Where the joint named in Joint of the object's model is in the world, as the last step posed it (Found is false when the object is not animated or has no such joint). Which object: as Play Clip.",
+            inputs: &[TARGET],
+            outputs: &[pin("position", "Position", Vec3), pin("found", "Found", Bool)],
+            settings: &[SettingDef { name: "joint", label: "Joint", kind: SettingKind::Text("") }, OBJECT_NAME],
             unique: false,
         },
         NodeDef {
@@ -2306,6 +2384,39 @@ impl Compiler<'_> {
                     }
                 }
             }
+            "playClip" | "stopClip" | "setAnimationNumber" | "setAnimationFlag" | "triggerAnimation" => {
+                let handle = self.target(next, Ok("(call $self_handle)"))?;
+                // The host refuses a fade out of range; held within 0 to 60 here.
+                let fade = |c: &mut Self| {
+                    c.input(next, "fade").and_then(|v| as_float(next, v)).map(|f| format!("(f32.min (f32.max {f} (f32.const 0)) (f32.const 60))"))
+                };
+                match n.kind.as_str() {
+                    "playClip" => {
+                        let clip = self.input(next, "clip").and_then(|v| as_text(next, v))?;
+                        let (fade, looping) = (fade(self)?, self.input(next, "loop").and_then(|v| as_bool(next, v))?);
+                        let _ = writeln!(code, "{indent}(call $anim_play {handle} {clip} {fade} {looping})");
+                    }
+                    "stopClip" => {
+                        let fade = fade(self)?;
+                        let _ = writeln!(code, "{indent}(drop (call $animation_stop {handle} {fade}))");
+                    }
+                    kind => {
+                        let (at, len) = self.named(next, "parameter", "name the parameter")?;
+                        let call = match kind {
+                            "setAnimationNumber" => {
+                                let value = self.input(next, "value").and_then(|v| as_float(next, v))?;
+                                format!("(call $animation_number {handle} (i32.const {at}) (i32.const {len}) {value})")
+                            }
+                            "setAnimationFlag" => {
+                                let value = self.input(next, "value").and_then(|v| as_bool(next, v))?;
+                                format!("(call $animation_flag {handle} (i32.const {at}) (i32.const {len}) {value})")
+                            }
+                            _ => format!("(call $animation_trigger {handle} (i32.const {at}) (i32.const {len}))"),
+                        };
+                        let _ = writeln!(code, "{indent}(drop {call})");
+                    }
+                }
+            }
             "setInterfaceText" | "setInterfaceValue" | "showInterface" => {
                 let handle = self.target(next, Ok("(call $self_handle)"))?;
                 let element = self.setting_text(next, "element", if n.kind == "showInterface" { "" } else { "Start" });
@@ -2566,6 +2677,28 @@ impl Compiler<'_> {
         })
     }
 
+    /// An output of Animation State or Joint Position: what the last step posed.
+    fn animation_output(&mut self, node: u32, kind: &str, pin: &str) -> Result<Val, Problem> {
+        let handle = self.target(node, Ok("(call $self_handle)"))?;
+        if kind == "animationState" {
+            return Ok(if pin == "running" {
+                Val::B(format!("(i32.ge_s (call $animation_state {handle} (i32.const 0) (i32.const 0)) (i32.const 0))"))
+            } else {
+                Val::T(format!("(call $anim_state {handle})"))
+            });
+        }
+        let joint = self.setting_text(node, "joint", "");
+        if joint.trim().is_empty() {
+            return Err(Problem::on(node, "name the joint"));
+        }
+        let (at, len) = self.text(joint.as_bytes());
+        Ok(if pin == "found" {
+            Val::B(format!("(call $joint_transform {handle} (i32.const {at}) (i32.const {len}) (i32.const 0))"))
+        } else {
+            Val::V([0, 1, 2].map(|i| format!("(call $joint_part {handle} (i32.const {at}) (i32.const {len}) (i32.const {i}))")))
+        })
+    }
+
     /// The value of one output of a data node.
     fn output(&mut self, node: u32, pin: &str) -> Result<Val, Problem> {
         let graph = self.graph;
@@ -2765,6 +2898,7 @@ impl Compiler<'_> {
                 Val::T(format!("(call $replace {t} {find} {with})"))
             }
             "nameOf" => Val::T(format!("(call $name {})", self.target(node, Ok("(call $self_handle)"))?)),
+            "animationState" | "jointPosition" => self.animation_output(node, n.kind.as_str(), pin)?,
             "interfaceValue" | "interfaceText" => {
                 let handle = self.target(node, Ok("(call $self_handle)"))?;
                 let (at, len) = self.named(node, "element", "name the element")?;
@@ -3347,6 +3481,13 @@ const PRELUDE: &str = r#"(module
   (import "bayleaf" "particles_play" (func $particles_play (param i32) (result i32)))
   (import "bayleaf" "particles_stop" (func $particles_stop (param i32) (result i32)))
   (import "bayleaf" "particles_burst" (func $particles_burst (param i32 i32) (result i32)))
+  (import "bayleaf" "animation_play" (func $animation_play (param i32 i32 i32 f32 i32) (result i32)))
+  (import "bayleaf" "animation_stop" (func $animation_stop (param i32 f32) (result i32)))
+  (import "bayleaf" "animation_number" (func $animation_number (param i32 i32 i32 f32) (result i32)))
+  (import "bayleaf" "animation_flag" (func $animation_flag (param i32 i32 i32 i32) (result i32)))
+  (import "bayleaf" "animation_trigger" (func $animation_trigger (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "animation_state" (func $animation_state (param i32 i32 i32) (result i32)))
+  (import "bayleaf" "joint_transform" (func $joint_transform (param i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "ui_set_text" (func $ui_set_text (param i32 i32 i32 i32 i32) (result i32)))
   (import "bayleaf" "ui_set_value" (func $ui_set_value (param i32 i32 i32 f64) (result i32)))
   (import "bayleaf" "ui_show" (func $ui_show (param i32 i32 i32 i32) (result i32)))
@@ -3422,6 +3563,8 @@ const PRELUDE: &str = r#"(module
     (i64.or (i64.shl (i64.extend_i32_u (local.get $p)) (i64.const 32)) (i64.extend_i32_u (local.get $l))))
   (func $log_text (param $t i64) (call $log (call $tp (local.get $t)) (call $tl (local.get $t))))
   (func $find_text (param $t i64) (result i32) (call $find (call $tp (local.get $t)) (call $tl (local.get $t))))
+  (func $anim_play (param $h i32) (param $t i64) (param $f f32) (param $l i32)
+    (drop (call $animation_play (local.get $h) (call $tp (local.get $t)) (call $tl (local.get $t)) (local.get $f) (local.get $l))))
   (func $ui_text (param $h i32) (param $np i32) (param $nl i32) (param $t i64)
     (drop (call $ui_set_text (local.get $h) (local.get $np) (local.get $nl) (call $tp (local.get $t)) (call $tl (local.get $t)))))
   (func $ui_add_named (param $h i32) (param $pp i32) (param $pl i32) (param $wp i32) (param $wl i32) (param $t i64)
@@ -3673,6 +3816,17 @@ const PRELUDE: &str = r#"(module
     (local.set $p (call $alloc (local.get $n)))
     (drop (call $name_of (local.get $h) (local.get $p) (local.get $n)))
     (call $mk (local.get $p) (local.get $n)))
+  ;; The animation state of the object with handle h, as text (empty when it runs none).
+  (func $anim_state (param $h i32) (result i64) (local $n i32) (local $p i32)
+    (local.set $n (call $animation_state (local.get $h) (i32.const 0) (i32.const 0)))
+    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))
+    (local.set $p (call $alloc (local.get $n)))
+    (drop (call $animation_state (local.get $h) (local.get $p) (local.get $n)))
+    (call $mk (local.get $p) (local.get $n)))
+  ;; Part i (0 x, 1 y, 2 z) of where the joint named by p, n of the object with handle h is.
+  (func $joint_part (param $h i32) (param $p i32) (param $n i32) (param $i i32) (result f32)
+    (drop (call $joint_transform (local.get $h) (local.get $p) (local.get $n) (i32.const 0)))
+    (f32.load (i32.shl (local.get $i) (i32.const 2))))
   ;; Sets the position of the object with handle h.
   (func $set_position_of (param $h i32) (param $x f32) (param $y f32) (param $z f32)
     (call $transform_get_of (local.get $h) (i32.const 0))

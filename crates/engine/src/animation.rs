@@ -45,6 +45,8 @@ pub(crate) struct Animated {
     pub(crate) player: Player,
     /// Outside play mode: whether its time stands still (a preview paused or scrubbed).
     paused: bool,
+    /// Its joints' names, shared with what scripts read.
+    names: Arc<[String]>,
 }
 
 impl Animated {
@@ -167,7 +169,8 @@ fn new_animated(session: &mut Session, id: StableId, model: String, skeleton: Ar
         }
         _ => {}
     }
-    Animated { model, skeleton, clips, player, paused: false }
+    let names: Arc<[String]> = Arc::from(skeleton.names.as_slice());
+    Animated { model, skeleton, clips, player, paused: false, names }
 }
 
 /// Reads and compiles the animation states at `path` (relative to the project folder).
@@ -237,6 +240,10 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
             move_by_root(session, id, step.root);
         }
     }
+    let view = script_view(session);
+    if let Some(play) = session.play.as_mut() {
+        play.host.set_animation(view);
+    }
     if events.is_empty() {
         return;
     }
@@ -245,6 +252,53 @@ pub(crate) fn step(session: &mut Session, dt: f32) {
         play.host.trigger_events(&mut session.scene, &events, play.time, &input);
     }
     crate::play::after_message(session);
+}
+
+/// What scripts read of the animated objects after this step: each one's state and its joints'
+/// places in the world.
+fn script_view(session: &Session) -> bayleaf_script::AnimationView {
+    let mut view = bayleaf_script::AnimationView::default();
+    for (id, a) in &session.animation.objects {
+        let (Some(world), Some(nodes)) = (session.scene.world_matrix(*id), session.animation.poses.get(id)) else { continue };
+        let joints = nodes
+            .iter()
+            .map(|m| {
+                let t = bayleaf_scene::components::Transform::from_matrix(world * (a.skeleton.root * *m).as_dmat4());
+                let p = t.position.map(|v| v as f32);
+                [p[0], p[1], p[2], t.rotation[0], t.rotation[1], t.rotation[2], t.scale[0], t.scale[1], t.scale[2]]
+            })
+            .collect();
+        let state = a.player.state().map(str::to_owned);
+        view.objects.insert(*id, bayleaf_script::AnimatedView { state, names: Arc::clone(&a.names), joints });
+    }
+    view
+}
+
+/// Does what a script asked of object `object`'s animation (`by` is the asking script's object);
+/// what cannot be done goes to the console.
+pub(crate) fn apply_script(session: &mut Session, by: StableId, object: StableId, action: bayleaf_script::AnimationAction) {
+    use bayleaf_script::AnimationAction;
+    let result = animated(session, object).and_then(|a| {
+        match action {
+            AnimationAction::Play { clip, fade, looping } => {
+                let motion = Motion::Clip { clip, speed: 1.0, looping };
+                if let Some(problem) = motion.problems(&a.skeleton, &a.clips).first() {
+                    return Err(CommandError::Failed(problem.clone()));
+                }
+                a.player.play("", motion, fade).map_err(CommandError::Failed)?;
+            }
+            AnimationAction::Stop { fade } => a.player.stop("", fade),
+            AnimationAction::Number { name, value } => a.player.set_parameter(&name, Parameter::Number(value)).map_err(CommandError::Failed)?,
+            AnimationAction::Flag { name, value } => a.player.set_parameter(&name, Parameter::Flag(value)).map_err(CommandError::Failed)?,
+            AnimationAction::Trigger { name } => a.player.set_parameter(&name, Parameter::Trigger(true)).map_err(CommandError::Failed)?,
+        }
+        Ok(())
+    });
+    if let Err(error) = result {
+        let who = session.scene.name(by).unwrap_or("Object").to_owned();
+        let target = session.scene.name(object).unwrap_or("Object").to_owned();
+        session.log(Level::Error, format!("[{who}] cannot change the animation of {target}: {error}"));
+    }
 }
 
 /// Moves object `id` by `delta`, a move in its model (with the import scale and axes): through
@@ -767,6 +821,48 @@ mod tests {
         run(&mut session, "play.stop", Value::Null).unwrap();
         let back = session.scene().component(bayleaf_core::StableId::parse_hex(&id).unwrap(), "transform").unwrap()["position"][0].as_f64().unwrap();
         assert!(back.abs() < 1e-9, "stopping play puts it back");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A script that plays Raise on its object when it starts and logs "found" each step it reads
+    /// the Hand joint.
+    fn player_wasm() -> Vec<u8> {
+        wat::parse_str(
+            r#"(module
+                (import "bayleaf" "log" (func $log (param i32 i32)))
+                (import "bayleaf" "self_handle" (func $me (result i32)))
+                (import "bayleaf" "animation_play" (func $play (param i32 i32 i32 f32 i32) (result i32)))
+                (import "bayleaf" "joint_transform" (func $joint (param i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (data (i32.const 100) "Raise")
+                (data (i32.const 110) "Hand")
+                (data (i32.const 120) "found")
+                (func (export "bayleaf_abi") (result i32) i32.const 1)
+                (func (export "bayleaf_start") (drop (call $play (call $me) (i32.const 100) (i32.const 5) (f32.const 0) (i32.const 0))))
+                (func (export "bayleaf_update") (param $dt f32)
+                  (if (call $joint (call $me) (i32.const 110) (i32.const 4) (i32.const 200))
+                    (then (if (f32.gt (f32.load (i32.const 204)) (f32.const 0.5)) (then (call $log (i32.const 120) (i32.const 5))))))))"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_script_plays_a_clip_and_reads_a_joint() {
+        let (registry, mut session, id, dir) = arm_scene("script");
+        std::fs::write(dir.join("player.wasm"), player_wasm()).unwrap();
+        let run = |session: &mut Session, command: &str, params: Value| registry.execute(session, command, &params);
+        run(&mut session, "scene.component.add", json!({"id": id, "component": "scripts"})).unwrap();
+        run(&mut session, "scene.component.set", json!({"id": id, "component": "scripts", "value": [{"module": "player.wasm"}]})).unwrap();
+        run(&mut session, "play.start", Value::Null).unwrap();
+        run(&mut session, "play.step", json!({"seconds": 0.1, "steps": 12})).unwrap();
+        assert!(
+            arm_joint(&session, &id).y > 0.9 && arm_joint(&session, &id).x.abs() < 1e-3,
+            "the script's Raise replaced Stretch: {}",
+            arm_joint(&session, &id)
+        );
+        let found = session.console().iter().filter(|l| l.text.contains("found")).count();
+        assert!(found > 0, "the script read the raised Hand joint: {:?}", session.console().iter().map(|l| &l.text).collect::<Vec<_>>());
+        run(&mut session, "play.stop", Value::Null).unwrap();
         std::fs::remove_dir_all(&dir).ok();
     }
 }

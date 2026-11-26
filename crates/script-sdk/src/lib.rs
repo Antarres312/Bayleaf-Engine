@@ -264,6 +264,46 @@ impl Object {
         abi::particles_burst(self.0, count)
     }
 
+    /// Plays the clip `clip` of the object's model on its whole skeleton after this step, fading from
+    /// what played over `fade` seconds (0 to 60), from its end round to its start when `looping`.
+    /// A clip the model lacks is reported in the console. False when this call already asked too
+    /// much.
+    pub fn play_clip(self, clip: &str, fade: f32, looping: bool) -> bool {
+        abi::animation_play(self.0, clip, fade, looping)
+    }
+
+    /// Fades the object's model to its rest pose over `fade` seconds, after this step.
+    pub fn stop_clips(self, fade: f32) -> bool {
+        abi::animation_stop(self.0, fade)
+    }
+
+    /// Sets a number parameter of the object's animation (what mixes and animation states read).
+    pub fn set_animation_number(self, name: &str, value: f32) -> bool {
+        abi::animation_number(self.0, name, value)
+    }
+
+    /// Sets a true/false parameter of the object's animation.
+    pub fn set_animation_flag(self, name: &str, value: bool) -> bool {
+        abi::animation_flag(self.0, name, value)
+    }
+
+    /// Sets a trigger of the object's animation, which the first transition it lets through uses up.
+    pub fn trigger_animation(self, name: &str) -> bool {
+        abi::animation_trigger(self.0, name)
+    }
+
+    /// The animation state the object is in, when it runs animation states (as of the last step).
+    pub fn animation_state(self) -> Option<String> {
+        abi::animation_state(self.0)
+    }
+
+    /// Where the joint `joint` of the object's model is in the world (position, rotation, scale),
+    /// as the last step posed it; `None` when the object is not animated or has no such joint.
+    pub fn joint(self, joint: &str) -> Option<Transform> {
+        let v = abi::joint_transform(self.0, joint)?;
+        Some(Transform { position: [v[0], v[1], v[2]], rotation: [v[3], v[4], v[5]], scale: [v[6], v[7], v[8]] })
+    }
+
     /// Sets the text of the element named `element` in the object's Interface, after this step.
     /// Buttons send the object's scripts `pressed:<name>`, and toggles, sliders and text fields
     /// `changed:<name>` with their new value.

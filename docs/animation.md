@@ -106,3 +106,14 @@ has a joint of that name; otherwise the object stays where its Transform puts it
 the scene is drawn (the views, `scene.render`, picking); the object's Transform itself does not
 change, so scripts that need the joint read it (`animation.joint.get`, or the script functions
 below).
+
+## Scripts
+
+Every script action is a command first. Rust scripts (`Object::play_clip`, `stop_clips`,
+`set_animation_number`, `set_animation_flag`, `trigger_animation`, `animation_state` and `joint`)
+and visual scripts (**Play Clip**, **Stop Clip**, **Set Animation Number**, **Set Animation Flag**,
+**Trigger Animation**, **Animation State** and **Joint Position**, in the Animation category) reach
+the host functions in `docs/script-abi.md`. Changes are made after the step, as `animation.play`,
+`animation.stop`, `animation.parameter.set` and `animation.trigger` make them; what they cannot do
+(a clip the model lacks) goes to the console with the script's object. Reads see the objects as the
+last step posed them. A clip event arrives as a script event with the object as its value.
