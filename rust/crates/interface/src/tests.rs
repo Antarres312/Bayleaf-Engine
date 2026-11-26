@@ -297,3 +297,57 @@ fn a_part_shows_the_texts_its_use_gives_to_the_names_inside_it() {
     text_only.root.texts.insert("Name".to_owned(), "x".to_owned());
     assert!(text_only.validate().is_err());
 }
+
+/// What this crate writes back after reading `path` (a layout or style file), or `refused` when it
+/// does not read it. `None` for files of other kinds.
+fn rewrite(path: &std::path::Path) -> Option<String> {
+    let refused = || "refused\n".to_owned();
+    let text = match path.extension().and_then(|e| e.to_str())? {
+        "bui" => Layout::load(path).map(|l| l.to_text()).unwrap_or_else(|_| refused()),
+        "bstyle" => StyleSheet::load(path).map(|s| s.to_text()).unwrap_or_else(|_| refused()),
+        _ => return None,
+    };
+    Some(text)
+}
+
+fn files_below(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|n| n != "expected") {
+                files_below(&path, out);
+            }
+        } else {
+            out.push(path);
+        }
+    }
+}
+
+/// The C# engine must read and write every interface file of the examples and of `tests/files` as
+/// this one does (docs/csharp-redesign.md). Both engines' tests compare their rewrite of each file
+/// with `tests/files/expected/`, which this test writes when `BAYLEAF_BLESS=1` is set.
+#[test]
+fn the_shared_interface_files_rewrite_as_the_expected_files_say() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("..");
+    let expected_dir = root.join("tests").join("files").join("expected");
+    let bless = std::env::var_os("BAYLEAF_BLESS").is_some_and(|v| v == "1");
+    let mut inputs = Vec::new();
+    files_below(&root.join("examples"), &mut inputs);
+    files_below(&root.join("tests").join("files"), &mut inputs);
+    let mut checked = 0;
+    for input in inputs {
+        let Some(written) = rewrite(&input) else { continue };
+        let relative = input.strip_prefix(&root).unwrap_or(&input).components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>();
+        let name = relative.iter().skip_while(|c| *c == "tests" || *c == "files").cloned().collect::<Vec<_>>().join("__");
+        let expected_path = expected_dir.join(&name);
+        if bless {
+            std::fs::create_dir_all(&expected_dir).unwrap();
+            std::fs::write(&expected_path, &written).unwrap();
+        }
+        let expected = std::fs::read_to_string(&expected_path).unwrap_or_default().replace("\r\n", "\n");
+        assert_eq!(written, expected, "{} rewrites differently from {}", input.display(), expected_path.display());
+        checked += 1;
+    }
+    assert!(checked > 10, "only {checked} shared interface files were found");
+}

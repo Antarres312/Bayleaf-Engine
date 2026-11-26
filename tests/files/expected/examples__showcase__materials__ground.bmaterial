@@ -1,0 +1,115 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "material",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "output",
+      "position": [
+        840.0,
+        40.0
+      ],
+      "values": {
+        "roughness": 0.85
+      }
+    },
+    {
+      "id": 2,
+      "kind": "uv",
+      "position": [
+        0.0,
+        40.0
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "multiply",
+      "position": [
+        200.0,
+        40.0
+      ],
+      "values": {
+        "b": 5.0
+      }
+    },
+    {
+      "id": 4,
+      "kind": "texture",
+      "position": [
+        400.0,
+        40.0
+      ],
+      "values": {
+        "image": "assets/bayleaf-logo.png"
+      }
+    },
+    {
+      "id": 5,
+      "kind": "blend",
+      "position": [
+        620.0,
+        40.0
+      ],
+      "values": {
+        "a": [
+          0.085,
+          0.1,
+          0.09
+        ]
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": {
+        "node": 2,
+        "pin": "uv"
+      },
+      "to": {
+        "node": 3,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 3,
+        "pin": "result"
+      },
+      "to": {
+        "node": 4,
+        "pin": "uv"
+      }
+    },
+    {
+      "from": {
+        "node": 4,
+        "pin": "color"
+      },
+      "to": {
+        "node": 5,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 4,
+        "pin": "alpha"
+      },
+      "to": {
+        "node": 5,
+        "pin": "factor"
+      }
+    },
+    {
+      "from": {
+        "node": 5,
+        "pin": "result"
+      },
+      "to": {
+        "node": 1,
+        "pin": "baseColor"
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "material",
+  "nodes": [
+    {
+      "id": 4,
+      "kind": "output",
+      "position": [
+        300.0,
+        0.0
+      ]
+    }
+  ],
+  "links": []
+}

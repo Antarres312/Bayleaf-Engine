@@ -1,0 +1,133 @@
+{
+  "format": "bayleaf.interface",
+  "version": 2,
+  "styles": [
+    "ui/base.bstyle",
+    "UI/Upper.BSTYLE"
+  ],
+  "root": {
+    "kind": "panel",
+    "name": "Screen",
+    "classes": [
+      "full",
+      "dark"
+    ],
+    "style": {
+      "alignItems": "center",
+      "background": "#202020c0",
+      "gap": "12px",
+      "height": "100%",
+      "padding": "8px 16px",
+      "width": "100%"
+    },
+    "children": [
+      {
+        "kind": "text",
+        "name": "Title",
+        "text": "Tab\there \"quoted\" back\\slash \u0001 😀 é 🌿\nnew line",
+        "style": {
+          "color": "#ffffff",
+          "fontSize": "40px",
+          "textAlign": "center"
+        }
+      },
+      {
+        "kind": "image",
+        "name": "Logo",
+        "image": "assets/Logo.PNG",
+        "style": {
+          "maxWidth": "400px",
+          "minHeight": "0px"
+        }
+      },
+      {
+        "kind": "button",
+        "name": "Start",
+        "classes": [
+          "big"
+        ],
+        "text": "Start",
+        "onClick": "startGame"
+      },
+      {
+        "kind": "toggle",
+        "name": "Sound",
+        "text": "Sound",
+        "value": 1.0
+      },
+      {
+        "kind": "slider",
+        "name": "Volume",
+        "value": 0.5,
+        "min": -1e-7,
+        "max": 1e+20
+      },
+      {
+        "kind": "slider",
+        "name": "Zero"
+      },
+      {
+        "kind": "textField",
+        "name": "Player",
+        "text": "Anna"
+      },
+      {
+        "kind": "progress",
+        "name": "Health",
+        "value": 0.25,
+        "bind": "player:health"
+      },
+      {
+        "kind": "text",
+        "name": "Score",
+        "bind": "game:score"
+      },
+      {
+        "kind": "list",
+        "name": "Scores",
+        "value": 30.0,
+        "style": {
+          "direction": "column",
+          "height": "100px",
+          "justify": "spaceBetween"
+        },
+        "children": [
+          {
+            "kind": "row",
+            "style": {
+              "alignSelf": "end",
+              "grow": "1",
+              "radius": "6px",
+              "shrink": "0.5"
+            }
+          },
+          {
+            "kind": "column",
+            "style": {
+              "accent": "#5fb3f9",
+              "borderColor": "#808080",
+              "borderWidth": "1px",
+              "maxHeight": "1000%",
+              "minWidth": "auto",
+              "opacity": "0.5",
+              "pointer": "block",
+              "visible": "false"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "part",
+        "name": "Card",
+        "layout": "ui/card.bui",
+        "style": {
+          "width": "300px"
+        },
+        "texts": {
+          "Health": "3/5",
+          "Name": "Rogue"
+        }
+      }
+    ]
+  }
+}

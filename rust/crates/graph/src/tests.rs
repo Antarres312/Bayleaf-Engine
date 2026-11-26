@@ -162,3 +162,81 @@ fn comments_keep_their_limits_and_survive_a_file_round_trip() {
     graph.remove_comment(id).unwrap();
     assert!(graph.remove_comment(id).is_err());
 }
+
+/// The catalog of a graph file's domain, by its extension, with none of the domain's node kinds:
+/// the graph format's own rules. The node kinds live with the crates that compile each domain
+/// (render, script, animation), which this crate cannot use.
+fn format_catalog(extension: &str) -> Option<Catalog> {
+    let (domain, label, extension) = match extension {
+        "bmaterial" => ("material", "Material", "bmaterial"),
+        "bscript" => ("script", "Visual Script", "bscript"),
+        "banim" => ("animation", "Animation States", "banim"),
+        _ => return None,
+    };
+    Some(Catalog { domain, label, extension, nodes: &[], starter: &[], variant: crate::no_variant, upgrade: crate::no_upgrade, fractional: &[] })
+}
+
+/// What this crate writes back after reading the graph file at `path` as [`Graph::from_json`]
+/// does, its nodes and links aside (they need the domain's node kinds), or `refused` when it does
+/// not read it. `None` for files of other kinds.
+fn rewrite(path: &std::path::Path) -> Option<String> {
+    let catalog = format_catalog(path.extension()?.to_str()?)?;
+    let refused = Some("refused\n".to_owned());
+    let Ok(text) = std::fs::read_to_string(path) else { return refused };
+    let Ok(mut graph) = serde_json::from_str::<Graph>(&text) else { return refused };
+    let read = graph.version;
+    graph.upgrade();
+    if read < VERSION {
+        (catalog.upgrade)(&mut graph, read);
+        graph.version = VERSION;
+    }
+    let declarations = Graph { nodes: Vec::new(), links: Vec::new(), ..graph.clone() };
+    if declarations.check(&catalog).is_err() {
+        return refused;
+    }
+    Some(graph.to_json())
+}
+
+fn files_below(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|n| n != "expected") {
+                files_below(&path, out);
+            }
+        } else {
+            out.push(path);
+        }
+    }
+}
+
+/// The C# engine must read and write every graph file of the examples, the benchmark and
+/// `tests/files` as this one does (docs/csharp-redesign.md). Both engines' tests compare their
+/// rewrite of each file with `tests/files/expected/`, which this test writes when `BAYLEAF_BLESS=1`
+/// is set.
+#[test]
+fn the_shared_graph_files_rewrite_as_the_expected_files_say() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("..");
+    let expected_dir = root.join("tests").join("files").join("expected");
+    let bless = std::env::var_os("BAYLEAF_BLESS").is_some_and(|v| v == "1");
+    let mut inputs = Vec::new();
+    files_below(&root.join("examples"), &mut inputs);
+    files_below(&root.join("rust").join("bench").join("graphs"), &mut inputs);
+    files_below(&root.join("tests").join("files"), &mut inputs);
+    let mut checked = 0;
+    for input in inputs {
+        let Some(written) = rewrite(&input) else { continue };
+        let relative = input.strip_prefix(&root).unwrap_or(&input).components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>();
+        let name = relative.iter().skip_while(|c| *c == "tests" || *c == "files").cloned().collect::<Vec<_>>().join("__");
+        let expected_path = expected_dir.join(&name);
+        if bless {
+            std::fs::create_dir_all(&expected_dir).unwrap();
+            std::fs::write(&expected_path, &written).unwrap();
+        }
+        let expected = std::fs::read_to_string(&expected_path).unwrap_or_default().replace("\r\n", "\n");
+        assert_eq!(written, expected, "{} rewrites differently from {}", input.display(), expected_path.display());
+        checked += 1;
+    }
+    assert!(checked > 10, "only {checked} shared graph files were found");
+}

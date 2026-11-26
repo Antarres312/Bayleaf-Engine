@@ -1,0 +1,33 @@
+{
+  "format": "bayleaf.interface",
+  "version": 2,
+  "styles": ["ui/base.bstyle", "UI/Upper.BSTYLE"],
+  "root": {
+    "kind": "panel",
+    "name": "Screen",
+    "classes": ["full", "dark"],
+    "style": { "width": "100%", "height": "100%", "alignItems": "center", "gap": " 16px ", "padding": "8px 16px", "background": "#202020c0", "gap": "12px" },
+    "children": [
+      { "kind": "text", "name": "Title", "text": "Tab\there \"quoted\" back\\slash \u0001 😀 é 🌿\nnew line", "style": { "fontSize": "40px", "textAlign": "center", "color": "#ffffff" } },
+      { "kind": "image", "name": "Logo", "image": "assets/Logo.PNG", "style": { "maxWidth": "400px", "minHeight": "0px" } },
+      { "kind": "button", "name": "Start", "text": "Start", "onClick": "startGame", "classes": ["big"] },
+      { "kind": "toggle", "name": "Sound", "text": "Sound", "value": 1 },
+      { "kind": "slider", "name": "Volume", "value": 0.5, "min": -1e-7, "max": 1e20 },
+      { "kind": "slider", "name": "Zero", "value": -0.0, "min": 0, "max": 1.0 },
+      { "kind": "textField", "name": "Player", "text": "Anna" },
+      { "kind": "progress", "name": "Health", "value": 0.25, "bind": "player:health" },
+      { "kind": "text", "name": "Score", "bind": "game:score" },
+      {
+        "kind": "list",
+        "name": "Scores",
+        "value": 30,
+        "style": { "height": "100px", "direction": "column", "justify": "spaceBetween" },
+        "children": [
+          { "kind": "row", "style": { "grow": "1", "shrink": "0.5", "alignSelf": "end", "radius": "6px" } },
+          { "kind": "column", "style": { "visible": "false", "opacity": "0.5", "accent": "#5fb3f9", "pointer": "block", "borderColor": "#808080", "borderWidth": "1px", "minWidth": "auto", "maxHeight": "1000%" } }
+        ]
+      },
+      { "kind": "part", "name": "Card", "layout": "ui/card.bui", "texts": { "Name": "Rogue", "Health": "3/5" }, "style": { "width": "300px" } }
+    ]
+  }
+}

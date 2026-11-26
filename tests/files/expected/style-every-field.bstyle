@@ -1,0 +1,35 @@
+{
+  "format": "bayleaf.style",
+  "version": 1,
+  "rules": [
+    {
+      "kind": "button",
+      "set": {
+        "color": "#0000ff",
+        "fontSize": "20px",
+        "padding": "1px 2px 3px 4px",
+        "radius": "2px"
+      }
+    },
+    {
+      "class": "loud",
+      "set": {
+        "color": "#ff000080",
+        "fontSize": " 30px "
+      }
+    },
+    {
+      "name": "Go 😀",
+      "set": {}
+    },
+    {
+      "kind": "textField",
+      "set": {
+        "grow": "1e2",
+        "height": "50%",
+        "opacity": "1",
+        "width": "auto"
+      }
+    }
+  ]
+}

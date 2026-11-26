@@ -1,0 +1,12 @@
+{
+  "format": "bayleaf.interface",
+  "version": 0,
+  "root": {
+    "kind": "panel",
+    "children": [
+      {
+        "kind": "column"
+      }
+    ]
+  }
+}

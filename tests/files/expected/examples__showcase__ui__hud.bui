@@ -1,0 +1,72 @@
+{
+  "format": "bayleaf.interface",
+  "version": 2,
+  "root": {
+    "kind": "column",
+    "name": "HUD",
+    "style": {
+      "alignItems": "center",
+      "gap": "8px",
+      "height": "100%",
+      "justify": "end",
+      "padding": "20px",
+      "width": "100%"
+    },
+    "children": [
+      {
+        "kind": "row",
+        "name": "Cards",
+        "style": {
+          "gap": "10px"
+        },
+        "children": [
+          {
+            "kind": "part",
+            "name": "Animation",
+            "layout": "ui/card.bui",
+            "texts": {
+              "Detail": "The windmill's sails turn: Model Animation",
+              "Name": "Animated glTF model"
+            }
+          },
+          {
+            "kind": "part",
+            "name": "Obj",
+            "layout": "ui/card.bui",
+            "texts": {
+              "Detail": "Read with their MTL library and texture",
+              "Name": "OBJ crates"
+            }
+          },
+          {
+            "kind": "part",
+            "name": "Sparks",
+            "layout": "ui/card.bui",
+            "texts": {
+              "Detail": "Size and colour curves, added light",
+              "Name": "Particles from a surface"
+            }
+          },
+          {
+            "kind": "part",
+            "name": "Look",
+            "layout": "ui/card.bui",
+            "texts": {
+              "Detail": "Bloom, occlusion, vignette, a warm lookup image",
+              "Name": "Post-processing"
+            }
+          },
+          {
+            "kind": "part",
+            "name": "Sign",
+            "layout": "ui/card.bui",
+            "texts": {
+              "Detail": "The sign is a panel you can click",
+              "Name": "Interface in the world"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

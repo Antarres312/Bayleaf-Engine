@@ -1,0 +1,16 @@
+{
+  "format": "bayleaf.graph",
+  "version": 2,
+  "domain": "script",
+  "nodes": [
+    { "id": 1, "kind": "menuPath", "position": [0, 0], "values": { "path": "Light/Flicker" } },
+    { "id": 2, "kind": "start", "position": [10, 10] },
+    { "id": 3, "kind": "menuPath", "position": [0, 50], "values": { "path": "Ignored/Second" } },
+    { "id": 4, "kind": "log", "position": [200, 10] }
+  ],
+  "links": [
+    { "from": { "node": 2, "pin": "then" }, "to": { "node": 4, "pin": "run" } },
+    { "from": { "node": 1, "pin": "out" }, "to": { "node": 4, "pin": "text" } }
+  ],
+  "variables": [{ "name": "level", "type": "wholeNumber", "start": 3 }]
+}
