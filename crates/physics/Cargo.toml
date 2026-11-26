@@ -13,6 +13,12 @@ bayleaf-scene = { workspace = true }
 rapier3d = { workspace = true }
 rapier3d-f64 = { workspace = true }
 
+# On desktops each step spreads over a pool of worker threads (Rapier's `parallel`, through rayon).
+# The web player has one thread and keeps the single-threaded step. Both give the same results.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rapier3d = { workspace = true, features = ["parallel"] }
+rapier3d-f64 = { workspace = true, features = ["parallel"] }
+
 [dev-dependencies]
 serde_json = { workspace = true }
 

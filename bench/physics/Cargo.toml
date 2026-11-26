@@ -1,0 +1,19 @@
+[package]
+name = "bayleaf-bench-physics"
+description = "L7: internal performance benchmark of the physics step on scenes of many dynamic bodies (see bench/README.md)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bayleaf-core = { workspace = true }
+bayleaf-scene = { workspace = true }
+bayleaf-physics = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

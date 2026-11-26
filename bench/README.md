@@ -456,3 +456,81 @@ What it says:
   script host (above), not in ECS queries, so the switch stays off by default. It is worth turning
   on where systems do real per-entity work over thousands of entities (the heavy and schedule
   cases), not for light queries; a later step could choose per query by its row count and cost.
+
+## Physics on several cores (2026-11-26)
+
+Rapier stepped each world on one thread. On desktops `bayleaf-physics` now turns on Rapier's
+`parallel` feature, and every world steps on one shared pool of worker threads: the processor's
+threads up to 8 (`MAX_THREADS`), or as many as `BAYLEAF_PHYSICS_THREADS` says (1 to 64);
+`Physics::set_threads` gives one world a pool of its own. The web player (wasm32) has one thread and
+keeps the single-threaded step.
+
+**The scene** (`bench/physics`, crate `bayleaf-bench-physics`): N dynamic 1 m boxes in columns of
+ten on a grid 1.25 m apart, each box a fixed 0 to 0.2 m off its column and turned 0 to 90 degrees,
+above one wide static floor. The columns fall over into each other, so the boxes keep touching.
+Timed: `Physics::step` with 1/60 s, the call play mode makes, which is Rapier's step plus Bayleaf's
+own work (bodies for new objects, kinematic bodies in, every dynamic body's place written back to
+the scene). The program prints a checksum of every box's final position and rotation bits.
+
+**Method.** Release builds (`lto = "thin"`, `codegen-units = 1`), each in its own target folder.
+*Before*: the base commit (c3d939d) with only the benchmark added, built without the parallel
+feature (no rayon in its dependencies). *After*: this branch. Each case runs in its own process:
+30 warm-up steps, then 240 steps timed one by one (the pile is still moving at the end of them;
+from about step 300 most boxes sleep and a step costs little). Three runs of each case, run after
+run, so a slow spell does not land on one case. Before each case `bench/run-physics.ps1` waits
+until the processors are less than 15 or 20 % busy (at most 1.5 minutes) and records the load;
+other sessions were building on the computer at times. The table gives the median of the three
+runs' means, in milliseconds per step.
+
+AMD Ryzen 7 260 (8 cores, 16 threads), 31 GB, Windows 11; Rust 1.100, Rapier 0.36.1, rayon 1.12.
+Every case is in [results/2026-11-26-physics.md](results/2026-11-26-physics.md), raw runs in
+[results/2026-11-26-physics.jsonl](results/2026-11-26-physics.jsonl).
+
+| Single precision | 5000 | 10,000 | 20,000 |
+|---|---:|---:|---:|
+| Before: one thread, build without the parallel feature | 20.0 | 39.2 | 131.3 |
+| After, 1 thread | 19.9 | 44.7 | 141.6 |
+| After, 2 threads | 12.6 | 24.8 | 84.0 |
+| After, 4 threads | 7.9 | 16.1 | 53.5 |
+| **After, default (8 threads)** | **6.05** | **11.2** | **42.7** |
+| After, 16 threads | 5.97 | 11.7 | 38.8 |
+| Before / after (default) | 3.3 | 3.5 | 3.1 |
+
+Double precision, 10,000 bodies: 96.1 ms before, 25.8 ms after on 8 threads (3.7 times).
+
+The runs' means are mostly within 2 to 10 % of each other; the widest is after on 1 thread at
+10,000, 37.2 to 45.7. The processors were 2 to 18 % busy before each run.
+
+What it says:
+
+- **The same results.** Every run of a size and precision, before and after and on every number of
+  threads, ended with the same checksum. Rapier's parallel step promises results identical bit for
+  bit whatever the pool size and with or without the feature (its own tests check it), and here it
+  holds. `crates/physics` keeps a test of it: a pile of 400 boxes and a chain of hinges steps to the
+  same places on a second run and on 1, 3 and 8 threads, in both precisions.
+- **Bayleaf itself was not deterministic with joints.** Joints were made, and bodies of deleted
+  objects removed, in a `HashMap`'s order, which changes from run to run, and that order decides
+  Rapier's handles and so its solving order: two runs of the same scene with a chain of joints
+  ended in different places, also on one thread. They are now made and removed in id order; the test
+  above fails without that.
+- **About 3 to 3.5 times faster on 8 threads** than before. Against the same build on one thread,
+  two threads give 1.6 to 1.8 times, four 2.5 to 2.8 and eight 3.3 to 4;
+  the rest does not scale, as part of the step runs on one thread (Bayleaf's own work around Rapier's
+  step and Rapier's serial stages; this benchmark does not split them).
+- **Past 8 threads little changes**: 16 threads (the processor's second thread on each core) are 1
+  to 9 % faster at 5000 and 20,000 and 4 % slower at 10,000. So the default stops at 8, which also
+  leaves threads for the rest of the frame.
+- **The parallel build on one thread costs 0 to 14 % more** than the build without the feature
+  (`BAYLEAF_PHYSICS_THREADS=1`), so the single-threaded step stays for the web only.
+- **Twice the bodies cost more than twice the time** in every build (20,000 against 10,000: 3.2 to
+  3.8 times), likely as Rapier's data stops fitting the processor's caches; not looked into.
+
+Rerun, from the repository root in PowerShell (the *before* binary is built from a checkout of the
+base commit with `bench/physics` added and its `--threads` option taken out):
+
+```powershell
+cargo build --release -p bayleaf-bench-physics -j 2
+.\bench\run-physics.ps1 -Label after -Threads 0,1,2,4,16
+```
+
+One case by hand: `target\release\bayleaf-bench-physics.exe --bodies 20000 --threads 8`.

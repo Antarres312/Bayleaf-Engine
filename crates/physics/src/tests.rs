@@ -306,3 +306,61 @@ fn a_hinge_motor_turns_the_box_and_follows_a_changed_speed() {
     }
     assert!((yaw(&scene) - before).abs() < 10.0, "at speed 0 the motor holds it still: {before} then {}", yaw(&scene));
 }
+
+/// Columns of boxes, a little off and turned, that fall over into each other, and a chain of
+/// hinged boxes swinging through them: enough contacts and joints for Rapier's parallel stages.
+fn tumbling_pile() -> bayleaf_scene::doc::SceneDoc {
+    let mut scene = Scene::new();
+    floor(&mut scene);
+    for k in 0..400_usize {
+        let (column, layer) = (k / 8, k % 8);
+        let jitter = |seed: usize| ((seed * 7919) % 41) as f64 / 100.0 - 0.2;
+        let id = crate_box(&mut scene, &format!("Box {k}"), 0.0);
+        let position = [(column % 7) as f64 * 1.25 - 4.0 + jitter(k), 0.6 + layer as f64 * 1.1, (column / 7) as f64 * 1.25 - 4.0 + jitter(k + 17)];
+        scene.set(id, Transform { position, rotation: [0.0, ((k * 37) % 90) as f32, 0.0], scale: [1.0; 3] }).unwrap();
+    }
+    for link in 0..6 {
+        let connected = if link == 0 { String::new() } else { format!("Link {}", link - 1) };
+        let hinge = joint("hinge", &connected, [-0.6, 0.0, 0.0], [0.0, 0.0, 1.0]);
+        jointed(&mut scene, &format!("Link {link}"), hinge, [-3.0 + link as f32 * 1.2, 11.0, 0.0]);
+    }
+    scene.to_doc()
+}
+
+/// Every object's place, as bits, and the contacts by object index, after `steps` steps on
+/// `threads` workers (`None`: the shared pool).
+fn run_pile(doc: &bayleaf_scene::doc::SceneDoc, precision: Precision, threads: Option<usize>, steps: usize) -> (Vec<u64>, Vec<(usize, usize, ContactKind)>) {
+    let mut scene = Scene::from_doc(doc).unwrap();
+    let order: Vec<StableId> = scene.world_matrices().into_iter().map(|(id, _)| id).collect();
+    let index = |id: StableId| order.iter().position(|o| *o == id).unwrap();
+    let mut physics = Physics::build(&scene, GRAVITY, precision);
+    if let Some(threads) = threads {
+        let made = physics.set_threads(threads);
+        assert!(made == threads || (cfg!(target_arch = "wasm32") && made == 1), "asked for {threads} threads, got {made}");
+    }
+    let mut contacts = Vec::new();
+    for _ in 0..steps {
+        contacts.extend(physics.step(&mut scene, STEP).into_iter().map(|c| (index(c.object), index(c.other), c.kind)));
+    }
+    let places = order
+        .iter()
+        .flat_map(|id| {
+            let t = scene.get::<Transform>(*id).unwrap();
+            t.position.map(f64::to_bits).into_iter().chain(t.rotation.map(|r| u64::from(r.to_bits())))
+        })
+        .collect();
+    (places, contacts)
+}
+
+#[test]
+fn the_same_scene_steps_to_the_same_places_on_any_number_of_threads() {
+    let doc = tumbling_pile();
+    for precision in [Precision::Single, Precision::Double] {
+        let first = run_pile(&doc, precision, None, 150);
+        assert!(first.1.len() > 400, "the pile collides: {} contacts", first.1.len());
+        assert_eq!(run_pile(&doc, precision, None, 150), first, "{precision:?}: a second run reads the same");
+        for threads in [1, 3, 8] {
+            assert!(run_pile(&doc, precision, Some(threads), 150) == first, "{precision:?}: {threads} threads read the same");
+        }
+    }
+}

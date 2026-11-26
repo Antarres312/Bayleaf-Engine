@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*", "xtask", "bench"]
+members = ["crates/*", "apps/*", "xtask", "bench", "bench/physics"]
 # Example game scripts build for WebAssembly in their own workspace (`cargo xtask scripts`), as do
 # the benchmark's scripts and its small runtimes (bench/README.md).
 exclude = ["scripts", "bench/scripts", "bench/runtime/rust", "bench/runtime/wasm-host"]

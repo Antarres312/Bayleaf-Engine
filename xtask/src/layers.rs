@@ -25,6 +25,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("bayleaf-player", 7),
     // Internal performance benchmark (bench/README.md).
     ("bayleaf-bench", 7),
+    ("bayleaf-bench-physics", 7),
 ];
 
 /// UI crates that nothing below layer 6 may use.

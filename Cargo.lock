@@ -554,6 +554,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bayleaf-bench-physics"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "bayleaf-core",
+ "bayleaf-physics",
+ "bayleaf-scene",
+ "clap",
+ "serde_json",
+]
+
+[[package]]
 name = "bayleaf-cli"
 version = "0.3.0"
 dependencies = [
@@ -3873,6 +3885,7 @@ dependencies = [
  "num-derive 0.5.1",
  "num-traits",
  "ordered-float",
+ "rayon",
  "rstar",
  "simba",
  "slab",
@@ -3901,6 +3914,7 @@ dependencies = [
  "num-derive 0.5.1",
  "num-traits",
  "ordered-float",
+ "rayon",
  "rstar",
  "simba",
  "slab",
@@ -4253,6 +4267,7 @@ dependencies = [
  "num-traits",
  "parry3d",
  "profiling",
+ "rayon",
  "serde",
  "simba",
  "static_assertions",
@@ -4275,6 +4290,7 @@ dependencies = [
  "num-traits",
  "parry3d-f64",
  "profiling",
+ "rayon",
  "serde",
  "simba",
  "static_assertions",

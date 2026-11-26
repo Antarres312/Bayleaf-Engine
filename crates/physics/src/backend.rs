@@ -68,6 +68,8 @@ impl World {
             joints: HashMap::new(),
             ground: None,
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        physics.world.set_thread_pool(crate::pool::shared());
         physics.sync_objects(scene);
         // Scene queries (raycasts) work before the first step: a step of no time fills them in.
         physics.world.integration_parameters.dt = real(0.0);
@@ -78,7 +80,10 @@ impl World {
 
     /// Bodies for objects that gained physics, none for objects that are gone.
     fn sync_objects(&mut self, scene: &Scene) {
-        let gone: Vec<StableId> = self.bodies.keys().filter(|id| !scene.contains(**id)).copied().collect();
+        // In id order, here and for joints: a HashMap's order changes from run to run, and the
+        // order bodies and joints come and go in decides Rapier's handles and so its solving order.
+        let mut gone: Vec<StableId> = self.bodies.keys().filter(|id| !scene.contains(**id)).copied().collect();
+        gone.sort_unstable();
         for id in gone {
             if let Some(body) = self.bodies.remove(&id) {
                 // Bodies that touched it wake up and fall.
@@ -194,6 +199,21 @@ impl World {
     pub(crate) fn velocity(&self, id: StableId) -> Option<[f32; 3]> {
         let rb = self.world.bodies.get(self.bodies.get(&id)?.handle)?;
         Some(from_vector(rb.linvel()).as_vec3().to_array())
+    }
+
+    /// Gives this world its own pool of worker threads, or the shared one again with `None`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_pool(&mut self, pool: Option<std::sync::Arc<crate::pool::ThreadPool>>) {
+        self.world.set_thread_pool(pool.or_else(crate::pool::shared));
+    }
+
+    /// The worker threads a step runs on.
+    pub(crate) fn threads(&self) -> usize {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(threads) = self.world.num_threads() {
+            return threads;
+        }
+        1
     }
 
     pub(crate) fn ids(&self) -> impl Iterator<Item = StableId> + '_ {
@@ -419,16 +439,18 @@ impl World {
     /// at once, for the world). Changed limits and motors apply to the joint; other changes make
     /// it again where the bodies are now.
     fn sync_joints(&mut self, scene: &Scene) {
-        let stale: Vec<StableId> = self.joints.keys().filter(|id| !self.bodies.contains_key(id) || scene.get::<Joint>(**id).is_none()).copied().collect();
+        let mut stale: Vec<StableId> = self.joints.keys().filter(|id| !self.bodies.contains_key(id) || scene.get::<Joint>(**id).is_none()).copied().collect();
+        stale.sort_unstable();
         for id in stale {
             if let Some((handle, _)) = self.joints.remove(&id) {
                 self.world.impulse_joints.remove(handle, true);
             }
         }
-        let wanted: Vec<(StableId, Joint)> = self.bodies.keys().filter_map(|id| scene.get::<Joint>(*id).map(|j| (*id, j.clone()))).collect();
+        let mut wanted: Vec<(StableId, Joint)> = self.bodies.keys().filter_map(|id| scene.get::<Joint>(*id).map(|j| (*id, j.clone()))).collect();
         if wanted.is_empty() {
             return;
         }
+        wanted.sort_unstable_by_key(|(id, _)| *id);
         let objects = scene.world_matrices();
         for (id, settings) in wanted {
             if let Some((handle, made)) = self.joints.get(&id).cloned() {
