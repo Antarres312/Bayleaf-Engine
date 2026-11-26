@@ -38,6 +38,7 @@ fn hostile_params_are_refused_for_every_command() {
         json!({"id": real, "component": "../../etc", "value": 1}),
         json!({"id": real, "parent": real}),
         json!({"id": real, "index": -1}),
+        json!({"id": real, "component": "transform", "script": 0}),
         json!({"unexpected": true}),
     ];
     for id in ids.iter().filter(|id| !matches!(**id, "scene.new" | "edit.undo" | "edit.redo")) {
@@ -346,6 +347,49 @@ fn scripts_are_added_edited_and_removed_one_by_one() {
     // One undo step per change.
     registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
     assert_eq!(session.scene().component(sid, "scripts").unwrap().as_array().map(Vec::len), Some(1));
+}
+
+#[test]
+fn reset_puts_a_component_or_one_script_back_to_its_defaults_in_one_undo_step() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let mesh = json!({"shape": "sphere", "color": [0.1, 0.2, 0.3, 1], "metallic": 1, "roughness": 0.1});
+    let id = create(&registry, &mut session, json!({"components": {"mesh": mesh}}));
+    let sid = bayleaf_core::StableId::parse_hex(&id).unwrap();
+    let mut fresh = bayleaf_scene::Scene::new();
+    let other = fresh.create_object(None, "Fresh").unwrap();
+    fresh.add_component(other, "mesh").unwrap();
+    let changed = session.scene().to_doc();
+
+    let result = registry.execute(&mut session, "scene.component.reset", &json!({"id": id, "component": "mesh"})).unwrap();
+    assert_eq!(result["from"], "defaults");
+    assert_eq!(session.scene().component(sid, "mesh").unwrap(), fresh.component(other, "mesh").unwrap(), "every field is the default");
+    registry.execute(&mut session, "edit.undo", &Value::Null).unwrap();
+    assert_eq!(session.scene().to_doc(), changed, "one undo step brings the values back");
+
+    // One script's properties go back to their defaults; the others keep theirs.
+    for module in ["a.wasm", "b.wasm"] {
+        registry.execute(&mut session, "scene.script.add", &json!({"id": id, "module": module})).unwrap();
+    }
+    for index in [0, 1] {
+        registry.execute(&mut session, "scene.script.setProperty", &json!({"id": id, "index": index, "name": "speed", "value": 7})).unwrap();
+    }
+    registry.execute(&mut session, "scene.component.reset", &json!({"id": id, "component": "scripts", "script": 1})).unwrap();
+    let scripts = session.scene().component(sid, "scripts").unwrap();
+    assert!(scripts[1].get("properties").is_none(), "the reset script is back to its declared defaults");
+    assert_eq!(scripts[0]["properties"]["speed"], 7.0, "the other script keeps its own");
+    assert_eq!(scripts.as_array().map(Vec::len), Some(2), "no script is removed");
+
+    let before = session.scene().to_doc();
+    for bad in [
+        json!({"id": id, "component": "scripts", "script": 2}),
+        json!({"id": id, "component": "mesh", "script": 0}),
+        json!({"id": id, "component": "pointLight"}),
+        json!({"id": id, "component": "prefab"}),
+    ] {
+        assert!(registry.execute(&mut session, "scene.component.reset", &bad).is_err(), "{bad} is refused");
+    }
+    assert_eq!(session.scene().to_doc(), before);
 }
 
 fn node(registry: &CommandRegistry, session: &mut Session, kind: &str) -> u64 {
@@ -809,6 +853,48 @@ fn prefab_copies_keep_their_own_changes_nest_and_update_when_the_scene_opens() {
     run(&mut session, "scene.prefab.revert", json!({"id": second}));
     assert!((color(&session, bulb_of(&session, &second)) - 0.5).abs() < 1e-6);
     assert!(session.scene().component(bayleaf_core::StableId::parse_hex(&second).unwrap(), "prefab").unwrap().get("overrides").is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn reset_on_a_prefab_copy_returns_to_the_prefab_and_drops_the_override() {
+    let registry = CommandRegistry::with_builtins();
+    let mut session = Session::default();
+    let dir = std::env::temp_dir().join(format!("bayleaf-prefab-reset-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    registry.execute(&mut session, "scene.saveAs", &json!({"path": dir.join("room.bscene")})).unwrap();
+    let run = |session: &mut Session, id: &str, params: Value| registry.execute(session, id, &params).unwrap();
+    let mesh = |red: f32| json!({"shape": "sphere", "color": [red, 0, 0, 1], "metallic": 0, "roughness": 0.5});
+    let lamp = create(&registry, &mut session, json!({"name": "Lamp"}));
+    create(&registry, &mut session, json!({"name": "Bulb", "parent": lamp, "components": {"mesh": mesh(0.9)}}));
+    run(&mut session, "scene.prefab.create", json!({"id": lamp, "path": "lamp.bprefab"}));
+    let copy = run(&mut session, "scene.prefab.place", json!({"path": "lamp.bprefab"}))["id"].as_str().unwrap().to_owned();
+    let copy_id = bayleaf_core::StableId::parse_hex(&copy).unwrap();
+    let bulb = session.scene().children(Some(copy_id))[0];
+    let overrides = |session: &Session| session.scene().component(copy_id, "prefab").unwrap().get("overrides").cloned().unwrap_or(json!([]));
+
+    // The copy's bulb gets its own colour and a light the prefab does not have.
+    run(&mut session, "scene.component.set", json!({"id": bulb, "component": "mesh", "value": mesh(0.1)}));
+    run(&mut session, "scene.component.add", json!({"id": bulb, "component": "pointLight"}));
+    assert_eq!(overrides(&session), json!(["1/mesh", "1/pointLight"]));
+
+    assert_eq!(crate::prefab_cmds::reset_source(&session, bulb, "mesh", None).as_deref(), Some("lamp.bprefab"));
+    let result = run(&mut session, "scene.component.reset", json!({"id": bulb, "component": "mesh"}));
+    assert_eq!((result["from"].as_str(), result["source"].as_str()), (Some("prefab"), Some("lamp.bprefab")), "it says it used the prefab");
+    assert!((session.scene().component(bulb, "mesh").unwrap()["color"][0].as_f64().unwrap() - 0.9).abs() < 1e-6, "the prefab's colour, not the default");
+    assert_eq!(overrides(&session), json!(["1/pointLight"]), "the copy follows the file's colour again");
+
+    // What the prefab does not have, and the copy's own transform, go to the defaults.
+    assert_eq!(crate::prefab_cmds::reset_source(&session, bulb, "pointLight", None), None);
+    assert_eq!(run(&mut session, "scene.component.reset", json!({"id": bulb, "component": "pointLight"}))["from"], "defaults");
+    run(
+        &mut session,
+        "scene.component.set",
+        json!({"id": copy, "component": "transform", "value": {"position": [5, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}}),
+    );
+    assert_eq!(crate::prefab_cmds::reset_source(&session, copy_id, "transform", None), None);
+    assert_eq!(run(&mut session, "scene.component.reset", json!({"id": copy, "component": "transform"}))["from"], "defaults");
+    assert_eq!(session.scene().component(copy_id, "transform").unwrap()["position"][0], 0.0);
     std::fs::remove_dir_all(&dir).ok();
 }
 

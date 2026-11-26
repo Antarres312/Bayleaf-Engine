@@ -3496,6 +3496,49 @@ fn a_script_cards_menu_opens_the_script_to_edit_or_says_why_not_and_removes_it()
 }
 
 #[test]
+fn a_cards_menu_resets_it_from_the_keyboard_and_offers_reset_to_prefab_on_a_copy() {
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-reset-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut harness = harness();
+    let mesh = |red: f32| json!({ "shape": "sphere", "color": [red, 0.2, 0.3, 1], "metallic": 1, "roughness": 0.1 });
+    harness.state_mut().dispatch("scene.saveAs", &json!({ "path": dir.join("room.bscene") }), None).unwrap();
+    harness.state_mut().dispatch("scene.object.create", &json!({ "name": "Lamp", "components": { "mesh": mesh(0.1) } }), None).unwrap();
+    harness.run();
+    let lamp = harness.state().selected.unwrap();
+    let red = |harness: &Harness<'static, Editor>| harness.state().session.scene().component(lamp, "mesh").unwrap()["color"][0].as_f64().unwrap();
+
+    // By keyboard: the card's menu button, then Reset.
+    harness.get_by_label("More for Mesh").focus();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(harness.query_by_label("Reset to Prefab").is_none(), "a plain object resets to the defaults");
+    harness.get_by_label("Reset").focus();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    let defaults = bayleaf_engine::scene::registry::ComponentRegistry::builtin().find("mesh").unwrap().default_value();
+    assert_eq!(harness.state().session.scene().component(lamp, "mesh").unwrap(), defaults, "every field is back to its default");
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    harness.run();
+    assert!((red(&harness) - 0.1).abs() < 1e-6, "one undo step brings the values back");
+
+    // On a prefab copy the menu says it resets to the prefab, and does.
+    harness.state_mut().dispatch("scene.prefab.create", &json!({ "id": lamp, "path": "lamp.bprefab" }), None).unwrap();
+    harness.state_mut().dispatch("scene.component.set", &json!({ "id": lamp, "component": "mesh", "value": mesh(0.7) }), None).unwrap();
+    harness.run();
+    harness.get_by_label("More for Mesh").click();
+    harness.run();
+    assert!(harness.query_by_label("Reset").is_none(), "the plain label is not offered on a copy");
+    harness.get_by_label("Reset to Prefab").click();
+    harness.run();
+    assert!((red(&harness) - 0.1).abs() < 1e-6, "the prefab's colour, not the default");
+    assert!(harness.state().status.contains("lamp.bprefab"), "the status says which values came back: {}", harness.state().status);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn a_native_build_shows_how_far_it_is_in_the_status_bar_and_says_how_it_went() {
     let mut harness = harness();
     let progress = std::sync::Arc::new(std::sync::Mutex::new(bayleaf_engine::native_export::Progress { done: 3, total: 10, doing: "serde".to_owned() }));

@@ -348,18 +348,79 @@ fn nested_copies(scene: &Scene, root: StableId) -> Vec<StableId> {
 /// belongs to keeps the change when it is updated from its file. A copy's own name and transform
 /// are always its own; inside another copy they are that copy's change.
 pub(crate) fn note_override(scene: &mut Scene, id: StableId, component: &str) {
+    if let Some((root, index)) = override_owner(scene, id, component) {
+        add_override(scene, root, index, component);
+    }
+}
+
+/// The copy that keeps component `component` of `id` as its own change, and `id`'s index among
+/// its objects: the nearest copy, or for a copy's own name and transform the copy around it.
+fn override_owner(scene: &Scene, id: StableId, component: &str) -> Option<(StableId, usize)> {
     if component == "prefab" {
-        return;
+        return None;
     }
-    let Some((root, index)) = copy_of(scene, id) else { return };
+    let (root, index) = copy_of(scene, id)?;
     if index == 0 && KEPT.contains(&component) {
-        let Some((outer, _)) = scene.parent(root).and_then(|parent| copy_of(scene, parent)) else { return };
-        if let Some(at) = order(scene, outer).iter().position(|o| *o == root) {
-            add_override(scene, outer, at, component);
-        }
-        return;
+        let (outer, _) = copy_of(scene, scene.parent(root)?)?;
+        let at = order(scene, outer).iter().position(|o| *o == root)?;
+        return Some((outer, at));
     }
-    add_override(scene, root, index, component);
+    Some((root, index))
+}
+
+/// What the prefab file gives component `component` of `id`: the file and the value, or `None`
+/// when `id` is not part of a copy, the component is the copy's own (its name and transform), or
+/// the file has no such component there (or cannot be read).
+fn prefab_value(session: &Session, id: StableId, component: &str) -> Option<(String, Value)> {
+    let (owner, index) = override_owner(&session.scene, id, component)?;
+    let source = session.scene.get::<Prefab>(owner)?.source.clone();
+    let objects = read_prefab(session, &source).ok()?;
+    let value = objects.get(index)?.components.get(component)?.clone();
+    Some((source, value))
+}
+
+/// Where Reset takes component `component` of `id` from: the prefab file it names, or `None` for
+/// the component's defaults. With `script`, one script of the object's list: the prefab's values
+/// only when the file has the same script at that place.
+pub fn reset_source(session: &Session, id: StableId, component: &str, script: Option<usize>) -> Option<String> {
+    reset_values(session, id, component, script).map(|(source, _)| source)
+}
+
+/// The prefab's value for a Reset (see [`reset_source`]): the whole component, or with `script`
+/// that script's properties as a `Scripts` value holding the file's script.
+pub(crate) fn reset_values(session: &Session, id: StableId, component: &str, script: Option<usize>) -> Option<(String, Value)> {
+    let (source, value) = prefab_value(session, id, component)?;
+    let Some(index) = script else { return Some((source, value)) };
+    let file: bayleaf_scene::components::Scripts = serde_json::from_value(value).ok()?;
+    let current = session.scene.get::<bayleaf_scene::components::Scripts>(id)?.0.get(index)?;
+    let theirs = file.0.get(index).filter(|s| s.module == current.module)?;
+    Some((source, serde_json::to_value(theirs).ok()?))
+}
+
+/// Drops the override of component `component` of `id` once it matches the prefab file again,
+/// so changes to the file reach it.
+pub(crate) fn forget_override(session: &mut Session, id: StableId, component: &str) {
+    let Some((root, index)) = override_owner(&session.scene, id, component) else { return };
+    let theirs = prefab_value(session, id, component).and_then(|(_, value)| stored(component, value));
+    let same = theirs.is_some() && session.scene.component(id, component).ok() == theirs;
+    let Some(mut link) = session.scene.get::<Prefab>(root).cloned() else { return };
+    let key = format!("{index}/{component}");
+    if same && link.overrides.contains(&key) {
+        link.overrides.retain(|k| *k != key);
+        let _ = session.scene.set(root, link);
+    }
+}
+
+/// `value` of component `component` as the scene stores it, so fields a file leaves out compare
+/// as their defaults.
+fn stored(component: &str, value: Value) -> Option<Value> {
+    let mut probe = Scene::new();
+    let object = probe.create_object(None, "probe").ok()?;
+    if probe.component(object, component).is_err() {
+        probe.add_component(object, component).ok()?;
+    }
+    probe.set_component(object, component, value).ok()?;
+    probe.component(object, component).ok()
 }
 fn add_override(scene: &mut Scene, root: StableId, index: usize, component: &str) {
     let Some(mut link) = scene.get::<Prefab>(root).cloned() else { return };

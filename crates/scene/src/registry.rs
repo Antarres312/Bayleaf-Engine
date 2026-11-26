@@ -22,6 +22,7 @@ pub struct ComponentKind {
     get: fn(&World, Entity) -> Option<Value>,
     set: fn(&mut World, Entity, Value) -> Result<(), String>,
     add_default: fn(&mut World, Entity) -> Result<(), String>,
+    default: fn() -> Value,
     remove: fn(&mut World, Entity) -> bool,
     options: fn(&str) -> &'static [&'static str],
 }
@@ -38,6 +39,7 @@ impl ComponentKind {
             get: get::<T>,
             set: set::<T>,
             add_default: add_default::<T>,
+            default: default_value::<T>,
             remove: remove::<T>,
             options: T::options,
         }
@@ -46,6 +48,11 @@ impl ComponentKind {
     /// Allowed values of a text field, empty when any text is allowed.
     pub fn options(&self, field: &str) -> &'static [&'static str] {
         (self.options)(field)
+    }
+
+    /// The value a new component of this type starts with.
+    pub fn default_value(&self) -> Value {
+        (self.default)()
     }
 
     pub(crate) fn has(&self, world: &World, entity: Entity) -> bool {
@@ -85,6 +92,10 @@ fn set<T: SceneComponent>(world: &mut World, entity: Entity, value: Value) -> Re
 
 fn add_default<T: SceneComponent>(world: &mut World, entity: Entity) -> Result<(), String> {
     world.insert(entity, T::default()).map_err(|e| e.to_string())
+}
+
+fn default_value<T: SceneComponent>() -> Value {
+    serde_json::to_value(T::default()).unwrap_or(Value::Null)
 }
 
 fn remove<T: SceneComponent>(world: &mut World, entity: Entity) -> bool {
