@@ -408,3 +408,51 @@ Loading (stage 3), three scripts per object: the scripts of 20,000 objects load 
 before) and of 100,000 in 1.8 s, and `play.start` on 100,000 objects takes 2.5 to 2.9 s; loading
 is linear in the scene. `--full-load` loads as play mode does, so the script step can now be timed
 that way at any size.
+
+## The ECS on several cores (2026-11-26)
+
+The question: does running the ECS's systems and queries on a thread pool (the `parallel` feature
+of `bayleaf-ecs` and `World::set_parallel`, off by default) pay at 5000 to 20,000 entities?
+`crates/ecs/examples/parallel.rs` times `Schedule::run` with the switch off and on; `bench/run-ecs.ps1`
+builds it (`cargo build --release -p bayleaf-ecs --features parallel --example parallel -j 1`), runs
+each case three times in its own process and writes `results/<date>-ecs.jsonl` and `.md`.
+
+Every entity has a transform, a motion, a matrix, health, regeneration, a phase and a rate; every
+tenth also a light, so queries span two archetypes. The cases:
+
+- **light**: one system adds velocity to position and spin to yaw (a few additions per entity).
+- **heavy**: one system works out each entity's world matrix (two `sin_cos` and a 4x4 per entity).
+- **schedule**: four systems: move, heal and animate touch different components and run at once on
+  the pool; matrices reads what move writes, so it runs after them. Every system's rows are also
+  split over the pool.
+
+Method as above: release build, 30 warm-up steps, at least 100 steps and 3 s, at most 20,000 steps,
+each step timed alone, median of three runs' means, each case started once the processors were
+under 15 % busy (they were 2 to 15 %; each run records it). Two runs that started busier, after the
+runner's ten-minute wait, were dropped and taken again. The pool had 16 threads on 8 cores. Both
+modes end every case with the same checksum.
+
+Milliseconds per step ([results/2026-11-26-ecs.md](results/2026-11-26-ecs.md)); in brackets, one
+thread's time over the pool's:
+
+| Case | Mode | 5000 | 10,000 | 20,000 |
+|---|---|---:|---:|---:|
+| light | one thread | 0.003 | 0.004 | 0.008 |
+| light | pool | 0.015 (0.2) | 0.017 (0.2) | 0.015 (0.5) |
+| heavy | one thread | 0.034 | 0.065 | 0.136 |
+| heavy | pool | 0.020 (1.7) | 0.022 (3.0) | 0.038 (3.6) |
+| schedule | one thread | 0.106 | 0.199 | 0.392 |
+| schedule | pool | 0.059 (1.8) | 0.061 (3.3) | 0.099 (4.0) |
+
+What it says:
+
+- **Handing work to the pool costs about 15 µs per step**, whatever the size: the light case takes
+  3 to 8 µs on one thread and 15 to 17 µs on the pool. Work under a few tens of microseconds per
+  step is slower on the pool.
+- **Above that it pays, and more with more entities**: about 1.8 times at 5000, 3 to 3.3 times at
+  10,000 and 3.6 to 4 times at 20,000. It stays well under 8 times because each step is a fraction
+  of a millisecond, so the fixed cost and memory bandwidth weigh much.
+- **For now these are small numbers either way.** Bayleaf's own step spends milliseconds in the
+  script host (above), not in ECS queries, so the switch stays off by default. It is worth turning
+  on where systems do real per-entity work over thousands of entities (the heavy and schedule
+  cases), not for light queries; a later step could choose per query by its row count and cost.

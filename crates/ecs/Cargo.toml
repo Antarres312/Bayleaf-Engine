@@ -7,9 +7,17 @@ license.workspace = true
 rust-version.workspace = true
 publish = false
 
+[features]
+# Runs systems that do not conflict, and the rows of `for_each_mut` queries, on a thread pool when
+# `World::set_parallel` turns it on. Has no effect on WebAssembly, which has no pool.
+parallel = ["dep:rayon"]
+
 [dependencies]
 bayleaf-core = { workspace = true }
 thiserror = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = { workspace = true, optional = true }
 
 [lints]
 workspace = true
