@@ -75,6 +75,25 @@ public class SessionTests
         Assert.Equal(JsonValue.From(false), render.Get("enabled"));
         Assert.Contains("not in the C# engine yet", render.Get("disabledReason")!.AsString(), StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ANewProjectsFilesHaveUnixLineEndsOnEveryCheckout()
+    {
+        var dir = Path.Join(Path.GetTempPath(), $"bayleaf-starter-cs-{Environment.ProcessId}");
+        try
+        {
+            var (registry, session) = Fresh();
+            Assert.True(registry.Execute(session, "project.new", new JsonObject { { "path", new JsonString(dir) } }).IsOk);
+            foreach (var file in new[] { "scenes/main.bscene", "materials/ground.bmaterial", "scripts/spin.bscript" })
+            {
+                Assert.DoesNotContain((byte)13, File.ReadAllBytes(Path.Join(dir, file)));
+            }
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
 }
 
 public class ConfinementTests

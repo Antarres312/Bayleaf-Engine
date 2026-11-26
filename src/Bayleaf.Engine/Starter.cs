@@ -1,10 +1,14 @@
 namespace Bayleaf.Engine;
 
-/// <summary>The files <c>project.new</c> writes, the same as the Rust engine's starting point.</summary>
+/// <summary>
+/// The files <c>project.new</c> writes, the same as the Rust engine's starting point. Their text is
+/// taken with <c>\n</c> line ends whatever line ends this source file was checked out with, so the
+/// files are byte for byte the Rust engine's on every machine.
+/// </summary>
 internal static class Starter
 {
     /// <summary>The starting scene: a camera, the sun, a checkered ground and a spinning cube, lit by <c>scenes/daylight.blight</c>.</summary>
-    public const string MainScene = """"
+    public static readonly string MainScene = (""""
 {
   "format": "bayleaf.scene",
   "version": 17,
@@ -49,10 +53,10 @@ internal static class Starter
     }
   ]
 }
-"""" + "\n";
+"""" + "\n").ReplaceLineEndings("\n");
 
     /// <summary>A checkered ground in two greens.</summary>
-    public const string GroundMaterial = """"
+    public static readonly string GroundMaterial = (""""
 {
   "format": "bayleaf.graph",
   "version": 1,
@@ -67,10 +71,10 @@ internal static class Starter
     { "from": { "node": 3, "pin": "result" }, "to": { "node": 1, "pin": "baseColor" } }
   ]
 }
-"""" + "\n";
+"""" + "\n").ReplaceLineEndings("\n");
 
     /// <summary>Turns its object around Y by its Speed property, in degrees per second.</summary>
-    public const string SpinScript = """"
+    public static readonly string SpinScript = (""""
 {
   "format": "bayleaf.graph",
   "version": 1,
@@ -90,5 +94,5 @@ internal static class Starter
     { "from": { "node": 4, "pin": "vector" }, "to": { "node": 5, "pin": "degrees" } }
   ]
 }
-"""" + "\n";
+"""" + "\n").ReplaceLineEndings("\n");
 }
