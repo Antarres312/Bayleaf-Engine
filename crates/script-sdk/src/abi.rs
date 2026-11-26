@@ -42,6 +42,8 @@ mod raw {
         pub fn ui_text(handle: i32, name_ptr: *const u8, name_len: usize, out: *mut u8, cap: usize) -> i32;
         pub fn sound_play(handle: i32) -> i32;
         pub fn sound_stop(handle: i32) -> i32;
+        pub fn timeline_play(handle: i32) -> i32;
+        pub fn timeline_stop(handle: i32) -> i32;
         pub fn sound_play_at(path_ptr: *const u8, path_len: usize, x: f32, y: f32, z: f32, volume: f32) -> i32;
         pub fn scene_unload(path_ptr: *const u8, path_len: usize) -> i32;
         pub fn object_of(reference: i32) -> i32;
@@ -461,6 +463,12 @@ mod raw {
     }
     pub unsafe fn sound_stop(handle: i32) -> i32 {
         plain("sound_stop", &[I32(handle)])
+    }
+    pub unsafe fn timeline_play(handle: i32) -> i32 {
+        plain("timeline_play", &[I32(handle)])
+    }
+    pub unsafe fn timeline_stop(handle: i32) -> i32 {
+        plain("timeline_stop", &[I32(handle)])
     }
     pub unsafe fn sound_play_at(ptr: *const u8, n: usize, x: f32, y: f32, z: f32, volume: f32) -> i32 {
         // SAFETY: the safe wrappers pass a live slice.
@@ -1092,6 +1100,18 @@ pub(crate) fn sound_stop(handle: i32) -> bool {
     crate::batch::sync();
     // SAFETY: a plain number in and out.
     unsafe { raw::sound_stop(handle) != 0 }
+}
+
+pub(crate) fn timeline_play(handle: i32) -> bool {
+    crate::batch::sync();
+    // SAFETY: a plain number in and out.
+    unsafe { raw::timeline_play(handle) != 0 }
+}
+
+pub(crate) fn timeline_stop(handle: i32) -> bool {
+    crate::batch::sync();
+    // SAFETY: a plain number in and out.
+    unsafe { raw::timeline_stop(handle) != 0 }
 }
 
 pub(crate) fn sound_play_at(path: &str, position: [f32; 3], volume: f32) -> bool {

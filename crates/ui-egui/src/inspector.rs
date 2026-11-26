@@ -741,7 +741,21 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
     let emitter = scene.get::<bayleaf_engine::scene::components::ParticleEmitter>(id).cloned();
     let interface = scene.get::<bayleaf_engine::scene::components::Interface>(id).cloned();
     let streamed = scene.get::<StreamedArea>(id).cloned();
+    let keyframes = scene.get::<bayleaf_engine::scene::components::KeyframeAnimation>(id).cloned();
     let mut fields = Vec::new();
+    if let Some(keyframes) = keyframes {
+        let missing = !keyframes.animation.is_empty() && !base.join(&keyframes.animation).is_file();
+        fields.push(FileField {
+            component: "keyframeAnimation",
+            field: "animation",
+            label: "Animation",
+            none: "None (plays nothing)",
+            no_files: "No .btimeline files in the project folder",
+            files: editor.project.keyframe_files(),
+            problem: missing.then(|| crate::i18n::tf("{file} is not there", &[("file", &keyframes.animation.to_string())])),
+            editable: false,
+        });
+    }
     if let Some(interface) = interface {
         let missing = !interface.layout.is_empty() && !base.join(&interface.layout).is_file();
         fields.push(FileField {

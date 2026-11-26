@@ -411,6 +411,17 @@ impl Object {
         abi::sound_stop(self.0)
     }
 
+    /// Plays its Keyframe Animation from the start after this step; false when this call asked
+    /// too often.
+    pub fn play_keyframes(self) -> bool {
+        abi::timeline_play(self.0)
+    }
+
+    /// Stops its Keyframe Animation where it is, after this step.
+    pub fn stop_keyframes(self) -> bool {
+        abi::timeline_stop(self.0)
+    }
+
     /// Its name, as the step began.
     pub fn name(self) -> String {
         abi::name_of(self.0)

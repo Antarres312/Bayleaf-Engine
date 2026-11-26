@@ -87,5 +87,6 @@ fn restore(session: &mut Session, snapshot: Snapshot) -> Result<Snapshot, Comman
             open.dirty = true;
             Ok(current)
         }
+        Snapshot::Timeline(_) => crate::timeline_cmds::restore(session, &snapshot),
     }
 }

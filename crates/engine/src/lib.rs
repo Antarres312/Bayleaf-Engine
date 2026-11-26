@@ -27,6 +27,8 @@ pub mod saved;
 mod scene_cmds;
 mod sound;
 mod stream;
+pub mod timeline_cmds;
+mod timeline_play;
 pub mod web_export;
 
 /// Optional world streaming, present only with the `streaming` feature.
@@ -77,6 +79,8 @@ enum Snapshot {
     Scene(Vec<u8>),
     /// A graph, by its id among the open graphs.
     Graph(u64, Vec<u8>),
+    /// The open timeline.
+    Timeline(Vec<u8>),
 }
 
 /// Undo and redo together keep at most this many bytes of snapshots; the oldest steps go first.
@@ -94,9 +98,18 @@ impl Snapshot {
         Self::Graph(id, serde_json::to_vec(graph).unwrap_or_default())
     }
 
+    /// Whether two snapshots hold the same document.
+    fn same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Scene(a), Self::Scene(b)) | (Self::Timeline(a), Self::Timeline(b)) => a == b,
+            (Self::Graph(x, a), Self::Graph(y, b)) => x == y && a == b,
+            _ => false,
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
-            Self::Scene(bytes) | Self::Graph(_, bytes) => bytes.len(),
+            Self::Scene(bytes) | Self::Graph(_, bytes) | Self::Timeline(bytes) => bytes.len(),
         }
     }
 
@@ -127,6 +140,8 @@ pub enum Mutates {
     Scene,
     /// Changes the open graph; one undo step, and the graph file is marked modified.
     Graph,
+    /// Changes the open timeline; one undo step, and the timeline file is marked modified.
+    Timeline,
 }
 
 /// State that commands read and change: the open scene, its file, the undo history and play mode.
@@ -159,6 +174,8 @@ pub struct Session {
     prefab_edits: Vec<prefab_cmds::PrefabEdit>,
     /// Play steps' times by part, while it records.
     profiler: profiler::Profiler,
+    /// The keyframe animation the `timeline.*` commands work on.
+    timeline: Option<timeline_cmds::TimelineDoc>,
 }
 
 /// How important a console line is.
@@ -578,6 +595,8 @@ impl CommandRegistry {
         commands.extend(import::commands());
         commands.extend(interface::commands());
         commands.extend(input_cmds::commands());
+        commands.extend(timeline_cmds::commands());
+        commands.extend(timeline_play::commands());
         Self { commands }
     }
 
@@ -615,7 +634,11 @@ impl CommandRegistry {
         if !(params.is_object() || params.is_null()) {
             return Err(CommandError::ParamsNotObject);
         }
+        // While recording, edits of the posed parts become keys.
+        let id = if timeline_cmds::redirect(session, id, params) { "timeline.key.record" } else { id };
         let spec = self.get(id).ok_or_else(|| CommandError::Unknown(id.to_owned()))?;
+        // The timeline's pose is only shown: it goes before anything else sees or saves the scene.
+        timeline_cmds::before_command(session, id);
         (spec.enabled)(session).map_err(|reason| CommandError::Disabled { id: id.to_owned(), reason })?;
         let before = match spec.mutates {
             Mutates::No => return (spec.run)(session, params),
@@ -624,8 +647,14 @@ impl CommandRegistry {
                 let doc = session.graph.as_ref().ok_or_else(|| CommandError::Failed(graph_cmds::NO_GRAPH.to_owned()))?;
                 Snapshot::graph(doc.id, &doc.graph)
             }
+            Mutates::Timeline => Snapshot::timeline(session.timeline.as_ref().ok_or_else(|| CommandError::Failed(timeline_cmds::NO_TIMELINE.to_owned()))?),
         };
         match (spec.run)(session, params) {
+            // A timeline edit that changed nothing is no undo step.
+            Ok(result) if spec.mutates == Mutates::Timeline && session.timeline.as_ref().map(Snapshot::timeline).is_some_and(|now| now.same(&before)) => {
+                timeline_cmds::after_change(session);
+                Ok(result)
+            }
             // Play-mode changes to the scene are thrown away on stop, so they are not undo steps and do not dirty the file.
             Ok(result) if session.is_playing() && spec.mutates == Mutates::Scene => Ok(result),
             Ok(result) => {
@@ -641,6 +670,12 @@ impl CommandRegistry {
                             graph.dirty = true;
                         }
                     }
+                    Mutates::Timeline => {
+                        if let Some(doc) = session.timeline.as_mut() {
+                            doc.dirty = true;
+                        }
+                        timeline_cmds::after_change(session);
+                    }
                     _ => session.dirty = true,
                 }
                 Ok(result)
@@ -651,6 +686,8 @@ impl CommandRegistry {
                     session.scene = scene;
                 } else if let (Ok(graph), Some(open)) = (before.to_graph(), session.graph.as_mut()) {
                     open.graph = graph;
+                } else if let (Ok(timeline), Some(open)) = (before.to_timeline(), session.timeline.as_mut()) {
+                    open.timeline = timeline;
                 }
                 Err(error)
             }

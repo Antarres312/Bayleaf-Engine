@@ -84,6 +84,8 @@ enum Kind {
     Image,
     /// A sound file an Audio Source plays.
     Sound,
+    /// A keyframe animation (`.btimeline`) made for a prefab.
+    KeyframeAnimation,
     Other,
 }
 
@@ -103,6 +105,7 @@ impl Kind {
             Some(bayleaf_interface::STYLE_EXTENSION) => Kind::InterfaceStyle,
             Some(bayleaf_engine::scene::data::SHAPE_EXTENSION) => Kind::DataShape,
             Some(bayleaf_engine::scene::data::DATA_EXTENSION) => Kind::DataFile,
+            Some(bayleaf_engine::scene::timeline::EXTENSION) => Kind::KeyframeAnimation,
             Some("png" | "jpg" | "jpeg" | "exr" | "webp" | "ktx2") => Kind::Image,
             Some(ext) if bayleaf_engine::render::assets::MODEL_EXTENSIONS.contains(&ext) => Kind::Model,
             Some(ext) if bayleaf_engine::scene::components::SOUND_EXTENSIONS.contains(&ext) => Kind::Sound,
@@ -130,6 +133,7 @@ impl Kind {
             Kind::DataFile => "Data File",
             Kind::Image => "Image",
             Kind::Sound => "Sound",
+            Kind::KeyframeAnimation => "Keyframe Animation",
             Kind::Other => "File",
         }
     }
@@ -253,6 +257,11 @@ impl ProjectView {
     /// Every prefab (`.bprefab`) in the project.
     pub(crate) fn prefab_files(&self) -> Vec<String> {
         self.files_of(&[Kind::Prefab])
+    }
+
+    /// Every keyframe animation (`.btimeline`) in the project.
+    pub(crate) fn keyframe_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::KeyframeAnimation])
     }
 
     /// Every Input Map (`.binput`) in the project.
@@ -432,6 +441,10 @@ enum Action {
     PlacePrefab(PathBuf),
     /// Edits a prefab on its own (`prefab.open`).
     OpenPrefab(PathBuf),
+    /// Makes a keyframe animation for this prefab, beside it, and opens it.
+    NewKeyframes(PathBuf),
+    /// Opens a keyframe animation in the Keyframes panel.
+    OpenKeyframes(PathBuf),
     OpenGraph(PathBuf),
     AddScript(String),
     /// Start naming a new asset of this kind, in this folder or else the open one.
@@ -563,6 +576,8 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         Some(Action::OpenPrefab(path)) => {
             editor.dispatch("prefab.open", &json!({ "path": path }), None);
         }
+        Some(Action::NewKeyframes(prefab)) => crate::timeline_view::new_for_prefab(editor, &prefab),
+        Some(Action::OpenKeyframes(path)) => crate::timeline_view::open(editor, &path),
         Some(Action::OpenGraph(path)) => editor.open_graph(&path),
         Some(Action::StartNew(kind, folder)) => {
             // New files go into the project only, never into the engine's folder.
@@ -1296,6 +1311,19 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
             outcome.action = Some(Action::PlacePrefab(entry.path.clone()));
             ui.close();
         }
+        if entry.kind == Kind::Prefab
+            && ui
+                .button(tl("New Keyframe Animation"))
+                .on_hover_text(tl("Make an animation of this prefab's parts, beside it, and open it in the Keyframes panel"))
+                .clicked()
+        {
+            outcome.action = Some(Action::NewKeyframes(entry.path.clone()));
+            ui.close();
+        }
+        if entry.kind == Kind::KeyframeAnimation && ui.button(tl("Open in Keyframes Panel")).clicked() {
+            outcome.action = Some(Action::OpenKeyframes(entry.path.clone()));
+            ui.close();
+        }
         if entry.kind == Kind::Project && ui.button(tl("Open Project")).clicked() {
             outcome.action = Some(Action::OpenScene(entry.path.clone()));
             ui.close();
@@ -1371,6 +1399,7 @@ fn default_action(entry: &Entry) -> Option<Action> {
         Kind::Scene | Kind::Project => Some(Action::OpenScene(path)),
         Kind::Material | Kind::VisualScript => Some(Action::OpenGraph(path)),
         Kind::Prefab => Some(Action::OpenPrefab(path)),
+        Kind::KeyframeAnimation => Some(Action::OpenKeyframes(path)),
         // A Rust script: its source, in the code editor.
         Kind::ScriptSource | Kind::Script => source_file(entry).map(Action::OpenExternal),
         Kind::Model | Kind::Image | Kind::Sound | Kind::Other => Some(Action::OpenExternal(path)),
@@ -1472,6 +1501,17 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             painter.add(egui::Shape::convex_polygon(vec![top, right, mid, left], color.gamma_multiply(if filled { 0.9 } else { 0.35 }), stroke(color)));
             painter.add(egui::Shape::convex_polygon(vec![left, mid, bottom, lb], side, stroke(color)));
             painter.add(egui::Shape::convex_polygon(vec![mid, right, rb, bottom], side, stroke(color)));
+        }
+        Kind::KeyframeAnimation => {
+            // A time line with keys on it.
+            let y = rect.center().y;
+            painter.hline(at(0.1, 0.0).x..=at(0.9, 0.0).x, y, stroke(t.text_muted));
+            for x in [0.22, 0.5, 0.78] {
+                let c = egui::pos2(at(x, 0.0).x, y);
+                let r = s * 0.12;
+                let diamond = vec![c - egui::vec2(0.0, r), c + egui::vec2(r, 0.0), c + egui::vec2(0.0, r), c - egui::vec2(r, 0.0)];
+                painter.add(egui::Shape::convex_polygon(diamond, t.pin_number, stroke(t.pin_number)));
+            }
         }
         Kind::Material => {
             // A shaded ball with a highlight.

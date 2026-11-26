@@ -26,10 +26,12 @@ pub enum Panel {
     Profiler,
     /// A game interface layout edited visually, a tab beside the scene view.
     Interface,
+    /// The open keyframe animation's tracks under a time ruler, below the scene view.
+    Keyframes,
 }
 
 impl Panel {
-    pub const ALL: [Panel; 10] = [
+    pub const ALL: [Panel; 11] = [
         Panel::Hierarchy,
         Panel::Scene,
         Panel::Game,
@@ -40,6 +42,7 @@ impl Panel {
         Panel::Console,
         Panel::ProjectSettings,
         Panel::Profiler,
+        Panel::Keyframes,
     ];
 
     pub fn title(self) -> &'static str {
@@ -54,6 +57,7 @@ impl Panel {
             Panel::Game => tl("Game"),
             Panel::Profiler => tl("Profiler"),
             Panel::Interface => tl("Interface"),
+            Panel::Keyframes => tl("Keyframes"),
         }
     }
 
@@ -90,17 +94,17 @@ impl Layout {
         let surface = state.main_surface_mut();
         match self {
             Layout::Standard => {
-                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console, Panel::Profiler]);
+                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console, Panel::Profiler, Panel::Keyframes]);
                 let [scene, _] = surface.split_right(top, 0.76, vec![Panel::Inspector]);
                 surface.split_left(scene, 0.24, vec![Panel::Hierarchy]);
             }
             Layout::WideScene => {
-                let [top, _] = surface.split_below(NodeIndex::root(), 0.8, vec![Panel::Project, Panel::Console, Panel::Profiler]);
+                let [top, _] = surface.split_below(NodeIndex::root(), 0.8, vec![Panel::Project, Panel::Console, Panel::Profiler, Panel::Keyframes]);
                 let [_, side] = surface.split_right(top, 0.74, vec![Panel::Hierarchy]);
                 surface.split_below(side, 0.42, vec![Panel::Inspector]);
             }
             Layout::Mirrored => {
-                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console, Panel::Profiler]);
+                let [top, _] = surface.split_below(NodeIndex::root(), 0.76, vec![Panel::Project, Panel::Console, Panel::Profiler, Panel::Keyframes]);
                 let [scene, _] = surface.split_left(top, 0.26, vec![Panel::Inspector]);
                 surface.split_right(scene, 0.76, vec![Panel::Hierarchy]);
             }
@@ -162,7 +166,7 @@ pub(crate) fn set_open(dock: &mut DockState<Panel>, panel: Panel, open: bool) {
                     Panel::Hierarchy => {
                         surface.split_left(node, 0.24, vec![panel]);
                     }
-                    Panel::Console | Panel::Project | Panel::Profiler => {
+                    Panel::Console | Panel::Project | Panel::Profiler | Panel::Keyframes => {
                         surface.split_below(node, 0.76, vec![panel]);
                     }
                     _ => {
@@ -226,6 +230,7 @@ impl TabViewer for Panels<'_> {
             Panel::Game => game_view::show(self.editor, ui, self.gpu),
             Panel::Profiler => profiler_view::show(self.editor, ui),
             Panel::Interface => crate::interface_view::show(self.editor, ui),
+            Panel::Keyframes => crate::timeline_view::show(self.editor, ui),
         }
     }
 

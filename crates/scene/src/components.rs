@@ -1055,6 +1055,45 @@ impl SceneComponent for ModelAnimation {
     }
 }
 
+/// Plays a keyframe animation (`.btimeline`) on the parts of the prefab this object is the root
+/// of, in play mode: from the start, or when a script says.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KeyframeAnimation {
+    /// The `.btimeline` file, relative to the project folder; empty for none.
+    pub animation: String,
+    /// Starts when play mode starts, or when the object is spawned; otherwise when a script says.
+    pub play_on_start: bool,
+    /// 1 as made; 0.5 half as fast.
+    pub speed: f32,
+}
+
+impl Default for KeyframeAnimation {
+    fn default() -> Self {
+        Self { animation: String::new(), play_on_start: true, speed: 1.0 }
+    }
+}
+
+impl SceneComponent for KeyframeAnimation {
+    const NAME: &'static str = "keyframeAnimation";
+    const LABEL: &'static str = "Keyframe Animation";
+    const MENU: &'static str = "Rendering/Keyframe Animation";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        if self.animation.len() > 1024 || self.animation.contains('\0') {
+            return Err("animation is a path of at most 1024 bytes, without NUL".to_owned());
+        }
+        if !(self.animation.is_empty() || self.animation.ends_with(&format!(".{}", crate::timeline::EXTENSION))) {
+            return Err(format!("animation is a .{} file", crate::timeline::EXTENSION));
+        }
+        if !(self.speed.is_finite() && (0.0..=10.0).contains(&self.speed)) {
+            return Err("speed must be between 0 and 10".to_owned());
+        }
+        Ok(())
+    }
+}
+
 /// A sound the object plays in play mode: from its own place when spatial, heard from the first
 /// camera (quieter with distance, from the side it is on), or the same everywhere.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
