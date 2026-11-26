@@ -290,6 +290,12 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
         ),
         spec("animation.trigger", "Trigger Animation Parameter", "{id, name}: sets a trigger, which the first transition that uses it uses up", trigger),
         spec(
+            "animation.joint.get",
+            "Read Joint",
+            "{id, joint}: where the joint of the object's model is in the world now, as its animation poses it (at rest when nothing plays): {position, rotation (degrees), scale}",
+            joint_get,
+        ),
+        spec(
             "animation.state.set",
             "Go to Animation State",
             "{id, state, fade?: seconds}: an object running animation states goes to that state now, fading over `fade` (default 0.25)",
@@ -549,6 +555,39 @@ fn trigger(session: &mut Session, params: &Value) -> Result<Value, CommandError>
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct JointParams {
+    id: StableId,
+    joint: String,
+}
+
+/// Where joint `joint` of object `id`'s model is in the world now: by its player when it has one,
+/// else at rest.
+pub(crate) fn joint_world(session: &mut Session, id: StableId, joint: &str) -> Result<bayleaf_core::math::DMat4, CommandError> {
+    let world = session.scene.world_matrix(id).ok_or_else(|| CommandError::Failed(format!("there is no object {id}")))?;
+    let (skeleton, nodes) = match session.animation.objects.get(&id).filter(|a| session.scene.get::<Mesh>(id).is_some_and(|m| m.model == a.model)) {
+        Some(a) => (Arc::clone(&a.skeleton), a.world()),
+        None => {
+            let (_, skeleton) = load_skeleton(session, id)?;
+            let nodes = skeleton.pose(None, 0.0);
+            (skeleton, nodes)
+        }
+    };
+    let node = skeleton
+        .node_named(joint)
+        .ok_or_else(|| CommandError::Failed(format!("there is no joint named \"{joint}\"; the model has {}", skeleton.names.join(", "))))?;
+    let in_model = skeleton.root * nodes.get(node).copied().unwrap_or(Mat4::IDENTITY);
+    Ok(world * in_model.as_dmat4())
+}
+
+fn joint_get(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: JointParams = parse(params)?;
+    check_name("joint", &p.joint)?;
+    let t = bayleaf_scene::components::Transform::from_matrix(joint_world(session, p.id, &p.joint)?);
+    Ok(json!({ "position": t.position, "rotation": t.rotation, "scale": t.scale }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StateParams {
     id: StableId,
     state: String,
@@ -605,6 +644,10 @@ mod tests {
         run(&mut session, "play.start", Value::Null).unwrap();
         run(&mut session, "play.step", json!({"seconds": 1.0})).unwrap();
         assert!(arm_joint(&session, &id).x > 1.4, "its Model Animation plays Stretch: {}", arm_joint(&session, &id));
+        let hand = run(&mut session, "animation.joint.get", json!({"id": id, "joint": "Hand"})).unwrap();
+        let x = hand["position"][0].as_f64().unwrap();
+        assert!(x > 2.4, "the Hand joint is a unit past the stretched Arm, in the world: {hand}");
+        assert!(run(&mut session, "animation.joint.get", json!({"id": id, "joint": "Elbow"})).is_err());
 
         run(&mut session, "animation.play", json!({"id": id, "clip": "Raise", "fade": 1.0, "loop": false})).unwrap();
         run(&mut session, "play.step", json!({"seconds": 0.5})).unwrap();

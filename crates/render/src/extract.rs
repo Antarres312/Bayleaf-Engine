@@ -5,7 +5,7 @@ use bayleaf_core::math::{DMat4, DVec3, Mat3, Mat4, Vec2, Vec3, Vec4};
 use bayleaf_scene::Scene;
 use std::sync::Arc;
 
-use bayleaf_scene::components::{Camera, DirectionalLight, Environment, Mesh, PointLight, Projection, Shape, SpotLight, Sprite};
+use bayleaf_scene::components::{Camera, DirectionalLight, Environment, FollowJoint, Mesh, PointLight, Projection, Shape, SpotLight, Sprite, Transform};
 
 use bayleaf_assets::{Image, MeshData};
 use bayleaf_scene::lighting::Lighting;
@@ -378,7 +378,15 @@ impl EffectsAllowed {
 /// skeleton.
 fn skin_of(scene: &Scene, id: StableId, model: &MeshData, time: f32, assets: &mut dyn AssetSource) -> Option<Arc<Skin>> {
     let skeleton = model.skeleton.as_ref()?;
-    let world = match assets.pose(id).filter(|w| w.len() == skeleton.nodes.len()) {
+    let world = model_pose(scene, id, skeleton, time, assets);
+    Some(Arc::new(skin_for(skeleton, &world)))
+}
+
+/// Where object `id`'s model's nodes are now (their matrices in the model, before the import scale
+/// and axes): as `assets` says the object is posed, else as its Model Animation poses it at `time`
+/// seconds, else at rest.
+fn model_pose(scene: &Scene, id: StableId, skeleton: &bayleaf_assets::skeleton::Skeleton, time: f32, assets: &mut dyn AssetSource) -> Vec<Mat4> {
+    match assets.pose(id).filter(|w| w.len() == skeleton.nodes.len()) {
         Some(world) => world.as_ref().clone(),
         None => {
             let animation = scene.get::<bayleaf_scene::components::ModelAnimation>(id).filter(|a| a.playing);
@@ -386,8 +394,65 @@ fn skin_of(scene: &Scene, id: StableId, model: &MeshData, time: f32, assets: &mu
             let at = animation.map_or(0.0, |a| skeleton.clip_time(index, time * a.speed, a.looping));
             skeleton.pose(index, at)
         }
-    };
-    Some(Arc::new(skin_for(skeleton, &world)))
+    }
+}
+
+/// The skeleton of object `id`'s model, when it has one.
+fn skeleton_of(scene: &Scene, id: StableId, assets: &mut dyn AssetSource) -> Option<Arc<bayleaf_assets::skeleton::Skeleton>> {
+    let mesh = scene.get::<Mesh>(id)?;
+    if mesh.model.is_empty() {
+        return None;
+    }
+    assets.model(&mesh.model)?.skeleton.clone()
+}
+
+/// The matrix of the joint named `joint` of object `id`'s model in the object's own space (with the
+/// import scale and axes), as the model stands now (see [`model_pose`]).
+pub fn joint_matrix(scene: &Scene, id: StableId, joint: &str, time: f32, assets: &mut dyn AssetSource) -> Option<Mat4> {
+    let skeleton = skeleton_of(scene, id, assets)?;
+    let node = skeleton.node_named(joint)?;
+    let world = model_pose(scene, id, &skeleton, time, assets);
+    Some(skeleton.root * *world.get(node)?)
+}
+
+/// Lines from each joint of object `id`'s model to its parent joint, in the object's own space, as
+/// the model stands now: what the scene view draws of a skeleton. `None` for an object whose model
+/// has no skeleton.
+pub fn skeleton_lines(scene: &Scene, id: StableId, time: f32, assets: &mut dyn AssetSource) -> Option<Vec<(Vec3, Vec3)>> {
+    let skeleton = skeleton_of(scene, id, assets)?;
+    let world = model_pose(scene, id, &skeleton, time, assets);
+    let at = |node: usize| world.get(node).map(|m| (skeleton.root * *m).w_axis.truncate());
+    let lines: Vec<(Vec3, Vec3)> = skeleton.nodes.iter().enumerate().filter_map(|(i, n)| Some((at(n.parent?)?, at(i)?))).collect();
+    (!lines.is_empty()).then_some(lines)
+}
+
+/// Every object's world matrix in hierarchy order, as [`Scene::world_matrices`] gives them, with
+/// each object that follows a joint (Follow Joint) and the objects under it placed on that joint of
+/// its parent's model as the model stands now.
+pub fn followed_worlds(scene: &Scene, time: f32, assets: &mut dyn AssetSource) -> Vec<(StableId, DMat4)> {
+    let worlds = scene.world_matrices();
+    if !worlds.iter().any(|(id, _)| scene.get::<FollowJoint>(*id).is_some()) {
+        return worlds;
+    }
+    let mut placed: std::collections::HashMap<StableId, DMat4> = std::collections::HashMap::with_capacity(worlds.len());
+    let mut out = Vec::with_capacity(worlds.len());
+    for (id, world) in worlds {
+        let parent = scene.parent(id);
+        let local = scene.get::<Transform>(id).map_or(DMat4::IDENTITY, Transform::matrix);
+        let mut new = match parent.and_then(|p| placed.get(&p)) {
+            Some(parent_world) => *parent_world * local,
+            None => world,
+        };
+        if let (Some(follow), Some(p)) = (scene.get::<FollowJoint>(id), parent)
+            && let Some(parent_world) = placed.get(&p).copied()
+            && let Some(joint) = joint_matrix(scene, p, &follow.joint, time, assets)
+        {
+            new = parent_world * joint.as_dmat4() * local;
+        }
+        placed.insert(id, new);
+        out.push((id, new));
+    }
+    out
 }
 
 /// The skin of `skeleton` with its nodes at `world` (from [`bayleaf_assets::skeleton::Skeleton::world`]).
@@ -503,7 +568,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
     let lighting = Some(scene.settings().lighting.as_str()).filter(|p| !p.is_empty()).and_then(|path| assets.lighting(path));
     let mut environment: Option<Environment> = lighting.as_ref().map(|l| l.environment());
     let mut has_sun = false;
-    for (id, world) in scene.world_matrices() {
+    for (id, world) in followed_worlds(scene, options.time, assets) {
         let world = camera.relative(world);
         if environment.is_none() {
             environment = scene.get::<Environment>(id).cloned();

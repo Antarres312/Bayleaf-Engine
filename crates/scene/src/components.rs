@@ -1054,6 +1054,31 @@ impl SceneComponent for ModelAnimation {
     }
 }
 
+/// Follows a joint of its parent's model (a sword in the hand): the object stands where the joint
+/// is, as the parent's animation moves it, and its own Transform is measured from the joint. The
+/// parent needs a Mesh whose model has a joint of that name; otherwise the object stays where its
+/// Transform puts it. Applies where the scene is drawn (version 25).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FollowJoint {
+    /// The joint, by its name in the parent's model.
+    pub joint: String,
+}
+
+impl SceneComponent for FollowJoint {
+    const NAME: &'static str = "followJoint";
+    const LABEL: &'static str = "Follow Joint";
+    const MENU: &'static str = "Rendering/Follow Joint";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        if self.joint.len() > 256 {
+            return Err("joint is longer than 256 bytes".to_owned());
+        }
+        Ok(())
+    }
+}
+
 /// A sound the object plays in play mode: from its own place when spatial, heard from the first
 /// camera (quieter with distance, from the side it is on), or the same everywhere.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

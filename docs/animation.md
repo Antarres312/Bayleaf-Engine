@@ -63,6 +63,7 @@ pose, and stopping another layer fades it out.
 | `animation.parameter.set` | `{id, name, value}` | a number or true/false |
 | `animation.trigger` | `{id, name}` | sets a trigger |
 | `animation.state.set` | `{id, state, fade?}` | an object running animation states goes to that state now |
+| `animation.joint.get` | `{id, joint}` | where a joint of the object's model is in the world now: `{position, rotation, scale}` |
 
 In play mode every object with a Model Animation component gets a player when play starts (or when
 it is spawned), which plays the component's clip; the commands then change what plays. Outside play
@@ -95,3 +96,13 @@ and the joint is drawn where it stood at rest along the ground; its height stays
 root joint is **Root Joint** by name, or else the first joint, parents first, that one of the model's
 clips moves. A looping clip carries the object on across each start over rather than back. Turns
 of the root joint stay in the pose.
+
+## Following a joint
+
+An object with a **Follow Joint** component (`followJoint`, `{joint}`) stands on that joint of its
+parent's model (a sword in the hand), as the parent's animation moves it: its own Transform is then
+measured from the joint, and the objects under it follow too. The parent needs a Mesh whose model
+has a joint of that name; otherwise the object stays where its Transform puts it. It applies where
+the scene is drawn (the views, `scene.render`, picking); the object's Transform itself does not
+change, so scripts that need the joint read it (`animation.joint.get`, or the script functions
+below).

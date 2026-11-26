@@ -1219,3 +1219,40 @@ fn a_skinned_model_bends_on_the_gpu_as_on_the_cpu() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn an_object_following_a_joint_moves_with_it_and_the_skeleton_can_be_drawn() {
+    let dir = asset_folder("follow");
+    bayleaf_assets::fixtures::skinned_arm(&dir).unwrap();
+    let mut scene = Scene::new();
+    let arm =
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "arm.gltf"}), [0.0; 3], [0.0; 3]);
+    scene.add_component(arm, "modelAnimation").unwrap();
+    scene.set_component(arm, "modelAnimation", json!({"animation": "Stretch", "playing": true, "looping": false, "speed": 1})).unwrap();
+    // A sword in the hand: half a unit above the Hand joint.
+    let sword = scene.create_object(Some(arm), "Sword").unwrap();
+    scene.add_component(sword, "mesh").unwrap();
+    scene.set_component(sword, "transform", json!({"position": [0.0, 0.5, 0.0], "rotation": [0, 0, 0], "scale": [1, 1, 1]})).unwrap();
+    scene.add_component(sword, "followJoint").unwrap();
+    scene.set_component(sword, "followJoint", json!({"joint": "Hand"})).unwrap();
+    let mut cache = bayleaf_assets::AssetCache::new();
+    let mut materials = crate::MaterialLibrary::new();
+    let allow = |p: &std::path::Path| Ok(p.to_path_buf());
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 60.0, 1.0);
+    let mut sword_at = |scene: &Scene, time: f32| {
+        let mut assets = crate::FileAssets { base: dir.clone(), materials: &mut materials, cache: &mut cache, allow: &allow, warnings: Vec::new() };
+        let frame = extract_with(scene, camera, FrameOptions { time, ..OPTIONS }, &mut assets);
+        let lines = crate::skeleton_lines(scene, arm, time, &mut assets).expect("the arm has a skeleton");
+        (frame.items.iter().find(|i| i.object == sword).expect("the sword is drawn").model.w_axis.truncate(), lines)
+    };
+    let ((rest, rest_lines), (stretched, stretched_lines)) = (sword_at(&scene, 0.0), sword_at(&scene, 0.9));
+    assert!((rest.x - 1.0).abs() < 1e-3 && (rest.y - 0.5).abs() < 1e-3, "at rest, the Hand joint's place plus its own: {rest}");
+    assert!(stretched.x > rest.x + 1.0 && (stretched.y - 0.5).abs() < 1e-3, "it goes where the joint goes: {stretched}");
+    assert_eq!(rest_lines.len(), 2, "Root to Arm, Arm to Hand");
+    let reach = |lines: &[(Vec3, Vec3)]| lines.iter().map(|(_, b)| b.x).fold(f32::MIN, f32::max);
+    assert!(reach(&stretched_lines) > reach(&rest_lines) + 1.0, "the drawn skeleton follows the pose");
+    // Without its component, the sword stays where its Transform puts it.
+    scene.remove_component(sword, "followJoint").unwrap();
+    assert!(sword_at(&scene, 0.9).0.x.abs() < 1e-3);
+    std::fs::remove_dir_all(&dir).ok();
+}
