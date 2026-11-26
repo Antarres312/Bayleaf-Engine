@@ -97,6 +97,17 @@ mod raw {
         pub fn data_entry_text(f_ptr: *const u8, f_len: usize, n_ptr: *const u8, n_len: usize, k_ptr: *const u8, k_len: usize, out: *mut u8, cap: usize)
         -> i32;
     }
+
+    /// `data_entry_text` with its three texts (the file, the field, the key) as pointer and length
+    /// pairs, as the native bridge takes them too.
+    ///
+    /// # Safety
+    /// As the import: each text is readable, and `out` has `cap` writable bytes.
+    pub unsafe fn data_entry_text_of(texts: [(*const u8, usize); 3], out: *mut u8, cap: usize) -> i32 {
+        let [(f, fl), (n, nl), (k, kl)] = texts;
+        // SAFETY: the caller's promise is the import's.
+        unsafe { data_entry_text(f, fl, n, nl, k, kl, out, cap) }
+    }
 }
 
 /// Off WebAssembly, a script is built into the game (native mode): each import goes through the
@@ -781,7 +792,8 @@ mod raw {
         // SAFETY: the safe wrappers pass live slices and room for 3 f32.
         unsafe { data_numbers("data_entry", &[bytes(f, fl), bytes(n, nl), bytes(k, kl)], &[], out) }
     }
-    pub unsafe fn data_entry_text(f: *const u8, fl: usize, n: *const u8, nl: usize, k: *const u8, kl: usize, out: *mut u8, cap: usize) -> i32 {
+    pub unsafe fn data_entry_text_of(texts: [(*const u8, usize); 3], out: *mut u8, cap: usize) -> i32 {
+        let [(f, fl), (n, nl), (k, kl)] = texts;
         // SAFETY: the safe wrappers pass live slices and `cap` writable bytes at `out`.
         unsafe { data_text_call("data_entry_text", &[bytes(f, fl), bytes(n, nl), bytes(k, kl)], &[], out, cap) }
     }
@@ -1513,5 +1525,6 @@ pub(crate) fn data_entry(file: &str, field: &str, key: &str) -> Option<[f32; 3]>
 
 pub(crate) fn data_entry_text(file: &str, field: &str, key: &str) -> Option<String> {
     // SAFETY: as `data_text_of`, with `key` read only too.
-    data_text(|out, cap| unsafe { raw::data_entry_text(file.as_ptr(), file.len(), field.as_ptr(), field.len(), key.as_ptr(), key.len(), out, cap) })
+    let texts = [(file.as_ptr(), file.len()), (field.as_ptr(), field.len()), (key.as_ptr(), key.len())];
+    data_text(|out, cap| unsafe { raw::data_entry_text_of(texts, out, cap) })
 }

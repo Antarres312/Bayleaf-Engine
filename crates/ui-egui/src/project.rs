@@ -1540,7 +1540,8 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
                     for i in 0..3 {
                         let y = inner.top() + inner.height() * (0.12 + 0.32 * i as f32);
                         let name = egui::Rect::from_min_size(egui::pos2(inner.left(), y), egui::vec2(inner.width() * 0.38, inner.height() * 0.2));
-                        let value = egui::Rect::from_min_size(egui::pos2(inner.left() + inner.width() * 0.5, y), egui::vec2(inner.width() * 0.5, inner.height() * 0.2));
+                        let value =
+                            egui::Rect::from_min_size(egui::pos2(inner.left() + inner.width() * 0.5, y), egui::vec2(inner.width() * 0.5, inner.height() * 0.2));
                         painter.rect_filled(name, 1.0, accent);
                         if kind == Kind::DataFile {
                             painter.rect_filled(value, 1.0, accent.gamma_multiply(0.6));

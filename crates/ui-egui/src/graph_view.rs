@@ -175,7 +175,8 @@ fn refresh_data_fields(editor: &mut Editor, graph: &Graph, files: &mut FileCache
         let kept: Vec<String> =
             node.values.get("fields").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
         if kept != fields && editor.dispatch("graph.node.set", &json!({ "node": node.id, "name": "fields", "value": fields }), None).is_some() {
-            editor.status = crate::i18n::tf("Node {id}: the fields of {shape} changed, so its pins did too.", &[("id", &node.id.to_string()), ("shape", &shape)]);
+            editor.status =
+                crate::i18n::tf("Node {id}: the fields of {shape} changed, so its pins did too.", &[("id", &node.id.to_string()), ("shape", &shape)]);
         }
     }
 }

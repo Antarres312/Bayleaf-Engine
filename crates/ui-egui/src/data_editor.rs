@@ -43,7 +43,11 @@ pub(crate) fn shape_editor(ui: &mut egui::Ui, shape: &mut DataShape, files: &[St
                     if ui.add_enabled(i > 0, egui::Button::new(tl("Up"))).on_hover_text(crate::i18n::tf("Moves {field} up", &[("field", &shown)])).clicked() {
                         moved = Some((i, Move::Up));
                     }
-                    if ui.add_enabled(i + 1 < count, egui::Button::new(tl("Down"))).on_hover_text(crate::i18n::tf("Moves {field} down", &[("field", &shown)])).clicked() {
+                    if ui
+                        .add_enabled(i + 1 < count, egui::Button::new(tl("Down")))
+                        .on_hover_text(crate::i18n::tf("Moves {field} down", &[("field", &shown)]))
+                        .clicked()
+                    {
                         moved = Some((i, Move::Down));
                     }
                     if ui.button(tl("Remove")).on_hover_text(crate::i18n::tf("Removes the field {field}", &[("field", &shown)])).clicked() {
@@ -89,7 +93,8 @@ pub(crate) fn shape_editor(ui: &mut egui::Ui, shape: &mut DataShape, files: &[St
 fn field_rows(ui: &mut egui::Ui, t: &Tokens, field: &mut DataField, files: &[String]) -> bool {
     let mut ended = false;
     value_editor::row(ui, t, "Name", |ui, label, width| {
-        let response = ui.add_sized([width, ROW_HEIGHT], egui::TextEdit::singleline(&mut field.name).char_limit(bayleaf_engine::scene::data::MAX_NAME)).labelled_by(label);
+        let response =
+            ui.add_sized([width, ROW_HEIGHT], egui::TextEdit::singleline(&mut field.name).char_limit(bayleaf_engine::scene::data::MAX_NAME)).labelled_by(label);
         ended |= response.lost_focus();
     });
     let (ty, shape) = field.kind().unwrap_or((PropertyType::Number, PropertyShape::Single));

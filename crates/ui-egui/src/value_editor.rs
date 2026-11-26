@@ -730,25 +730,6 @@ fn reset_button(ui: &mut egui::Ui, enabled: bool, name: &str) -> egui::Response 
     button
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{is_color, title_case};
-    use serde_json::json;
-
-    #[test]
-    fn camel_case_keys_become_words() {
-        assert_eq!(title_case("directionalLight"), "Directional Light");
-        assert_eq!(title_case("fov"), "Fov");
-    }
-
-    #[test]
-    fn only_unit_range_color_fields_get_a_picker() {
-        assert!(is_color("color", &json!([0.1, 0.2, 0.3, 1.0])));
-        assert!(!is_color("color", &json!([0.1, 2.0, 0.3])));
-        assert!(!is_color("position", &json!([0.1, 0.2, 0.3])));
-    }
-}
-
 /// A file property's field: None or one of the project's files of its kind; a file of that kind
 /// dragged from the Project panel and dropped on it chooses it too.
 fn file_choice(ui: &mut egui::Ui, ty: PropertyType, chosen: &mut String, files: &[String], label: egui::Id, width: f32) -> Outcome {
@@ -780,5 +761,24 @@ fn file_choice(ui: &mut egui::Ui, ty: PropertyType, chosen: &mut String, files: 
             Outcome { changed: true, ended: true }
         }
         _ => Outcome::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_color, title_case};
+    use serde_json::json;
+
+    #[test]
+    fn camel_case_keys_become_words() {
+        assert_eq!(title_case("directionalLight"), "Directional Light");
+        assert_eq!(title_case("fov"), "Fov");
+    }
+
+    #[test]
+    fn only_unit_range_color_fields_get_a_picker() {
+        assert!(is_color("color", &json!([0.1, 0.2, 0.3, 1.0])));
+        assert!(!is_color("color", &json!([0.1, 2.0, 0.3])));
+        assert!(!is_color("position", &json!([0.1, 0.2, 0.3])));
     }
 }

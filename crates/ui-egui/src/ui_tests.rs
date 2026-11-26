@@ -3617,7 +3617,10 @@ fn data_files_show_their_shape_s_fields_in_groups_and_resets_and_new_fields_are_
     // The shape: Add Field writes a third field, which the data file then shows.
     harness.state_mut().inspect_file(dir.join("Enemy.bshape"));
     harness.run_steps(2);
-    harness.get_by_label("Add Field").click();
+    // By keyboard: the button is below the fold of the Inspector's scroll area.
+    harness.get_by_label("Add Field").focus();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
     harness.run_steps(2);
     let fields = harness.state_mut().dispatch("data.shape.get", &json!({ "path": "Enemy.bshape" }), None).unwrap()["shape"]["fields"].clone();
     assert_eq!(fields.as_array().map(Vec::len), Some(3));
