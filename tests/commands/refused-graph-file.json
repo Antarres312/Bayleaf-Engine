@@ -1,0 +1,1 @@
+[{"cmd": "graph.open", "params": {"path": "$root/tests/files/bad-graph-version.bscript"}}]

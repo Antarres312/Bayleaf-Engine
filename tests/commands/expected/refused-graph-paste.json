@@ -1,0 +1,65 @@
+{
+  "error": "these are material nodes; they cannot go into a script graph",
+  "failedStep": 3,
+  "results": [
+    {
+      "dirty": false,
+      "domain": "material",
+      "graph": {
+        "domain": "material",
+        "format": "bayleaf.graph",
+        "links": [],
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "output",
+            "position": [
+              360.0,
+              40.0
+            ]
+          }
+        ],
+        "version": 8
+      },
+      "id": 1,
+      "outputTypes": [],
+      "path": null,
+      "problems": []
+    },
+    {
+      "text": "{\"format\":\"bayleaf.nodes\",\"domain\":\"material\",\"nodes\":[{\"id\":1,\"kind\":\"output\",\"position\":[360.0,40.0]}],\"links\":[]}"
+    },
+    {
+      "dirty": false,
+      "domain": "script",
+      "graph": {
+        "domain": "script",
+        "format": "bayleaf.graph",
+        "links": [],
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "start",
+            "position": [
+              40.0,
+              40.0
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "update",
+            "position": [
+              40.0,
+              200.0
+            ]
+          }
+        ],
+        "version": 8
+      },
+      "id": 2,
+      "outputTypes": [],
+      "path": null,
+      "problems": []
+    }
+  ]
+}

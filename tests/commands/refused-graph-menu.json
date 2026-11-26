@@ -1,0 +1,1 @@
+[{"cmd": "graph.new", "params": {"domain": "script"}}, {"cmd": "graph.menu.set", "params": {"path": "Light//Flicker"}}]

@@ -1,0 +1,534 @@
+{
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "bytes": 5141,
+      "kind": "Scene",
+      "path": "$root/tests/files/every-component.bscene",
+      "problems": [],
+      "rows": [
+        [
+          "Objects",
+          "5"
+        ],
+        [
+          "Top level",
+          "Łódź \"quoted\"\ttab\u0001 😀 \\ / end, Bare"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 1503,
+      "kind": "Visual Script",
+      "path": "$root/tests/files/script-version-4.bscript",
+      "problems": [],
+      "rows": [
+        [
+          "Nodes",
+          "13"
+        ],
+        [
+          "Links",
+          "0"
+        ],
+        [
+          "Properties",
+          "kept (text) = \"old\", speed (number) = 45.0, on (bool) = true, label (text) = \"\", count (whole) = 3.0, aim (vector) = [1.0,2.0,3.0], tint (color) = [1.0,1.0,1.0], target (object) = \"\", lit (bool) = false, push (vector) = [0.0,0.0,0.0], lives (whole) = -4.0, far (number) = 1.0"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 2071,
+      "kind": "Material",
+      "path": "$root/tests/files/material-numbers.bmaterial",
+      "problems": [],
+      "rows": [
+        [
+          "Nodes",
+          "12"
+        ],
+        [
+          "Links",
+          "11"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 0,
+      "kind": "Folder",
+      "path": "$out/p/scenes",
+      "problems": [],
+      "rows": [
+        [
+          "Files",
+          "2"
+        ],
+        [
+          "Folders",
+          "0"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 0,
+      "kind": "Folder",
+      "path": "$out/p/",
+      "problems": [],
+      "rows": [
+        [
+          "Files",
+          "3"
+        ],
+        [
+          "Folders",
+          "5"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 786,
+      "kind": "Project",
+      "path": "$out/p/p.bproject",
+      "problems": [],
+      "rows": [
+        [
+          "Name",
+          "p"
+        ],
+        [
+          "Main scene",
+          "scenes/main.bscene"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 328,
+      "kind": "Text",
+      "path": "$out/p/README.md",
+      "problems": [],
+      "rows": [],
+      "text": "# p\n\nA Bayleaf Engine project. Open `p.bproject` in the editor.\n\n- `scenes/`: scenes; `main.bscene` opens first\n- `materials/`: material graphs\n- `scripts/`: visual scripts and WebAssembly scripts\n- `assets/`: images, sounds and other files\n- `saves/`: values the game keeps between plays, such as a best score (safe to delete)\n"
+    },
+    {
+      "bytes": 70,
+      "kind": "Text",
+      "path": "$out/p/.gitignore",
+      "problems": [],
+      "rows": [],
+      "text": "# Files the editor or build tools make again.\n/build/\n/.build/\n*.wasm\n"
+    },
+    {
+      "bytes": 0,
+      "kind": "Missing",
+      "path": "$out/p/missing.png",
+      "problems": [
+        "$out/p/missing.png does not exist"
+      ],
+      "rows": [],
+      "text": null
+    },
+    {
+      "path": "$out/p/controls.binput"
+    },
+    {
+      "bytes": 2015,
+      "kind": "Input Map",
+      "path": "$out/p/controls.binput",
+      "problems": [],
+      "rows": [
+        [
+          "Maps",
+          "Player, Menu"
+        ],
+        [
+          "Starts with",
+          "Player"
+        ],
+        [
+          "Actions",
+          "10"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 277,
+      "kind": "Image",
+      "path": "$root/tests/files/assets/png-rgba8.png",
+      "problems": [],
+      "rows": [
+        [
+          "Size",
+          "11 × 6 pixels"
+        ],
+        [
+          "Transparency",
+          "Yes"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 124,
+      "kind": "Image",
+      "path": "$root/tests/files/assets/mips-bc3-data.png",
+      "problems": [],
+      "rows": [
+        [
+          "Size",
+          "8 × 4 pixels"
+        ],
+        [
+          "Transparency",
+          "Yes"
+        ],
+        [
+          "Pixels",
+          "Plain numbers, read as stored"
+        ],
+        [
+          "Compression",
+          "BC3, where the graphics device reads it"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 130,
+      "kind": "Image",
+      "path": "$root/tests/files/assets/odd-bc1.png",
+      "problems": [
+        "kept uncompressed: block compression needs sides that are multiples of 4"
+      ],
+      "rows": [
+        [
+          "Size",
+          "6 × 4 pixels"
+        ],
+        [
+          "Transparency",
+          "None"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 16,
+      "kind": "Model",
+      "path": "$root/tests/files/assets/bad-obj-no-faces.obj",
+      "problems": [
+        "$root/tests/files/assets/bad-obj-no-faces.obj: OBJ: no faces"
+      ],
+      "rows": [],
+      "text": null
+    },
+    {
+      "bytes": 3546,
+      "kind": "Model",
+      "path": "$root/tests/files/assets/gltf-skinned.gltf",
+      "problems": [
+        "Bend: shape blending (morph targets) is left out",
+        "Animation 2: a channel with keys out of order or unmatched is left out"
+      ],
+      "rows": [
+        [
+          "Vertices",
+          "6"
+        ],
+        [
+          "Triangles",
+          "4"
+        ],
+        [
+          "Size",
+          "1.00 × 2.00 × 0.00 m"
+        ],
+        [
+          "Texture coordinates",
+          "Yes"
+        ],
+        [
+          "Animations",
+          "Bend (2.00 s), Animation 2 (0.00 s)"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 1116,
+      "kind": "Model",
+      "path": "$root/tests/files/assets/gltf-textured.glb",
+      "problems": [],
+      "rows": [
+        [
+          "Vertices",
+          "3"
+        ],
+        [
+          "Triangles",
+          "1"
+        ],
+        [
+          "Size",
+          "1.00 × 1.00 × 0.00 m"
+        ],
+        [
+          "Texture coordinates",
+          "Yes"
+        ],
+        [
+          "Material",
+          "its own colour, a 4 × 2 image, metallic 1.00, roughness 1.00"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 412,
+      "kind": "Model",
+      "path": "$root/tests/files/assets/obj-polygons.obj",
+      "problems": [],
+      "rows": [
+        [
+          "Vertices",
+          "9"
+        ],
+        [
+          "Triangles",
+          "7"
+        ],
+        [
+          "Size",
+          "4.00 × 2.00 × 4.00 m"
+        ],
+        [
+          "Texture coordinates",
+          "Yes"
+        ],
+        [
+          "Parts",
+          "4, each with its own material"
+        ],
+        [
+          "Material",
+          "its own colour, a 2 × 2 image, metallic 0.00, roughness 0.14"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 168,
+      "kind": "File",
+      "path": "$root/tests/files/assets/gltf-hierarchy.bin",
+      "problems": [],
+      "rows": [],
+      "text": null
+    },
+    {
+      "bytes": 158,
+      "kind": "Image",
+      "path": "$root/tests/files/assets/png-gray8-trns.png",
+      "problems": [],
+      "rows": [
+        [
+          "Size",
+          "13 × 7 pixels"
+        ],
+        [
+          "Transparency",
+          "Yes"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 735,
+      "kind": "Data Shape",
+      "path": "$root/tests/files/enemy.bshape",
+      "problems": [],
+      "rows": [
+        [
+          "Fields",
+          "8"
+        ],
+        [
+          "Names",
+          "health, speed, damage, tint, waves, loot, drop, boss"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 148,
+      "kind": "Data Shape",
+      "path": "$root/tests/files/bad-shape.bshape",
+      "problems": [
+        "scene file: two fields are named a"
+      ],
+      "rows": [],
+      "text": null
+    },
+    {
+      "bytes": 251,
+      "kind": "Interface",
+      "path": "$root/tests/files/layout-defaults.bui",
+      "problems": [],
+      "rows": [
+        [
+          "Elements",
+          "2"
+        ],
+        [
+          "Named",
+          "0"
+        ],
+        [
+          "Style files",
+          "None"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 460,
+      "kind": "Interface Style",
+      "path": "$root/tests/files/style-every-field.bstyle",
+      "problems": [],
+      "rows": [
+        [
+          "Rules",
+          "4"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 3372,
+      "kind": "Animation States",
+      "path": "$root/tests/files/anim-every-node.banim",
+      "problems": [],
+      "rows": [
+        [
+          "Nodes",
+          "21"
+        ],
+        [
+          "Links",
+          "16"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 1855,
+      "kind": "Animation States",
+      "path": "$root/tests/files/bad-anim-problems.banim",
+      "problems": [
+        "Clip · speed must be from 0 to 10",
+        "Mix · link a motion into both A and B",
+        "Number Parameter · give the parameter a name",
+        "State · another state is named \"Idle\"",
+        "Clip · name one of the model's clips",
+        "Layer · link the motion it plays into Top",
+        "Layer · a motion reads a number parameter or a number typed in, not Time in State",
+        "Start State · there is no state named \"Missing\"",
+        "Transition · there is no state named \"Run\" to go to",
+        "Transition · there is no state named \"Jump\" to go from",
+        "Transition · fade must be from 0 to 60 seconds",
+        "Transition · name the state it goes to",
+        "True/False Parameter · \"speed\" is a number parameter elsewhere in the graph; one name holds one kind"
+      ],
+      "rows": [
+        [
+          "Nodes",
+          "14"
+        ],
+        [
+          "Links",
+          "7"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 143,
+      "kind": "Material",
+      "path": "$root/tests/files/bad-material-no-output.bmaterial",
+      "problems": [
+        "add a Material Output node (or a Custom Lighting Output)"
+      ],
+      "rows": [
+        [
+          "Nodes",
+          "1"
+        ],
+        [
+          "Links",
+          "0"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "bytes": 69,
+      "kind": "Material",
+      "path": "$root/tests/files/bad-graph-format.bmaterial",
+      "problems": [
+        "not a graph file: format must be \"bayleaf.graph\""
+      ],
+      "rows": [],
+      "text": null
+    },
+    {
+      "bytes": 4587,
+      "kind": "Visual Script",
+      "path": "$root/tests/files/script-every-field.bscript",
+      "problems": [
+        "script-every-field.bscript is not a valid script: bayleaf_describe: inspector: \"speed\": choices are for a whole number (by place) or a text, not a Number"
+      ],
+      "rows": [
+        [
+          "Nodes",
+          "13"
+        ],
+        [
+          "Links",
+          "2"
+        ]
+      ],
+      "text": null
+    },
+    {
+      "path": "$out/p/goblin.bdata"
+    },
+    {
+      "bytes": 78,
+      "kind": "Data File",
+      "path": "$out/p/goblin.bdata",
+      "problems": [
+        "no shape is chosen"
+      ],
+      "rows": [
+        [
+          "Shape",
+          "None"
+        ],
+        [
+          "Values set",
+          "0"
+        ]
+      ],
+      "text": null
+    }
+  ]
+}

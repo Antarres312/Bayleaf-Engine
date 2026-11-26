@@ -1,0 +1,14 @@
+[
+  {"cmd": "graph.new", "params": {"domain": "animation"}},
+  {"cmd": "graph.open", "params": {"path": "$root/tests/files/anim-every-node.banim"}},
+  {"cmd": "graph.open", "params": {"path": "$root/tests/files/graph-version-5.banim"}},
+  {"cmd": "graph.list"},
+  {"cmd": "graph.activate", "params": {"id": 1}},
+  {"cmd": "graph.comment.add", "params": {"position": [10, 20], "size": [300, 200]}},
+  {"cmd": "graph.get"},
+  {"cmd": "graph.save", "params": {"path": "$out/a.banim"}},
+  {"cmd": "graph.close"},
+  {"cmd": "graph.close"},
+  {"cmd": "graph.close"},
+  {"cmd": "graph.close"}
+]

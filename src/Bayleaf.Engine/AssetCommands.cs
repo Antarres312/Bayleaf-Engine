@@ -3,8 +3,10 @@ using Bayleaf.Core;
 using Bayleaf.Core.Geometry;
 using Bayleaf.Core.Json;
 using Bayleaf.GameInterface;
+using Bayleaf.Render;
 using Bayleaf.Scene;
 using Bayleaf.Scene.Components;
+using Bayleaf.Script;
 
 using SceneModel = Bayleaf.Scene.Scene;
 
@@ -281,11 +283,9 @@ internal static class AssetCommands
         var kind = Kinds[f.Required("kind", v => JsonRead.Variant(v, Kinds))];
         var folderParam = f.Required("folder", JsonRead.Str);
         var given = f.Required("name", JsonRead.Str);
-        if (kind is "script" or "material" or "visualScript")
+        if (kind is "script")
         {
-            throw Stop.Failed(kind == "script"
-                ? "the C# engine's scripts are C#, which comes with the script port; make a visual script or use the Rust engine (rust/) for a Rust script"
-                : $"a new {kind} needs its node catalog, which is not in the C# engine yet");
+            throw Stop.Failed("the C# engine's scripts are C#, which comes with the script port; make a visual script or use the Rust engine (rust/) for a Rust script");
         }
         if (!ValidFileName(given))
         {
@@ -300,6 +300,8 @@ internal static class AssetCommands
         string? extension = kind switch
         {
             "scene" => SceneDoc.Extension,
+            "material" => Material.Catalog.Extension,
+            "visualScript" => Visual.Catalog.Extension,
             "inputMap" => InputAsset.Extension,
             "lighting" => Lighting.Extension,
             "postProcessing" => PostProcessing.Extension,
@@ -323,6 +325,12 @@ internal static class AssetCommands
                 break;
             case "scene":
                 StarterScene().Save(path).OrFail();
+                break;
+            case "material":
+                Write(Graph.Graph.Create(Material.Catalog).ToJson());
+                break;
+            case "visualScript":
+                Write(Graph.Graph.Create(Visual.Catalog).ToJson());
                 break;
             case "inputMap":
                 Write(InputAsset.Starter().ToText());

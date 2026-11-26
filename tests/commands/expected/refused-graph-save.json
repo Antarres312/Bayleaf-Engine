@@ -1,0 +1,30 @@
+{
+  "error": "invalid params: Material files end in .bmaterial",
+  "failedStep": 1,
+  "results": [
+    {
+      "dirty": false,
+      "domain": "material",
+      "graph": {
+        "domain": "material",
+        "format": "bayleaf.graph",
+        "links": [],
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "output",
+            "position": [
+              360.0,
+              40.0
+            ]
+          }
+        ],
+        "version": 8
+      },
+      "id": 1,
+      "outputTypes": [],
+      "path": null,
+      "problems": []
+    }
+  ]
+}

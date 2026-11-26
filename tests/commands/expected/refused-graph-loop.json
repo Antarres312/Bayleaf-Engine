@@ -1,0 +1,37 @@
+{
+  "error": "not a graph file: linking Add to Add would make a loop",
+  "failedStep": 4,
+  "results": [
+    {
+      "dirty": false,
+      "domain": "material",
+      "graph": {
+        "domain": "material",
+        "format": "bayleaf.graph",
+        "links": [],
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "output",
+            "position": [
+              360.0,
+              40.0
+            ]
+          }
+        ],
+        "version": 8
+      },
+      "id": 1,
+      "outputTypes": [],
+      "path": null,
+      "problems": []
+    },
+    {
+      "node": 2
+    },
+    {
+      "node": 3
+    },
+    {}
+  ]
+}

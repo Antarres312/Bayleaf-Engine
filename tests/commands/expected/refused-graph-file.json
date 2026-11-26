@@ -1,0 +1,5 @@
+{
+  "error": "$root/tests/files/bad-graph-version.bscript: not a graph file: graph version 9 is not supported (this engine reads versions 1 to 8)",
+  "failedStep": 0,
+  "results": []
+}

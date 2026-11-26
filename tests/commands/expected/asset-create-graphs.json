@@ -1,0 +1,138 @@
+{
+  "error": "$out/a/materials/Rock.bmaterial already exists; pick another name",
+  "failedStep": 6,
+  "results": [
+    {
+      "name": "a",
+      "path": "$out/a",
+      "scene": "$out/a/scenes/main.bscene"
+    },
+    {
+      "path": "$out/a/materials/Rock.bmaterial"
+    },
+    {
+      "path": "$out/a/scripts/Door.bscript"
+    },
+    {
+      "dirty": false,
+      "domain": "material",
+      "graph": {
+        "domain": "material",
+        "format": "bayleaf.graph",
+        "links": [],
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "output",
+            "position": [
+              360.0,
+              40.0
+            ]
+          }
+        ],
+        "version": 8
+      },
+      "id": 1,
+      "outputTypes": [],
+      "path": "$out/a/materials/Rock.bmaterial",
+      "problems": []
+    },
+    {
+      "dirty": false,
+      "domain": "script",
+      "graph": {
+        "domain": "script",
+        "format": "bayleaf.graph",
+        "links": [],
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "start",
+            "position": [
+              40.0,
+              40.0
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "update",
+            "position": [
+              40.0,
+              200.0
+            ]
+          }
+        ],
+        "version": 8
+      },
+      "id": 2,
+      "outputTypes": [],
+      "path": "$out/a/scripts/Door.bscript",
+      "problems": []
+    },
+    {
+      "entries": [
+        {
+          "kind": "File",
+          "path": "README.md"
+        },
+        {
+          "kind": "Project",
+          "path": "a.bproject"
+        },
+        {
+          "kind": "Folder",
+          "path": "assets"
+        },
+        {
+          "kind": "Folder",
+          "path": "input"
+        },
+        {
+          "kind": "Folder",
+          "path": "materials"
+        },
+        {
+          "kind": "Folder",
+          "path": "scenes"
+        },
+        {
+          "kind": "Folder",
+          "path": "scripts"
+        },
+        {
+          "kind": "Visual Script",
+          "path": "scripts/Door.bscript"
+        },
+        {
+          "kind": "Visual Script",
+          "path": "scripts/spin.bscript"
+        },
+        {
+          "kind": "Lighting",
+          "path": "scenes/daylight.blight"
+        },
+        {
+          "kind": "Scene",
+          "path": "scenes/main.bscene"
+        },
+        {
+          "kind": "Material",
+          "path": "materials/Rock.bmaterial"
+        },
+        {
+          "kind": "Material",
+          "path": "materials/ground.bmaterial"
+        },
+        {
+          "kind": "Input Map",
+          "path": "input/game.binput"
+        },
+        {
+          "kind": "File",
+          "path": "assets/README.md"
+        }
+      ],
+      "truncated": false
+    }
+  ]
+}

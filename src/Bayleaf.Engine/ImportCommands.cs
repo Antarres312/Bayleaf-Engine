@@ -10,7 +10,7 @@ namespace Bayleaf.Engine;
 /// (a drop from the system, or an agent) into a folder of the project, checking first that each can
 /// be read, so nothing half-imported stays behind. Models and images get import settings beside them
 /// (<c>asset.importSettings.get</c>/<c>.set</c>). <c>scene.file.place</c> puts a model or sound in
-/// the scene as an object.
+/// the scene as an object, and <c>scene.image.apply</c> makes an image an object's look.
 /// </summary>
 internal static class ImportCommands
 {
@@ -50,6 +50,12 @@ internal static class ImportCommands
             Id = "scene.file.place", Label = "Place File",
             Params = "{path, parent?, index?, position?: [x, y, z]}: a model or a sound of the project as a new object named after it (a Mesh drawing the model, or an Audio Source playing the sound), at position (world units; the origin when left out). Returns {id}",
             Mutates = Mutates.Scene, Run = Place,
+        },
+        new()
+        {
+            Id = "scene.image.apply", Label = "Apply Image",
+            Params = "{id, image}: an image of the project becomes the object's look: a sprite shows it; a mesh gets a new material beside the image that shows it (named after it). Returns {material?}: the material made",
+            Mutates = Mutates.Scene, Run = ImageApply,
         },
     ];
 
@@ -454,5 +460,59 @@ internal static class ImportCommands
             throw;
         }
         return J.Obj(("id", J.Id(id)));
+    }
+
+    private static JsonObject ImageApply(Session session, JsonValue p)
+    {
+        var f = Params.Of(p, "id", "image");
+        var id = f.Required("id", JsonRead.Id);
+        var given = f.Required("image", JsonRead.Str);
+        var image = session.Allowed(Path.Combine(session.ScriptDir, given), Access.Read);
+        if (KindOf(image) != FileKind.Image || !File.Exists(image))
+        {
+            throw Stop.BadParams($"{image} is not an image of the project (.png or .jpg)");
+        }
+        var named = Relative(session, image);
+        var scene = session.Scene;
+        if (scene.Component(id, "sprite").IsOk)
+        {
+            var sprite = scene.Component(id, "sprite").OrFail();
+            if (sprite is JsonObject s)
+            {
+                s.Set("image", J.S(named));
+            }
+            scene.SetComponent(id, "sprite", sprite).OrFail();
+            return new JsonObject();
+        }
+        var mesh = scene.Component(id, "mesh").IsOk ? scene.Component(id, "mesh").Value : throw Stop.BadParams("the object has neither a mesh nor a sprite to show the image");
+        var stem = StemOf(image) ?? "Image";
+        var folder = Path.GetDirectoryName(image) is { Length: > 0 } dir ? dir : ".";
+        var material = session.Allowed(FreePath(folder, stem, Render.Material.Catalog.Extension), Access.Write);
+        Files.Write(material, System.Text.Encoding.UTF8.GetBytes(ImageMaterial(named))).MapError(e => $"cannot write {material}: {e}").OrFail();
+        var materialNamed = Relative(session, material);
+        if (mesh is JsonObject m)
+        {
+            m.Set("material", J.S(materialNamed));
+        }
+        var set = scene.SetComponent(id, "mesh", mesh);
+        if (set.IsError)
+        {
+            Files.RemoveFile(material);
+            throw new CommandException(CommandError.From(set.Error));
+        }
+        return J.Obj(("material", J.S(materialNamed)));
+    }
+
+    /// <summary>A material graph showing <paramref name="image"/> (as scenes name it) as the surface's colour.</summary>
+    private static string ImageMaterial(string image)
+    {
+        var catalog = Render.Material.Catalog;
+        T Made<T>(Result<T, Graph.GraphError> result) => result.IsOk ? result.Value : throw Stop.Failed($"cannot make the material: {result.Error.Message}");
+        var graph = Graph.Graph.Create(catalog);
+        var output = graph.Nodes.Find(n => n.Kind == "output")?.Id ?? throw Stop.Failed("the material has no output");
+        var texture = Made(graph.AddNode(catalog, "texture", new System.Numerics.Vector2(80f, 40f)));
+        Made(graph.SetValue(catalog, texture, "image", J.S(image)));
+        Made(graph.Connect(catalog, new Graph.Link(texture, "color", output, "baseColor")));
+        return graph.ToJson();
     }
 }

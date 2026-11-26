@@ -1,0 +1,326 @@
+{
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "imported": [
+        {
+          "kind": "image",
+          "path": "assets/png-rgba8.png",
+          "source": "$root/tests/files/assets/png-rgba8.png"
+        }
+      ]
+    },
+    {
+      "material": "assets/png-rgba8.bmaterial"
+    },
+    {
+      "material": "assets/png-rgba8 2.bmaterial"
+    },
+    {
+      "id": "<id 0>"
+    },
+    {},
+    {},
+    {
+      "entries": [
+        {
+          "kind": "File",
+          "path": "assets/README.md"
+        },
+        {
+          "kind": "Material",
+          "path": "assets/png-rgba8 2.bmaterial"
+        },
+        {
+          "kind": "Material",
+          "path": "assets/png-rgba8.bmaterial"
+        },
+        {
+          "kind": "Image",
+          "path": "assets/png-rgba8.png"
+        }
+      ],
+      "truncated": false
+    },
+    {
+      "dirty": false,
+      "domain": "material",
+      "graph": {
+        "domain": "material",
+        "format": "bayleaf.graph",
+        "links": [
+          {
+            "from": {
+              "node": 2,
+              "pin": "color"
+            },
+            "to": {
+              "node": 1,
+              "pin": "baseColor"
+            }
+          }
+        ],
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "output",
+            "position": [
+              360.0,
+              40.0
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "texture",
+            "position": [
+              80.0,
+              40.0
+            ],
+            "values": {
+              "image": "assets/png-rgba8.png"
+            }
+          }
+        ],
+        "version": 8
+      },
+      "id": 1,
+      "outputTypes": [],
+      "path": "$out/p/assets/png-rgba8.bmaterial",
+      "problems": []
+    },
+    {
+      "dirty": false,
+      "domain": "material",
+      "graph": {
+        "domain": "material",
+        "format": "bayleaf.graph",
+        "links": [
+          {
+            "from": {
+              "node": 2,
+              "pin": "color"
+            },
+            "to": {
+              "node": 1,
+              "pin": "baseColor"
+            }
+          }
+        ],
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "output",
+            "position": [
+              360.0,
+              40.0
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "texture",
+            "position": [
+              80.0,
+              40.0
+            ],
+            "values": {
+              "image": "assets/png-rgba8.png"
+            }
+          }
+        ],
+        "version": 8
+      },
+      "id": 2,
+      "outputTypes": [],
+      "path": "$out/p/assets/png-rgba8 2.bmaterial",
+      "problems": []
+    },
+    {
+      "undone": "scene.image.apply"
+    },
+    {
+      "undone": "scene.component.add"
+    },
+    {
+      "dirty": true,
+      "path": "$out/p/scenes/main.bscene",
+      "scene": {
+        "format": "bayleaf.scene",
+        "objects": [
+          {
+            "components": {
+              "camera": {
+                "far": 500.0,
+                "fov": 60.0,
+                "near": 0.10000000149011612,
+                "projection": "perspective",
+                "size": 5.0
+              },
+              "name": "Camera",
+              "transform": {
+                "position": [
+                  0.0,
+                  3.0,
+                  8.0
+                ],
+                "rotation": [
+                  -18.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              }
+            },
+            "id": "<id 1>",
+            "parent": null
+          },
+          {
+            "components": {
+              "directionalLight": {
+                "color": [
+                  1.0,
+                  0.9599999785423279,
+                  0.8999999761581421
+                ],
+                "intensity": 3.0,
+                "shadows": true
+              },
+              "name": "Sun",
+              "transform": {
+                "position": [
+                  0.0,
+                  5.0,
+                  0.0
+                ],
+                "rotation": [
+                  -50.0,
+                  30.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              }
+            },
+            "id": "<id 2>",
+            "parent": null
+          },
+          {
+            "components": {
+              "mesh": {
+                "color": [
+                  0.30000001192092896,
+                  0.36000001430511475,
+                  0.3199999928474426,
+                  1.0
+                ],
+                "material": "assets/png-rgba8 2.bmaterial",
+                "metallic": 0.0,
+                "roughness": 0.8999999761581421,
+                "shape": "plane"
+              },
+              "name": "Ground",
+              "transform": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  20.0,
+                  1.0,
+                  20.0
+                ]
+              }
+            },
+            "id": "<id 3>",
+            "parent": null
+          },
+          {
+            "components": {
+              "mesh": {
+                "color": [
+                  0.8500000238418579,
+                  0.44999998807907104,
+                  0.25,
+                  1.0
+                ],
+                "material": "assets/png-rgba8.bmaterial",
+                "metallic": 0.0,
+                "roughness": 0.44999998807907104,
+                "shape": "cube"
+              },
+              "name": "Cube",
+              "scripts": [
+                {
+                  "module": "scripts/spin.bscript"
+                }
+              ],
+              "transform": {
+                "position": [
+                  0.0,
+                  0.5,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              }
+            },
+            "id": "<id 4>",
+            "parent": null
+          },
+          {
+            "components": {
+              "name": "Card",
+              "transform": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              }
+            },
+            "id": "<id 0>",
+            "parent": null
+          }
+        ],
+        "settings": {
+          "lighting": "scenes/daylight.blight"
+        },
+        "version": 26
+      }
+    }
+  ]
+}

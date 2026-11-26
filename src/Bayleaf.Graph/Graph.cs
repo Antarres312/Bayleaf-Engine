@@ -224,7 +224,10 @@ public sealed partial class Graph
     }
 
     /// <summary>The file's text, as the engine saves it.</summary>
-    public string ToJson()
+    public string ToJson() => ToValue().ToPretty();
+
+    /// <summary>The graph as a JSON value, with the fields the file has (numbers in single precision, as written).</summary>
+    public JsonObject ToValue()
     {
         var o = new JsonObject
         {
@@ -258,7 +261,7 @@ public sealed partial class Graph
         {
             o.Add("properties", new JsonArray(Properties.Select(p => p.Write())));
         }
-        return o.ToPretty();
+        return o;
     }
 
     /// <summary>Checks a whole graph, as loaded from a file or an agent.</summary>

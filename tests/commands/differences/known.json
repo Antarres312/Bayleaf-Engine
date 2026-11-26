@@ -1,0 +1,54 @@
+[
+  {
+    "batch": "graph-script.json",
+    "steps": [0, 51, 54, 55],
+    "field": "problems",
+    "csharp": [{"message": "visual scripts are not compiled by the C# engine yet: they will compile to C# with the script host (docs/csharp-redesign.md, stage 4); until then the Rust engine (rust/) compiles them and finds their problems"}],
+    "why": "The Rust engine compiles a visual script to WebAssembly to find its problems; the C# engine's scripts are C#, and visual scripts compile to C# with the script host (stage 4). Until then a visual script's problems say it is not compiled rather than that nothing is wrong (AGENTS.md rule 15)."
+  },
+  {
+    "batch": "asset-create-graphs.json",
+    "steps": [4],
+    "field": "problems",
+    "csharp": [{"message": "visual scripts are not compiled by the C# engine yet: they will compile to C# with the script host (docs/csharp-redesign.md, stage 4); until then the Rust engine (rust/) compiles them and finds their problems"}],
+    "why": "As for graph-script.json."
+  },
+  {
+    "batch": "refused-graph-inspector.json",
+    "steps": [0],
+    "field": "problems",
+    "csharp": [{"message": "visual scripts are not compiled by the C# engine yet: they will compile to C# with the script host (docs/csharp-redesign.md, stage 4); until then the Rust engine (rust/) compiles them and finds their problems"}],
+    "why": "As for graph-script.json."
+  },
+  {
+    "batch": "refused-graph-menu.json",
+    "steps": [0],
+    "field": "problems",
+    "csharp": [{"message": "visual scripts are not compiled by the C# engine yet: they will compile to C# with the script host (docs/csharp-redesign.md, stage 4); until then the Rust engine (rust/) compiles them and finds their problems"}],
+    "why": "As for graph-script.json."
+  },
+  {
+    "batch": "refused-graph-paste.json",
+    "steps": [2],
+    "field": "problems",
+    "csharp": [{"message": "visual scripts are not compiled by the C# engine yet: they will compile to C# with the script host (docs/csharp-redesign.md, stage 4); until then the Rust engine (rust/) compiles them and finds their problems"}],
+    "why": "As for graph-script.json."
+  },
+  {
+    "batch": "asset-info.json",
+    "steps": [2],
+    "field": "problems",
+    "csharp": ["visual scripts are not compiled by the C# engine yet: they will compile to C# with the script host (docs/csharp-redesign.md, stage 4); until then the Rust engine (rust/) compiles them and finds their problems"],
+    "why": "As for graph-script.json: asset.info gives a graph's problems too. A visual script's Properties row is the same in both engines (the Rust one runs the compiled script's describe step; the C# one reads the properties the graph declares)."
+  },
+  {
+    "batch": "asset-info.json",
+    "steps": [29],
+    "field": "problems",
+    "csharp": [
+      "visual scripts are not compiled by the C# engine yet: they will compile to C# with the script host (docs/csharp-redesign.md, stage 4); until then the Rust engine (rust/) compiles them and finds their problems",
+      "script-every-field.bscript is not a valid script: bayleaf_describe: inspector: \"speed\": choices are for a whole number (by place) or a text, not a Number"
+    ],
+    "why": "As for step 2; the script host's refusal of its Inspector options is the same in both engines."
+  }
+]

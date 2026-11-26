@@ -1,0 +1,1103 @@
+{
+  "results": [
+    {
+      "dirty": false,
+      "domain": "script",
+      "graph": {
+        "domain": "script",
+        "format": "bayleaf.graph",
+        "links": [],
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "start",
+            "position": [
+              40.0,
+              40.0
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "update",
+            "position": [
+              40.0,
+              200.0
+            ]
+          }
+        ],
+        "version": 8
+      },
+      "id": 1,
+      "outputTypes": [],
+      "path": null,
+      "problems": []
+    },
+    {},
+    {
+      "node": 3
+    },
+    {},
+    {},
+    {},
+    {
+      "node": 4
+    },
+    {},
+    {
+      "node": 5
+    },
+    {},
+    {},
+    {},
+    {
+      "node": 6
+    },
+    {},
+    {},
+    {},
+    {},
+    {
+      "node": 7
+    },
+    {},
+    {},
+    {},
+    {},
+    {
+      "node": 8
+    },
+    {},
+    {},
+    {
+      "node": 9
+    },
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {
+      "node": 10
+    },
+    {},
+    {},
+    {},
+    {},
+    {},
+    {
+      "node": 11
+    },
+    {
+      "node": 12
+    },
+    {},
+    {},
+    {},
+    {},
+    {},
+    {
+      "path": "Light/Flicker"
+    },
+    {},
+    {
+      "undone": "graph.variable.remove"
+    },
+    {
+      "dirty": true,
+      "domain": "script",
+      "graph": {
+        "domain": "script",
+        "events": [
+          {
+            "name": "OpenDoor",
+            "params": [
+              {
+                "name": "speed",
+                "type": "number"
+              }
+            ]
+          }
+        ],
+        "format": "bayleaf.graph",
+        "functions": [
+          {
+            "inputs": [
+              {
+                "name": "height",
+                "type": "number"
+              }
+            ],
+            "name": "Leap",
+            "outputs": [
+              {
+                "name": "done",
+                "type": "trueFalse"
+              }
+            ]
+          }
+        ],
+        "links": [
+          {
+            "from": {
+              "node": 8,
+              "pin": "list"
+            },
+            "to": {
+              "node": 9,
+              "pin": "list"
+            }
+          }
+        ],
+        "menu": "Light/Flicker",
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "start",
+            "position": [
+              40.0,
+              40.0
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "update",
+            "position": [
+              40.0,
+              200.0
+            ]
+          },
+          {
+            "id": 3,
+            "kind": "setVariable",
+            "position": [
+              0.0,
+              0.0
+            ],
+            "values": {
+              "name": "hearts"
+            }
+          },
+          {
+            "id": 4,
+            "kind": "variable",
+            "position": [
+              0.0,
+              200.0
+            ],
+            "values": {
+              "name": "scores"
+            }
+          },
+          {
+            "id": 5,
+            "kind": "log",
+            "position": [
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": 6,
+            "kind": "listAdd",
+            "position": [
+              0.0,
+              400.0
+            ],
+            "values": {
+              "item": [
+                "number",
+                "text"
+              ],
+              "name": "scores"
+            }
+          },
+          {
+            "id": 7,
+            "kind": "mapSet",
+            "position": [
+              400.0,
+              0.0
+            ],
+            "values": {
+              "item": [
+                "whole",
+                "text"
+              ],
+              "name": "waves"
+            }
+          },
+          {
+            "id": 8,
+            "kind": "getList",
+            "position": [
+              400.0,
+              200.0
+            ],
+            "values": {
+              "item": [
+                "text"
+              ],
+              "name": "words"
+            }
+          },
+          {
+            "id": 9,
+            "kind": "listForEach",
+            "position": [
+              600.0,
+              200.0
+            ],
+            "values": {
+              "item": [
+                "text",
+                "text"
+              ]
+            }
+          },
+          {
+            "id": 10,
+            "kind": "callFunction",
+            "position": [
+              0.0,
+              600.0
+            ],
+            "values": {
+              "function": "Leap",
+              "inputs": [
+                "height:number"
+              ],
+              "outputs": [
+                "done:bool"
+              ]
+            }
+          },
+          {
+            "id": 11,
+            "kind": "eventStart",
+            "position": [
+              0.0,
+              800.0
+            ],
+            "values": {
+              "event": "OpenDoor",
+              "params": [
+                "speed:number"
+              ]
+            }
+          },
+          {
+            "id": 12,
+            "kind": "triggerEvent",
+            "position": [
+              0.0,
+              1000.0
+            ],
+            "values": {
+              "event": "OpenDoor",
+              "params": [
+                "speed:number"
+              ]
+            }
+          }
+        ],
+        "properties": [
+          {
+            "default": "",
+            "inspector": {
+              "group": "Motion",
+              "label": "Top speed"
+            },
+            "name": "speed",
+            "type": "text"
+          },
+          {
+            "default": [],
+            "name": "waves",
+            "shape": "list",
+            "type": "wholeNumber"
+          }
+        ],
+        "variables": [
+          {
+            "name": "hearts",
+            "start": 5,
+            "type": "number"
+          },
+          {
+            "name": "scores",
+            "shape": "list",
+            "start": [],
+            "type": "number"
+          },
+          {
+            "key": "wholeNumber",
+            "name": "waves",
+            "shape": "map",
+            "start": {},
+            "type": "text"
+          },
+          {
+            "name": "words",
+            "shape": "list",
+            "start": [],
+            "type": "text"
+          }
+        ],
+        "version": 8
+      },
+      "id": 1,
+      "outputTypes": [],
+      "path": null,
+      "problems": [
+        {
+          "message": "scores is a list: use the list and map nodes",
+          "node": 4
+        }
+      ]
+    },
+    {
+      "path": "$out/s.bscript"
+    },
+    {
+      "inUse": null
+    },
+    {
+      "dirty": false,
+      "domain": "script",
+      "graph": {
+        "domain": "script",
+        "events": [
+          {
+            "name": "OpenDoor",
+            "params": [
+              {
+                "name": "speed",
+                "type": "number"
+              }
+            ]
+          }
+        ],
+        "format": "bayleaf.graph",
+        "functions": [
+          {
+            "inputs": [
+              {
+                "name": "height",
+                "type": "number"
+              }
+            ],
+            "name": "Leap",
+            "outputs": [
+              {
+                "name": "done",
+                "type": "trueFalse"
+              }
+            ]
+          }
+        ],
+        "links": [
+          {
+            "from": {
+              "node": 8,
+              "pin": "list"
+            },
+            "to": {
+              "node": 9,
+              "pin": "list"
+            }
+          }
+        ],
+        "menu": "Light/Flicker",
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "start",
+            "position": [
+              40.0,
+              40.0
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "update",
+            "position": [
+              40.0,
+              200.0
+            ]
+          },
+          {
+            "id": 3,
+            "kind": "setVariable",
+            "position": [
+              0.0,
+              0.0
+            ],
+            "values": {
+              "name": "hearts"
+            }
+          },
+          {
+            "id": 4,
+            "kind": "variable",
+            "position": [
+              0.0,
+              200.0
+            ],
+            "values": {
+              "name": "scores"
+            }
+          },
+          {
+            "id": 5,
+            "kind": "log",
+            "position": [
+              200.0,
+              200.0
+            ]
+          },
+          {
+            "id": 6,
+            "kind": "listAdd",
+            "position": [
+              0.0,
+              400.0
+            ],
+            "values": {
+              "item": [
+                "number",
+                "text"
+              ],
+              "name": "scores"
+            }
+          },
+          {
+            "id": 7,
+            "kind": "mapSet",
+            "position": [
+              400.0,
+              0.0
+            ],
+            "values": {
+              "item": [
+                "whole",
+                "text"
+              ],
+              "name": "waves"
+            }
+          },
+          {
+            "id": 8,
+            "kind": "getList",
+            "position": [
+              400.0,
+              200.0
+            ],
+            "values": {
+              "item": [
+                "text"
+              ],
+              "name": "words"
+            }
+          },
+          {
+            "id": 9,
+            "kind": "listForEach",
+            "position": [
+              600.0,
+              200.0
+            ],
+            "values": {
+              "item": [
+                "text",
+                "text"
+              ]
+            }
+          },
+          {
+            "id": 10,
+            "kind": "callFunction",
+            "position": [
+              0.0,
+              600.0
+            ],
+            "values": {
+              "function": "Leap",
+              "inputs": [
+                "height:number"
+              ],
+              "outputs": [
+                "done:bool"
+              ]
+            }
+          },
+          {
+            "id": 11,
+            "kind": "eventStart",
+            "position": [
+              0.0,
+              800.0
+            ],
+            "values": {
+              "event": "OpenDoor",
+              "params": [
+                "speed:number"
+              ]
+            }
+          },
+          {
+            "id": 12,
+            "kind": "triggerEvent",
+            "position": [
+              0.0,
+              1000.0
+            ],
+            "values": {
+              "event": "OpenDoor",
+              "params": [
+                "speed:number"
+              ]
+            }
+          }
+        ],
+        "properties": [
+          {
+            "default": "",
+            "inspector": {
+              "group": "Motion",
+              "label": "Top speed"
+            },
+            "name": "speed",
+            "type": "text"
+          },
+          {
+            "default": [],
+            "name": "waves",
+            "shape": "list",
+            "type": "wholeNumber"
+          }
+        ],
+        "variables": [
+          {
+            "name": "hearts",
+            "start": 5,
+            "type": "number"
+          },
+          {
+            "name": "scores",
+            "shape": "list",
+            "start": [],
+            "type": "number"
+          },
+          {
+            "key": "wholeNumber",
+            "name": "waves",
+            "shape": "map",
+            "start": {},
+            "type": "text"
+          },
+          {
+            "name": "words",
+            "shape": "list",
+            "start": [],
+            "type": "text"
+          }
+        ],
+        "version": 8
+      },
+      "id": 2,
+      "outputTypes": [],
+      "path": "$out/s.bscript",
+      "problems": [
+        {
+          "message": "scores is a list: use the list and map nodes",
+          "node": 4
+        }
+      ]
+    },
+    {
+      "dirty": false,
+      "domain": "script",
+      "graph": {
+        "comments": [
+          {
+            "id": 2,
+            "position": [
+              1.0000000116860974e-7,
+              1000000.0
+            ],
+            "size": [
+              120.0,
+              60.5
+            ],
+            "text": "Moves \"up\"\nand down 😀"
+          }
+        ],
+        "domain": "script",
+        "events": [
+          {
+            "name": "hit",
+            "params": [
+              {
+                "name": "damage",
+                "type": "number"
+              },
+              {
+                "name": "from",
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "name": "reset",
+            "params": []
+          }
+        ],
+        "format": "bayleaf.graph",
+        "functions": [
+          {
+            "inputs": [
+              {
+                "name": "height",
+                "type": "number"
+              },
+              {
+                "name": "heights",
+                "shape": "list",
+                "type": "number"
+              }
+            ],
+            "name": "jump",
+            "outputs": [
+              {
+                "name": "landed",
+                "type": "trueFalse"
+              }
+            ]
+          },
+          {
+            "inputs": [],
+            "name": "rest",
+            "outputs": []
+          },
+          {
+            "inputs": [
+              {
+                "key": "object",
+                "name": "byName",
+                "shape": "map",
+                "type": "wholeNumber"
+              }
+            ],
+            "name": "tally",
+            "outputs": []
+          }
+        ],
+        "links": [
+          {
+            "from": {
+              "node": 1,
+              "pin": "then"
+            },
+            "to": {
+              "node": 3,
+              "pin": "run"
+            }
+          },
+          {
+            "from": {
+              "node": 7,
+              "pin": "value"
+            },
+            "to": {
+              "node": 3,
+              "pin": "position"
+            }
+          }
+        ],
+        "menu": "Movement/Bob 🌿",
+        "nodes": [
+          {
+            "id": 1,
+            "kind": "update",
+            "position": [
+              40.0,
+              200.0
+            ]
+          },
+          {
+            "id": 7,
+            "kind": "property",
+            "position": [
+              0.10000000149011612,
+              -0.0
+            ],
+            "values": {
+              "name": "speed"
+            }
+          },
+          {
+            "id": 3,
+            "kind": "setPosition",
+            "position": [
+              123456.7890625,
+              -999999.875
+            ]
+          },
+          {
+            "id": 8,
+            "kind": "number",
+            "position": [
+              0.0,
+              300.0
+            ],
+            "values": {
+              "value": 1e-7
+            }
+          },
+          {
+            "id": 9,
+            "kind": "setVariable",
+            "position": [
+              0.0,
+              400.0
+            ],
+            "values": {
+              "name": "ratio",
+              "value": 18446744073709551615
+            }
+          },
+          {
+            "id": 10,
+            "kind": "wholeNumber",
+            "position": [
+              0.0,
+              500.0
+            ],
+            "values": {
+              "value": 12
+            }
+          },
+          {
+            "id": 11,
+            "kind": "text",
+            "position": [
+              0.0,
+              600.0
+            ],
+            "values": {
+              "value": "tab\there \"quoted\" back\\slash \u0001 😀 é"
+            }
+          },
+          {
+            "id": 12,
+            "kind": "log",
+            "position": [
+              0.0,
+              700.0
+            ],
+            "values": {
+              "message": "🌿 leaf\u001f"
+            }
+          },
+          {
+            "id": 13,
+            "kind": "number",
+            "position": [
+              0.0,
+              800.0
+            ],
+            "values": {
+              "value": 1e-300
+            }
+          },
+          {
+            "id": 14,
+            "kind": "vector",
+            "position": [
+              0.0,
+              900.0
+            ],
+            "values": {
+              "x": 1500.0,
+              "y": 0.30000000000000004,
+              "z": -0.0
+            }
+          },
+          {
+            "id": 15,
+            "kind": "number",
+            "position": [
+              0.0,
+              1000.0
+            ],
+            "values": {
+              "value": 1.8446744073709552e+19
+            }
+          },
+          {
+            "id": 16,
+            "kind": "number",
+            "position": [
+              0.0,
+              1100.0
+            ],
+            "values": {
+              "value": -9.223372036854776e+18
+            }
+          },
+          {
+            "id": 17,
+            "kind": "wholeNumber",
+            "position": [
+              0.0,
+              1200.0
+            ],
+            "values": {
+              "value": -2147483648
+            }
+          }
+        ],
+        "properties": [
+          {
+            "default": 2.5,
+            "inspector": {
+              "choices": [
+                "slow",
+                "fast"
+              ],
+              "group": "Motion",
+              "hint": "How fast it bobs, in \"cycles\" per second",
+              "label": "Speed",
+              "range": [
+                0.0,
+                1e+20
+              ],
+              "readOnly": true,
+              "showIf": [
+                "mode",
+                "fast"
+              ],
+              "slider": true
+            },
+            "name": "speed",
+            "type": "number"
+          },
+          {
+            "default": "fast",
+            "inspector": {
+              "showIf": [
+                "on",
+                true
+              ]
+            },
+            "name": "mode",
+            "type": "text"
+          },
+          {
+            "default": null,
+            "name": "follow",
+            "type": "object"
+          },
+          {
+            "default": [
+              [
+                1,
+                2,
+                3
+              ],
+              [
+                0.5,
+                -0.0,
+                1e-7
+              ]
+            ],
+            "name": "steps",
+            "shape": "list",
+            "type": "vector"
+          },
+          {
+            "default": {
+              "a": 2,
+              "z": 1
+            },
+            "name": "costs",
+            "shape": "map",
+            "type": "wholeNumber"
+          },
+          {
+            "default": 1,
+            "inspector": {
+              "range": [
+                -1.5,
+                2.0
+              ]
+            },
+            "name": "range",
+            "type": "number"
+          }
+        ],
+        "variables": [
+          {
+            "name": "ratio",
+            "start": 1e+20,
+            "type": "number"
+          },
+          {
+            "name": "small",
+            "start": 1e-7,
+            "type": "number"
+          },
+          {
+            "name": "zero",
+            "start": -0.0,
+            "type": "number"
+          },
+          {
+            "name": "count",
+            "start": -2147483648,
+            "type": "wholeNumber"
+          },
+          {
+            "name": "aim",
+            "start": [
+              0.1,
+              0.2,
+              3
+            ],
+            "type": "vector"
+          },
+          {
+            "name": "tint",
+            "start": [
+              1,
+              0.5,
+              0.25
+            ],
+            "type": "color"
+          },
+          {
+            "name": "on",
+            "start": true,
+            "type": "trueFalse"
+          },
+          {
+            "name": "say",
+            "start": "🌿 leaf\u001f",
+            "type": "text"
+          },
+          {
+            "name": "target",
+            "start": null,
+            "type": "object"
+          },
+          {
+            "name": "scores",
+            "shape": "list",
+            "start": [
+              3,
+              -4,
+              2147483647
+            ],
+            "type": "wholeNumber"
+          },
+          {
+            "key": "wholeNumber",
+            "name": "byLevel",
+            "shape": "map",
+            "start": {
+              " 3": 0.5,
+              "+4": -1,
+              "1": 2,
+              "2": 1.5
+            },
+            "type": "number"
+          },
+          {
+            "key": "number",
+            "name": "byWeight",
+            "shape": "map",
+            "start": {
+              "-0": "none",
+              ".5": "half",
+              "1e3": "kilo",
+              "7.": "seven"
+            },
+            "type": "text"
+          },
+          {
+            "key": "vector",
+            "name": "byPlace",
+            "shape": "map",
+            "start": {
+              " 0, -1 ,2.5": false,
+              "1,2,3": true
+            },
+            "type": "trueFalse"
+          },
+          {
+            "key": "trueFalse",
+            "name": "byFlag",
+            "shape": "map",
+            "start": {
+              "false": [
+                0,
+                0,
+                0
+              ],
+              "true": [
+                1,
+                1,
+                1
+              ]
+            },
+            "type": "color"
+          },
+          {
+            "name": "named",
+            "shape": "map",
+            "start": {
+              "a": null,
+              "b": null
+            },
+            "type": "object"
+          },
+          {
+            "name": "plain",
+            "start": 2,
+            "type": "number"
+          }
+        ],
+        "version": 8
+      },
+      "id": 3,
+      "outputTypes": [],
+      "path": "$root/tests/files/script-every-field.bscript",
+      "problems": []
+    },
+    {
+      "path": ""
+    },
+    {
+      "graphs": [
+        {
+          "dirty": false,
+          "domain": "script",
+          "id": 2,
+          "inUse": false,
+          "path": "$out/s.bscript"
+        },
+        {
+          "dirty": true,
+          "domain": "script",
+          "id": 3,
+          "inUse": true,
+          "path": "$root/tests/files/script-every-field.bscript"
+        }
+      ]
+    }
+  ]
+}

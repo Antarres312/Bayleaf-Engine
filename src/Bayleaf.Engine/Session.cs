@@ -35,9 +35,13 @@ public sealed partial class Session
     {
         Scene,
         Timeline,
+
+        /// <summary>A graph, by its id among the open graphs (<see cref="Snapshot.Graph"/>).</summary>
+        Graph,
     }
 
-    internal sealed record Snapshot(SnapshotKind Kind, string Text);
+    /// <param name="Graph">For a graph's step: the open graph's id.</param>
+    internal sealed record Snapshot(SnapshotKind Kind, string Text, ulong Graph = 0);
 
     internal sealed record HistoryStep(string Command, Snapshot Before, string? MergeKey);
 
@@ -182,6 +186,14 @@ public sealed partial class Session
     /// <summary>Puts a snapshot's document back as it was, with nothing else (a failed command's undoing).</summary>
     internal void PutBack(Snapshot snapshot)
     {
+        if (snapshot.Kind == SnapshotKind.Graph)
+        {
+            if (Graph is { } open && GraphCommands.FromSnapshot(snapshot, open.Catalog) is { IsOk: true } graph)
+            {
+                open.Graph = graph.Value;
+            }
+            return;
+        }
         if (snapshot.Kind == SnapshotKind.Timeline)
         {
             if (Timeline is not null && Bayleaf.Scene.Timeline.FromJson(snapshot.Text) is { IsOk: true } restored)
@@ -199,6 +211,10 @@ public sealed partial class Session
     /// <summary>Puts a snapshot back and gives the state it replaced, for the opposite stack.</summary>
     internal Snapshot Restore(Snapshot snapshot)
     {
+        if (snapshot.Kind == SnapshotKind.Graph)
+        {
+            return RestoreGraph(snapshot);
+        }
         if (snapshot.Kind == SnapshotKind.Timeline)
         {
             var doc = Timeline ?? throw Stop.Failed("the timeline of this step is closed");
