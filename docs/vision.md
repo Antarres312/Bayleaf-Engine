@@ -473,6 +473,104 @@ No crate below L6 may use egui, eframe, winit or rfd.
      picks another and `graph.list` gives the open graphs. Undo goes back through every graph's
      steps where they were made. (Done; a graph's tab can be dragged beside another, and the tab
      bar of a narrow panel scrolls.)
+12. **M11 Data assets and editing comfort** (planned).
+   - **Data assets.** A project file holds plain data that scripts and scenes share, instead of
+     copying the same values into every object: the settings of an enemy type, a weapon's numbers,
+     a level's list of waves. A data asset's shape comes from a declaration: fields with a name, a
+     type (the variable types, lists and maps of them, and references to other files: prefabs,
+     sounds, materials, other data assets) and a default. Making one (Project panel > Create, or a
+     command) writes a file that the Inspector edits field by field, with the same row options as a
+     script's properties (labels, ranges, groups). A script property or a component field can name
+     a data asset, and Rust scripts and visual scripts read its fields (a Data Asset node, its
+     fields as pins). Several objects naming one data asset all see it change when it is edited;
+     while playing, a data asset reads as it was saved, and play mode never writes it. Shapes and
+     files go through `data.*` commands, so agents make and fill them without the editor. The
+     feature's name is checked and recorded in `docs/feature-names.md` before it ships.
+   - **Number fields keep dragging at the screen's edge.** Dragging a number field changes the
+     value while the pointer moves; today the drag stops when the pointer reaches the edge of the
+     screen. The pointer jumps to the opposite edge instead and the drag goes on, so a value changes
+     as far as it needs in one drag. The jump does not change the value; the pointer comes back to
+     where the drag began, or stays where it was let go, as the platform allows. Where the
+     platform cannot move the pointer (the web), the drag keeps reading the pointer's movement
+     instead of its place. Keyboard editing of the field is unchanged.
+   - **Reset a component to its defaults.** A component card's menu in the Inspector (beside Edit
+     Script and Remove) gets Reset: every field of the component goes back to its default (a
+     script's properties to their declared defaults), in one undo step, through a command (for
+     example `scene.component.reset`) so agents can do it too. On a prefab copy, Reset returns the
+     component to the prefab's values rather than the defaults, and says which it does.
+   - **Adding objects from the hierarchy's menus.** A right-click on the empty part of the
+     hierarchy opens the menu for adding a new object (the same entries as the Add menu: empty
+     object, shapes, lights, camera, …), placed at the top level. An object's own context menu
+     gets an Add entry with the same list, which makes the new object a child of the object
+     clicked. Both select the new object and start renaming it, and undo as one step; both work by
+     keyboard (the menu key, Shift+F10) as well as by mouse.
+   - **Skeletal animation.** Today a glTF model's animations play through the Model Animation
+     component, one clip at a time, posed on the CPU. They grow into full skeletal animation:
+     - *Skinning on the GPU*: joint matrices go to the vertex shader (up to four joints per vertex),
+       so thousands of animated characters stay cheap; the CPU path stays for tests and machines
+       without a GPU.
+     - *Blending*: a clip fades into the next over a chosen time; two or more clips mix by weight
+       (walk and run by speed, aiming up and down by angle); a layer plays on part of the skeleton
+       only (a wave on the arm while the legs walk), picked by a joint and its children.
+     - *Animation states*: a graph domain of its own (`.banim`, in `crates/graph` like the other
+       graphs) of states, each a clip or a mix, and transitions between them on conditions over
+       parameters (numbers, true/false, triggers) that scripts set; the Graph panel edits it, and
+       `graph.*` commands change it, so agents can too.
+     - *Clip events and root motion*: a clip can mark moments (a footstep) that arrive as script
+       events with the object, and can move the object by the root joint's motion instead of in
+       place.
+     - *Attaching to joints*: an object can follow a joint (a sword in the hand) through a
+       component naming the joint.
+     - *Scripts*: Rust and visual scripts play, fade and stop clips, set parameters and read the
+       current state and a joint's transform; every action is a command first (`animation.*`).
+     - The Inspector previews a clip on the model (scrub, play, pause) without play mode, and the
+       scene view can draw the skeleton. Each new feature name is checked and recorded in
+       `docs/feature-names.md`; behaviour is learned only from public docs and papers.
+   - **Timeline animation.** An animation file of its own (for example `.btimeline`) made for a
+     prefab: it lists the prefab's parts (objects of its hierarchy, by their stable ids) that take
+     part, and has a length in seconds. Each part gets tracks for the values it animates: its
+     position, rotation and scale, a component's fields (a light's colour, a material's value) and
+     a script's properties. A timeline panel shows the tracks under a time ruler: keyframes are
+     placed, moved, copied and deleted on the axis, the value at a keyframe is set in the Inspector
+     or by moving the part in the scene view while recording, and each keyframe says how it eases to
+     the next (step, linear, smooth). A playhead scrubs the prefab's pose in the editor without play
+     mode; a timeline loops or plays once. In play, a component on the prefab's root plays it (on
+     start or when a script says), and its clips can feed the animation states above like any
+     other clip. Every edit goes through `timeline.*` commands and undoes as one step, so agents
+     build timelines without the editor; it all works by keyboard (moving between tracks and keys,
+     nudging a key in time).
+   - **Physics on several cores.** Rapier steps the world on one thread today. Its parallel
+     feature spreads the step over the machine's cores; the step stays deterministic for the same
+     input, so replays and tests read the same. The web player, which has one thread, keeps the
+     single-threaded step. Measured before and after on scenes of 5,000 to 20,000 bodies.
+   - **The ECS on several cores.** Systems that touch different components, and queries over many
+     entities, can run on a pool of threads (as an option, off by default until measured), with the
+     same results as one thread. Writes that must be ordered stay on the main thread. Each crate
+     still builds and runs single-threaded, and on the web.
+   - **Scripts on several cores.** Today the host calls every script of every object in turn. A
+     design that lets them run at once: each script instance already has its own state, so a step's
+     updates can run in parallel when what they change on the world is gathered as requests
+     (moves, property writes, spawns, messages) and applied after, in a fixed order, so the result
+     does not depend on which core ran what. Reads see the world as the step began. The design
+     settles what a script may do directly during the step, how visual scripts and native Rust
+     scripts fit it, and how a script says it must run alone; it is measured against the benchmark
+     scenes before it becomes the default.
+   - **One node per job, its pins following what it names.** Today Set Property is seven nodes,
+     one per type (Set Property, Set Whole Property, Set Flag Property, …), and so is Property;
+     the variables' Get and Set nodes are seven pairs too. Each family becomes one node: the
+     property or variable chosen in it decides its Value pin's type (number, whole number, vector,
+     text, object…), as list and map nodes already take the type of the list they name. Changing
+     a declaration's type then changes only the pin, never the node's kind. Graphs saved with the
+     old kinds open as the new node (an upgrade on load, with the file's version raised). The
+     review of the catalog found the same pattern in:
+     - Property and Set Property (seven each), Get and Set of variables (seven pairs);
+     - Interface Value and Interface Text, and Set Interface Value and Set Interface Text: one
+       read and one write node whose pin follows the element's kind;
+     - Number and Text and the other one-value nodes stay as they are (each is a typed constant),
+       and Position, Rotation and Scale stay apart (they say different things, not one thing in
+       different types).
+     Every node keeps its id and links where the types still fit; the node search finds the new
+     node by the old names too.
 
 ## Open questions
 
