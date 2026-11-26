@@ -684,6 +684,35 @@ fn a_module_that_runs_many_objects_runs_them_all_in_one_call_per_step() {
 }
 
 #[test]
+fn a_scene_loads_each_file_s_objects_into_that_file_s_module_even_when_two_files_are_alike() {
+    // Two files with the same bytes, two objects on each.
+    let dir = std::env::temp_dir().join(format!("bayleaf-script-alike-{}-{}", std::process::id(), module_path!().replace("::", "-")));
+    std::fs::create_dir_all(&dir).unwrap();
+    let bytes = batched_turner(false);
+    let mut scene = Scene::new();
+    let mut objects = Vec::new();
+    for file in ["one.wasm", "two.wasm"] {
+        std::fs::write(dir.join(file), &bytes).unwrap();
+        for n in 0..2 {
+            let id = scene.create_object(None, &format!("{file} {n}")).unwrap();
+            scene.set(id, Scripts(vec![ScriptRef { module: file.into(), properties: BTreeMap::new() }])).unwrap();
+            objects.push(id);
+        }
+    }
+    let mut host = super::test_host();
+    let input = Arc::new(Input::default());
+    host.load_scene(&mut scene, &dir, 0.0, &input);
+    assert!(host.take_faults().is_empty());
+    assert_eq!(host.len(), 4);
+    host.update(&mut scene, 0.1, 0.0, &input);
+    assert_eq!(host.take_logs().len(), 2, "one call per file, not one for both and not one per object");
+    for id in &objects {
+        assert!((rotation_y(&scene, *id) - 1.0).abs() < 1e-6, "each object turned once");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn an_error_in_a_module_that_runs_many_objects_stops_them_all_with_one_fault() {
     let input = Arc::new(Input::default());
     let (mut scene, first, script) = setup(&[]);

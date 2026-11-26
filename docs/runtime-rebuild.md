@@ -68,12 +68,20 @@ a time.
 **Stage 3: loading.** A scene of 100,000 objects takes 320 s to start playing today. Find what
 grows faster than the scene and remove it. Gate: 100,000 objects load in under 10 s.
 
-State: started. A load now reads and compiles each script file once (a visual script was compiled
-again for every object), keeps what it asks of the module, looks through the instances for one to
-replace only when the place has one, and finds the module more objects join by its key. Loading as
-play mode does (`--full-load`), 20,000 objects with three scripts each: 19.1 to 0.56 s for Rust
-scripts, 19.0 to 0.46 s for visual scripts. 100,000 objects are not measured yet, and no new test
-was added; the existing loading and reloading tests pass.
+State: the gate is met. A load now reads and compiles each script file once (a visual script was
+compiled again for every object), keeps what it asks of the module, looks through the instances for
+one to replace only when the place has one, and finds the module more objects join by its key and
+file. Loading is linear in the scene now. With three scripts per object:
+
+| Objects | Scripts loaded as play mode does (`--full-load`) | `play.start` (`--part step`) |
+|---:|---:|---:|
+| 20,000 | 0.52 s (19.1 s before) | 0.68 s |
+| 50,000 | 0.99 s | |
+| 100,000 | 1.84 s Rust, 1.69 s visual (320 s before, on the benchmark's own loading) | 2.9 s Rust, 2.5 s visual |
+
+Not part of this stage, but seen here: the first steps after a load are slow (about 200 ms at
+100,000 objects, where everything is found and kept for the first time), and the whole play step,
+not only scripts, is what stage 6 is about.
 
 **Stage 4: scripts keep their data.** Properties a script reads every step become fields set when
 they change, not lookups by name. Typed access to the module's objects' transforms as one slice

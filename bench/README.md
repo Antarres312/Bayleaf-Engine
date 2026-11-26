@@ -403,3 +403,8 @@ Rows were measured on different hours; compare along a row's own before and afte
 `docs/runtime-rebuild.md`), not down a column. The benchmark prints `check`, a sum over the scene;
 with `--warmup 30 --min-frames 200 --max-frames 200 --seconds 0` it was the same before and after
 each change.
+
+Loading (stage 3), three scripts per object: the scripts of 20,000 objects load in 0.52 s (19.1 s
+before) and of 100,000 in 1.8 s, and `play.start` on 100,000 objects takes 2.5 to 2.9 s; loading
+is linear in the scene. `--full-load` loads as play mode does, so the script step can now be timed
+that way at any size.
