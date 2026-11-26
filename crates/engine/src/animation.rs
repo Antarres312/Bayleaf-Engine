@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bayleaf_animation::states::{self, Machine};
-use bayleaf_animation::{ClipEvent, Clips, Motion, Number, Parameter, Player};
+use bayleaf_animation::{ClipEvent, Clips, Motion, NamedClip, NamedTrack, Number, Parameter, Player};
 use bayleaf_core::StableId;
 use bayleaf_core::math::Mat4;
 use bayleaf_render::assets::skeleton::Skeleton;
@@ -162,7 +162,7 @@ fn new_animated(session: &mut Session, id: StableId, model: String, skeleton: Ar
     let settings = session.scene.get::<ModelAnimation>(id).cloned();
     let marks: Vec<(String, ClipEvent)> =
         settings.iter().flat_map(|s| s.events.iter().map(|m| (m.clip.clone(), ClipEvent { time: m.time, name: m.event.clone() }))).collect();
-    let clips = Clips::of_model(&skeleton, &marks);
+    let mut clips = Clips::of_model(&skeleton, &marks);
     let mut player = Player::new();
     // Root motion moves the object only in play mode, where the scene is a copy.
     if let Some(s) = settings.as_ref().filter(|s| autoplay && s.root_motion) {
@@ -175,6 +175,17 @@ fn new_animated(session: &mut Session, id: StableId, model: String, skeleton: Ar
         // Animation states, when the component names some that read and compile.
         Some(settings) if !settings.states.is_empty() => match load_states(session, &settings.states) {
             Ok(machine) => {
+                // Keyframe animations the states name are clips too.
+                let mut named = Vec::new();
+                machine.states.iter().for_each(|s| clip_names(&s.motion, &mut named));
+                named.sort();
+                named.dedup();
+                for path in named.iter().filter(|n| n.to_ascii_lowercase().ends_with(&format!(".{}", bayleaf_scene::timeline::EXTENSION))) {
+                    match timeline_clip(session, path) {
+                        Ok(clip) => clips.insert(path, Arc::new(clip)),
+                        Err(problem) => session.log(Level::Error, format!("{}: the clip {path} does not read: {problem}", settings.states)),
+                    }
+                }
                 let problems: Vec<String> = machine.states.iter().flat_map(|s| s.motion.problems(&skeleton, &clips)).collect();
                 for problem in problems {
                     session.log(Level::Error, format!("{}: {problem}", settings.states));
@@ -193,6 +204,73 @@ fn new_animated(session: &mut Session, id: StableId, model: String, skeleton: Ar
     }
     let names: Arc<[String]> = Arc::from(skeleton.names.as_slice());
     Animated { model, skeleton, clips, player, paused: false, names }
+}
+
+/// Every clip a motion names: its own, and its mix's and layers' clips.
+fn clip_names(motion: &Motion, out: &mut Vec<String>) {
+    match motion {
+        Motion::Rest => {}
+        Motion::Clip { clip, .. } => out.push(clip.clone()),
+        Motion::Mix { items, .. } => items.iter().for_each(|(m, _)| clip_names(m, out)),
+        Motion::Layer { base, top, .. } => {
+            clip_names(base, out);
+            clip_names(top, out);
+        }
+    }
+}
+
+/// Samples per second a keyframe animation is taken at when animation states play it as a clip,
+/// so every ease (step, linear, smooth) reads as the timeline shows it.
+const TIMELINE_RATE: f32 = 60.0;
+
+/// A keyframe animation (`.btimeline`, relative to the project folder) as a clip for a model: the
+/// position, rotation and scale tracks of its parts, each posing the model's node named as the part
+/// is in the timeline's prefab. Other tracks (component fields, script properties) are not a
+/// skeleton's and are left out; so are parts no node of the model is called.
+fn timeline_clip(session: &Session, path: &str) -> Result<NamedClip, String> {
+    let full = session.allowed(&session.script_dir().join(path), Access::Read).map_err(|e| e.to_string())?;
+    let text = bayleaf_core::files::read_to_string(&full).map_err(|e| format!("cannot read it: {e}"))?;
+    let timeline = bayleaf_scene::timeline::Timeline::from_json(&text)?;
+    let objects = crate::prefab_cmds::read_prefab(session, &timeline.prefab).map_err(|e| e.to_string())?;
+    let length = timeline.length.max(1e-3);
+    let steps = (length * TIMELINE_RATE).ceil().clamp(1.0, 100_000.0) as usize;
+    let times: Vec<f32> = (0..=steps).map(|i| (i as f32 / TIMELINE_RATE).min(length)).collect();
+    let mut tracks = Vec::new();
+    for part in &timeline.parts {
+        let Some(name) = objects.iter().find(|o| o.id == part.id).and_then(|o| o.components.get("name")?.as_str()) else { continue };
+        for track in &part.tracks {
+            let bayleaf_scene::timeline::Target::Field { component, field } = &track.target else { continue };
+            let property = match (component.as_str(), field.as_str()) {
+                ("transform", "position") => bayleaf_render::assets::skeleton::Property::Translation,
+                ("transform", "rotation") => bayleaf_render::assets::skeleton::Property::Rotation,
+                ("transform", "scale") => bayleaf_render::assets::skeleton::Property::Scale,
+                _ => continue,
+            };
+            let three = |t: f32| -> Option<[f32; 3]> {
+                let value = track.value_at(t)?;
+                let items = value.as_array()?;
+                let part = |i: usize| items.get(i).and_then(Value::as_f64).map(|v| v as f32);
+                Some([part(0)?, part(1)?, part(2)?])
+            };
+            let values: Option<Vec<[f32; 4]>> = times
+                .iter()
+                .map(|t| {
+                    three(*t).map(|[x, y, z]| match property {
+                        // Degrees about X, then Y, then Z, as a Transform turns.
+                        bayleaf_render::assets::skeleton::Property::Rotation => {
+                            let q = bayleaf_core::math::Quat::from_euler(bayleaf_core::math::EulerRot::XYZ, x.to_radians(), y.to_radians(), z.to_radians());
+                            [q.x, q.y, q.z, q.w]
+                        }
+                        _ => [x, y, z, 0.0],
+                    })
+                })
+                .collect();
+            if let Some(values) = values {
+                tracks.push(NamedTrack { part: name.to_owned(), property, step: false, times: times.clone(), values });
+            }
+        }
+    }
+    Ok(NamedClip { duration: length, tracks, events: Vec::new() })
 }
 
 /// Reads and compiles the animation states at `path` (relative to the project folder).
@@ -983,6 +1061,48 @@ mod tests {
         assert!(!session.is_dirty(), "nor marks it changed");
         run(&mut session, "play.start", Value::Null).unwrap();
         assert!(run(&mut session, "animation.preview", json!({"id": id, "clip": "Stretch"})).is_err(), "not in play mode");
+        run(&mut session, "play.stop", Value::Null).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn animation_states_play_a_keyframe_animation_as_a_clip_posing_the_joints_its_parts_are_named_as() {
+        let (registry, mut session, id, dir) = arm_scene("timeline-clip");
+        let run = |session: &mut Session, command: &str, params: Value| registry.execute(session, command, &params);
+        // A prefab whose part "Arm" moves up 2 over a second on a keyframe animation.
+        let arm_part = bayleaf_core::StableId::from_u128(7);
+        let prefab = json!({"format": "bayleaf.prefab", "version": bayleaf_scene::doc::VERSION, "objects": [
+            {"id": arm_part, "components": {"name": "Arm", "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]}}}
+        ]});
+        std::fs::write(dir.join("rig.bprefab"), prefab.to_string()).unwrap();
+        let mut timeline = bayleaf_scene::timeline::Timeline::new("rig.bprefab", 1.0);
+        let target = bayleaf_scene::timeline::Target::field("transform", "position");
+        let key = |time: f32, y: f64| bayleaf_scene::timeline::Key { time, value: json!([0.0, y, 0.0]), ease: bayleaf_scene::timeline::Ease::Linear };
+        timeline.parts.push(bayleaf_scene::timeline::Part {
+            id: arm_part,
+            tracks: vec![bayleaf_scene::timeline::Track { target, keys: vec![key(0.0, 0.0), key(1.0, 2.0)] }],
+        });
+        std::fs::write(dir.join("lift.btimeline"), timeline.to_json()).unwrap();
+        // Animation states with one state playing it once.
+        use bayleaf_animation::states::CATALOG;
+        let mut graph = bayleaf_graph::Graph::empty(&CATALOG);
+        let state = graph.add_node(&CATALOG, "state", [0.0, 0.0]).unwrap();
+        graph.set_value(&CATALOG, state, "name", json!("Lift")).unwrap();
+        let clip = graph.add_node(&CATALOG, "clip", [0.0, 0.0]).unwrap();
+        graph.set_value(&CATALOG, clip, "clip", json!("lift.btimeline")).unwrap();
+        graph.set_value(&CATALOG, clip, "play", json!("Once")).unwrap();
+        graph
+            .connect(&CATALOG, bayleaf_graph::Link { from: bayleaf_graph::PinRef::new(clip, "motion"), to: bayleaf_graph::PinRef::new(state, "motion") })
+            .unwrap();
+        std::fs::write(dir.join("lift.banim"), graph.to_json()).unwrap();
+        let animation = json!({"animation": "", "playing": true, "looping": false, "speed": 1, "states": "lift.banim"});
+        run(&mut session, "scene.component.set", json!({"id": id, "component": "modelAnimation", "value": animation})).unwrap();
+        run(&mut session, "play.start", Value::Null).unwrap();
+        run(&mut session, "play.step", json!({"seconds": 0.1, "steps": 5})).unwrap();
+        let errors: Vec<&String> = session.console().iter().filter(|l| l.level == crate::Level::Error).map(|l| &l.text).collect();
+        assert!(errors.is_empty(), "{errors:?}");
+        let y = arm_joint(&session, &id).y;
+        assert!((y - 1.0).abs() < 0.05, "half way up the keyframe animation: {y}");
         run(&mut session, "play.stop", Value::Null).unwrap();
         std::fs::remove_dir_all(&dir).ok();
     }
