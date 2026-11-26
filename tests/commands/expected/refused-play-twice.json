@@ -1,0 +1,11 @@
+{
+  "error": "command play.start is disabled: play mode is already running",
+  "failedStep": 1,
+  "results": [
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

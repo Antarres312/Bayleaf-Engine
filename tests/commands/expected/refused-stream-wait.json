@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: seconds must be between 0 and 60",
+  "failedStep": 1,
+  "results": [
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "error": "it has no Keyframe Animation with an animation file",
+  "failedStep": 2,
+  "results": [
+    {
+      "id": "<id 0>"
+    },
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

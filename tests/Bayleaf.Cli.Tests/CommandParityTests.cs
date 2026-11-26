@@ -111,7 +111,7 @@ public class CommandParityTests
             : error;
     }
 
-    private static string RunBatch(string path)
+    private static JsonObject RunBatch(string path)
     {
         var root = Plain(Root());
         var outDir = Path.Join(Path.GetTempPath(), $"bayleaf-parity-cs-{Path.GetFileNameWithoutExtension(path)}-{Environment.ProcessId}");
@@ -137,7 +137,7 @@ public class CommandParityTests
                 report.Add("failedStep", JsonNumber.Of((long)index));
             }
             report.Add("results", results);
-            return report.ToPretty() + "\n";
+            return report;
         }
         finally
         {
@@ -175,15 +175,18 @@ public class CommandParityTests
             d.Get("csharp")!))];
     }
 
-    /// <summary>The printed report with each known difference checked and then put back as the Rust engine gave it.</summary>
-    private static string WithKnownDifferences(string name, string printed, string expected)
+    /// <summary>
+    /// The report as printed, with each known difference checked and then put back as the Rust engine
+    /// gave it. The report is changed where it is, not printed and read back, since reading decimals
+    /// back (as the Rust engine's JSON library reads them) can move a number's last digit.
+    /// </summary>
+    private static string WithKnownDifferences(string name, JsonObject ours, string expected)
     {
         var differences = KnownDifferences().Where(d => d.Batch == name).ToList();
         if (differences.Count == 0)
         {
-            return printed;
+            return ours.ToPretty() + "\n";
         }
-        var ours = (JsonObject)JsonReader.Parse(printed).Value;
         var rust = (JsonObject)JsonReader.Parse(expected).Value;
         foreach (var (_, steps, field, csharp) in differences)
         {

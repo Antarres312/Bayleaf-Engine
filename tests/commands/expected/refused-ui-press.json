@@ -1,0 +1,25 @@
+{
+  "error": "invalid params: \"Title\" is a text without On Click; only buttons, toggles and elements with On Click are pressed",
+  "failedStep": 5,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "path": "$out/p/menu.bui"
+    },
+    {
+      "id": "<id 0>"
+    },
+    {
+      "deleted": 1
+    },
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

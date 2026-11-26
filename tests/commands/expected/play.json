@@ -1,0 +1,220 @@
+{
+  "results": [
+    {
+      "console": [],
+      "particles": 0,
+      "paused": false,
+      "playing": false,
+      "running": 0,
+      "scripts": 0,
+      "time": 0.0
+    },
+    {
+      "id": "<id 0>"
+    },
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    },
+    {
+      "console": [
+        {
+          "level": "info",
+          "text": "Play mode started: 0 of 0 scripts running."
+        }
+      ],
+      "particles": 0,
+      "paused": false,
+      "playing": true,
+      "running": 0,
+      "scripts": 0,
+      "time": 0.0
+    },
+    {
+      "time": 0.5000000223517418
+    },
+    {
+      "time": 1.2500000447034836
+    },
+    {
+      "paused": true
+    },
+    {
+      "time": 1.2666667122393847
+    },
+    {
+      "paused": false
+    },
+    {
+      "game": {},
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {},
+      "savedFile": null,
+      "savedProblem": null
+    },
+    {
+      "game": {
+        "score": 3.0
+      },
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {},
+      "savedFile": null,
+      "savedProblem": null
+    },
+    {
+      "game": {
+        "score": 3.0
+      },
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {
+        "best": 9.5
+      },
+      "savedFile": null,
+      "savedProblem": null
+    },
+    {
+      "sent": "jump"
+    },
+    {
+      "sent": "everyone"
+    },
+    {},
+    {
+      "objects": [],
+      "playing": true,
+      "project": {
+        "active": "Player",
+        "maps": [
+          "Player",
+          "Menu"
+        ]
+      }
+    },
+    {
+      "objects": [],
+      "playing": true,
+      "project": {
+        "active": "Menu",
+        "maps": [
+          "Player",
+          "Menu"
+        ]
+      }
+    },
+    {
+      "added": []
+    },
+    {},
+    {
+      "children": [],
+      "components": {
+        "name": "Box",
+        "transform": {
+          "position": [
+            7.0,
+            7.0,
+            7.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            2.0,
+            2.0,
+            2.0
+          ]
+        }
+      },
+      "id": "<id 0>",
+      "parent": null
+    },
+    {
+      "time": 1.2666667122393847
+    },
+    {
+      "children": [],
+      "components": {
+        "name": "Box",
+        "transform": {
+          "position": [
+            1.0,
+            2.0,
+            3.0
+          ],
+          "rotation": [
+            0.0,
+            30.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "id": "<id 0>",
+      "parent": null
+    },
+    {
+      "console": [
+        {
+          "level": "info",
+          "text": "Play mode started: 0 of 0 scripts running."
+        },
+        {
+          "level": "info",
+          "text": "Saved values are kept only in a project; open or make one to keep them between plays."
+        },
+        {
+          "level": "info",
+          "text": "Play mode stopped after 1.27 s; the scene is back as it was."
+        }
+      ],
+      "particles": 0,
+      "paused": false,
+      "playing": false,
+      "running": 0,
+      "scripts": 0,
+      "time": 0.0
+    },
+    {
+      "playing": false
+    },
+    {
+      "game": {},
+      "outcome": null,
+      "players": [],
+      "playing": false,
+      "saved": {},
+      "savedFile": null,
+      "savedProblem": null
+    },
+    {
+      "lines": [
+        {
+          "level": "info",
+          "text": "Play mode started: 0 of 0 scripts running."
+        },
+        {
+          "level": "info",
+          "text": "Saved values are kept only in a project; open or make one to keep them between plays."
+        },
+        {
+          "level": "info",
+          "text": "Play mode stopped after 1.27 s; the scene is back as it was."
+        }
+      ],
+      "total": 3
+    }
+  ]
+}

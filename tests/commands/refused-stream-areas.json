@@ -1,0 +1,1 @@
+[{"cmd": "scene.object.create", "params": {"name": "Area", "components": {"streamedArea": {"scene": "a.bscene", "loadDistance": 10, "keepMargin": 1}}}}, {"cmd": "play.start"}, {"cmd": "console.read"}, {"cmd": "stream.areas"}]

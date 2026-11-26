@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: give a name of 1 to 64 bytes and a finite number; a state holds at most 1024 values",
+  "failedStep": 1,
+  "results": [
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

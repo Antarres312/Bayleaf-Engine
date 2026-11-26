@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: unknown gamepad button \"Jump\"; use South, East, West, North, LeftBumper, RightBumper, LeftTrigger, RightTrigger, Select, Start, LeftStick, RightStick, Up, Down, Left, Right",
+  "failedStep": 1,
+  "results": [
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

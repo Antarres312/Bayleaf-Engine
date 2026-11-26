@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: <id 0> is not a player (an object with Player Control)",
+  "failedStep": 1,
+  "results": [
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+[{"cmd": "scene.object.create", "params": {"name": "Plain"}}, {"cmd": "play.start"}, {"cmd": "timeline.play", "params": {"id": "$0.id"}}]
