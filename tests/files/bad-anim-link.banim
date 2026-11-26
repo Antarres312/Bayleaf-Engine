@@ -1,0 +1,12 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "animation",
+  "nodes": [
+    {"id": 1, "kind": "clip", "position": [0, 0], "values": {"clip": "Walk"}},
+    {"id": 2, "kind": "compare", "position": [200, 0], "values": {}}
+  ],
+  "links": [
+    {"from": {"node": 1, "pin": "motion"}, "to": {"node": 2, "pin": "a"}}
+  ]
+}

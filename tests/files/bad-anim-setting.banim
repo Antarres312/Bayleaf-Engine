@@ -1,0 +1,9 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "animation",
+  "nodes": [
+    {"id": 1, "kind": "clip", "position": [0, 0], "values": {"clip": "Walk", "speed": "fast"}}
+  ],
+  "links": []
+}

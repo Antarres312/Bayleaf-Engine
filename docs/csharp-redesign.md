@@ -62,8 +62,8 @@ stays buildable and takes fixes until stage 8 removes it. `examples/`, `assets/`
 | L0 | `Bayleaf.Core`: ids, handles, results, math (`Double3` for positions, since `System.Numerics` has only `float` vectors) |
 | L1 | `Bayleaf.Ecs`: archetype storage, queries, schedule, the thread pool option |
 | L2 | `Bayleaf.Scene`, `Bayleaf.Assets`, `Bayleaf.Graph`, `Bayleaf.Interface` (namespace `Bayleaf.GameInterface`) |
-| L3 | `Bayleaf.Render` |
-| L4 | `Bayleaf.Script`, `Bayleaf.Gameplay`, `Bayleaf.Streaming`, `Bayleaf.Physics`, `Bayleaf.Animation`, `Bayleaf.Audio`, `Bayleaf.Particles` |
+| L3 | `Bayleaf.Render`, `Bayleaf.Animation` (L3 as in the Rust tree) |
+| L4 | `Bayleaf.Script`, `Bayleaf.Gameplay`, `Bayleaf.Streaming`, `Bayleaf.Physics`, `Bayleaf.Audio`, `Bayleaf.Particles` |
 | L5 | `Bayleaf.Engine`: session, command registry, undo, play mode |
 | L6 | `Bayleaf.Editor` (the editor's UI), `Bayleaf.Automation` |
 | L7 | `apps/Bayleaf` (editor), `apps/Bayleaf.Cli`, `apps/Bayleaf.Player` |
@@ -229,6 +229,11 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    of `runtime-rebuild.md` at 20,000 and 100,000 objects, no worse than the Rust engine's at the time.
 5. **Physics, audio, animation, particles, game interface, gameplay, streaming.** Their behaviour
    tests ported and passing.
+   *Animation ported, 2026-11-26* (`src/Bayleaf.Animation`: clips, motions, players, animation states
+   with their node kinds and compiler). Each `.banim` file of `tests/files` is read with the animation
+   states' catalog, written back, compiled and run on the arm fixture in both engines, and compared with
+   what the Rust engine writes (`BAYLEAF_BLESS=1 cargo test -p bayleaf-animation`); the players in the
+   session and the `animation.*` commands wait for play mode.
 6. **The editor.** Panel by panel, each with its headless tests and its accessibility check.
 7. **The player and export.** NativeAOT players for Windows, macOS and Linux; the web decision.
 8. **Switch.** The C# editor becomes the release; the Rust tree stays for one release and is then

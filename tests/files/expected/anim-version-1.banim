@@ -1,0 +1,43 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "animation",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "state",
+      "position": [
+        40.0,
+        140.0
+      ],
+      "values": {
+        "name": "Idle"
+      }
+    },
+    {
+      "id": 2,
+      "kind": "clip",
+      "position": [
+        -220.0,
+        140.0
+      ],
+      "values": {
+        "clip": "Wave",
+        "play": "Once",
+        "speed": 0.75
+      }
+    }
+  ],
+  "links": [
+    {
+      "from": {
+        "node": 2,
+        "pin": "motion"
+      },
+      "to": {
+        "node": 1,
+        "pin": "motion"
+      }
+    }
+  ]
+}

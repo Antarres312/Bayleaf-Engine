@@ -1,0 +1,13 @@
+problem node 6 Clip · speed must be from 0 to 10
+problem node 5 Mix · link a motion into both A and B
+problem node 4 Number Parameter · give the parameter a name
+problem node 2 State · another state is named "Idle"
+problem node 15 Clip · name one of the model's clips
+problem node 12 Layer · link the motion it plays into Top
+problem node 12 Layer · a motion reads a number parameter or a number typed in, not Time in State
+problem node 14 Start State · there is no state named "Missing"
+problem node 7 Transition · there is no state named "Run" to go to
+problem node 8 Transition · there is no state named "Jump" to go from
+problem node 8 Transition · fade must be from 0 to 60 seconds
+problem node 9 Transition · name the state it goes to
+problem node 11 True/False Parameter · "speed" is a number parameter elsewhere in the graph; one name holds one kind

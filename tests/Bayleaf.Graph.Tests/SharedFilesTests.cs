@@ -12,7 +12,8 @@ namespace Bayleaf.Graph.Tests;
 /// </summary>
 public class SharedFilesTests
 {
-    private static readonly string[] Kinds = ["bmaterial", "bscript", "banim"];
+    /// <summary>The kinds read here; animation states files (<c>.banim</c>) are read with their own catalog in <c>tests/Bayleaf.Animation.Tests</c>.</summary>
+    private static readonly string[] Kinds = ["bmaterial", "bscript"];
 
     internal static string RepositoryRoot()
     {
@@ -28,8 +29,7 @@ public class SharedFilesTests
     private static Catalog FormatCatalog(string extension) => extension switch
     {
         "bmaterial" => new() { Domain = "material", Label = "Material", Extension = extension },
-        "bscript" => new() { Domain = "script", Label = "Visual Script", Extension = extension },
-        _ => new() { Domain = "animation", Label = "Animation States", Extension = extension },
+        _ => new() { Domain = "script", Label = "Visual Script", Extension = extension },
     };
 
     /// <summary>What the C# engine writes back after reading <paramref name="path"/> as <see cref="Graph.FromJson"/> does, its nodes and links aside, or <c>refused</c>.</summary>
