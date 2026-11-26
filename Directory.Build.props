@@ -13,7 +13,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
     <IsPackable>false</IsPackable>
-    <ArtifactsPath>$(MSBuildThisFileDirectory)..\target\dotnet</ArtifactsPath>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)target\dotnet</ArtifactsPath>
   </PropertyGroup>
 
 </Project>

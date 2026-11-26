@@ -1,9 +1,9 @@
 namespace Bayleaf.Scene.Tests;
 
 /// <summary>
-/// Stage 1 of docs/csharp-redesign.md: every file of the examples and of <c>dotnet/tests/files</c> reads
+/// Stage 1 of docs/csharp-redesign.md: every file of the examples and of <c>tests/files</c> reads
 /// and writes back as the Rust engine reads and writes it. The Rust engine's test
-/// (<c>crates/scene/src/tests.rs</c>) writes what it gives into <c>dotnet/tests/files/expected</c> and
+/// (<c>rust/crates/scene/src/tests.rs</c>) writes what it gives into <c>tests/files/expected</c> and
 /// checks it still gives that; this test checks the C# engine gives the same.
 /// </summary>
 public class SharedFilesTests
@@ -13,7 +13,7 @@ public class SharedFilesTests
     internal static string RepositoryRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !(File.Exists(Path.Join(dir.FullName, "Cargo.toml")) && Directory.Exists(Path.Join(dir.FullName, "dotnet"))))
+        while (dir is not null && !File.Exists(Path.Join(dir.FullName, "Bayleaf.slnx")))
         {
             dir = dir.Parent;
         }
@@ -39,7 +39,7 @@ public class SharedFilesTests
     {
         var root = RepositoryRoot();
         var files = new TheoryData<string>();
-        foreach (var dir in new[] { Path.Join(root, "examples"), Path.Join(root, "dotnet", "tests", "files") })
+        foreach (var dir in new[] { Path.Join(root, "examples"), Path.Join(root, "tests", "files") })
         {
             foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
             {
@@ -61,8 +61,8 @@ public class SharedFilesTests
     public void EachFileRewritesAsTheRustEngineRewritesIt(string relative)
     {
         var root = RepositoryRoot();
-        var name = string.Join("__", relative.Split('/').SkipWhile(p => p is "dotnet" or "tests" or "files"));
-        var expected = File.ReadAllText(Path.Join(root, "dotnet", "tests", "files", "expected", name)).ReplaceLineEndings("\n");
+        var name = string.Join("__", relative.Split('/').SkipWhile(p => p is "tests" or "files"));
+        var expected = File.ReadAllText(Path.Join(root, "tests", "files", "expected", name)).ReplaceLineEndings("\n");
         Assert.Equal(expected, Rewrite(Path.Join(root, relative)));
     }
 }

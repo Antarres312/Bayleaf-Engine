@@ -3,9 +3,9 @@
 A glTF model with a skeleton (skinned parts, or parts on nodes that its animations move) is drawn by
 its skin: each vertex follows up to four joints by its weights. Its animations are its **clips**.
 This page says how clips play: on the GPU, faded and mixed, in layers, through animation states,
-with clip events and root motion, and from scripts and commands. The code is in `crates/animation`
-(clips, motions, players, animation states), `crates/assets/src/skeleton.rs` (poses and skins),
-`crates/render` (GPU skinning) and `crates/engine/src/animation.rs` (players in the session and the
+with clip events and root motion, and from scripts and commands. The code is in `rust/crates/animation`
+(clips, motions, players, animation states), `rust/crates/assets/src/skeleton.rs` (poses and skins),
+`rust/crates/render` (GPU skinning) and `rust/crates/engine/src/animation.rs` (players in the session and the
 `animation.*` commands).
 
 Behaviour is learned from public descriptions of skeletal animation (linear blend skinning,
@@ -29,7 +29,7 @@ together, so it is never smaller than the model.
 
 ## Clips
 
-A clip is anything that poses named parts over time (`ClipSource` in `crates/animation/src/clip.rs`):
+A clip is anything that poses named parts over time (`ClipSource` in `rust/crates/animation/src/clip.rs`):
 its length, where it puts the parts it moves at a moment, and the moments it marks. A model's own
 animations are clips under their names. A clip made elsewhere (a timeline) becomes one by
 implementing `ClipSource`, or by filling a `NamedClip` (keys of translation, rotation and scale for

@@ -1,8 +1,10 @@
 /target
+/rust/target
 /log
 /plan
 .claude/
 .cursor/
-/scripts/target
+/rust/scripts/target
 /examples/**/scripts/*.wasm
-/bench/scripts/target
+/rust/bench/scripts/target
+TestResults/

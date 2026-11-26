@@ -414,22 +414,22 @@ fn files_below(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// The C# engine must read and write every file of the examples and of `dotnet/tests/files` as this
+/// The C# engine must read and write every file of the examples and of `tests/files` as this
 /// one does (docs/csharp-redesign.md, stage 1). Both engines' tests compare their rewrite of each file
-/// with `dotnet/tests/files/expected/`, which this test writes when `BAYLEAF_BLESS=1` is set.
+/// with `tests/files/expected/`, which this test writes when `BAYLEAF_BLESS=1` is set.
 #[test]
 fn the_shared_files_rewrite_as_the_expected_files_say() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
-    let expected_dir = root.join("dotnet").join("tests").join("files").join("expected");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("..");
+    let expected_dir = root.join("tests").join("files").join("expected");
     let bless = std::env::var_os("BAYLEAF_BLESS").is_some_and(|v| v == "1");
     let mut inputs = Vec::new();
     files_below(&root.join("examples"), &mut inputs);
-    files_below(&root.join("dotnet").join("tests").join("files"), &mut inputs);
+    files_below(&root.join("tests").join("files"), &mut inputs);
     let mut checked = 0;
     for input in inputs {
         let Some(written) = rewrite(&input) else { continue };
         let relative = input.strip_prefix(&root).unwrap_or(&input).components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>();
-        let name = relative.iter().skip_while(|c| *c == "dotnet" || *c == "tests" || *c == "files").cloned().collect::<Vec<_>>().join("__");
+        let name = relative.iter().skip_while(|c| *c == "tests" || *c == "files").cloned().collect::<Vec<_>>().join("__");
         let expected_path = expected_dir.join(&name);
         if bless {
             std::fs::create_dir_all(&expected_dir).unwrap();

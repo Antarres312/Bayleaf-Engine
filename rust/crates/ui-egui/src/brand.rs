@@ -5,7 +5,7 @@
 
 use egui::Color32;
 
-const LOGO_PNG: &[u8] = include_bytes!("../../../assets/brand/bayleaf-logo.png");
+const LOGO_PNG: &[u8] = include_bytes!("../../../../assets/brand/bayleaf-logo.png");
 
 /// Darkest channel value of the leaf in a source without alpha; white maps to fully transparent.
 const LEAF_MIN_CHANNEL: f32 = 127.0;

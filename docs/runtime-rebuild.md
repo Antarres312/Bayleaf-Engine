@@ -1,6 +1,6 @@
 # Rebuilding the play runtime (in Rust)
 
-Status: in progress. Decided 2026-11-25 after the comparison in `bench/README.md` ("The same
+Status: in progress. Decided 2026-11-25 after the comparison in `rust/bench/README.md` ("The same
 runtime in C++ and Rust").
 
 ## Why
@@ -16,7 +16,7 @@ The target is scenes of 100,000 objects.
 
 ## What the fast design is
 
-It is what `bench/runtime/rust/src/runtime.rs` does, and what each stage moves Bayleaf towards:
+It is what `rust/bench/runtime/rust/src/runtime.rs` does, and what each stage moves Bayleaf towards:
 
 1. During play, transforms and what scripts need of an object live in packed arrays indexed by the
    object's place; nothing is looked up by id per object per step.
@@ -29,7 +29,7 @@ It is what `bench/runtime/rust/src/runtime.rs` does, and what each stage moves B
 
 ## Stages
 
-Each stage ends with `bench/` numbers at 5000, 20,000 and 100,000 objects in `bench/README.md`, and
+Each stage ends with `rust/bench/` numbers at 5000, 20,000 and 100,000 objects in `rust/bench/README.md`, and
 keeps every existing test passing.
 
 **Stage 1: Rust scripts make no host call per object.** In a module that runs many objects, the
@@ -91,7 +91,7 @@ not only scripts, is what stage 6 is about.
 **Stage 4: scripts keep their data.** Properties a script reads every step become fields set when
 they change, not lookups by name. Typed access to the module's objects' transforms as one slice
 (a system over many objects) for the hot cases. Gate: within 3 times of the one-module WebAssembly
-figures in `bench/README.md` (about 1.5 ms at 20,000 objects).
+figures in `rust/bench/README.md` (about 1.5 ms at 20,000 objects).
 
 State: the SDK half is done. `Script::read_properties` reads a script's properties into its fields
 before `init` and whenever they may have changed; `Script::update_many` runs every object of a
@@ -100,7 +100,7 @@ which the SDK now holds as typed entries. Scripts that do neither run as before,
 and no byte decoding. Timing the step in parts showed where the rest went, and two host changes
 followed: moved transforms are written back through a key the scene gives for each object
 (`Scene::key`, `Scene::set_transform`: 8 ns a write against 27 ns by id), and the frame a module
-gives back is read where it is in the module's memory instead of copied out. `bench/scripts/*-many`
+gives back is read where it is in the module's memory instead of copied out. `rust/bench/scripts/*-many`
 are the benchmark's scripts written the new way (`--scripts rust-many`).
 
 Run in turns against the program before this stage, same `check` each time. The computer was busy
@@ -124,7 +124,7 @@ moved list for the scene.
 
 **Stage 5: native scripts run directly.** In an exported game, Rust scripts built into the player
 call the runtime as ordinary functions on the same arrays, with no bridge module. Gate: within 2
-times of `bench/runtime/rust` (about 0.5 ms at 20,000 objects).
+times of `rust/bench/runtime/rust` (about 0.5 ms at 20,000 objects).
 
 **Stage 6: the rest of the step.** The renderer's extract, physics and the editor's viewport take
 the moved list instead of walking the scene, so the whole play step, not only scripts, costs what

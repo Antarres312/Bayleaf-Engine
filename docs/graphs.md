@@ -1,14 +1,14 @@
 # Graphs: materials, visual scripts and animation states
 
-Materials, visual scripts and animation states are all node graphs. They use the same model (`crates/graph`), the same
+Materials, visual scripts and animation states are all node graphs. They use the same model (`rust/crates/graph`), the same
 file format, the same `graph.*` commands and the same editor panel (the **Graph** tab beside the
 scene view). What differs is the set of node kinds and what the graph compiles to:
 
 | Domain | File | Compiles to | Node kinds and compiler |
 |---|---|---|---|
-| `material` | `.bmaterial` | a WGSL `surface` function in the mesh shader | `crates/render/src/material.rs` |
-| `script` | `.bscript` | a WebAssembly module with script ABI v1 | `crates/script/src/visual.rs` |
-| `animation` | `.banim` | animation states: states, motions and transitions an object runs | `crates/animation/src/states.rs` |
+| `material` | `.bmaterial` | a WGSL `surface` function in the mesh shader | `rust/crates/render/src/material.rs` |
+| `script` | `.bscript` | a WebAssembly module with script ABI v1 | `rust/crates/script/src/visual.rs` |
+| `animation` | `.banim` | animation states: states, motions and transitions an object runs | `rust/crates/animation/src/states.rs` |
 
 ## Model
 
@@ -128,7 +128,7 @@ Equal, Not Equal, of numbers typed in or from a Number Parameter or **Time in St
 and Runs, the times the state's motion has played through) and **And**, **Or** and **Not**. A
 parameter's name holds one kind: the same name as a number and as a trigger is a problem.
 
-Motion pins (**Motion**) link only to motion inputs. The compiler (`crates/animation/src/states.rs`)
+Motion pins (**Motion**) link only to motion inputs. The compiler (`rust/crates/animation/src/states.rs`)
 names what is wrong on its node: a state or transition naming no state, two states of one name, a Mix
 or Layer missing a motion, a clip node without a clip. A Model Animation component names the file in
 its States field; in play mode the object then runs it, and `animation.get` (its `state`) and `animation.state.set`

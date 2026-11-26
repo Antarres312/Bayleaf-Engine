@@ -61,8 +61,14 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119
 
 ## This repository
 
-Bayleaf Engine is a game engine and editor in Rust. It follows the Craft Apps conventions but is not
-a member of the suite. The vision, decisions and milestones are in `docs/vision.md`.
+Bayleaf Engine is a game engine and editor. It follows the Craft Apps conventions but is not a member of the
+suite. The vision, decisions and milestones are in `docs/vision.md`.
+
+**Two trees.** The engine is being ported from Rust to C# 14 on .NET 10 (`docs/csharp-redesign.md`). The C# tree is
+the repository's root (`Bayleaf.slnx`: `src/`, `tests/`, `tools/`); the Rust tree is in `rust/` (its workspace,
+crates, apps, xtask, scripts and benchmarks) and stays the one users run until the port's stage 8. `examples/`,
+`assets/` and `docs/` are shared. Rust paths in the paragraphs below up to **The C# tree** are relative to `rust/`,
+and Rust commands run there. New features land in C# only; the Rust tree takes fixes.
 
 **Layout by layer.** `cargo xtask layers` enforces it. Register every new crate in `xtask/src/layers.rs`
 in the same change that adds it.
@@ -137,17 +143,16 @@ Craft apps do, and `cargo xtask licences` records that choice (`ELECTED` in `xta
 merged back into it; PRs target `develop`. `main` holds only releases, each tagged `vX.Y.Z` (Semantic Versioning, the
 root `Cargo.toml` version), and changes only when a release merges `develop` into it.
 
-**The C# tree** (`docs/csharp-redesign.md`). The engine is being redesigned in C# 14 on .NET 10, stage by
-stage, in `dotnet/` (`Bayleaf.slnx`: `src/`, `tests/`, `tools/`); until its stage 8 the Rust tree stays the one
-users run. This departs from AA 11 (apps in Rust only) and AA 9, as the design records. The layers are the Rust
-tree's; `dotnet run --project dotnet/tools/Bayleaf.Check -- layers` checks them, and a new project goes into its
-table in the same change. Every project keeps the settings of `dotnet/Directory.Build.props` (nullable, warnings
-as errors, the recommended analyzers) with no suppressions. Both engines read and write each file the same, to the
-byte: `dotnet/tests/files/expected/` holds what the Rust engine writes back for every file of `examples/` and
-`dotnet/tests/files/` (`BAYLEAF_BLESS=1 cargo test -p bayleaf-scene` writes it), and both engines' tests compare
-with it, so a format change updates both trees and the expected files in one change. Checks for the C# projects
-you changed: `dotnet build dotnet/Bayleaf.slnx`, `dotnet test --solution Bayleaf.slnx` run in `dotnet/`,
-`Bayleaf.Check -- layers`, and after a package change `Bayleaf.Check -- licences`.
+**The C# tree.** It departs from AA 11 (apps in Rust only) and AA 9, as the design records. The layers are the Rust
+tree's; `dotnet run --project tools/Bayleaf.Check -- layers` checks them, and a new project goes into its table in the
+same change. Every project keeps the settings of `Directory.Build.props` (nullable, warnings as errors, the
+recommended analyzers) with no suppressions; `unsafe` only in `Bayleaf.Native`, each block with a `// SAFETY:`
+comment. Both engines read and write each file the same, to the byte: `tests/files/expected/` holds what the Rust
+engine writes back for every file of `examples/` and `tests/files/` (`BAYLEAF_BLESS=1 cargo test -p bayleaf-scene`,
+in `rust/`, writes it), and both engines' tests compare with it, so a format change updates both trees and the
+expected files in one change. Checks for the C# projects you changed: `dotnet build Bayleaf.slnx`,
+`dotnet test --solution Bayleaf.slnx`, `Bayleaf.Check -- layers`, and after a package change
+`Bayleaf.Check -- licences`.
 
 **Conventions.** `unsafe` is allowed only in `crates/script-sdk/src/abi.rs` (the guest FFI to the host), each block
 with a `// SAFETY:` comment. Every crate root carries the deny attributes

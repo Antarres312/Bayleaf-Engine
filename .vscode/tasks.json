@@ -4,6 +4,7 @@
     {
       "label": "cargo build: editor",
       "type": "shell",
+      "options": { "cwd": "${workspaceFolder}/rust" },
       "command": "cargo",
       "args": ["build", "-p", "bayleaf"],
       "problemMatcher": ["$rustc"],
@@ -12,6 +13,7 @@
     {
       "label": "cargo build: editor (release)",
       "type": "shell",
+      "options": { "cwd": "${workspaceFolder}/rust" },
       "command": "cargo",
       "args": ["build", "--release", "-p", "bayleaf"],
       "problemMatcher": ["$rustc"],
@@ -20,6 +22,7 @@
     {
       "label": "cargo build: cli",
       "type": "shell",
+      "options": { "cwd": "${workspaceFolder}/rust" },
       "command": "cargo",
       "args": ["build", "-p", "bayleaf-cli"],
       "problemMatcher": ["$rustc"],
@@ -28,6 +31,7 @@
     {
       "label": "cargo test: workspace",
       "type": "shell",
+      "options": { "cwd": "${workspaceFolder}/rust" },
       "command": "cargo",
       "args": ["test", "--workspace", "--all-features"],
       "problemMatcher": ["$rustc"],

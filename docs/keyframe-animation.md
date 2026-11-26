@@ -1,6 +1,6 @@
 # Keyframe animation
 
-A keyframe animation (`.btimeline`, `crates/scene/src/timeline.rs`) is made for one prefab. It names
+A keyframe animation (`.btimeline`, `rust/crates/scene/src/timeline.rs`) is made for one prefab. It names
 the prefab, has a length in seconds, plays once or loops, and lists the parts that take part: objects
 of the prefab's hierarchy, by their ids in the prefab file. Each part has tracks, one value each:
 
@@ -65,7 +65,7 @@ the changed values are keyed at the playhead instead of changing the prefab. Tha
 view's handles and the Inspector place keys while recording.
 
 The editor's Keyframes panel shows the tracks under a time ruler; its keyboard use is described at the
-top of `crates/ui-egui/src/timeline_view.rs`.
+top of `rust/crates/ui-egui/src/timeline_view.rs`.
 
 ## In play mode
 

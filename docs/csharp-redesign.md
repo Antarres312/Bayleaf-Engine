@@ -1,7 +1,7 @@
 # Bayleaf in C#: a redesign
 
 Status: design, 2026-11-26. Asked for by the operator after the comparison of a C# port with the Rust
-engine. Stages 0 and 1 are done (see Stages): the C# tree in `dotnet/` holds the core, the ECS and the
+engine. Stages 0 and 1 are done (see Stages): the C# tree, now at the repository's root, holds the core, the ECS and the
 scene with its files; the Rust tree is still the one users run.
 
 ## What is decided and what is not
@@ -41,13 +41,13 @@ behaviour, not line by line.
 
 ## Layout
 
-One solution, `dotnet/Bayleaf.slnx`, with one project per layer's part. A project may reference only
+One solution, `Bayleaf.slnx` at the root, with one project per layer's part. A project may reference only
 projects in lower layers; `tools/Bayleaf.Check` (the `xtask` of the C# tree) checks the references,
 the licences and the deny settings, as `cargo xtask layers` and `licences` do now.
 
-The C# tree lives in `dotnet/` (`src/`, `tests/`, `tools/`, later `apps/`), beside the Rust crates
-until stage 8: at the root, `apps/Bayleaf` would be the same folder as the Rust editor's `apps/bayleaf`
-on a file system that ignores case.
+The C# tree is the repository's root (`src/`, `tests/`, `tools/`, later `apps/`); on the operator's word of
+2026-11-26 the Rust tree moved to `rust/` (its workspace, crates, apps, xtask, scripts and benchmarks), where it
+stays buildable and takes fixes until stage 8 removes it. `examples/`, `assets/` and `docs/` are shared.
 
 | Layer | Projects |
 |---|---|
@@ -71,7 +71,7 @@ on a file system that ignores case.
   at their recommended level, no suppressions (rule 13). Expected failures are results, not
   exceptions; an exception that escapes non-test code is a bug, as a panic is now.
 - **Tests.** One test project per project (rule 30), xUnit v3 on Microsoft.Testing.Platform
-  (`dotnet/global.json` picks it; run `dotnet test --solution Bayleaf.slnx` in `dotnet/`). The editor's
+  (`global.json` picks it; run `dotnet test --solution Bayleaf.slnx`). The editor's
   tests run headless (see Editor), as the egui_kittest tests do now. The test platform reports usage to
   Microsoft unless `TESTINGPLATFORM_TELEMETRY_OPTOUT=1` (or `DOTNET_CLI_TELEMETRY_OPTOUT=1`) is set, as the
   `dotnet` command itself does.
@@ -116,7 +116,7 @@ through WebGPU. The WGSL shaders and the material graph's WGSL output stay as th
 - **Viewport:** the scene and game views are native child windows that draw with WebGPU, hosted in
   Avalonia. Avalonia cannot draw over a native child, so the views' overlays (gizmos, selection,
   labels) are drawn in the WebGPU pass, not as Avalonia controls.
-- **Theme:** the tokens in `crates/ui-egui/src/theme.rs` become Avalonia resources, with their
+- **Theme:** the tokens in `rust/crates/ui-egui/src/theme.rs` become Avalonia resources, with their
   contrast still tested (4.5:1 for text, 3:1 for controls).
 - **Translations:** the craft-i18n catalogs (`common.tsv`, `bayleaf.tsv`) are read as now, through
   the same helpers (`Tl`, `Tc`, `Tid`, `Tf`, `Tn`), English as the key; the pseudo language stays in
@@ -157,10 +157,10 @@ This is the part that changes most, and the part that gains most.
 |---|---|---|
 | Physics | Rapier | BepuPhysics v2 (Apache-2.0, to be confirmed): multi-threaded already; determinism for the same input and thread count to be checked by test before it is relied on |
 | Audio | cpal, craft-audio | SDL3 audio output; our mixer and effects ported from craft-audio-dsp |
-| glTF | Rust loader in `crates/assets` | SharpGLTF (MIT, to be confirmed) or a port of ours |
+| glTF | Rust loader in `rust/crates/assets` | SharpGLTF (MIT, to be confirmed) or a port of ours |
 | PNG, JPEG | `png` and others | StbImageSharp (licence to be confirmed); EXR, DDS and OBJ ported from our craft libraries |
 | CLI | clap | System.CommandLine (MIT) |
-| MCP | `crates/automation` | a port of ours (800 lines); the official C# SDK (MIT) if it saves work |
+| MCP | `rust/crates/automation` | a port of ours (800 lines); the official C# SDK (MIT) if it saves work |
 | JSON | serde | System.Text.Json, with the same field names |
 | Animation, particles, game interface, gameplay roles, streaming, graphs | Rust crates | ported as they are |
 
@@ -173,11 +173,11 @@ yet.
 
 Each stage ends with its gate met and the Rust tree still the one users run, until stage 8.
 
-0. **Measure first.** A C# copy of `bench/runtime/rust` beside the C++ one, run on the same scene.
+0. **Measure first.** A C# copy of `rust/bench/runtime/rust` beside the C++ one, run on the same scene.
    Gate: the C# step within 1.5 times of Rust's (Rust: 0.24 ms at 20,000 objects, 1.2 to 1.3 ms at
    100,000), with no GC collection during the measured frames. If C# misses it, the port stops here
    and this document records why.
-   *Done, 2026-11-26* (`bench/runtime/csharp`, figures in `bench/README.md`, "The same runtime in
+   *Done, 2026-11-26* (`rust/bench/runtime/csharp`, figures in `rust/bench/README.md`, "The same runtime in
    C#"): every checksum equal, no collection, no allocation in the timed steps. On the JIT the script
    step is 1.23 to 1.30 times Rust's and the whole step 1.11 to 1.26: the gate is met. As NativeAOT
    it is 1.60 to 1.63 and 1.36 to 1.59, just over the gate; see the player below. Reading the JIT's
@@ -185,13 +185,13 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    paths and reading the generated code.
 1. **Core, ECS, scene, files.** Every file in the test projects reads and writes back the same as the
    Rust engine reads and writes it.
-   *Done, 2026-11-26* (`dotnet/src/Bayleaf.Core`, `Bayleaf.Ecs`, `Bayleaf.Scene`, with a test project
-   each and `dotnet/tools/Bayleaf.Check`). The files are the scene's own kinds (`.bscene`, `.blight`,
+   *Done, 2026-11-26* (`src/Bayleaf.Core`, `Bayleaf.Ecs`, `Bayleaf.Scene`, with a test project
+   each and `tools/Bayleaf.Check`). The files are the scene's own kinds (`.bscene`, `.blight`,
    `.bpost`, `.bshape`, `.bdata`, `.btimeline`); the other kinds belong to the stages that port their
-   crates. Each file of `examples/` and `dotnet/tests/files/` (all 27 component types, every kind of
+   crates. Each file of `examples/` and `tests/files/` (all 27 component types, every kind of
    script property, version 1 and 16 scenes, duplicate keys, numbers from 1e-7 to 1e30, escapes and
    characters past U+FFFF, and 13 files that must be refused) is read and written back by both engines
-   and compared byte for byte with `dotnet/tests/files/expected/`, which the Rust test writes with
+   and compared byte for byte with `tests/files/expected/`, which the Rust test writes with
    `BAYLEAF_BLESS=1` and checks otherwise. To give the same bytes, `Bayleaf.Core.Json` writes and reads
    JSON as the Rust engine's library does: the same shortest digits and exponent form (`1e+20`), single
    precision widened to double in untyped values (`0.10000000149011612`), keys sorted by UTF-8 and the

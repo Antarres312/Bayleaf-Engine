@@ -57,7 +57,7 @@ recipe that wrote its interfaces, its post-processing and its objects.
 </p>
 
 ```sh
-cargo run -p bayleaf -- examples/showcase/Showcase.bproject   # open it, then Play (Ctrl+P)
+cargo run --manifest-path rust/Cargo.toml -p bayleaf -- examples/showcase/Showcase.bproject   # open it, then Play (Ctrl+P)
 ```
 
 ## Features
@@ -108,9 +108,14 @@ Every feature below works both in the editor and through commands.
 
 ## Build from source
 
+The engine you run today is the Rust one, in `rust/`; the commands below run there. The engine is being
+ported to C# 14 on .NET 10 at the repository's root (see [the C# redesign](docs/csharp-redesign.md) and
+[The C# port](#the-c-port) below).
+
 You need Rust 1.95 or newer. To build the example scripts, you also need the WebAssembly target:
 
 ```sh
+cd rust
 rustup target add wasm32-unknown-unknown
 cargo xtask scripts                                     # build the example scripts (once)
 ```
@@ -118,8 +123,8 @@ cargo xtask scripts                                     # build the example scri
 Then run the editor, the player or the CLI:
 
 ```sh
-cargo run -p bayleaf -- examples/showcase/Showcase.bproject   # editor with the showcase
-cargo run -p bayleaf -- examples/demo/demo.bscene       # editor with the first demo; Play, then WASD and Space
+cargo run -p bayleaf -- ../examples/showcase/Showcase.bproject   # editor with the showcase
+cargo run -p bayleaf -- ../examples/demo/demo.bscene    # editor with the first demo; Play, then WASD and Space
 cargo run -p bayleaf-player -- path/to/Game.bproject    # the game in its own window (F11: full screen)
 cargo run -p bayleaf-cli -- commands                    # every command, as JSON
 ```
@@ -135,7 +140,7 @@ the web player once, then choose Web in Export Game:
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.130 --locked   # the version Cargo.lock holds
-cargo xtask web-player                  # into target/web-player
+cargo xtask web-player                  # into rust/target/web-player
 cargo xtask serve "out/My Game"         # try the exported folder at http://127.0.0.1:8000/
 ```
 
@@ -149,13 +154,25 @@ Two optional build inputs come from sibling Craft repositories:
 
 Without them the editor uses egui's fonts and English.
 
+## The C# port
+
+You need the .NET 10 SDK. In the repository's root:
+
+```sh
+dotnet build Bayleaf.slnx
+dotnet test --solution Bayleaf.slnx
+dotnet run --project tools/Bayleaf.Check -- layers
+```
+
+What each stage has ported so far is in [the C# redesign](docs/csharp-redesign.md).
+
 ## AI agents
 
 `bayleaf-cli mcp` runs headless, or drives an open editor started with `--control`. It refuses to
 start until you name the folders it may read and write:
 
 ```sh
-cargo run -p bayleaf-cli -- mcp --automation-read-root examples --automation-write-root out
+cargo run -p bayleaf-cli -- mcp --automation-read-root ../examples --automation-write-root ../out
 ```
 
 Setup for Claude Code and the editor bridge is in [docs/automation.md](docs/automation.md).

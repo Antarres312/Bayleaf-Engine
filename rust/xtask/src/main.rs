@@ -48,7 +48,7 @@ fn build_scripts(root: &Path) -> anyhow::Result<()> {
         bail!("building the scripts failed; if the target is missing, run: rustup target add {SCRIPT_TARGET}");
     }
     let built = root.join("scripts").join("target").join(SCRIPT_TARGET).join("release");
-    let out = root.join("examples").join("demo").join("scripts");
+    let out = root.join("..").join("examples").join("demo").join("scripts");
     std::fs::create_dir_all(&out).with_context(|| format!("creating {}", out.display()))?;
     let mut copied = 0;
     for entry in std::fs::read_dir(&built).with_context(|| format!("reading {}", built.display()))? {

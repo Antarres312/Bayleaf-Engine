@@ -7,7 +7,7 @@
       "name": "Bayleaf editor",
       "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}/target/debug/bayleaf.exe",
+      "program": "${workspaceFolder}/rust/target/debug/bayleaf.exe",
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "cargo build: editor",
       "console": "integratedTerminal"
@@ -16,7 +16,7 @@
       "name": "Bayleaf editor (release)",
       "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}/target/release/bayleaf.exe",
+      "program": "${workspaceFolder}/rust/target/release/bayleaf.exe",
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "cargo build: editor (release)",
       "console": "integratedTerminal"
@@ -25,14 +25,14 @@
       "name": "Bayleaf editor (CodeLLDB)",
       "type": "lldb",
       "request": "launch",
-      "cargo": { "args": ["build", "-p", "bayleaf"], "filter": { "name": "bayleaf", "kind": "bin" } },
+      "cargo": { "args": ["build", "--manifest-path", "rust/Cargo.toml", "-p", "bayleaf"], "filter": { "name": "bayleaf", "kind": "bin" } },
       "cwd": "${workspaceFolder}"
     },
     {
       "name": "bayleaf-cli: list commands",
       "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}/target/debug/bayleaf-cli.exe",
+      "program": "${workspaceFolder}/rust/target/debug/bayleaf-cli.exe",
       "args": ["commands"],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "cargo build: cli",

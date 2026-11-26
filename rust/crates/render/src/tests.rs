@@ -885,7 +885,7 @@ fn custom_lighting_bands_the_light_and_an_outline_rims_the_shape() {
 
 #[test]
 fn the_example_materials_compile() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo/materials");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/demo/materials");
     let mut seen = Vec::new();
     for entry in std::fs::read_dir(&dir).unwrap().flatten() {
         let path = entry.path();

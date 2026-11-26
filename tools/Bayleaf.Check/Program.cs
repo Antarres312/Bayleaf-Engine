@@ -3,7 +3,7 @@
 //   layers    every project is in its layer and refers only to lower ones (a test project to the project
 //             it tests and lower), is in Bayleaf.slnx, keeps the shared code rules on, and no source
 //             file silences a warning.
-//   licences  every package the projects restore (after `dotnet restore dotnet/Bayleaf.slnx`) declares a
+//   licences  every package the projects restore (after `dotnet restore Bayleaf.slnx`) declares a
 //             licence on the Craft list, as `cargo xtask licences` checks the crates.
 
 using System.Text.Json;
@@ -31,11 +31,11 @@ return problems.Count == 0 ? 0 : 1;
 static string FindRoot()
 {
     var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
-    while (dir is not null && !File.Exists(Path.Join(dir.FullName, "dotnet", "Bayleaf.slnx")))
+    while (dir is not null && !File.Exists(Path.Join(dir.FullName, "Bayleaf.slnx")))
     {
         dir = dir.Parent;
     }
-    return dir is null ? Directory.GetCurrentDirectory() : Path.Join(dir.FullName, "dotnet");
+    return dir?.FullName ?? Directory.GetCurrentDirectory();
 }
 
 internal static partial class Layers
@@ -66,6 +66,9 @@ internal static partial class Layers
         ["Bayleaf.Player"] = 7,
     };
 
+    /// <summary>The folders that hold the C# tree's projects (the Rust tree, in rust/, has its own checks).</summary>
+    private static readonly string[] Areas = ["src", "tests", "tools", "apps"];
+
     /// <summary>The one project whose code may be unsafe: the interop with native libraries.</summary>
     private const string Native = "Bayleaf.Native";
 
@@ -80,7 +83,7 @@ internal static partial class Layers
         var problems = new List<string>();
         var solution = XDocument.Load(Path.Join(root, "Bayleaf.slnx"));
         var listed = solution.Descendants("Project").Select(p => Path.GetFullPath(Path.Join(root, (string?)p.Attribute("Path") ?? ""))).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var projects = Directory.EnumerateFiles(root, "*.csproj", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToList();
+        var projects = Areas.Where(a => Directory.Exists(Path.Join(root, a))).SelectMany(a => Directory.EnumerateFiles(Path.Join(root, a), "*.csproj", SearchOption.AllDirectories)).Order(StringComparer.Ordinal).ToList();
         foreach (var path in projects)
         {
             var name = Path.GetFileNameWithoutExtension(path);
@@ -170,12 +173,12 @@ internal static class Licences
     public static List<string> Check(string root)
     {
         var problems = new List<string>();
-        var assets = Directory.Exists(Path.Join(root, "..", "target", "dotnet", "obj"))
-            ? Directory.EnumerateFiles(Path.Join(root, "..", "target", "dotnet", "obj"), "project.assets.json", SearchOption.AllDirectories).ToList()
+        var assets = Directory.Exists(Path.Join(root, "target", "dotnet", "obj"))
+            ? Directory.EnumerateFiles(Path.Join(root, "target", "dotnet", "obj"), "project.assets.json", SearchOption.AllDirectories).ToList()
             : [];
         if (assets.Count == 0)
         {
-            return ["no restored projects: run `dotnet restore dotnet/Bayleaf.slnx` first"];
+            return ["no restored projects: run `dotnet restore Bayleaf.slnx` first"];
         }
         var seen = new SortedDictionary<string, string>(StringComparer.Ordinal);
         foreach (var file in assets)

@@ -54,7 +54,7 @@ If we want to join later, that goes through an RFC in craft-contrib.
 | L4 | `script`, `gameplay`, `streaming` | WASM host and ABI; modular gameplay roles; optional world streaming |
 | L5 | `engine` | session, command registry, undo history, play mode |
 | L6 | `ui-egui`, `automation` | editor shell; control channel and MCP server |
-| L7 | `apps/*` | `bayleaf` (editor), `bayleaf-cli`, `bayleaf-player` |
+| L7 | `rust/apps/*` | `bayleaf` (editor), `bayleaf-cli`, `bayleaf-player` |
 
 No crate below L6 may use egui, eframe, winit or rfd.
 
@@ -125,7 +125,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
    (`environment.fogDistance`), and reflections of the sky on surfaces (sharp on smooth ones,
    blurred on rough ones). Still open: reflections of other shapes, light from image files.
 4. **M3 Scripts (done, 2026-11-21):** WASM host on wasmi (fuel and memory limits, faults isolated per
-   script), ABI v1 (`docs/script-abi.md`), Rust SDK (`crates/script-sdk`), example scripts (`scripts/`,
+   script), ABI v1 (`docs/script-abi.md`), Rust SDK (`rust/crates/script-sdk`), example scripts (`rust/scripts/`,
    built by `cargo xtask scripts`), hot reload, play mode (`play.start/stop/pause/step/input/status`)
    that restores the edited scene, a Console panel, and a Project panel (asset browser).
    Scripts sit directly on objects, several per object, each shown as its own inspector card named after
@@ -205,7 +205,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
    players' and saved values. Play brings it to the front and Stop the Scene tab, which stays the
    editor's view during play. Graph node settings can be a list of choices (Scope).
 8. **M7 Streaming** (optional crate), physics and audio integrations. Physics is started: the
-   `physics` feature of `bayleaf-engine` (`crates/physics`, on Rapier) gives Rigid Body and Collider
+   `physics` feature of `bayleaf-engine` (`rust/crates/physics`, on Rapier) gives Rigid Body and Collider
    components (box, sphere, capsule; triggers), steps at 60 Hz in play mode, tells scripts about
    collisions and triggers, and lets them push bodies and set or read their velocity (scene format
    version 8). Project settings (`settings` in the `.bproject` file, project format version 2;
@@ -215,12 +215,12 @@ No crate below L6 may use egui, eframe, winit or rfd.
    all), script raycasts against colliders' exact shapes, and `physics.raycast` for agents (scene
    format version 9). Then: a Joint component (fixed, hinge, ball, slider) holds a body to another
    object, by name, or to the world, with limits and a motor whose speed scripts can change (Set
-   Component; scene format version 13). Audio is started: the `audio` feature (`crates/audio`) plays
+   Component; scene format version 13). Audio is started: the `audio` feature (`rust/crates/audio`) plays
    Audio Source components (scene format version 14) and scripts' sounds (`sound_play`,
    `sound_stop`, `sound_play_at`; Play Sound, Stop Sound and Play Sound At nodes; `audio.*`
    commands), decoded with craft-audio and heard through the first camera on the default output
    (cpal). The editor and the player play them out loud; the CLI, agents and tests silently. World
-   streaming is started: the `streaming` feature (`crates/streaming`) adds a Streamed Area's scene
+   streaming is started: the `streaming` feature (`rust/crates/streaming`) adds a Streamed Area's scene
    under it, read on worker threads, when a camera comes within its Load Distance, and removes it once
    every camera is past the Keep Margin (scene format version 15; `stream.areas`, `stream.wait`).
    Object > Split into Streamed Areas (`stream.split`) cuts the open scene's top objects into one scene
@@ -512,7 +512,7 @@ No crate below L6 may use egui, eframe, winit or rfd.
      - *Blending*: a clip fades into the next over a chosen time; two or more clips mix by weight
        (walk and run by speed, aiming up and down by angle); a layer plays on part of the skeleton
        only (a wave on the arm while the legs walk), picked by a joint and its children.
-     - *Animation states*: a graph domain of its own (`.banim`, in `crates/graph` like the other
+     - *Animation states*: a graph domain of its own (`.banim`, in `rust/crates/graph` like the other
        graphs) of states, each a clip or a mix, and transitions between them on conditions over
        parameters (numbers, true/false, triggers) that scripts set; the Graph panel edits it, and
        `graph.*` commands change it, so agents can too.

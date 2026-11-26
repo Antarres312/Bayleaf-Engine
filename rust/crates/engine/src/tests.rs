@@ -2332,7 +2332,7 @@ fn write_gltf_with_files(dir: &std::path::Path) {
     bin.extend([0u8, 0, 1, 0, 2, 0, 0, 0]);
     std::fs::write(dir.join("tri.bin"), &bin).unwrap();
     std::fs::create_dir_all(dir.join("tex")).unwrap();
-    std::fs::write(dir.join("tex/logo.png"), include_bytes!("../../../assets/brand/bayleaf-logo.png")).unwrap();
+    std::fs::write(dir.join("tex/logo.png"), include_bytes!("../../../../assets/brand/bayleaf-logo.png")).unwrap();
     let gltf = json!({
         "asset": {"version": "2.0"},
         "scene": 0,
@@ -2398,7 +2398,7 @@ fn files_brought_in_are_checked_copied_with_their_settings_and_placed() {
     let (project, outside) = (base.join("Game"), base.join("outside"));
     registry.execute(&mut session, "project.new", &json!({"path": project})).unwrap();
     std::fs::create_dir_all(&outside).unwrap();
-    std::fs::write(outside.join("logo.png"), include_bytes!("../../../assets/brand/bayleaf-logo.png")).unwrap();
+    std::fs::write(outside.join("logo.png"), include_bytes!("../../../../assets/brand/bayleaf-logo.png")).unwrap();
     std::fs::write(outside.join("broken.png"), b"not an image").unwrap();
     std::fs::write(outside.join("crate.obj"), b"v 0 0 0").unwrap();
     std::fs::write(outside.join("crate.fbx"), b"Kaydara FBX Binary").unwrap();
@@ -2923,7 +2923,7 @@ fn a_visual_script_bursts_and_stops_an_emitter() {
 fn the_showcase_example_opens_and_everything_it_names_reads() {
     let registry = CommandRegistry::with_builtins();
     let mut session = Session::default();
-    let project = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/showcase/Showcase.bproject");
+    let project = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/showcase/Showcase.bproject");
     registry.execute(&mut session, "project.open", &json!({"path": project})).unwrap();
     for model in ["models/windmill.gltf", "models/crate.obj", "materials/ground.bmaterial"] {
         let info = registry.execute(&mut session, "asset.info", &json!({"path": model})).unwrap();

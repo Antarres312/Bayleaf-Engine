@@ -2,8 +2,8 @@
 
 A game builds its menus and its display from files of its own: a **layout** (`.bui`) of nested
 elements and **style** files (`.bstyle`) of rules that set their look. An **Interface** component
-puts a layout over the game. The model and the layout engine are `crates/interface`; drawing and
-input are `crates/ui-egui/src/game_interface.rs`, used by the editor's Game view and the player.
+puts a layout over the game. The model and the layout engine are `rust/crates/interface`; drawing and
+input are `rust/crates/ui-egui/src/game_interface.rs`, used by the editor's Game view and the player.
 
 ## Layout files (`.bui`)
 

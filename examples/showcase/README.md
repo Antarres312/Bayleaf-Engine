@@ -20,7 +20,7 @@ the objects in a new project (`project.new`), with the models and images already
 floor's material replaces the new project's chequered one):
 
 ```sh
-cargo run -p bayleaf-cli -- batch --scene examples/showcase/scenes/main.bscene examples/showcase/build.json
+cargo run --manifest-path rust/Cargo.toml -p bayleaf-cli -- batch --scene examples/showcase/scenes/main.bscene examples/showcase/build.json
 ```
 
 Running it again on this project adds the objects a second time.

@@ -508,7 +508,7 @@ fn node_values_edit_through_commands_and_problems_name_their_node() {
 fn buttons_at_the_end_of_inspector_rows_stay_inside_their_section() {
     let mut harness = harness();
     // The demo's visual script declares properties; overriding one shows Reset at the end of its row.
-    let bob = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo/scripts/bob.bscript");
+    let bob = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/demo/scripts/bob.bscript");
     let params = json!({ "name": "Bobber", "components": {
         "mesh": { "shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.5, "material": "missing.bmaterial" },
         "scripts": [{ "module": bob.to_string_lossy().replace('\\', "/"), "properties": { "speed": 5.0 } }] } });
@@ -1521,7 +1521,7 @@ fn an_object_dragged_from_the_hierarchy_onto_a_script_field_fills_it_and_keeps_t
 #[test]
 fn dragging_a_script_property_from_its_default_keeps_going_and_reset_turns_on_and_off() {
     let mut harness = harness();
-    let bob = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo/scripts/bob.bscript");
+    let bob = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/demo/scripts/bob.bscript");
     let params = json!({ "name": "Bobber", "components": {
         "scripts": [{ "module": bob.to_string_lossy().replace('\\', "/") }] } });
     harness.state_mut().dispatch("scene.object.create", &params, None);
@@ -2537,7 +2537,7 @@ fn files_dropped_from_the_system_come_into_the_folder_or_the_scene_they_land_on(
     let (dir, outside) = (base.join("Game"), base.join("outside"));
     std::fs::create_dir_all(&outside).unwrap();
     let logo = outside.join("logo.png");
-    std::fs::write(&logo, include_bytes!("../../../assets/brand/bayleaf-logo.png")).unwrap();
+    std::fs::write(&logo, include_bytes!("../../../../assets/brand/bayleaf-logo.png")).unwrap();
     harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
     harness.state_mut().project.current = dir.join("materials");
     harness.run_steps(2);
