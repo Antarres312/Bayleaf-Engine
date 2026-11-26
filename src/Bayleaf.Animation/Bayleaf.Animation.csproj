@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L3: skeletal animation on a model's skeleton: clips, fades, mixes and layers on part of a
+       skeleton, animation states (.banim graphs) with their node kinds and compiler, clip events and
+       root motion (docs/animation.md). -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Animation</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+    <ProjectReference Include="..\Bayleaf.Assets\Bayleaf.Assets.csproj" />
+    <ProjectReference Include="..\Bayleaf.Graph\Bayleaf.Graph.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Animation.Tests" />
+  </ItemGroup>
+
+</Project>

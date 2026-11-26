@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Bayleaf.Animation\Bayleaf.Animation.csproj" />
+  </ItemGroup>
+
+</Project>

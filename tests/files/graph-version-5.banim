@@ -3,7 +3,7 @@
   "version": 5,
   "domain": "animation",
   "nodes": [
-    { "id": 1, "kind": "state", "position": [0.5, 0.25], "values": { "name": "Idle", "speed": 1, "speed": 1.25 } }
+    { "id": 1, "kind": "clip", "position": [0.5, 0.25], "values": { "clip": "Idle", "speed": 1, "speed": 1.25 } }
   ],
   "links": []
 }

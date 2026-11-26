@@ -1,0 +1,411 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "animation",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "entry",
+      "position": [
+        40.0,
+        40.0
+      ],
+      "values": {
+        "state": "Idle"
+      }
+    },
+    {
+      "id": 2,
+      "kind": "state",
+      "position": [
+        40.0,
+        140.0
+      ],
+      "values": {
+        "name": "Idle"
+      }
+    },
+    {
+      "id": 3,
+      "kind": "clip",
+      "position": [
+        -440.0,
+        100.0
+      ],
+      "values": {
+        "clip": "Stretch",
+        "play": "Once"
+      }
+    },
+    {
+      "id": 4,
+      "kind": "clip",
+      "position": [
+        -440.0,
+        200.0
+      ],
+      "values": {
+        "clip": "Raise",
+        "play": "Once"
+      }
+    },
+    {
+      "id": 5,
+      "kind": "mix",
+      "position": [
+        -220.0,
+        140.0
+      ],
+      "values": {
+        "atA": 0.0,
+        "atB": 1.0
+      }
+    },
+    {
+      "id": 6,
+      "kind": "number",
+      "position": [
+        -440.0,
+        300.0
+      ],
+      "values": {
+        "name": "aim"
+      }
+    },
+    {
+      "id": 7,
+      "kind": "state",
+      "position": [
+        40.0,
+        400.0
+      ],
+      "values": {
+        "name": "Wave"
+      }
+    },
+    {
+      "id": 8,
+      "kind": "clip",
+      "position": [
+        -440.0,
+        400.0
+      ],
+      "values": {
+        "clip": "Stretch"
+      }
+    },
+    {
+      "id": 9,
+      "kind": "clip",
+      "position": [
+        -440.0,
+        500.0
+      ],
+      "values": {
+        "clip": "Wave"
+      }
+    },
+    {
+      "id": 10,
+      "kind": "layer",
+      "position": [
+        -220.0,
+        440.0
+      ],
+      "values": {
+        "joint": "Hand"
+      }
+    },
+    {
+      "id": 11,
+      "kind": "transition",
+      "position": [
+        300.0,
+        140.0
+      ],
+      "values": {
+        "fade": 0.0,
+        "from": "Idle",
+        "to": "Wave"
+      }
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "position": [
+        -220.0,
+        640.0
+      ],
+      "values": {
+        "name": "wave"
+      }
+    },
+    {
+      "id": 13,
+      "kind": "flag",
+      "position": [
+        -440.0,
+        720.0
+      ],
+      "values": {
+        "name": "still"
+      }
+    },
+    {
+      "id": 14,
+      "kind": "and",
+      "position": [
+        80.0,
+        660.0
+      ]
+    },
+    {
+      "id": 15,
+      "kind": "not",
+      "position": [
+        -220.0,
+        720.0
+      ]
+    },
+    {
+      "id": 16,
+      "kind": "transition",
+      "position": [
+        300.0,
+        400.0
+      ],
+      "values": {
+        "fade": 0.0,
+        "from": "Wave",
+        "to": "Idle"
+      }
+    },
+    {
+      "id": 17,
+      "kind": "stateTime",
+      "position": [
+        -440.0,
+        860.0
+      ]
+    },
+    {
+      "id": 18,
+      "kind": "compare",
+      "position": [
+        -220.0,
+        860.0
+      ],
+      "values": {
+        "b": 1.0,
+        "test": "At Least"
+      }
+    },
+    {
+      "id": 19,
+      "kind": "compare",
+      "position": [
+        -220.0,
+        960.0
+      ],
+      "values": {
+        "b": 5.0,
+        "test": "Greater"
+      }
+    },
+    {
+      "id": 20,
+      "kind": "number",
+      "position": [
+        -440.0,
+        960.0
+      ],
+      "values": {
+        "name": "aim"
+      }
+    },
+    {
+      "id": 21,
+      "kind": "or",
+      "position": [
+        80.0,
+        900.0
+      ]
+    }
+  ],
+  "links": [
+    {
+      "from": {
+        "node": 3,
+        "pin": "motion"
+      },
+      "to": {
+        "node": 5,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 4,
+        "pin": "motion"
+      },
+      "to": {
+        "node": 5,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 6,
+        "pin": "value"
+      },
+      "to": {
+        "node": 5,
+        "pin": "by"
+      }
+    },
+    {
+      "from": {
+        "node": 5,
+        "pin": "motion"
+      },
+      "to": {
+        "node": 2,
+        "pin": "motion"
+      }
+    },
+    {
+      "from": {
+        "node": 8,
+        "pin": "motion"
+      },
+      "to": {
+        "node": 10,
+        "pin": "base"
+      }
+    },
+    {
+      "from": {
+        "node": 9,
+        "pin": "motion"
+      },
+      "to": {
+        "node": 10,
+        "pin": "top"
+      }
+    },
+    {
+      "from": {
+        "node": 10,
+        "pin": "motion"
+      },
+      "to": {
+        "node": 7,
+        "pin": "motion"
+      }
+    },
+    {
+      "from": {
+        "node": 12,
+        "pin": "value"
+      },
+      "to": {
+        "node": 14,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 13,
+        "pin": "value"
+      },
+      "to": {
+        "node": 15,
+        "pin": "in"
+      }
+    },
+    {
+      "from": {
+        "node": 15,
+        "pin": "result"
+      },
+      "to": {
+        "node": 14,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 14,
+        "pin": "result"
+      },
+      "to": {
+        "node": 11,
+        "pin": "when"
+      }
+    },
+    {
+      "from": {
+        "node": 17,
+        "pin": "runs"
+      },
+      "to": {
+        "node": 18,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 20,
+        "pin": "value"
+      },
+      "to": {
+        "node": 19,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 18,
+        "pin": "result"
+      },
+      "to": {
+        "node": 21,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 19,
+        "pin": "result"
+      },
+      "to": {
+        "node": 21,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 21,
+        "pin": "result"
+      },
+      "to": {
+        "node": 16,
+        "pin": "when"
+      }
+    }
+  ],
+  "comments": [
+    {
+      "id": 1,
+      "text": "Idle mixes Stretch and Raise by aim; the wave trigger goes to Wave unless still",
+      "position": [
+        -480.0,
+        40.0
+      ],
+      "size": [
+        900.0,
+        320.0
+      ]
+    }
+  ]
+}

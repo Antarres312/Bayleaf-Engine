@@ -165,12 +165,12 @@ fn comments_keep_their_limits_and_survive_a_file_round_trip() {
 
 /// The catalog of a graph file's domain, by its extension, with none of the domain's node kinds:
 /// the graph format's own rules. The node kinds live with the crates that compile each domain
-/// (render, script, animation), which this crate cannot use.
+/// (render, script), which this crate cannot use. Animation states files (`.banim`) are read with
+/// their own catalog by `bayleaf-animation`'s shared-files test instead.
 fn format_catalog(extension: &str) -> Option<Catalog> {
     let (domain, label, extension) = match extension {
         "bmaterial" => ("material", "Material", "bmaterial"),
         "bscript" => ("script", "Visual Script", "bscript"),
-        "banim" => ("animation", "Animation States", "banim"),
         _ => return None,
     };
     Some(Catalog { domain, label, extension, nodes: &[], starter: &[], variant: crate::no_variant, upgrade: crate::no_upgrade, fractional: &[] })

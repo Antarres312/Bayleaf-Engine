@@ -1,0 +1,30 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "animation",
+  "nodes": [
+    {"id": 1, "kind": "state", "position": [40, 40], "values": {"name": "Idle"}},
+    {"id": 2, "kind": "state", "position": [40, 200], "values": {"name": "Idle"}},
+    {"id": 4, "kind": "number", "position": [-440, 120], "values": {}},
+    {"id": 5, "kind": "mix", "position": [-220, 40], "values": {}},
+    {"id": 6, "kind": "clip", "position": [-440, 0], "values": {"clip": "Stretch", "speed": 12.0}},
+    {"id": 7, "kind": "transition", "position": [300, 40], "values": {"from": "Idle", "to": "Run"}},
+    {"id": 8, "kind": "transition", "position": [300, 140], "values": {"from": "Jump", "to": "Idle", "fade": 70.0}},
+    {"id": 9, "kind": "transition", "position": [300, 240], "values": {}},
+    {"id": 10, "kind": "number", "position": [-440, 400], "values": {"name": "speed"}},
+    {"id": 11, "kind": "flag", "position": [-440, 500], "values": {"name": "speed"}},
+    {"id": 12, "kind": "layer", "position": [-220, 200], "values": {"joint": "Elbow"}},
+    {"id": 13, "kind": "stateTime", "position": [-440, 250], "values": {}},
+    {"id": 14, "kind": "entry", "position": [40, -100], "values": {"state": "Missing"}},
+    {"id": 15, "kind": "clip", "position": [-440, 180], "values": {}}
+  ],
+  "links": [
+    {"from": {"node": 6, "pin": "motion"}, "to": {"node": 5, "pin": "a"}},
+    {"from": {"node": 4, "pin": "value"}, "to": {"node": 5, "pin": "by"}},
+    {"from": {"node": 5, "pin": "motion"}, "to": {"node": 1, "pin": "motion"}},
+    {"from": {"node": 13, "pin": "seconds"}, "to": {"node": 12, "pin": "weight"}},
+    {"from": {"node": 15, "pin": "motion"}, "to": {"node": 12, "pin": "base"}},
+    {"from": {"node": 12, "pin": "motion"}, "to": {"node": 2, "pin": "motion"}},
+    {"from": {"node": 11, "pin": "value"}, "to": {"node": 9, "pin": "when"}}
+  ]
+}

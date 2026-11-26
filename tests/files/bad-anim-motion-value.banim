@@ -1,0 +1,9 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "animation",
+  "nodes": [
+    {"id": 1, "kind": "state", "position": [0, 0], "values": {"name": "Idle", "motion": 1.0}}
+  ],
+  "links": []
+}

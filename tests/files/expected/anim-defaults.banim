@@ -1,0 +1,32 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "animation",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "entry",
+      "position": [
+        40.0,
+        40.0
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "state",
+      "position": [
+        40.0,
+        140.0
+      ]
+    },
+    {
+      "id": 3,
+      "kind": "clip",
+      "position": [
+        -220.0,
+        140.0
+      ]
+    }
+  ],
+  "links": []
+}

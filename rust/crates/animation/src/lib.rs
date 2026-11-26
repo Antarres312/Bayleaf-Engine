@@ -26,4 +26,6 @@ pub use motion::{Motion, Number, Parameter, Rig, default_root, pin_root};
 pub use player::{Layer, MAX_FADE, MAX_LAYERS, MAX_PARAMETERS, Player, Step};
 
 #[cfg(test)]
+mod shared_files;
+#[cfg(test)]
 mod tests;
