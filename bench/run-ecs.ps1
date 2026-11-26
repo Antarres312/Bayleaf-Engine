@@ -32,7 +32,7 @@ function Wait-Quiet {
 if (-not $SummaryOnly) {
     if (-not $SkipBuild) {
         Push-Location $root
-        try { cargo build --release -p bayleaf-ecs --features parallel --example parallel -j 2; if (-not $?) { throw 'the benchmark did not build' } } finally { Pop-Location }
+        try { cargo build --release -p bayleaf-ecs --features parallel --example parallel -j 1; if (-not $?) { throw 'the benchmark did not build' } } finally { Pop-Location }
     }
     foreach ($n in $Entities) {
         for ($r = 1; $r -le $Repeats; $r++) {
