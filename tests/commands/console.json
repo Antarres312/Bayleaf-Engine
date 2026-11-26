@@ -1,0 +1,15 @@
+[
+  {"cmd": "console.read"},
+  {"cmd": "project.new", "params": {"path": "$out/c"}},
+  {"cmd": "game.saved.clear"},
+  {"cmd": "scene.saveAs", "params": {"path": "$out/c/scenes/old.bscene"}},
+  {"cmd": "scene.object.create", "params": {"name": "Sky", "components": {"environment": {"skyColor": [0.1, 0.2, 0.3], "horizonColor": [0.4, 0.5, 0.6], "groundColor": [0.2, 0.2, 0.2], "ambient": 2, "showSky": true}}}},
+  {"cmd": "scene.settings.set", "params": {"lighting": ""}},
+  {"cmd": "scene.save"},
+  {"cmd": "scene.open", "params": {"path": "$out/c/scenes/old.bscene"}},
+  {"cmd": "scene.document"},
+  {"cmd": "console.read", "params": {"last": 5}},
+  {"cmd": "console.read", "params": {"errors": true}},
+  {"cmd": "console.clear"},
+  {"cmd": "console.read"}
+]
