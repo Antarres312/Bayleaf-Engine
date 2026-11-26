@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L6: automation for AI agents and scripts: an MCP server over the engine's commands, and the
+       control channel of a running editor. File access is confined to the automation roots
+       (AGENTS.md rule 18). See docs/automation.md. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Automation</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Engine\Bayleaf.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

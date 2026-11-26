@@ -3,4 +3,4 @@
 
 using Bayleaf.Cli;
 
-return Cli.Run(args, Console.Out, Console.Error);
+return Cli.Run(args, Console.In, Console.Out, Console.Error);

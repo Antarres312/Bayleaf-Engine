@@ -12,6 +12,7 @@
     <Project Path="src/Bayleaf.Script/Bayleaf.Script.csproj" />
     <Project Path="src/Bayleaf.Streaming/Bayleaf.Streaming.csproj" />
     <Project Path="src/Bayleaf.Engine/Bayleaf.Engine.csproj" />
+    <Project Path="src/Bayleaf.Automation/Bayleaf.Automation.csproj" />
   </Folder>
   <Folder Name="/apps/">
     <Project Path="apps/Bayleaf.Cli/Bayleaf.Cli.csproj" />
@@ -29,6 +30,7 @@
     <Project Path="tests/Bayleaf.Script.Tests/Bayleaf.Script.Tests.csproj" />
     <Project Path="tests/Bayleaf.Streaming.Tests/Bayleaf.Streaming.Tests.csproj" />
     <Project Path="tests/Bayleaf.Engine.Tests/Bayleaf.Engine.Tests.csproj" />
+    <Project Path="tests/Bayleaf.Automation.Tests/Bayleaf.Automation.Tests.csproj" />
     <Project Path="tests/Bayleaf.Cli.Tests/Bayleaf.Cli.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

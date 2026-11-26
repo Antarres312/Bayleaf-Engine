@@ -221,8 +221,10 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    (`rust/crates/engine/src/parity_tests.rs`, `tests/Bayleaf.Cli.Tests`), as `bayleaf-cli batch` runs
    it, and what comes back (folders as `$root`/`$out`, ids as `<id N>`) is compared with
    `tests/commands/expected/`, which the Rust test writes with `BAYLEAF_BLESS=1`. All 31 batches agree,
-   and every ported command lists the same as in Rust. Running both CLIs as programs comes with the
-   automation port, which also brings `mcp`.
+   and every ported command lists the same as in Rust. The automation port is done (`src/Bayleaf.Automation`):
+   `bayleaf-cli mcp` serves every command as a tool over stdio, refuses to start without both automation
+   roots, and can drive a running editor through its loopback control channel (token file, owner-only),
+   with the Rust crate's tests.
 3. **Rendering.** `scene.render` images of the test scenes close to the Rust ones (a difference
    threshold, not exact pixels).
    *Materials ported, 2026-11-26* (`src/Bayleaf.Render`: the material node catalog, the compiler to

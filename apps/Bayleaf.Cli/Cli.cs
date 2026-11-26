@@ -18,9 +18,12 @@ internal static class Cli
           commands  Print every registered command as a JSON array
           run       Run one command and print its JSON result
           batch     Run a JSON array of steps [{"cmd": "...", "params": {...}}] in one session
+          mcp       Run an MCP server on stdio for AI agents. It refuses to start without both automation roots, and refuses file access outside them (AA 18)
         """;
 
-    public static int Run(string[] args, TextWriter output, TextWriter errors)
+    public static int Run(string[] args, TextWriter output, TextWriter errors) => Run(args, TextReader.Null, output, errors);
+
+    public static int Run(string[] args, TextReader input, TextWriter output, TextWriter errors)
     {
         if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
         {
@@ -31,6 +34,10 @@ internal static class Cli
         {
             output.WriteLine($"bayleaf-cli {CommandRegistry.EngineVersion}");
             return 0;
+        }
+        if (args[0] == "mcp")
+        {
+            return Mcp.Run(args.Skip(1).ToList(), input, output, errors);
         }
         var registry = CommandRegistry.WithBuiltins();
         var session = new Session();
