@@ -1,0 +1,9 @@
+{
+  "error": "there is no joint named \"Elbow\"; the model has Strip, Hip, Knee",
+  "failedStep": 1,
+  "results": [
+    {
+      "id": "<id 0>"
+    }
+  ]
+}

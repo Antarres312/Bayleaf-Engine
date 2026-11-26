@@ -1,0 +1,9 @@
+{
+  "error": "object <id 0> has no Mesh, so no model to animate",
+  "failedStep": 1,
+  "results": [
+    {
+      "id": "<id 0>"
+    }
+  ]
+}

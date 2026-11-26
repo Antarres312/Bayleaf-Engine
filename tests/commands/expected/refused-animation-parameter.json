@@ -1,0 +1,9 @@
+{
+  "error": "invalid params: value must be a number or true/false",
+  "failedStep": 1,
+  "results": [
+    {
+      "id": "<id 0>"
+    }
+  ]
+}

@@ -19,7 +19,7 @@ public sealed record ConsoleLine(Level Level, string Text);
 /// State that commands read and change: the open scene, its file, the undo history, the console and
 /// (when automation drives it) the folders it may read and write.
 /// </summary>
-public sealed class Session
+public sealed partial class Session
 {
     /// <summary>Undo and redo together keep at most this many bytes of snapshots; the oldest steps go first.</summary>
     public const long UndoBudgetBytes = 256L << 20;
