@@ -105,6 +105,92 @@ fn right_clicking_a_row_offers_moves_and_delete() {
     assert_eq!(harness.state().session.scene().object_count(), 0);
 }
 
+fn right_click_at(harness: &mut Harness<'static, Editor>, pos: egui::Pos2) {
+    harness.hover_at(pos);
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    harness.run();
+}
+
+#[test]
+fn right_clicking_the_empty_hierarchy_adds_a_top_object_named_in_place_and_one_undo_removes_it() {
+    let mut harness = harness();
+    create_named(&mut harness, "Parent");
+    let parent = harness.state().selected;
+    let below = harness.get_by_label("Parent").rect().center() + egui::vec2(0.0, 120.0);
+    right_click_at(&mut harness, below);
+    let steps = harness.state().session.history().len();
+    harness.get_by_label("Cube").click();
+    harness.run();
+    let editor = harness.state();
+    let scene = editor.session.scene();
+    assert_eq!(scene.children(None).len(), 2, "the new object is at the top, not inside the selected one");
+    assert_ne!(editor.selected, parent, "the new object is selected");
+    assert_eq!(editor.selected, scene.children(None).last().copied());
+    assert_eq!(editor.session.history().len(), steps + 1, "one undo step");
+    assert!(harness.get_by_label("Object name").is_focused(), "its name field takes focus");
+    // Escape keeps the ready-made name and leaves the field, so the undo shortcut works again.
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    harness.run();
+    assert_eq!(harness.state().session.scene().object_count(), 1, "one undo removes it");
+}
+
+#[test]
+fn an_objects_add_menu_makes_a_child_of_it_and_names_it_in_place() {
+    let mut harness = harness();
+    create_named(&mut harness, "Parent");
+    harness.get_by_label("Parent").click_secondary();
+    harness.run();
+    harness.get_by_label("Add").click();
+    harness.run();
+    harness.get_by_label("Empty Object").click();
+    harness.run();
+    assert!(harness.query_by_label("Move Up").is_none(), "the menu closes");
+    let field = harness.get_by_label("Object name");
+    assert!(field.is_focused(), "the name field takes focus");
+    field.type_text("Lid");
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    let editor = harness.state();
+    let scene = editor.session.scene();
+    let parent = scene.children(None)[0];
+    let children = scene.children(Some(parent));
+    assert_eq!(children.len(), 1, "the new object is a child of the clicked one");
+    assert_eq!(editor.selected, Some(children[0]));
+    assert_eq!(scene.name(children[0]), Some("Lid"));
+}
+
+#[test]
+fn shift_f10_and_the_menu_key_open_the_hierarchy_menus_by_keyboard() {
+    let mut harness = harness();
+    create_named(&mut harness, "Target");
+    harness.get_by_label("Target").focus();
+    harness.run();
+    harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F10);
+    harness.run();
+    assert!(harness.query_by_label("Move Up").is_some(), "Shift+F10 opens the focused row's menu");
+    assert!(harness.get_by_label("Rename").is_focused(), "its first entry takes focus");
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(harness.query_by_label("Move Up").is_none(), "Escape closes it");
+    assert!(harness.get_by_label("Target").is_focused(), "and gives focus back to the row");
+
+    // The scene's row stands for the top level: its menu adds a top object.
+    harness.get_by_label_contains("Untitled").focus();
+    harness.run();
+    harness.key_press(egui::Key::Menu);
+    harness.run();
+    assert!(harness.get_by_label("Empty Object").is_focused(), "the menu key opens the Add menu with focus on its first entry");
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert_eq!(harness.state().session.scene().children(None).len(), 2);
+    assert!(harness.get_by_label("Object name").is_focused(), "the new object is named in place");
+}
+
 #[test]
 fn clicking_a_row_selects_it_even_if_the_mouse_moves_a_little() {
     let mut harness = harness();

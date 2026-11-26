@@ -5,6 +5,10 @@
 //! the root. Without dragging, the same moves are in each row's context menu and in the Object
 //! menu with keyboard shortcuts (accessibility standard: anything done by dragging also works
 //! without dragging).
+//!
+//! A right-click on the empty space below the tree, or on the scene's row, opens the Add menu for
+//! a new top object; a row's context menu has the same list under Add, for a new child. The menu
+//! key or Shift+F10 opens the context menu of the focused row.
 
 use crate::i18n::tl;
 use bayleaf_core::StableId;
@@ -74,6 +78,9 @@ struct RowState {
     scene_selected: bool,
     /// Where the scene's row is, as a place to drop objects to the top.
     scene_row: Option<egui::Rect>,
+    /// An object chosen from an Add menu: its parent (`None` for the top) and its
+    /// `scene.object.create` params.
+    add: Option<(Option<StableId>, Value)>,
 }
 
 /// An in-place rename: started by a double-click, F2, or the context menu.
@@ -111,22 +118,30 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
         if filter.is_empty() {
             // The scene itself heads the tree and holds every top object.
             let state_id = ui.make_persistent_id("hierarchy scene");
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true)
-                .show_header(ui, |ui| scene_row(ui, &scene_name, &mut state))
-                .body(|ui| {
-                    if scene.object_count() == 0 {
-                        inspector::empty_state(ui, "Empty scene", "Use + to add an object.");
-                    } else {
-                        tree(ui, scene, None, &mut state);
-                    }
-                });
+            let mut collapsing = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true);
+            if new_child_of(scene, &state, None) {
+                collapsing.set_open(true);
+            }
+            collapsing.show_header(ui, |ui| scene_row(ui, &scene_name, &mut state)).body(|ui| {
+                if scene.object_count() == 0 {
+                    inspector::empty_state(ui, "Empty scene", "Use + to add an object.");
+                } else {
+                    tree(ui, scene, None, &mut state);
+                }
+            });
             theme::stripes(ui, stripe_slot, state.rows.iter().map(|(_, r)| *r), full_width);
             // The space below the tree, and the scene's row, take drops to the top.
-            let root_zone = ui.allocate_space(egui::vec2(ui.available_width(), ui.available_height().max(ROW_HEIGHT * 2.0))).1;
+            let root_zone = empty_space(ui, &mut state);
             moved = handle_drop(ui, t, scene, &state.rows, root_zone, state.scene_row);
         } else {
-            let matches: Vec<StableId> =
-                scene.world_matrices().into_iter().map(|(id, _)| id).filter(|id| scene.name(*id).is_some_and(|n| n.to_lowercase().contains(&filter))).collect();
+            // The object being renamed stays in the list, so a new object can be named.
+            let renaming = state.renaming.as_ref().map(|r| r.id);
+            let matches: Vec<StableId> = scene
+                .world_matrices()
+                .into_iter()
+                .map(|(id, _)| id)
+                .filter(|id| renaming == Some(*id) || scene.name(*id).is_some_and(|n| n.to_lowercase().contains(&filter)))
+                .collect();
             if matches.is_empty() {
                 inspector::empty_state(ui, "No matches", "No object name contains the filter text.");
             }
@@ -134,6 +149,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                 draggable_row(ui, id, scene.name(id).unwrap_or("Object"), is_prefab(scene, id), &mut state);
             }
             theme::stripes(ui, stripe_slot, state.rows.iter().map(|(_, r)| *r), full_width);
+            empty_space(ui, &mut state);
         }
         script_dropped = script_drop(ui, t, &state.rows);
     });
@@ -187,16 +203,116 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
             editor.dispatch("scene.component.set", &json!({ "id": id, "component": "name", "value": name }), None);
         }
     }
+    // One command, so one undo step; the new object is selected and named in place.
+    if let Some((parent, mut params)) = state.add {
+        params["parent"] = json!(parent);
+        let created = editor.dispatch("scene.object.create", &params, None).and_then(|result| result["id"].as_str().and_then(|s| StableId::parse_hex(s).ok()));
+        if let Some(id) = created {
+            editor.select_only(Some(id));
+            editor.renaming = Some(Rename { id, text: String::new(), focused: false });
+        }
+    }
 }
 
-/// Right-click menu of a row. Opening it also selects the row's object.
+/// True when the object being renamed is a new, not yet focused child of `parent` (`None`: the
+/// top): its parent opens, so the name field is in view.
+fn new_child_of(scene: &Scene, state: &RowState, parent: Option<StableId>) -> bool {
+    state.renaming.as_ref().is_some_and(|r| !r.focused && scene.contains(r.id) && scene.parent(r.id) == parent)
+}
+
+/// The space below the tree: a right-click there opens the Add menu for a new top object.
+/// Returns its rectangle, which also takes drops to the top.
+fn empty_space(ui: &mut egui::Ui, state: &mut RowState) -> egui::Rect {
+    // Not focusable: the scene's row is the keyboard's way to the same menu.
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ui.available_height().max(ROW_HEIGHT * 2.0)), egui::Sense::CLICK);
+    context_menu(&response, false, |ui, by_key| {
+        if let Some(params) = add_entries(ui, by_key) {
+            state.add = Some((None, params));
+        }
+    });
+    rect
+}
+
+/// True on the frame the menu key or Shift+F10 is pressed while `response` has keyboard focus.
+fn menu_key(response: &egui::Response) -> bool {
+    response.has_focus()
+        && response.ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::F10) || i.consume_key(egui::Modifiers::NONE, egui::Key::Menu))
+}
+
+/// A context menu that opens on a right-click at the pointer, or by keyboard (`by_key`) under the
+/// widget. `add_contents` is told whether the keyboard opened it, so its first entry can take
+/// focus; Escape then gives focus back to the widget.
+fn context_menu(response: &egui::Response, by_key: bool, add_contents: impl FnOnce(&mut egui::Ui, bool)) {
+    let ctx = &response.ctx;
+    let popup_id = egui::Popup::default_response_id(response);
+    let place_id = popup_id.with("place");
+    let keyboard_id = popup_id.with("keyboard");
+    let open = if response.secondary_clicked() || by_key {
+        let place = if by_key { response.rect.left_bottom() } else { ctx.pointer_interact_pos().unwrap_or_else(|| response.rect.left_bottom()) };
+        ctx.data_mut(|d| {
+            d.insert_temp(place_id, place);
+            d.insert_temp(keyboard_id, by_key);
+        });
+        Some(egui::SetOpenCommand::Bool(true))
+    } else if response.clicked() {
+        Some(egui::SetOpenCommand::Bool(false))
+    } else {
+        None
+    };
+    let place = ctx.data(|d| d.get_temp::<egui::Pos2>(place_id)).unwrap_or_else(|| response.rect.left_bottom());
+    let shown = egui::Popup::menu(response).open_memory(open).at_position(place).show(|ui| add_contents(ui, by_key));
+    let from_keyboard = ctx.data(|d| d.get_temp::<bool>(keyboard_id)).unwrap_or(false);
+    if shown.is_some() && from_keyboard && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        response.request_focus();
+    }
+    if !egui::Popup::is_id_open(ctx, popup_id) {
+        ctx.data_mut(|d| d.remove::<bool>(keyboard_id));
+    }
+}
+
+/// The entries of every Add menu: an empty object, then the ready-made ones. Returns the chosen
+/// one's `scene.object.create` params. `focus_first` gives the first entry keyboard focus.
+fn add_entries(ui: &mut egui::Ui, focus_first: bool) -> Option<Value> {
+    ui.set_min_width(180.0);
+    let mut chosen = None;
+    let empty = ui.button(tl("Empty Object"));
+    if focus_first {
+        empty.request_focus();
+    }
+    if empty.clicked() {
+        chosen = Some(json!({ "name": "Object" }));
+    }
+    ui.separator();
+    for (label, params) in presets() {
+        if ui.button(tl(label)).clicked() {
+            chosen = Some(params);
+        }
+    }
+    if chosen.is_some() {
+        ui.close();
+    }
+    chosen
+}
+
+/// Right-click menu of a row (also the menu key or Shift+F10). Opening it also selects the row's
+/// object. Its Add list makes the new object a child of this one.
 fn row_menu(response: &egui::Response, id: StableId, state: &mut RowState) {
-    response.context_menu(|ui| {
+    let by_key = menu_key(response);
+    context_menu(response, by_key, |ui, by_key| {
         state.selected = Some(id);
-        if ui.button(tl("Rename")).on_hover_text(tl("F2 or double-click")).clicked() {
+        let rename = ui.button(tl("Rename")).on_hover_text(tl("F2 or double-click"));
+        if by_key {
+            rename.request_focus();
+        }
+        if rename.clicked() {
             state.renaming = Some(Rename { id, text: String::new(), focused: false });
             ui.close();
         }
+        ui.menu_button(tl("Add"), |ui| {
+            if let Some(params) = add_entries(ui, false) {
+                state.add = Some((Some(id), params));
+            }
+        });
         for (label, command) in ROW_MENU {
             if ui.button(*label).clicked() {
                 state.command = Some((command, id));
@@ -217,6 +333,7 @@ fn rename_field(ui: &mut egui::Ui, id: StableId, current: &str, width: f32, stat
     ui.ctx().accesskit_node_builder(response.id, |node| node.set_label("Object name"));
     if !rename.focused {
         response.request_focus();
+        response.scroll_to_me(None);
         // Select the whole name, so typing replaces it.
         if let Some(mut text_state) = egui::text_edit::TextEditState::load(ui.ctx(), response.id) {
             let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(rename.text.chars().count()));
@@ -309,6 +426,14 @@ fn scene_row(ui: &mut egui::Ui, name: &str, state: &mut RowState) {
         state.selected = None;
         state.also.clear();
     }
+    // Its context menu adds a top object, like the empty space below the tree; from the keyboard
+    // too, as that space cannot take focus.
+    let by_key = menu_key(&response);
+    context_menu(&response, by_key, |ui, by_key| {
+        if let Some(params) = add_entries(ui, by_key) {
+            state.add = Some((None, params));
+        }
+    });
     state.scene_row = Some(response.rect);
 }
 
@@ -326,9 +451,11 @@ fn tree(ui: &mut egui::Ui, scene: &Scene, parent: Option<StableId>, state: &mut 
             });
         } else {
             let state_id = ui.make_persistent_id(("hierarchy", id.as_u128()));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true)
-                .show_header(ui, |ui| draggable_row(ui, id, &name, is_prefab(scene, id), state))
-                .body(|ui| tree(ui, scene, Some(id), state));
+            let mut collapsing = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, true);
+            if new_child_of(scene, state, Some(id)) {
+                collapsing.set_open(true);
+            }
+            collapsing.show_header(ui, |ui| draggable_row(ui, id, &name, is_prefab(scene, id), state)).body(|ui| tree(ui, scene, Some(id), state));
         }
     }
 }
@@ -502,18 +629,7 @@ fn toolbar(editor: &mut Editor, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let add_size = egui::vec2(ROW_HEIGHT, ROW_HEIGHT);
         let (add, _) = egui::containers::menu::MenuButton::from_button(egui::Button::new(egui::RichText::new("+").strong()).min_size(add_size)).ui(ui, |ui| {
-            ui.set_min_width(180.0);
-            if ui.button(tl("Empty Object")).clicked() {
-                action = Some(json!({ "name": "Object" }));
-                ui.close();
-            }
-            ui.separator();
-            for (label, params) in presets() {
-                if ui.button(label).clicked() {
-                    action = Some(params);
-                    ui.close();
-                }
-            }
+            action = add_entries(ui, false);
         });
         ui.ctx().accesskit_node_builder(add.id, |node| node.set_label("Add Object"));
         add.on_hover_text(tl("Add an object"));
