@@ -44,6 +44,14 @@ function Wait-Quiet {
     }
 }
 
+# Appends one line to the results, trying again while another program has the file open.
+function Add-Line([string]$text) {
+    for ($try = 1; ; $try++) {
+        try { [IO.File]::AppendAllText($out, $text + [Environment]::NewLine); return }
+        catch { if ($try -ge 20) { throw } else { Start-Sleep -Milliseconds 500 } }
+    }
+}
+
 # Every case, run after run, so a slow spell on the computer does not land on one case only.
 function Invoke-All {
     for ($r = 1; $r -le $Repeats; $r++) {
@@ -60,7 +68,7 @@ function Invoke-All {
                 $case | Add-Member asked_threads $t
                 $case | Add-Member run $r
                 $case | Add-Member busy_before $busy
-                $case | ConvertTo-Json -Compress | Add-Content $out
+                Add-Line ($case | ConvertTo-Json -Compress)
             }
         }
     }
@@ -85,7 +93,7 @@ function Write-Summary {
         $busy = ($g.Group | ForEach-Object { ([double]$_.busy_before).ToString([cultureinfo]::InvariantCulture) }) -join ', '
         $lines += "| $($first.label) | $threads | $($first.bodies) | $($first.precision) | $($g.Count) | $([math]::Round((& $median $means), 2)) | $([math]::Round(($means | Measure-Object -Minimum).Minimum, 2)) to $([math]::Round(($means | Measure-Object -Maximum).Maximum, 2)) | $([math]::Round((& $median ($g.Group | ForEach-Object { [double]$_.median_ms })), 2)) | $busy | $(if ($sums.Count -eq 1) { 'yes' } else { "no ($($sums.Count) checksums)" }) |"
     }
-    $lines | Set-Content -Encoding utf8 (Join-Path $results "$Name.md")
+    [IO.File]::WriteAllLines((Join-Path $results "$Name.md"), [string[]]$lines)
     $lines | Write-Host
 }
 
