@@ -1,0 +1,20 @@
+[
+  {
+    "id": "script.new",
+    "field": "params",
+    "csharp": "{folder, name}: makes a C# script `folder/<name>.cs` from a template (a class deriving from GameScript); returns {path, module}",
+    "why": "The C# engine's scripts are C# files (docs/csharp-redesign.md, decided by the operator on 2026-11-26): script.new writes a .cs file where the Rust engine makes a Rust crate."
+  },
+  {
+    "id": "script.build",
+    "field": "params",
+    "csharp": "{path}: a C# script of the project (or any path in it); compiles the project's scripts, running none of them; returns {module, log}, or fails with the compiler's problems",
+    "why": "As for script.new: script.build compiles the project's C# scripts with Roslyn where the Rust engine builds a crate to WebAssembly with cargo."
+  },
+  {
+    "id": "project.scripts.allow",
+    "field": "only",
+    "csharp": true,
+    "why": "C# only. A C# script runs in the editor's process with no sandbox, so opening a project first asks the person before its scripts run (docs/csharp-redesign.md, \"Scripts\"); this is the command the editor's question and menu give the answer through. The Rust engine's WebAssembly scripts are sandboxed and need no such consent."
+  }
+]

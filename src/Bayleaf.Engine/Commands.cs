@@ -150,6 +150,7 @@ public sealed class CommandRegistry
         all.AddRange(ImportCommands.All());
         all.AddRange(InterfaceCommands.All());
         all.AddRange(AnimationCommands.All());
+        all.AddRange([.. PlayCommands.All(), .. InterfacePlay.All(), .. TimelinePlay.All(), .. ScriptCommands.All()]);
         all.AddRange(PendingCommands.All(all.Select(c => c.Id).ToHashSet(StringComparer.Ordinal)));
         return new CommandRegistry(all);
     }

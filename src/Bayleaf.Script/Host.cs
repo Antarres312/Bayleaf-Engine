@@ -746,7 +746,7 @@ public sealed partial class ScriptHost : IDisposable
     // ---- the objects as scripts see them ---------------------------------------------------------
 
     /// <summary>The scene's objects in hierarchy order, parents before children.</summary>
-    internal static List<StableId> Order(SceneModel scene)
+    public static List<StableId> Order(SceneModel scene)
     {
         var output = new List<StableId>(scene.ObjectCount);
         var stack = new Stack<StableId>();

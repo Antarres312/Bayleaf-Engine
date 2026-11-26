@@ -206,6 +206,18 @@ public class CommandParityTests
         Assert.Equal(expected, WithKnownDifferences(name, RunBatch(Path.Join(root, "tests", "commands", name)), expected));
     }
 
+    /// <summary>
+    /// How this engine's command list differs from the Rust engine's on purpose, each with why
+    /// (<c>tests/commands/differences/listing.json</c>): a field of a command's row that must be what
+    /// <c>csharp</c> says, or (field <c>only</c>) a command only this engine has.
+    /// </summary>
+    private static List<(string Id, string Field, JsonValue CSharp)> ListingDifferences()
+    {
+        var path = Path.Join(Root(), "tests", "commands", "differences", "listing.json");
+        var listed = (JsonArray)JsonReader.Parse(File.ReadAllText(path)).Value;
+        return [.. listed.Select(d => (d.Get("id")!.AsString()!, d.Get("field")!.AsString()!, d.Get("csharp")!))];
+    }
+
     [Fact]
     public void EveryRustCommandIsListedAndThePortedOnesListTheSame()
     {
@@ -213,14 +225,21 @@ public class CommandParityTests
         var registry = CommandRegistry.WithBuiltins();
         var mine = registry.List(new Session());
         var byId = mine.ToDictionary(r => r.Get("id")!.AsString()!, r => r, StringComparer.Ordinal);
-        Assert.Equal(rust.Select(r => r.Get("id")!.AsString()!).Order(StringComparer.Ordinal), byId.Keys.Order(StringComparer.Ordinal));
+        var differences = ListingDifferences();
+        var only = differences.Where(d => d.Field == "only").Select(d => d.Id).ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(rust.Select(r => r.Get("id")!.AsString()!).Concat(only).Order(StringComparer.Ordinal), byId.Keys.Order(StringComparer.Ordinal));
         foreach (var row in rust)
         {
             var id = row.Get("id")!.AsString()!;
-            var ours = byId[id];
+            var ours = (JsonObject)JsonReader.Parse(byId[id].ToCompact()).Value;
             if (ours.Get("enabled") is JsonBool { Value: false } && ours.Get("disabledReason")?.AsString() == CommandRegistry.PendingReason(id))
             {
                 continue;
+            }
+            foreach (var (_, field, csharp) in differences.Where(d => d.Id == id))
+            {
+                Assert.Equal(csharp.ToCompact(), ours.Get(field)?.ToCompact());
+                ours.Set(field, row.Get(field)!);
             }
             Assert.Equal(row.ToCompact(), ours.ToCompact());
         }

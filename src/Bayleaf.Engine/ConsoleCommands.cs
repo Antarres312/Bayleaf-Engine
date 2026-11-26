@@ -62,6 +62,11 @@ internal static class ConsoleCommands
                 removed = true;
             }
         }
+        if (session.Play is { } play)
+        {
+            play.Host.State.Saved.Clear();
+            play.SavedOnDisk = new SortedDictionary<string, double>(Core.Utf8Order.Instance);
+        }
         session.Log(Level.Info, "Saved values cleared.");
         return J.Obj(("removed", J.B(removed)));
     }

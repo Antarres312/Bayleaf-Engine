@@ -68,11 +68,11 @@ public sealed partial class Session
     /// <summary>Set while an automation request runs: the folders it may read and write.</summary>
     public Confinement? Confinement { get; set; }
 
-    /// <summary>True while play mode runs (also when paused). Play mode comes with the script stage.</summary>
+    /// <summary>True while play mode runs (also when paused).</summary>
     public bool IsPlaying => Play is not null;
 
-    /// <summary>Play mode's state while it runs; it comes with the script stage, so it stays null until then.</summary>
-    internal object? Play { get; set; }
+    /// <summary>Play mode's state while it runs (<c>Play.cs</c>).</summary>
+    internal PlayState? Play { get; set; }
 
     public IReadOnlyList<ConsoleLine> Console => console;
 

@@ -106,15 +106,13 @@ public sealed partial class Session
 /// file never changes.
 /// </summary>
 /// <remarks>
-/// Play mode is not in the C# engine yet, so the session never plays and every player is made as
-/// the Rust engine makes one outside play mode: with the clips of the model and the moments the
-/// Model Animation marks, playing nothing. What the Rust engine does only while playing comes with
-/// the play-mode port: a player for each object with a Model Animation when play starts or it is
-/// spawned, playing its clip or running its animation states (with keyframe animations as clips),
-/// root motion moving the object, each play step moving every player, clip events reaching scripts,
-/// and scripts' own animation actions and the joints they read.
+/// Outside play mode a player is made with the clips of the model and the moments the Model
+/// Animation marks, playing nothing. In play mode (<c>AnimationPlay.cs</c>) each object with a Model
+/// Animation gets a player when play starts or it comes, playing its clip or running its animation
+/// states (with keyframe animations as clips); root motion moves the object, each step moves every
+/// player, clip events reach the object's scripts, and scripts play clips and read joints.
 /// </remarks>
-internal static class AnimationCommands
+internal static partial class AnimationCommands
 {
     /// <summary>Longest clip or joint name, in bytes.</summary>
     private const int MaxName = 256;
@@ -196,15 +194,20 @@ internal static class AnimationCommands
 
     /// <summary>
     /// A new player for object <paramref name="id"/>, with the model's clips and the moments its
-    /// Model Animation marks in them. Outside play mode it plays nothing until a command says so;
-    /// the play-mode port adds what the Model Animation plays when play starts.
+    /// Model Animation marks in them. Outside play mode it plays nothing until a command says so; in
+    /// play mode it plays what the Model Animation sets (<see cref="Autoplay"/>).
     /// </summary>
     private static Animated NewAnimated(Session session, StableId id, string model, Skeleton skeleton)
     {
         var marks = session.Scene.TryGet<ModelAnimation>(id, out var settings)
             ? settings.Events.Select(m => (m.Clip, new ClipEvent(m.Time, m.Event)))
             : [];
-        return new Animated(model, skeleton, Clips.OfModel(skeleton, marks));
+        var made = new Animated(model, skeleton, Clips.OfModel(skeleton, marks));
+        if (session.IsPlaying && settings is not null)
+        {
+            Autoplay(session, made, settings);
+        }
+        return made;
     }
 
     /// <summary>Object <paramref name="id"/>'s player, made when it has none (or its model changed).</summary>
