@@ -15,8 +15,8 @@ namespace Bayleaf.Engine;
 /// <summary>
 /// The project's files: <c>asset.create</c> makes new folders and asset files (never over a file),
 /// <c>asset.list</c> lists a folder as the Project panel does, <c>asset.rename</c> and <c>asset.delete</c>
-/// rename and delete them with their import settings. Rust script crates are not special here: the C#
-/// engine's scripts are C# (docs/csharp-redesign.md).
+/// rename and delete them with their import settings. A script is a C# file (docs/script-sdk.md);
+/// Rust script crates are not special here.
 /// </summary>
 internal static class AssetCommands
 {
@@ -285,7 +285,14 @@ internal static class AssetCommands
         var given = f.Required("name", JsonRead.Str);
         if (kind is "script")
         {
-            throw Stop.Failed("the C# engine's scripts are C#, which comes with the script port; make a visual script or use the Rust engine (rust/) for a Rust script");
+            // A C# script, as script.new makes one: its file is also the module objects run.
+            var into = session.Allowed(Path.Combine(session.ScriptDir, folderParam), Access.Write);
+            if (!Directory.Exists(into))
+            {
+                throw Stop.BadParams($"{into} is not a folder");
+            }
+            var script = ScriptCommands.Write(into, given);
+            return J.Obj(("path", J.S(script)), ("module", J.S(script)));
         }
         if (!ValidFileName(given))
         {

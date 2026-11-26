@@ -1,0 +1,207 @@
+{
+  "results": [
+    {
+      "name": "u",
+      "path": "$out/u",
+      "scene": "$out/u/scenes/main.bscene"
+    },
+    {
+      "deleted": 1
+    },
+    {
+      "path": "$out/u/menu.bui"
+    },
+    {
+      "at": [
+        2
+      ]
+    },
+    {},
+    {
+      "at": [
+        3
+      ]
+    },
+    {},
+    {
+      "at": [
+        4
+      ]
+    },
+    {},
+    {
+      "id": "<id 0>"
+    },
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    },
+    {
+      "elements": [
+        {
+          "kind": "panel",
+          "name": "Screen",
+          "text": "",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "text",
+          "name": "Title",
+          "text": "My Game",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "button",
+          "name": "Start",
+          "text": "Start",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "toggle",
+          "name": "Sound",
+          "text": "Toggle",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "slider",
+          "name": "Volume",
+          "text": "",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "text",
+          "name": "Score",
+          "text": "Text",
+          "value": 0.0,
+          "visible": true
+        }
+      ],
+      "visible": true
+    },
+    {
+      "game": {
+        "score": 7.25
+      },
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {},
+      "savedFile": "$out/u/saves/progress.json",
+      "savedProblem": null
+    },
+    {},
+    {},
+    {},
+    {
+      "elements": [
+        {
+          "kind": "panel",
+          "name": "Screen",
+          "text": "",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "text",
+          "name": "Title",
+          "text": "My Game",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "button",
+          "name": "Start",
+          "text": "Start",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "toggle",
+          "name": "Sound",
+          "text": "Toggle",
+          "value": 1.0,
+          "visible": true
+        },
+        {
+          "kind": "slider",
+          "name": "Volume",
+          "text": "",
+          "value": 10.0,
+          "visible": true
+        },
+        {
+          "kind": "text",
+          "name": "Score",
+          "text": "7.25",
+          "value": 0.0,
+          "visible": true
+        }
+      ],
+      "visible": true
+    },
+    {
+      "time": 0.0
+    },
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    },
+    {
+      "elements": [
+        {
+          "kind": "panel",
+          "name": "Screen",
+          "text": "",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "text",
+          "name": "Title",
+          "text": "My Game",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "button",
+          "name": "Start",
+          "text": "Start",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "toggle",
+          "name": "Sound",
+          "text": "Toggle",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "slider",
+          "name": "Volume",
+          "text": "",
+          "value": 0.0,
+          "visible": true
+        },
+        {
+          "kind": "text",
+          "name": "Score",
+          "text": "Text",
+          "value": 0.0,
+          "visible": true
+        }
+      ],
+      "visible": true
+    },
+    {
+      "time": 0.0
+    }
+  ]
+}

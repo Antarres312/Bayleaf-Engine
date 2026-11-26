@@ -50,5 +50,152 @@
       "script-every-field.bscript is not a valid script: bayleaf_describe: inspector: \"speed\": choices are for a whole number (by place) or a text, not a Number"
     ],
     "why": "As for step 2; the script host's refusal of its Inspector options is the same in both engines."
+  },
+  {
+    "batch": "play.json",
+    "steps": [2],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "play.start says how the scripts run. The Rust engine interprets them by default (wasmi) and compiles them with wasmtime when asked; the C# engine's scripts are C#, always compiled (Roslyn, then .NET's JIT), so it says compiled whichever is asked. The rest of play.start's result is the same."
+  },
+  {
+    "batch": "play-scenes.json",
+    "steps": [5],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "play-interface.json",
+    "steps": [10, 18],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "play-keyframes.json",
+    "steps": [11],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "play-saved.json",
+    "steps": [3, 8],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-play-twice.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-play-seconds.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-play-steps.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-play-message.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-play-message-object.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-play-input.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-play-pointer.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-game-state-player.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-game-state-name.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-input-map.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-play-scene-load.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-play-scene-unload.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-stream-areas.json",
+    "steps": [1],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-stream-wait.json",
+    "steps": [0],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-timeline-play.json",
+    "steps": [1],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
+  },
+  {
+    "batch": "refused-ui-press.json",
+    "steps": [4],
+    "field": "runtime",
+    "csharp": "compiled",
+    "why": "As for play.json: play.start's runtime."
   }
 ]

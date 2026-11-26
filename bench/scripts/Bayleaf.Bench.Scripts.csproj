@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The script step of the C# engine at the sizes of docs/runtime-rebuild.md (stage 4 of
+       docs/csharp-redesign.md): the scene of rust/bench (a target and N objects with three scripts
+       each), with the benchmark's scripts written in C# (game/), run by the engine's own script host
+       and play mode. Run it in Release: dotnet run -c Release -project bench/scripts -objects 20000. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Bayleaf.Bench.Scripts</RootNamespace>
+    <AssemblyName>bench-scripts</AssemblyName>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The game's scripts: the engine compiles them itself, as it compiles a project's. -->
+    <Compile Remove="game/**" />
+    <None Include="game/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Bayleaf.Engine\Bayleaf.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

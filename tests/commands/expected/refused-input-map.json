@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: there is no map Nowhere; the maps are Player, Menu",
+  "failedStep": 1,
+  "results": [
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

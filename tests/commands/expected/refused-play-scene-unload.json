@@ -1,0 +1,11 @@
+{
+  "error": "room.bscene was not added while playing",
+  "failedStep": 1,
+  "results": [
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

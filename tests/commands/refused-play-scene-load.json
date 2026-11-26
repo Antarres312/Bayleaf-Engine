@@ -1,0 +1,1 @@
+[{"cmd": "play.start"}, {"cmd": "play.scene.load", "params": {"path": "room.bmaterial"}}]

@@ -2,6 +2,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Bayleaf.Engine\Bayleaf.Engine.csproj" />
+    <!-- The opt-in modules, which play mode's tests turn on as an app does. -->
+    <ProjectReference Include="..\..\src\Bayleaf.Gameplay\Bayleaf.Gameplay.csproj" />
+    <ProjectReference Include="..\..\src\Bayleaf.Streaming\Bayleaf.Streaming.csproj" />
   </ItemGroup>
 
 </Project>

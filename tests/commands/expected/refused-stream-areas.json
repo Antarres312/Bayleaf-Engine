@@ -1,0 +1,27 @@
+{
+  "error": "this build has no world streaming",
+  "failedStep": 3,
+  "results": [
+    {
+      "id": "<id 0>"
+    },
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    },
+    {
+      "lines": [
+        {
+          "level": "info",
+          "text": "Play mode started: 0 of 0 scripts running."
+        },
+        {
+          "level": "info",
+          "text": "This build has no world streaming, so Streamed Areas stay empty."
+        }
+      ],
+      "total": 2
+    }
+  ]
+}

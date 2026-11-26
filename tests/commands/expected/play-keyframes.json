@@ -1,0 +1,263 @@
+{
+  "results": [
+    {
+      "name": "k",
+      "path": "$out/k",
+      "scene": "$out/k/scenes/main.bscene"
+    },
+    {},
+    {
+      "path": "$out/k/prefabs/cube.bprefab",
+      "source": "prefabs/cube.bprefab"
+    },
+    {
+      "dirty": false,
+      "parts": [],
+      "path": "$out/k/anim/turn.btimeline",
+      "playhead": 0.0,
+      "posed": false,
+      "recording": false,
+      "timeline": {
+        "format": "bayleaf.timeline",
+        "length": 2.0,
+        "looping": false,
+        "parts": [],
+        "prefab": "prefabs/cube.bprefab",
+        "version": 1
+      }
+    },
+    {},
+    {
+      "time": 0.0
+    },
+    {
+      "time": 2.0
+    },
+    {
+      "path": "$out/k/anim/turn.btimeline"
+    },
+    {},
+    {},
+    {},
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    },
+    {
+      "time": 0.5000000223517418
+    },
+    {
+      "children": [],
+      "components": {
+        "keyframeAnimation": {
+          "animation": "anim/turn.btimeline",
+          "playOnStart": false,
+          "speed": 1.0
+        },
+        "mesh": {
+          "color": [
+            0.8500000238418579,
+            0.44999998807907104,
+            0.25,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.44999998807907104,
+          "shape": "cube"
+        },
+        "name": "Cube",
+        "prefab": {
+          "overrides": [
+            "0/keyframeAnimation"
+          ],
+          "source": "prefabs/cube.bprefab"
+        },
+        "transform": {
+          "position": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "id": "<id 0>",
+      "parent": null
+    },
+    {},
+    {
+      "time": 1.5000000670552254
+    },
+    {
+      "children": [],
+      "components": {
+        "keyframeAnimation": {
+          "animation": "anim/turn.btimeline",
+          "playOnStart": false,
+          "speed": 1.0
+        },
+        "mesh": {
+          "color": [
+            0.8500000238418579,
+            0.44999998807907104,
+            0.25,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.44999998807907104,
+          "shape": "cube"
+        },
+        "name": "Cube",
+        "prefab": {
+          "overrides": [
+            "0/keyframeAnimation"
+          ],
+          "source": "prefabs/cube.bprefab"
+        },
+        "transform": {
+          "position": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            45.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "id": "<id 0>",
+      "parent": null
+    },
+    {},
+    {
+      "time": 2.000000089406967
+    },
+    {
+      "children": [],
+      "components": {
+        "keyframeAnimation": {
+          "animation": "anim/turn.btimeline",
+          "playOnStart": false,
+          "speed": 1.0
+        },
+        "mesh": {
+          "color": [
+            0.8500000238418579,
+            0.44999998807907104,
+            0.25,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.44999998807907104,
+          "shape": "cube"
+        },
+        "name": "Cube",
+        "prefab": {
+          "overrides": [
+            "0/keyframeAnimation"
+          ],
+          "source": "prefabs/cube.bprefab"
+        },
+        "transform": {
+          "position": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            45.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "id": "<id 0>",
+      "parent": null
+    },
+    {
+      "time": 2.000000089406967
+    },
+    {
+      "children": [],
+      "components": {
+        "keyframeAnimation": {
+          "animation": "anim/turn.btimeline",
+          "playOnStart": false,
+          "speed": 1.0
+        },
+        "mesh": {
+          "color": [
+            0.8500000238418579,
+            0.44999998807907104,
+            0.25,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.44999998807907104,
+          "shape": "cube"
+        },
+        "name": "Cube",
+        "prefab": {
+          "overrides": [
+            "0/keyframeAnimation"
+          ],
+          "source": "prefabs/cube.bprefab"
+        },
+        "transform": {
+          "position": [
+            0.0,
+            0.5,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "id": "<id 0>",
+      "parent": null
+    },
+    {
+      "lines": [
+        {
+          "level": "info",
+          "text": "Play mode started: 0 of 0 scripts running."
+        },
+        {
+          "level": "info",
+          "text": "Play mode stopped after 2.00 s; the scene is back as it was."
+        }
+      ],
+      "total": 2
+    }
+  ]
+}

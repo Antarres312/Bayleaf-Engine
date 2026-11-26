@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- L7: the headless engine. Runs commands, batch jobs and the MCP server for agents, as the
-       Rust bayleaf-cli does. -->
+       Rust bayleaf-cli does. It turns on the opt-in gameplay and streaming modules, as the Rust CLI
+       builds the engine with them. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Bayleaf.Cli</RootNamespace>
@@ -10,6 +11,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Bayleaf.Automation\Bayleaf.Automation.csproj" />
+    <ProjectReference Include="..\..\src\Bayleaf.Gameplay\Bayleaf.Gameplay.csproj" />
+    <ProjectReference Include="..\..\src\Bayleaf.Streaming\Bayleaf.Streaming.csproj" />
   </ItemGroup>
 
   <ItemGroup>

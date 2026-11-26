@@ -1,0 +1,120 @@
+{
+  "results": [
+    {
+      "name": "s",
+      "path": "$out/s",
+      "scene": "$out/s/scenes/main.bscene"
+    },
+    {
+      "deleted": 1
+    },
+    {
+      "game": {},
+      "outcome": null,
+      "players": [],
+      "playing": false,
+      "saved": {},
+      "savedFile": "$out/s/saves/progress.json",
+      "savedProblem": null
+    },
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    },
+    {
+      "game": {},
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {
+        "best": 12.0
+      },
+      "savedFile": "$out/s/saves/progress.json",
+      "savedProblem": null
+    },
+    {
+      "game": {
+        "lives": 2.0
+      },
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {
+        "best": 12.0
+      },
+      "savedFile": "$out/s/saves/progress.json",
+      "savedProblem": null
+    },
+    {
+      "time": 0.0
+    },
+    {
+      "game": {},
+      "outcome": null,
+      "players": [],
+      "playing": false,
+      "saved": {
+        "best": 12.0
+      },
+      "savedFile": "$out/s/saves/progress.json",
+      "savedProblem": null
+    },
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    },
+    {
+      "game": {},
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {
+        "best": 12.0
+      },
+      "savedFile": "$out/s/saves/progress.json",
+      "savedProblem": null
+    },
+    {
+      "removed": true
+    },
+    {
+      "game": {},
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {},
+      "savedFile": "$out/s/saves/progress.json",
+      "savedProblem": null
+    },
+    {
+      "time": 0.0
+    },
+    {
+      "lines": [
+        {
+          "level": "info",
+          "text": "Play mode started: 0 of 0 scripts running."
+        },
+        {
+          "level": "info",
+          "text": "Play mode stopped after 0.00 s; the scene is back as it was."
+        },
+        {
+          "level": "info",
+          "text": "Play mode started: 0 of 0 scripts running."
+        },
+        {
+          "level": "info",
+          "text": "Saved values cleared."
+        },
+        {
+          "level": "info",
+          "text": "Play mode stopped after 0.00 s; the scene is back as it was."
+        }
+      ],
+      "total": 5
+    }
+  ]
+}

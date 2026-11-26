@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: steps must be between 1 and 100000",
+  "failedStep": 1,
+  "results": [
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    }
+  ]
+}

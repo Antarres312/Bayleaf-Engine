@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L0: what a game's C# scripts are written against (docs/script-sdk.md). It refers to nothing but
+       .NET, so a script project needs only this. The engine's script host (Bayleaf.Script) is the
+       one that runs it; the members it calls are internal to the two. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Script.Sdk</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Script" />
+  </ItemGroup>
+
+</Project>

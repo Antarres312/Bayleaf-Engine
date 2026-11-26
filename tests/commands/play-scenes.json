@@ -1,0 +1,20 @@
+[
+  {"cmd": "scene.object.create", "params": {"name": "Room"}},
+  {"cmd": "scene.saveAs", "params": {"path": "$out/room.bscene"}},
+  {"cmd": "scene.new"},
+  {"cmd": "scene.object.create", "params": {"name": "Hub"}},
+  {"cmd": "scene.saveAs", "params": {"path": "$out/hub.bscene"}},
+  {"cmd": "play.start", "params": {"scripts": "interpreted"}},
+  {"cmd": "play.scene.load", "params": {"path": "room.bscene", "additive": true}},
+  {"cmd": "play.scene.list"},
+  {"cmd": "scene.objects"},
+  {"cmd": "play.scene.unload", "params": {"path": "room.bscene"}},
+  {"cmd": "play.scene.list"},
+  {"cmd": "game.state.set", "params": {"name": "coins", "value": 3}},
+  {"cmd": "play.scene.load", "params": {"path": "room.bscene"}},
+  {"cmd": "game.state"},
+  {"cmd": "scene.objects"},
+  {"cmd": "play.stop"},
+  {"cmd": "scene.objects"},
+  {"cmd": "console.read"}
+]

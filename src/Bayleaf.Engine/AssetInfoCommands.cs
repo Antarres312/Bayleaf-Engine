@@ -24,7 +24,8 @@ namespace Bayleaf.Engine;
 /// Two kinds differ from the Rust engine, whose script host runs a script's describe step: a visual
 /// script's properties are the ones its graph declares (Property nodes that name a property the graph
 /// does not declare are left out, and its problems say it is not compiled yet), and a WebAssembly
-/// module is not described, since the C# engine's scripts are C#.
+/// module is not described, since the C# engine's scripts are C#. A C# script (<c>.cs</c>) is a
+/// "Script" with the properties its source declares, read by compiling the project's scripts.
 /// </remarks>
 internal static class AssetInfoCommands
 {
@@ -118,6 +119,7 @@ internal static class AssetInfoCommands
             "bprefab" => Prefab(session, path),
             "bmaterial" or "bscript" or "banim" => GraphFile(path, extension),
             "wasm" => Module(),
+            "cs" => CSharpScript(session, path),
             "bproject" => Project(path),
             "binput" => InputMapFile(session, path),
             "bui" => Interface(session, path),
@@ -300,6 +302,43 @@ internal static class AssetInfoCommands
                 ? "None"
                 : string.Join(", ", declared.Select(d => $"{d.Name} ({d.Type.Code()}) = {d.Default.Write().ToCompact()}")));
         }
+        return info;
+    }
+
+    /// <summary>
+    /// A C# script: what it declares, read by compiling the project's scripts (no script code runs): its
+    /// properties with their types and defaults, as the Rust engine lists a module's, and where Add
+    /// Component lists it.
+    /// </summary>
+    private static Described CSharpScript(Session session, string path)
+    {
+        var info = new Described("Script");
+        var folder = Path.GetFullPath(session.ScriptDir);
+        var full = Path.GetFullPath(path);
+        if (!AssetCommands.StartsWith(full, folder))
+        {
+            info.Problems.Add($"{path} is outside the project folder, whose scripts compile together");
+            return info;
+        }
+        var described = session.CompiledScripts().Describe(Path.GetRelativePath(folder, full));
+        if (described.IsError)
+        {
+            info.Problems.Add(described.Error);
+            return info;
+        }
+        var script = described.Value;
+        info.Row("Properties", script.Properties.Count == 0
+            ? "None"
+            : string.Join(", ", script.Properties.Select(d => $"{d.Name} ({d.Type.Code()}) = {d.Default.Write().ToCompact()}")));
+        if (script.Menu is { } menu)
+        {
+            info.Row("Menu", menu);
+        }
+        if (script.Events.Count > 0)
+        {
+            info.Row("Events", string.Join(", ", script.Events.Select(e => e.Values.Count == 0 ? e.Name : $"{e.Name} ({string.Join(", ", e.Values)})")));
+        }
+        info.Problems.AddRange(script.Problems);
         return info;
     }
 

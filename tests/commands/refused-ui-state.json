@@ -1,0 +1,1 @@
+[{"cmd": "scene.object.create", "params": {"name": "Menu", "components": {"interface": {"layout": "menu.bui", "visible": true, "order": 0}}}}, {"cmd": "play.ui.state", "params": {"id": "$0.id"}}]

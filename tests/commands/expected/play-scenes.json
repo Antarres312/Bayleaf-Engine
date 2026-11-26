@@ -1,0 +1,124 @@
+{
+  "results": [
+    {
+      "id": "<id 0>"
+    },
+    {
+      "path": "$out/room.bscene"
+    },
+    {},
+    {
+      "id": "<id 1>"
+    },
+    {
+      "path": "$out/hub.bscene"
+    },
+    {
+      "running": 0,
+      "runtime": "interpreted",
+      "scripts": 0
+    },
+    {
+      "objects": [
+        "<id 2>"
+      ]
+    },
+    {
+      "added": [
+        {
+          "objects": [
+            "<id 2>"
+          ],
+          "path": "room.bscene"
+        }
+      ]
+    },
+    [
+      {
+        "children": [],
+        "id": "<id 1>",
+        "name": "Hub"
+      },
+      {
+        "children": [],
+        "id": "<id 2>",
+        "name": "Room"
+      }
+    ],
+    {
+      "removed": 1
+    },
+    {
+      "added": []
+    },
+    {
+      "game": {
+        "coins": 3.0
+      },
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {},
+      "savedFile": null,
+      "savedProblem": null
+    },
+    {
+      "objects": [
+        "<id 0>"
+      ]
+    },
+    {
+      "game": {
+        "coins": 3.0
+      },
+      "outcome": null,
+      "players": [],
+      "playing": true,
+      "saved": {},
+      "savedFile": null,
+      "savedProblem": null
+    },
+    [
+      {
+        "children": [],
+        "id": "<id 0>",
+        "name": "Room"
+      }
+    ],
+    {
+      "time": 0.0
+    },
+    [
+      {
+        "children": [],
+        "id": "<id 1>",
+        "name": "Hub"
+      }
+    ],
+    {
+      "lines": [
+        {
+          "level": "info",
+          "text": "Play mode started: 0 of 0 scripts running."
+        },
+        {
+          "level": "info",
+          "text": "Added the scene room.bscene."
+        },
+        {
+          "level": "info",
+          "text": "Removed the scene room.bscene."
+        },
+        {
+          "level": "info",
+          "text": "Loaded the scene room.bscene."
+        },
+        {
+          "level": "info",
+          "text": "Play mode stopped after 0.00 s; the scene is back as it was."
+        }
+      ],
+      "total": 5
+    }
+  ]
+}
