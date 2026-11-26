@@ -3807,3 +3807,22 @@ fn data_files_show_their_shape_s_fields_in_groups_and_resets_and_new_fields_are_
     assert!(harness.query_by_label("Field").is_some(), "the new field shows in the data file");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_text_item_in_a_list_property_keeps_the_script_panel_its_width() {
+    let mut harness = graph_harness("script");
+    harness.state_mut().dispatch("graph.property.add", &json!({ "name": "names", "type": "text", "shape": "list" }), None);
+    harness.run();
+    let edge = |harness: &Harness<'static, Editor>| harness.get_by_label("What names holds: List of Text").rect().right();
+    let before = edge(&harness);
+    harness.get_by_label("Add an item to names").click();
+    harness.run();
+    // A widening row grows the panel a little more every frame, so look again after a few.
+    for _ in 0..5 {
+        harness.run();
+    }
+    assert_eq!(graph(&harness).property("names").map(|p| p.default.clone()), Some(json!([""])));
+    assert!((edge(&harness) - before).abs() < 0.5, "the panel's right edge moved from {before} to {}", edge(&harness));
+    let remove = harness.get_by_label("Remove names item 0").rect();
+    assert!(remove.right() <= before + 0.5, "× ends at {} past the panel's edge {before}", remove.right());
+}

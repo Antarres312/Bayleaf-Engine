@@ -720,10 +720,14 @@ fn shaped_editor(ui: &mut egui::Ui, panel: &mut ScriptPanel, key: &str, holds: H
                 for (i, item) in items.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
                         let label = crate::i18n::tf("{name} item {index}", &[("name", name), ("index", &i.to_string())]);
-                        if let Some(new) = start_editor(ui, ty, item, &label) {
-                            *item = new;
-                            changed = true;
-                        }
+                        // The field in the room × leaves: a field as wide as the row with × after
+                        // it would widen the panel a little more every frame.
+                        fitted(ui, BUTTON_ROOM, |ui| {
+                            if let Some(new) = start_editor(ui, ty, item, &label) {
+                                *item = new;
+                                changed = true;
+                            }
+                        });
                         let remove = ui.small_button("×").on_hover_text(tl("Remove"));
                         ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(crate::i18n::tf("Remove {item}", &[("item", &label)])));
                         if remove.clicked() {
@@ -753,20 +757,23 @@ fn shaped_editor(ui: &mut egui::Ui, panel: &mut ScriptPanel, key: &str, holds: H
                 for (i, (k, item)) in entries.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
                         let label = crate::i18n::tf("{name} under {key}", &[("name", name), ("key", k)]);
-                        let remove = ui.small_button("×").on_hover_text(tl("Remove"));
-                        ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(crate::i18n::tf("Remove {item}", &[("item", &label)])));
-                        if remove.clicked() {
-                            gone = Some(k.clone());
-                        }
                         let key_label = crate::i18n::tf("Key {index} of {name}", &[("index", &i.to_string()), ("name", name)]);
-                        ui.allocate_ui(egui::vec2(96.0, ROW_HEIGHT), |ui| {
+                        ui.allocate_ui(egui::vec2(KEY_WIDTH, ROW_HEIGHT), |ui| {
                             if let Some(typed) = name_field(ui, panel, &format!("{key} key {i}"), k, &key_label) {
                                 renamed = Some((k.clone(), typed));
                             }
                         });
-                        if let Some(new) = start_editor(ui, ty, item, &label) {
-                            *item = new;
-                            changed = true;
+                        // The value in the room the key and × leave.
+                        fitted(ui, BUTTON_ROOM, |ui| {
+                            if let Some(new) = start_editor(ui, ty, item, &label) {
+                                *item = new;
+                                changed = true;
+                            }
+                        });
+                        let remove = ui.small_button("×").on_hover_text(tl("Remove"));
+                        ui.ctx().accesskit_node_builder(remove.id, |node| node.set_label(crate::i18n::tf("Remove {item}", &[("item", &label)])));
+                        if remove.clicked() {
+                            gone = Some(k.clone());
                         }
                     });
                 }
@@ -794,6 +801,24 @@ fn shaped_editor(ui: &mut egui::Ui, panel: &mut ScriptPanel, key: &str, holds: H
             changed.then_some(Value::Object(entries))
         }
     }
+}
+
+/// How wide a map key's field is in the panel.
+const KEY_WIDTH: f32 = 96.0;
+
+/// The room a small button after a field takes, with the gap before it.
+const BUTTON_ROOM: f32 = ROW_HEIGHT + 8.0;
+
+/// Lays out `body` in the row's room less `after` (what follows it), clipped to that: a field that
+/// asks for all the room it sees then never pushes what follows past the panel's edge, which would
+/// widen a resizable panel a little more every frame.
+fn fitted(ui: &mut egui::Ui, after: f32, body: impl FnOnce(&mut egui::Ui)) {
+    let room = (ui.available_width() - after).max(40.0);
+    ui.allocate_ui_with_layout(egui::vec2(room, ROW_HEIGHT), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_max_width(room);
+        ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
+        body(ui);
+    });
 }
 
 /// A name typed in place: what is typed stays until the field is left, then it is returned if it
