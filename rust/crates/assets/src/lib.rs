@@ -826,4 +826,6 @@ fn cached<T: Clone>(map: &mut Cached<T>, path: &Path, load: impl Fn(&Path) -> Re
 }
 
 #[cfg(test)]
+mod shared_files;
+#[cfg(test)]
 mod tests;

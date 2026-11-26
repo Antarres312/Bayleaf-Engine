@@ -1,0 +1,15 @@
+model
+files 0
+vertices 3
+indices 3 756241e1be8c9396
+min 0.0000 0.0000 0.0000
+max 1.0000 1.0000 0.0000
+v 0 0.0000 0.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+v 1 1.0000 0.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+v 2 0.0000 1.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+parts 1
+part 0 3 base 0.8000 0.8000 0.8000 1.0000 metallic 0.0000 roughness 0.5000 image none metal-roughness none normal none
+material base 0.8000 0.8000 0.8000 1.0000 metallic 0.0000 roughness 0.5000 image none metal-roughness none normal none
+warnings 1
+warning material library `nowhere.mtl other.mtl` was not supplied
+skeleton none

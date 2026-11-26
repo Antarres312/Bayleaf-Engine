@@ -1,0 +1,14 @@
+model
+files 0
+vertices 3
+indices 3 756241e1be8c9396
+min 0.0000 0.0000 0.0000
+max 1.0000 1.0000 0.0000
+v 0 0.0000 0.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+v 1 1.0000 0.0000 0.0000 0.0000 0.0000 1.0000 1.0000 0.0000
+v 2 0.0000 1.0000 0.0000 0.0000 0.0000 1.0000 0.0000 1.0000
+parts 1
+part 0 3 base 1.0000 1.0000 1.0000 1.0000 metallic 1.0000 roughness 1.0000 image 4x2 data=false 078c6a91e1e79205 metal-roughness 4x2 data=true 078c6a91e1e79205 normal none
+material base 1.0000 1.0000 1.0000 1.0000 metallic 1.0000 roughness 1.0000 image 4x2 data=false 078c6a91e1e79205 metal-roughness 4x2 data=true 078c6a91e1e79205 normal none
+warnings 0
+skeleton none

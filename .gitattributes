@@ -1,2 +1,8 @@
 # The files both engines' tests read and the rewrites they must give stay byte for byte as written.
 /tests/files/** text eol=lf
+# Images, models' buffers and binary models among them are kept as they are.
+/tests/files/**/*.png binary
+/tests/files/**/*.jpg binary
+/tests/files/**/*.exr binary
+/tests/files/**/*.glb binary
+/tests/files/**/*.bin binary

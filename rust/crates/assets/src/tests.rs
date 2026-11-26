@@ -182,7 +182,13 @@ fn import_settings_beside_a_model_scale_and_turn_it_and_reload_it_when_changed()
     let m = settings.model.as_mut().unwrap();
     m.scale = 3.0;
     m.up_axis = UpAxis::Z;
-    std::fs::write(settings_path(&model), settings.to_text()).unwrap();
+    // Each write later than the one before, as an edit is: the file system's clock may be coarser than the test.
+    let write_later = |text: &str, seconds: u64| {
+        std::fs::write(settings_path(&model), text).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(seconds);
+        std::fs::File::options().write(true).open(settings_path(&model)).unwrap().set_modified(later).unwrap();
+    };
+    write_later(&settings.to_text(), 1);
     let turned = cache.model(&model).unwrap();
     assert_ne!(turned.id, plain.id, "new settings make it a new model");
     // Up along Z becomes up along Y: what the node lifted along Y now points away from the viewer.
@@ -190,7 +196,7 @@ fn import_settings_beside_a_model_scale_and_turn_it_and_reload_it_when_changed()
     let size = |m: &super::MeshData| (0..3).map(|i| m.max[i] - m.min[i]).fold(0.0f32, f32::max);
     assert!(size(&turned) > size(&plain) * 2.0, "scaled up");
 
-    std::fs::write(settings_path(&model), "{ broken").unwrap();
+    write_later("{ broken", 2);
     let broken = cache.model(&model).unwrap_err();
     assert!(broken.contains("import settings"), "{broken}");
     std::fs::remove_dir_all(&dir).ok();

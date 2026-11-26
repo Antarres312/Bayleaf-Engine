@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L2: reading asset files: PNG, JPEG and OpenEXR images, glTF 2.0 and OBJ models with their
+       skeletons and animations, and the import settings (.bimport) beside them. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Assets</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Assets.Tests" />
+  </ItemGroup>
+
+</Project>

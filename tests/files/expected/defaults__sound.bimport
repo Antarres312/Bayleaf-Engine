@@ -1,0 +1,7 @@
+{
+  "format": "bayleaf.import",
+  "version": 1,
+  "sound": {
+    "stream": false
+  }
+}
