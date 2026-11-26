@@ -79,6 +79,11 @@ file. Loading is linear in the scene now. With three scripts per object:
 | 50,000 | 0.99 s | |
 | 100,000 | 1.84 s Rust, 1.69 s visual (320 s before, on the benchmark's own loading) | 2.9 s Rust, 2.5 s visual |
 
+With loading out of the way the script step can be timed at the target size, loaded as play mode
+loads: at 100,000 objects, compiled, it takes 8.9 ms for three empty scripts and 37 to 42 ms for
+Rust and for visual scripts (92 ms for Rust scripts before the rebuild; other builds were running
+during these runs). Stages 4 and 5 are about that figure.
+
 Not part of this stage, but seen here: the first steps after a load are slow (about 200 ms at
 100,000 objects, where everything is found and kept for the first time), and the whole play step,
 not only scripts, is what stage 6 is about.
