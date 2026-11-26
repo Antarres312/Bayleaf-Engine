@@ -24,20 +24,41 @@ public abstract class GameScript
     /// <summary>Its object's place in the host's packed poses, kept by the host while the scene's structure stays.</summary>
     internal int Place { get; set; } = -1;
 
+    /// <summary>The host's packed poses (one reference, so a script stays small: a step goes through every script).</summary>
+    internal PoseStore Store { get; set; } = PoseStore.Empty;
+
+    /// <summary>Where the pose of a script whose object is gone points: written, it goes nowhere.</summary>
+    private static Pose nowhere;
+
     private IWorld Engine => World ?? Runtime.Need();
 
     /// <summary>The object this script is on.</summary>
     public SceneObject Self => Engine.Self(Slot);
 
     /// <summary>
-    /// The object's pose relative to its parent, as this step has it; setting it moves the object (later
-    /// scripts in the step see it). Inside <see cref="IAdvanceMany{TSelf}.AdvanceMany"/> the pose given in
+    /// The object's pose relative to its parent, as this step has it: a reference into the engine's
+    /// packed poses, so <c>Pose.Rotation.Y += 90 * seconds</c> turns the object, and later scripts of the
+    /// step see it (<c>var pose = Pose; … Pose = pose;</c> works too). The poses that changed reach the
+    /// scene when the step ends; a pose that is not finite is refused then, and the object stays where
+    /// it was. Inside <see cref="IAdvanceMany{TSelf}.AdvanceMany"/> the pose given in
     /// <see cref="Many{T}.Poses"/> is the one that counts.
     /// </summary>
-    public Pose Pose
+    public ref Pose Pose
     {
-        get => Engine.OwnPose(this);
-        set => Engine.SetOwnPose(this, value);
+        get
+        {
+            var store = Store;
+            var poses = store.Poses;
+            var touched = store.Touched;
+            var at = Place;
+            if ((uint)at < (uint)poses.Length && (uint)at < (uint)touched.Length)
+            {
+                touched[at] = 1;
+                return ref poses[at];
+            }
+            nowhere = Sdk.Pose.Initial;
+            return ref nowhere;
+        }
     }
 
     /// <summary>Writes to the editor console, labelled with the object and the script.</summary>
@@ -159,4 +180,14 @@ public sealed class ScriptEventAttribute(string name, params string[] values) : 
     public string Name { get; } = name;
 
     public IReadOnlyList<string> Values { get; } = values;
+}
+
+/// <summary>The host's packed poses, one per object of the scene by its place, and its marks of those scripts reached this step (it writes only those that changed). The host makes a new one when the scene's structure changes.</summary>
+internal sealed class PoseStore(Pose[] poses, byte[] touched)
+{
+    public static readonly PoseStore Empty = new([], []);
+
+    public Pose[] Poses { get; } = poses;
+
+    public byte[] Touched { get; } = touched;
 }

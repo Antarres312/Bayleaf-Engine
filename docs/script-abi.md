@@ -1,5 +1,11 @@
 # Script ABI, version 1
 
+This is the Rust engine's script interface. The C# engine's scripts are C# classes written against
+`Bayleaf.Script.Sdk`, with the same abilities in a C# shape and the same rules for what is done after
+the step; `docs/script-sdk.md` describes them, and the table there says which parts wait for stage 5
+(physics, sound, particles). The operator decided on 2026-11-26 that the C# engine runs C# scripts only,
+so the WebAssembly modules below are the Rust tree's.
+
 A game script is a WebAssembly module (`wasm32`, no WASI). An object carries a list of scripts (the
 `scripts` component); the inspector shows each as its own component, named after its module file
 (`player_controller.wasm` -> "Player Controller"). Every script on every object gets its own instance,

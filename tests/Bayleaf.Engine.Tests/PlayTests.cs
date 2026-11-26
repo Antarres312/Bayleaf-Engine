@@ -628,6 +628,54 @@ public sealed class PlayTests : IDisposable
         Assert.Equal(1, session.Console.Count(l => l.Text.Contains("do not compile, so the running ones keep running", StringComparison.Ordinal)));
     }
 
+    /// <summary>
+    /// The Rust engine's hostile-params sweep, in play mode and out of it: every command refuses params
+    /// of the wrong shape with an error (no exception escapes), and a refused command leaves the scene
+    /// as it was.
+    /// </summary>
+    [Fact]
+    public void HostileParamsAreRefusedForEveryCommandInPlayAndOut()
+    {
+        Scripted(Spinner);
+        var real = Create("Target");
+        var ids = registry.Commands.Select(c => c.Id).Where(id => id is not ("scene.new" or "edit.undo" or "edit.redo" or "play.stop" or "project.scripts.allow")).ToList();
+        string[] hostile =
+        [
+            """{"id": 5, "path": [], "parent": {}, "component": 3}""",
+            """{"id": "not-hex", "component": "transform", "value": null}""",
+            $$$"""{"id": "{{{new string('0', 32)}}}", "component": "transform", "value": {}}""",
+            $$$"""{"id": "{{{real}}}", "component": "transform", "value": {"position": "up"}}""",
+            $$"""{"id": "{{real}}", "name": "", "keys": [1], "seconds": "x", "map": 3, "element": {}, "value": "nan"}""",
+            $$$"""{"id": "{{{real}}}", "index": -1, "steps": -2, "pointer": [1], "pad": {"axes": [1]}}""",
+            """{"name": "x", "value": 1e999, "saved": "yes", "player": "zz"}""",
+            """{"unexpected": true}""",
+        ];
+        foreach (var playing in new[] { false, true })
+        {
+            if (playing)
+            {
+                Run("play.start");
+            }
+            foreach (var id in ids)
+            {
+                foreach (var bad in new[] { "1", "\"x\"", "[1, 2]", "true" })
+                {
+                    Assert.Equal(CommandErrorKind.ParamsNotObject, Try(id, bad).Error?.Kind);
+                }
+                foreach (var bad in hostile)
+                {
+                    var before = session.Scene.ToDoc();
+                    var result = Try(id, bad);
+                    if (result.IsError && !playing)
+                    {
+                        Assert.True(before.Equals(session.Scene.ToDoc()), $"{id} changed the scene on failure with {bad}");
+                    }
+                }
+            }
+            Assert.Equal(playing, session.IsPlaying);
+        }
+    }
+
     [Fact]
     public void AKeyframeAnimationPlaysWhenAskedAndStopsWhereItIs()
     {

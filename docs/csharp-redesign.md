@@ -1,7 +1,7 @@
 # Bayleaf in C#: a redesign
 
 Status: design, 2026-11-26. Asked for by the operator after the comparison of a C# port with the Rust
-engine. Stages 0 and 1 are done (see Stages): the C# tree, now at the repository's root, holds the core, the ECS and the
+engine. Stages 0 and 1 are done and 2 to 5 under way (see Stages; stage 4 has C# scripts and play mode): the C# tree, now at the repository's root, holds the core, the ECS and the
 scene with its files; the Rust tree is still the one users run.
 
 ## What is decided and what is not
@@ -59,7 +59,7 @@ stays buildable and takes fixes until stage 8 removes it. `examples/`, `assets/`
 
 | Layer | Projects |
 |---|---|
-| L0 | `Bayleaf.Core`: ids, handles, results, math (`Double3` for positions, since `System.Numerics` has only `float` vectors) |
+| L0 | `Bayleaf.Core`: ids, handles, results, math (`Double3` for positions, since `System.Numerics` has only `float` vectors); `Bayleaf.Script.Sdk`: what game scripts are written against, referring to nothing but .NET |
 | L1 | `Bayleaf.Ecs`: archetype storage, queries, schedule, the thread pool option |
 | L2 | `Bayleaf.Scene`, `Bayleaf.Assets`, `Bayleaf.Graph`, `Bayleaf.Interface` (namespace `Bayleaf.GameInterface`) |
 | L3 | `Bayleaf.Render`, `Bayleaf.Animation` (L3 as in the Rust tree) |
@@ -71,7 +71,11 @@ stays buildable and takes fixes until stage 8 removes it. `examples/`, `assets/`
 - **Opt-in modules.** A cargo feature becomes its own project, which the engine does not reference;
   an app turns a module on by referencing it and registering it at start (`Engine.Use(new
   PhysicsModule())`). The core builds and runs with none of them, which a test project without them
-  checks.
+  checks. A play-mode module implements `IPlayModule` (in `Bayleaf.Scene`, so modules of L4 can), and
+  play mode calls it through `IPlayWorld` (the scene, placing prefabs and adding scenes with their
+  scripts, reading files through the confinement, ending the game); `session.Use(new
+  GameplayModule())` turns one on, and `bayleaf-cli` turns on gameplay and streaming as the Rust CLI
+  builds them in. The parity tests run without modules, as the Rust engine's run without features.
 - **Interop.** Native code (wgpu-native, SDL3) is reached only through `Bayleaf.Native`, the one
   project with `AllowUnsafeBlocks`; each `unsafe` block keeps a `// SAFETY:` comment. Every other
   project is safe code.
@@ -157,6 +161,25 @@ This is the part that changes most, and the part that gains most.
   - limits on run time become a watchdog that stops play mode, not fuel;
   - a WebAssembly module that kept the sandbox (for mods and the Rust scripts written so far) was
     considered and turned down by the operator on 2026-11-26: scripts are C# only.
+- **How the script host does it** (stage 4, `docs/script-sdk.md`; the choices below are for the
+  operator to confirm):
+  - *Consent* is session state, per project folder (`Session.ScriptsAllowed`). The editor's question
+    and its menu give it through `project.scripts.allow`, which is disabled under automation, so an
+    agent can never allow the scripts it would then run; `bayleaf-cli run|batch --allow-scripts` is the
+    person's own word on the command line. Without it play mode runs the scene without its C# scripts
+    and says so (the console, and `notRun` in `play.start`'s result) rather than refusing to play. The
+    editor (stage 6) is to remember the answer per folder in the person's own settings; agents driving
+    a running editor run what its person allowed.
+  - *The watchdog*: the scripts run on a script thread of their own, and each play step waits for them
+    at most `Session.ScriptTimeLimit` (2 s by default). A step that takes longer stops play mode (the
+    scene comes back) and names the script that was running. .NET cannot stop a thread, so a script
+    stuck in a loop keeps its thread until the program ends, holding only its own host and scene; a
+    script that recurses without end ends the program.
+  - *Compiling* every `.cs` file of the project folder into one assembly (so scripts share helpers),
+    against .NET's assemblies and the SDK only, with no analyzers or generators of the project; what a
+    script declares (properties as fields, their defaults as constants, its menu and events) is read
+    from the compiler's symbols, so describing a script runs none of its code and needs no consent.
+    A change to any file reloads all scripts (they share the assembly).
 
 ## The other parts
 
@@ -209,21 +232,21 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    `Bayleaf.Cli`. A parity harness runs the same command lists against both CLIs and compares what
    comes back. From here on, new features land in C# only; the Rust tree takes fixes.
    *In progress, 2026-11-26.* `src/Bayleaf.Engine` holds the session, the command registry with its
-   undo steps (merged by key, as the editor drags), the automation confinement, and 138 of the Rust
-   engine's 172 commands: the scene's files, objects, hierarchy, components and scripts, its settings,
+   undo steps (merged by key, as the editor drags), the automation confinement, and 161 of the Rust
+   engine's 172 commands (play mode's 23 with stage 4, below), with `project.scripts.allow` of its own: the scene's files, objects, hierarchy, components and scripts, its settings,
    lighting and post-processing assets, data files and shapes, Input Maps, projects and prefabs (with
-   overrides, nesting and editing a prefab on its own) and keyframe animations (editing, the playhead's pose, recording, copying keys; their undo steps share the scene's history), the console, clearing saved values and splitting a scene into Streamed Areas (`src/Bayleaf.Streaming`, the opt-in module that streams them in play mode, is ported with its tests and waits for play mode), and the project's files (`asset.create`, `asset.list`, `asset.rename`, `asset.delete`; for now without a Recycle Bin, so a delete needs `permanent: true`, and without Rust scripts, refused with why), what a file is and holds (`asset.info`; a visual script's properties are the ones its graph declares, and a `.wasm` module is not described, since the C# engine's scripts are C#), the graph editor's commands (`graph.*`: material graphs, visual scripts and animation states, several open at once, their edits undo steps in the scene's history; a visual script's problems say it is not compiled, until the script host compiles visual scripts to C#), making an image an object's look (`scene.image.apply`), and bringing files in (`asset.import` with its import settings, `asset.importSettings.get`/`.set`, `scene.file.place`; until sound is ported a sound is checked only for its size, as the Rust engine does without its `audio` feature), and editing game interface layouts and their style files (`ui.layout.*`, `ui.element.*`, `ui.style.*`), and skeletal animation outside play mode (the `animation.*` commands on a player the first command makes for an object, the editor's preview that scrubs and plays a clip, `Session.Animate` moving previews on, and the poses the views will draw; what Rust does only while playing, a Model Animation's own clip or animation states, root motion, clip events and scripts' animation, comes with play mode; joint places agree to the bit except where a turn is interpolated, which the Rust engine does with glam's approximate arc cosine and sine, so the last digit can differ and the batch reads joints where no turn is interpolated). `apps/Bayleaf.Cli` runs `commands`, `run` and
-   `batch` as the Rust CLI does. The other 34 are listed with the Rust engine's id, label, menu,
+   overrides, nesting and editing a prefab on its own) and keyframe animations (editing, the playhead's pose, recording, copying keys; their undo steps share the scene's history), the console, clearing saved values and splitting a scene into Streamed Areas (`src/Bayleaf.Streaming`, the opt-in module that streams them in play mode, is ported with its tests and waits for play mode), and the project's files (`asset.create`, `asset.list`, `asset.rename`, `asset.delete`; for now without a Recycle Bin, so a delete needs `permanent: true`; kind `script` is a C# script), what a file is and holds (`asset.info`; a visual script's properties are the ones its graph declares, a `.wasm` module is not described, since the C# engine's scripts are C#, and a `.cs` script lists the properties its source declares), the graph editor's commands (`graph.*`: material graphs, visual scripts and animation states, several open at once, their edits undo steps in the scene's history; a visual script's problems say it is not compiled, until the script host compiles visual scripts to C#), making an image an object's look (`scene.image.apply`), and bringing files in (`asset.import` with its import settings, `asset.importSettings.get`/`.set`, `scene.file.place`; until sound is ported a sound is checked only for its size, as the Rust engine does without its `audio` feature), and editing game interface layouts and their style files (`ui.layout.*`, `ui.element.*`, `ui.style.*`), and skeletal animation outside play mode (the `animation.*` commands on a player the first command makes for an object, the editor's preview that scrubs and plays a clip, `Session.Animate` moving previews on, and the poses the views will draw; what Rust does only while playing, a Model Animation's own clip or animation states, root motion, clip events and scripts' animation, runs in play mode since stage 4; joint places agree to the bit except where a turn is interpolated, which the Rust engine does with glam's approximate arc cosine and sine, so the last digit can differ and the batch reads joints where no turn is interpolated). `apps/Bayleaf.Cli` runs `commands`, `run` and
+   `batch` as the Rust CLI does. The other 11 are listed with the Rust engine's id, label, menu,
    shortcut, params and prompt, but disabled with a reason, until their part is ported
-   (`src/Bayleaf.Engine/Pending.json` is the Rust engine's list): play mode, sound, streaming,
-   export, the profiler, the game interface in play mode, playing timelines, and
-   `scene.render`. The harness: each batch in `tests/commands/` runs in both engines' tests
+   (`src/Bayleaf.Engine/Pending.json` is the Rust engine's list): sound (`audio.*`), physics'
+   `physics.raycast`, export, the profiler and `scene.render`. The harness: each batch in `tests/commands/` runs in both engines' tests
    (`rust/crates/engine/src/parity_tests.rs`, `tests/Bayleaf.Cli.Tests`), as `bayleaf-cli batch` runs
    it, and what comes back (folders as `$root`/`$out`, ids as `<id N>`) is compared with
    `tests/commands/expected/`, which the Rust test writes with `BAYLEAF_BLESS=1`. A difference kept on purpose
    is listed, with why, in `tests/commands/differences/known.json`: the C# test checks this engine's value
-   there and compares the rest. All 66 batches agree,
-   and every ported command lists the same as in Rust. The automation port is done (`src/Bayleaf.Automation`):
+   there and compares the rest. All 89 batches agree,
+   and every ported command lists the same as in Rust, but for what `tests/commands/differences/listing.json`
+   says (C# scripts' `script.new` and `script.build`, and the C#-only `project.scripts.allow`). The automation port is done (`src/Bayleaf.Automation`):
    `bayleaf-cli mcp` serves every command as a tool over stdio, refuses to start without both automation
    roots, and can drive a running editor through its loopback control channel (token file, owner-only),
    with the Rust crate's tests.
@@ -237,19 +260,51 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    of `runtime-rebuild.md` at 20,000 and 100,000 objects, no worse than the Rust engine's at the time.
    *Visual script catalog ported, 2026-11-26* (`src/Bayleaf.Script`: every node kind, the pins their
    settings give them, the upgrade of older files and the Inspector check); `.bscript` files and the
-   catalog match the Rust engine's (`-p bayleaf-script parity_tests`). Compiling them to C# comes with
-   the script host.
+   catalog match the Rust engine's (`-p bayleaf-script parity_tests`). Compiling them to C# comes next,
+   on the script host below.
+   *C# scripts and play mode ported, 2026-11-26* (`docs/script-sdk.md`). `src/Bayleaf.Script.Sdk` is what
+   scripts are written against; `src/Bayleaf.Script` compiles a project's `.cs` files with Roslyn into a
+   collectible load context, reads what each declares from the source, reloads on change and runs them
+   on a watched script thread; `src/Bayleaf.Engine` has play mode and its 23 commands with the Rust
+   engine's rules (no undo steps, the file not dirtied, the scene put back on stop), the keyframe and
+   skeletal animation players, interfaces in play, saved values, Input Maps, and the gameplay and
+   streaming modules through `IPlayModule`. Physics, sound and particles stay for stage 5: their
+   commands are pending, and scripts' calls to them do nothing and say so. The examples' Rust scripts
+   are in C# in `scripts/`. The Rust engine's play tests run as C# behaviour tests, and 23 play-mode
+   batches agree in both engines' parity tests (scenes without scripts, which both run).
+   *The gate, measured 2026-11-26* (`bench/scripts`: rust/bench's scene, its scripts in C#, the script
+   step `ScriptHost.Update`, release build on the JIT, medians of three interleaved runs; this computer
+   was busy with other programs, a game among them, and single runs differed by up to half). The Rust
+   engine's figures are those of `runtime-rebuild.md` (20,000: a quiet morning; 100,000: worked out from
+   the ratios that stage 4 gives against stage 3's figures), not rerun here:
+
+   | Script step (ms) | C#, 20,000 | Rust, 20,000 | C#, 100,000 | Rust, 100,000 |
+   |---|---:|---:|---:|---:|
+   | Three empty scripts | 0.24 to 0.29 | 1.2 | 4.3 to 4.4 | about 6.6 to 6.9 |
+   | Spin, bob, follow, a step per object | 4.9 to 5.1 (3.1 at best) | 4.0 | 20.5 to 23.4 (16.2 at best) | about 15 to 24 |
+   | The same, each stepping many | 2.9 to 3.2 (2.3 at best) | 2.2 | 14.3 to 17.4 (12.1 at best) | about 11 to 14 |
+
+   No collection and no allocation in the timed steps (a test checks the step allocates nothing). The
+   gate is met for the cost of running scripts (the empty ones, 4 times faster at 20,000) but not shown
+   for scripts that move their objects: under this load they run up to a quarter slower than the Rust
+   figures at 20,000, and within or at the top of the Rust range at 100,000. A fair verdict needs both
+   engines run in turns on a quiet computer (`rust/bench` with `--full-load`, and `bench/scripts`); what
+   is left in the C# step is the scripts' own calls (about 25 ns per object for a pose read and written)
+   and writing the moved transforms to the scene (about 35 ns each).
 5. **Physics, audio, animation, particles, game interface, gameplay, streaming.** Their behaviour
    tests ported and passing.
    *Animation ported, 2026-11-26* (`src/Bayleaf.Animation`: clips, motions, players, animation states
    with their node kinds and compiler). Each `.banim` file of `tests/files` is read with the animation
    states' catalog, written back, compiled and run on the arm fixture in both engines, and compared with
    what the Rust engine writes (`BAYLEAF_BLESS=1 cargo test -p bayleaf-animation`). The `animation.*`
-   commands and the editor's previews are in the engine (stage 2); the players play mode makes and
-   steps wait for play mode.
+   commands and the editor's previews are in the engine (stage 2); play mode (stage 4) makes and
+   steps the players, with the Rust engine's play tests (a Model Animation's clip and animation
+   states, clip events to scripts, root motion, scripts' clips and joints).
    *Gameplay ported, 2026-11-26* (`src/Bayleaf.Gameplay`, an opt-in module like streaming: Player
    Control's steering and following camera, Game Rules' start, respawn and time limit), with the Rust
-   behaviour tests; play mode applies them when it is ported.
+   behaviour tests; play mode applies them through `GameplayModule` (Game Rules and the following
+   camera; steering the player's Character waits for physics). World streaming runs in play mode
+   through `StreamingModule`.
 6. **The editor.** Panel by panel, each with its headless tests and its accessibility check.
 7. **The player and export.** NativeAOT players for Windows, macOS and Linux; the web decision.
 8. **Switch.** The C# editor becomes the release; the Rust tree stays for one release and is then
@@ -274,3 +329,9 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
 1. ~~Keep the web player?~~ Kept (2026-11-26).
 2. ~~Keep sandboxed WebAssembly scripts?~~ No: C# scripts only (2026-11-26).
 3. Stage 1 is done: start stage 2 (the engine, its commands and the parity harness)?
+4. The script host's choices of stage 4, under "Scripts" above: the consent per project folder, given by
+   the person through `project.scripts.allow` (refused to agents) or `--allow-scripts`, with play running
+   without the scripts until then; the watchdog's limit of 2 s per step; one assembly per project, so any
+   change reloads every script; per-object scripts running in load order and then each script type that
+   steps many; the play-mode module contract (`IPlayModule`) living in `Bayleaf.Scene`; the example
+   scripts in `scripts/` at the root. Keep them?

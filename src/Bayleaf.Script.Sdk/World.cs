@@ -68,10 +68,6 @@ internal interface IWorld
 
     SceneObject Self(int slot);
 
-    Pose OwnPose(GameScript script);
-
-    void SetOwnPose(GameScript script, in Pose pose);
-
     bool Exists(UInt128 id);
 
     string? NameOf(UInt128 id);

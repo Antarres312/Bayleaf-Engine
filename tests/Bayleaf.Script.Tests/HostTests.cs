@@ -493,6 +493,33 @@ public sealed class HostTests : IDisposable
     }
 
     [Fact]
+    public void APoseChangedInPlaceReachesTheSceneAndOneThatIsNotFiniteIsRefused()
+    {
+        Write("wild.cs", """
+            public class Wild : GameScript
+            {
+                [ScriptProperty] private bool broken;
+                protected override void Advance(float seconds)
+                {
+                    Pose.Position.X += 1;
+                    if (broken) Pose.Rotation.Y = float.NaN;
+                }
+            }
+            """);
+        var (host, _) = Host();
+        using var _1 = host;
+        var scene = new SceneModel();
+        var calm = Add(scene, "Calm", Script("wild.cs"));
+        var broken = Add(scene, "Broken", Script("wild.cs", ("broken", new PropertyValue.Flag(true))));
+        host.LoadScene(scene, 0);
+        host.Update(scene, 0.1f, 0.1);
+        host.Update(scene, 0.1f, 0.2);
+        Assert.Equal(2.0, TransformOf(scene, calm).Position.X);
+        Assert.Equal(0.0, TransformOf(scene, broken).Position.X);
+        Assert.Contains(host.TakeLogs(), l => l.Error && l.Owner == broken && l.Text.Contains("not finite", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void WhatIsNotInTheCSharpEngineYetSaysSoOnceAndDoesNothing()
     {
         Write("noisy.cs", """

@@ -702,7 +702,17 @@ internal static partial class PlayLoop
         {
             return;
         }
-        ReadableModules(session, session.Scene);
+        // Under automation the scripts of what comes must be inside the readable folders.
+        foreach (var id in ScriptHost.Order(session.Scene).Where(id => roots.Any(r => r == id || session.Scene.IsInside(id, r))))
+        {
+            if (session.Scene.TryGet<Scripts>(id, out var list))
+            {
+                foreach (var script in list.Items)
+                {
+                    session.Allowed(Path.Combine(session.ScriptDir, script.Module), Access.Read);
+                }
+            }
+        }
         if (!play.Host.LoadUnder(session.Scene, roots, play.Time))
         {
             StoppedByWatchdog(session);

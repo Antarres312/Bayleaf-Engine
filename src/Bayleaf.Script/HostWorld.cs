@@ -56,27 +56,6 @@ public sealed partial class ScriptHost
 
         public SceneObject Self(int slot) => Of(slot) is { } i ? new SceneObject(i.Object.AsUInt128(), i.View, this) : SceneObject.None;
 
-        public Pose OwnPose(GameScript script)
-        {
-            var poses = View.Poses;
-            var at = script.Place;
-            return (uint)at < (uint)poses.Length ? poses[at] : Pose.Initial;
-        }
-
-        public void SetOwnPose(GameScript script, in Pose pose)
-        {
-            var at = script.Place;
-            if ((uint)at >= (uint)View.Poses.Length)
-            {
-                return;
-            }
-            if (!pose.IsFinite)
-            {
-                throw Host.Broke(script.Slot, "the pose given is not finite");
-            }
-            View.Move(at, pose);
-        }
-
         public bool Exists(UInt128 id) => At(id) is not null;
 
         public string? NameOf(UInt128 id) => At(id) is { } at ? View.Names[at] : null;

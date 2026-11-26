@@ -226,7 +226,7 @@ public sealed partial class ScriptHost : IDisposable
                 var made = instance.Type.Create();
                 made.World = world;
                 made.Slot = slot;
-                made.Place = instance.View;
+                (made.Place, made.Store) = (instance.View, view.Store);
                 instance.Script = made;
             });
             if (!instance.Stopped)
@@ -818,7 +818,14 @@ public sealed partial class ScriptHost : IDisposable
 
     private static Transform TransformOf(Pose p) => new(new Double3(p.Position.X, p.Position.Y, p.Position.Z), p.Rotation, p.Scale);
 
-    private void WritePoses(SceneModel scene) => view.Write(scene);
+    private void WritePoses(SceneModel scene)
+    {
+        view.Write(scene);
+        foreach (var at in view.Refused)
+        {
+            logs.Add(new LogLine(view.Ids[at], "Pose", "a script gave it a pose that is not finite; it stays where it was", true));
+        }
+    }
 
     /// <summary>How many instances, from the first, have found their object's place in the view.</summary>
     private int placed;
@@ -844,7 +851,10 @@ public sealed partial class ScriptHost : IDisposable
         if (view.Index.TryGetValue(instance.Object, out var at))
         {
             instance.View = at;
-            instance.Script?.Place = at;
+            if (instance.Script is { } script)
+            {
+                (script.Place, script.Store) = (at, view.Store);
+            }
             return;
         }
         instance.View = -1;
@@ -877,8 +887,11 @@ public sealed partial class ScriptHost : IDisposable
 
         public Pose[] Poses { get; private set; } = [];
 
-        private bool[] moved = [];
-        private readonly List<int> movedList = [];
+        /// <summary>Each object's pose as the scene has it (as last read or written): a script's change is what differs.</summary>
+        private Pose[] before = [];
+
+        /// <summary>The places whose new pose was not finite at the last write, kept where they were.</summary>
+        public List<int> Refused { get; } = [];
         private ulong mark;
         private Dictionary<string, List<int>>? kinds;
         private List<StableId>? players;
@@ -927,8 +940,9 @@ public sealed partial class ScriptHost : IDisposable
             Names = new string[Ids.Length];
             Keys = new ObjectKey?[Ids.Length];
             Poses = new Pose[Ids.Length];
-            moved = new bool[Ids.Length];
-            movedList.Clear();
+            before = new Pose[Ids.Length];
+            Touched = new byte[Ids.Length];
+            Store = new PoseStore(Poses, Touched);
             Index.Clear();
             ByName.Clear();
             kinds = null;
@@ -946,38 +960,61 @@ public sealed partial class ScriptHost : IDisposable
             mark = scene.TransformMark;
         }
 
-        private void Read(SceneModel scene, int at) => Poses[at] = scene.TryGet<Transform>(Ids[at], out var t) ? PoseOf(t) : Pose.Initial;
+        private void Read(SceneModel scene, int at) => Poses[at] = before[at] = scene.TryGet<Transform>(Ids[at], out var t) ? PoseOf(t) : Pose.Initial;
 
         /// <summary>Moves the object at <paramref name="at"/>; it reaches the scene when the step's poses are written.</summary>
         public void Move(int at, in Pose pose)
         {
             Poses[at] = pose;
-            if (!moved[at])
-            {
-                moved[at] = true;
-                movedList.Add(at);
-            }
+            Touched[at] = 1;
         }
 
+        /// <summary>1 for each place whose pose a script reached this step (it may have changed it), shared with the scripts as <see cref="Poses"/> is.</summary>
+        public byte[] Touched { get; private set; } = [];
+
+        /// <summary>The poses and their marks as the scripts hold them.</summary>
+        public PoseStore Store { get; private set; } = PoseStore.Empty;
+
+        /// <summary>
+        /// Writes to the scene each pose a script reached this step (<see cref="Touched"/>) that differs, bit
+        /// for bit, from what the scene has. A pose that is not finite is put back and its place listed in
+        /// <see cref="Refused"/>.
+        /// </summary>
         public void Write(SceneModel scene)
         {
-            if (movedList.Count == 0)
+            Refused.Clear();
+            if (!ReferenceEquals(scene, this.scene))
             {
                 return;
             }
-            if (ReferenceEquals(scene, this.scene))
+            var poses = Poses;
+            var kept = before;
+            var touched = Touched.AsSpan();
+            var wrote = false;
+            for (var at = touched.IndexOf((byte)1); at >= 0; at = touched[(at + 1)..].IndexOf((byte)1) is var next and >= 0 ? at + 1 + next : -1)
             {
-                foreach (var at in movedList)
+                touched[at] = 0;
+                if (System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<Pose>(in poses[at])).SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<Pose>(in kept[at]))))
                 {
-                    moved[at] = false;
-                    if (Keys[at] is { } key)
-                    {
-                        scene.SetTransform(key, TransformOf(Poses[at]));
-                    }
+                    continue;
                 }
+                if (!poses[at].IsFinite)
+                {
+                    poses[at] = kept[at];
+                    Refused.Add(at);
+                    continue;
+                }
+                kept[at] = poses[at];
+                if (Keys[at] is { } key)
+                {
+                    scene.SetTransform(key, TransformOf(poses[at]));
+                    wrote = true;
+                }
+            }
+            if (wrote)
+            {
                 mark = scene.TransformMark;
             }
-            movedList.Clear();
         }
 
         /// <summary>The places of the objects that are <paramref name="kind"/>: a component (name or label), a tag or a script (its name or file).</summary>

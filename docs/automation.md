@@ -33,6 +33,13 @@ be inside a readable folder. `play.start` takes `{scripts?}`: `interpreted` (the
 `compiled` (machine code, in programs built with the `compiled-scripts` feature, as the player is);
 a program without it interprets them and says so in the console. Its result names the `runtime` used.
 
+In the C# engine scripts are C# (`docs/script-sdk.md`), always compiled, so `play.start`'s `runtime` is
+`compiled` whichever is asked. They run in the engine's process with no sandbox, so they run only once the
+person allowed the project's scripts (the editor's question, `project.scripts.allow`, or `bayleaf-cli
+--allow-scripts`); `project.scripts.allow` is refused to agents. An agent's `play.start` on a project
+whose scripts are not allowed plays without them and says so in its result (`notRun`) and the console.
+A play step whose scripts run longer than the time limit (2 s) stops play mode and names the script.
+
 The limits apply only to the agent's requests: in the editor, your own commands are not limited.
 
 ## Headless MCP server
