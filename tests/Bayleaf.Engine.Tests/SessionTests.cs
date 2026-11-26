@@ -71,9 +71,9 @@ public class SessionTests
     public void CommandsNotPortedYetAreListedButDisabledWithAReason()
     {
         var (registry, session) = Fresh();
-        var render = registry.List(session).First(r => r.Get("id")?.AsString() == "scene.render");
-        Assert.Equal(JsonValue.From(false), render.Get("enabled"));
-        Assert.Contains("not in the C# engine yet", render.Get("disabledReason")!.AsString(), StringComparison.Ordinal);
+        var export = registry.List(session).First(r => r.Get("id")?.AsString() == "project.export");
+        Assert.Equal(JsonValue.From(false), export.Get("enabled"));
+        Assert.Contains("not in the C# engine yet", export.Get("disabledReason")!.AsString(), StringComparison.Ordinal);
     }
 
     [Fact]

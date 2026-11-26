@@ -1,17 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- L3: the renderer's GPU-independent part for now: material graphs (.bmaterial), their node kinds
-       and the compiler that turns a graph into the WGSL surface function the mesh shader takes, and
-       the library that reads and keeps compiled materials, lighting and post-processing files.
-       The WebGPU renderer, extraction and the shaders come with stage 3 (docs/csharp-redesign.md). -->
+  <!-- L3: the renderer. Material graphs (.bmaterial), their node kinds and the compiler to the WGSL
+       surface function the mesh shader takes; extraction, which turns a scene into a GPU-independent
+       Frame; and the WebGPU renderer that draws a frame (through Bayleaf.Native's wgpu-native). -->
   <PropertyGroup>
     <RootNamespace>Bayleaf.Render</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+    <ProjectReference Include="..\Bayleaf.Native\Bayleaf.Native.csproj" />
     <ProjectReference Include="..\Bayleaf.Graph\Bayleaf.Graph.csproj" />
     <ProjectReference Include="..\Bayleaf.Scene\Bayleaf.Scene.csproj" />
+    <ProjectReference Include="..\Bayleaf.Assets\Bayleaf.Assets.csproj" />
+  </ItemGroup>
+
+  <!-- One copy of each shader: the Rust renderer's, embedded from where it is (until stage 8 moves it). -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\rust\crates\render\src\shaders\*.wgsl" LogicalName="Bayleaf.Render.Shaders.%(Filename)%(Extension)" Link="Shaders\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
