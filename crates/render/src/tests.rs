@@ -1177,7 +1177,8 @@ fn a_skinned_model_bends_on_the_gpu_as_on_the_cpu() {
     let dir = asset_folder("skinned");
     bayleaf_assets::fixtures::skinned_arm(&dir).unwrap();
     let mut scene = Scene::new();
-    let wall = object(&mut scene, "mesh", json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "arm.gltf"}), [0.0; 3], [0.0; 3]);
+    let wall =
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "arm.gltf"}), [0.0; 3], [0.0; 3]);
     scene.add_component(wall, "modelAnimation").unwrap();
     scene.set_component(wall, "modelAnimation", json!({"animation": "Stretch", "playing": true, "looping": false, "speed": 1})).unwrap();
     object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3}), [0.0; 3], [0.0; 3]);

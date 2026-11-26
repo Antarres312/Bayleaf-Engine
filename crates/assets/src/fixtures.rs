@@ -32,9 +32,7 @@ pub fn skinned_arm(dir: &Path) -> std::io::Result<PathBuf> {
     f32s(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, half, half], &mut bin);
     std::fs::write(dir.join("arm.bin"), &bin)?;
     let view = |offset: usize, length: usize| serde_json::json!({ "buffer": 0, "byteOffset": offset, "byteLength": length });
-    let channel = |node: usize, path: &str, output: usize| {
-        serde_json::json!({ "channels": [{ "sampler": 0, "target": { "node": node, "path": path } }], "samplers": [{ "input": 4, "output": output }] })
-    };
+    let channel = |node: usize, path: &str, output: usize| serde_json::json!({ "channels": [{ "sampler": 0, "target": { "node": node, "path": path } }], "samplers": [{ "input": 4, "output": output }] });
     let mut stretch = channel(1, "translation", 5);
     stretch["name"] = "Stretch".into();
     let mut raise = channel(1, "translation", 6);
