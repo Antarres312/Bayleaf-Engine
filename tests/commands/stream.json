@@ -1,0 +1,11 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/s"}},
+  {"cmd": "scene.object.create", "params": {"name": "Far", "components": {"transform": {"position": [-25, 0, 31], "rotation": [0, 45, 0], "scale": [1, 1, 1]}}}},
+  {"cmd": "scene.object.create", "params": {"name": "Near", "components": {"transform": {"position": [3, 1, 4], "rotation": [0, 0, 0], "scale": [2, 2, 2]}}}},
+  {"cmd": "scene.object.create", "params": {"name": "Child", "parent": "$2.id"}},
+  {"cmd": "stream.split", "params": {"cellSize": 10, "folder": "cells/"}},
+  {"cmd": "scene.document"},
+  {"cmd": "scene.open", "params": {"path": "$out/s/cells/cell_-3_3.bscene"}},
+  {"cmd": "scene.document"},
+  {"cmd": "console.read"}
+]

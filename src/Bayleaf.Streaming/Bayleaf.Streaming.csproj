@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L4: optional world streaming. An opt-in module: the engine does not reference it, an app turns
+       it on by referencing it. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Streaming</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+    <ProjectReference Include="..\Bayleaf.Scene\Bayleaf.Scene.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -143,6 +143,7 @@ public sealed class CommandRegistry
         all.AddRange(InputCommands.All());
         all.AddRange(TimelineCommands.All());
         all.AddRange(ConsoleCommands.All());
+        all.AddRange(StreamCommands.All());
         all.AddRange(PendingCommands.All(all.Select(c => c.Id).ToHashSet(StringComparer.Ordinal)));
         return new CommandRegistry(all);
     }

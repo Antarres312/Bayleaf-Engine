@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Bayleaf.Streaming\Bayleaf.Streaming.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,17 @@
+{
+  "error": "nothing to split: the scene's top objects all belong everywhere (cameras, sun lights, environment, rules, players)",
+  "failedStep": 3,
+  "results": [
+    {
+      "name": "n",
+      "path": "$out/n",
+      "scene": "$out/n/scenes/main.bscene"
+    },
+    {
+      "deleted": 1
+    },
+    {
+      "deleted": 1
+    }
+  ]
+}
