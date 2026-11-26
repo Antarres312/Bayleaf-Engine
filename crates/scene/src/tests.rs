@@ -1,5 +1,6 @@
 use serde_json::json;
 
+use crate::components::{PropertyShape, PropertyType, PropertyValue};
 use crate::doc::{self, SceneDoc};
 use crate::{Scene, SceneError};
 
@@ -312,4 +313,65 @@ fn transform_writes_since_a_mark_are_listed_and_a_mark_too_old_says_so() {
         scene.set(a, moved.clone()).unwrap();
     }
     assert_eq!(scene.transforms_written_since(mark), None);
+}
+
+#[test]
+fn data_files_read_their_values_where_they_fit_and_the_shape_defaults_elsewhere() {
+    use crate::data::{DataField, DataFile, DataShape};
+    let mut health = DataField::new("health", PropertyType::Number, PropertyShape::Single);
+    health.default = PropertyValue::Number(100.0);
+    let mut waves = DataField::new("waves", PropertyType::WholeNumber, PropertyShape::List);
+    waves.default = PropertyValue::List { list: vec![PropertyValue::Number(3.0)] };
+    let shape = DataShape { fields: vec![health, waves, DataField::new("drop", PropertyType::Prefab, PropertyShape::Single)] };
+    shape.validate().unwrap();
+    let mut data = DataFile::new("data/enemy.bshape");
+    data.values.insert("health".to_owned(), PropertyValue::Number(40.0));
+    data.values.insert("drop".to_owned(), PropertyValue::Text("coin.bsound".to_owned()));
+    data.values.insert("gone".to_owned(), PropertyValue::Flag(true));
+    let read = data.resolved(&shape);
+    assert_eq!(read["health"].value, PropertyValue::Number(40.0), "its own value");
+    assert_eq!(read["waves"].value, PropertyValue::List { list: vec![PropertyValue::Number(3.0)] }, "unset: the default");
+    assert_eq!(read["drop"].value, PropertyValue::Text(String::new()), "a path of the wrong kind reads as the default");
+    assert!(!read.contains_key("gone"), "only the shape's fields are read");
+    assert_eq!(data.problems(&shape).len(), 2, "the misfit and the unknown value are reported: {:?}", data.problems(&shape));
+    // The files read back as written.
+    assert_eq!(DataShape::from_text(&shape.to_text()).unwrap(), shape);
+    assert_eq!(DataFile::from_text(&data.to_text()).unwrap(), data);
+}
+
+#[test]
+fn shapes_refuse_fields_that_cannot_be_read_and_lay_groups_out_together() {
+    use crate::data::{DataField, DataShape};
+    use crate::inspector::InspectorItem;
+    let field = |name: &str| DataField::new(name, PropertyType::Number, PropertyShape::Single);
+    assert!(DataShape { fields: vec![field("a"), field("a")] }.validate().is_err(), "two fields of one name");
+    let mut bad = field("a");
+    bad.default = PropertyValue::Text("x".to_owned());
+    assert!(DataShape { fields: vec![bad] }.validate().is_err(), "a default of another type");
+    let mut ranged = DataField::new("name", PropertyType::Text, PropertyShape::Single);
+    ranged.range = Some([0.0, 1.0]);
+    assert!(DataShape { fields: vec![ranged] }.validate().is_err(), "a range on text");
+    let mut unknown = field("a");
+    unknown.code = "lists:number".to_owned();
+    assert!(DataShape { fields: vec![unknown] }.validate().is_err(), "a type code that names nothing");
+
+    let grouped = |name: &str| DataField { group: Some("Combat".to_owned()), ..field(name) };
+    let shape = DataShape { fields: vec![grouped("damage"), field("speed"), grouped("range")] };
+    let layout = shape.layout();
+    assert_eq!(layout.len(), 2, "the group's fields show together where its first is");
+    assert!(matches!(&layout[0], InspectorItem::Group { items, .. } if items.len() == 2));
+}
+
+#[test]
+fn file_properties_hold_paths_of_their_kind_or_nothing() {
+    let path = |t: &str| PropertyValue::Text(t.to_owned());
+    assert!(path("").fits(PropertyType::Data), "none");
+    assert!(path("data/Goblin.BDATA").fits(PropertyType::Data), "the extension in any case");
+    assert!(!path("data/goblin.bshape").fits(PropertyType::Data));
+    assert!(path("sounds/hit.ogg").fits(PropertyType::Sound) && !path("sounds/hit.ogg").fits(PropertyType::Prefab));
+    assert!(!path(&format!("{}.bprefab", "a".repeat(600))).fits(PropertyType::Prefab), "too long a path");
+    for ty in [PropertyType::Prefab, PropertyType::Sound, PropertyType::Material, PropertyType::Data] {
+        assert_eq!(PropertyType::from_code(ty.code()), Some(ty), "{} reads back", ty.code());
+        assert!(ty.zero().fits(ty), "{}'s none fits", ty.code());
+    }
 }

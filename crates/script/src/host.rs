@@ -20,8 +20,8 @@ use crate::{
     ABI_VERSION, DeclaredEvent, Description, EVERY_OBJECT, EventArg, FUEL_PER_CALL, GameState, Input, LogLine, MAX_COLLECTION_ITEMS, MAX_DECLARED_EVENTS,
     MAX_DESCRIPTION_BYTES, MAX_EVENT_ARGS, MAX_EVENT_TEXT, MAX_LOG_BYTES, MAX_LOG_LINES, MAX_MESSAGE_NAME, MAX_MESSAGES_PER_CALL, MAX_OBJECT_REFS,
     MAX_REQUESTS_PER_CALL, MAX_STORED_COLLECTIONS, MAX_SUBSCRIPTIONS, MapKey, Message, Ordered, Properties, PropertyWrite, Request, Scope, ScriptError,
-    ScriptFault, ScriptValues, SharedState, Stored, Subscription, Velocities, WorldView, actions, field_numbers, kind_key, lock, menu_path, merged_position,
-    module_bytes, read_position, read_transform, readable_component, script_keys, transform_from, visual,
+    ScriptFault, ScriptValues, SharedData, SharedState, Stored, Subscription, Velocities, WorldView, actions, field_numbers, kind_key, lock, menu_path,
+    merged_position, module_bytes, read_position, read_transform, readable_component, script_keys, transform_from, visual,
 };
 use crate::{FRAME_CHANGED, FRAME_CURRENT, FRAME_ENTRY, FRAME_HANDLE_SHIFT, FRAME_PROPERTIES, FRAME_RUNNING, StepFrame};
 use bayleaf_script_sdk::native::NativeObject;
@@ -241,6 +241,8 @@ pub struct ScriptHost {
     interface: Arc<crate::InterfaceValues>,
     input_maps: actions::SharedInput,
     state: SharedState,
+    /// The project's data files, read when play started.
+    data: SharedData,
     /// A loaded script reads or sets component fields, so each step takes their values along.
     reads_fields: bool,
     /// Script properties set during the step, applied when it ends.
@@ -284,6 +286,7 @@ impl ScriptHost {
             interface: Arc::new(crate::InterfaceValues::new()),
             input_maps: actions::SharedInput::default(),
             state: SharedState::default(),
+            data: SharedData::default(),
             reads_fields: false,
             property_writes: Vec::new(),
             view: Arc::default(),
@@ -608,6 +611,7 @@ impl ScriptHost {
         state.index = index;
         state.state = Arc::clone(&self.state);
         state.input_maps = Arc::clone(&self.input_maps);
+        state.data = Arc::clone(&self.data);
         // The world view comes before each call (init, start, every step), so a script just loaded
         // keeps none: loading stays linear in the scene, not objects times scripts.
         state.world = Arc::default();
@@ -1145,6 +1149,12 @@ impl ScriptHost {
     /// The characters standing on something, as scripts see them in the next calls.
     pub fn set_grounded(&mut self, grounded: impl IntoIterator<Item = StableId>) {
         self.grounded = Arc::new(grounded.into_iter().collect());
+    }
+
+    /// The project's data files as scripts read them (`data_*`), by path relative to the project
+    /// folder. Scripts loaded after this see them; play sets them once, before any script loads.
+    pub fn set_data(&mut self, data: HashMap<String, crate::DataValues>) {
+        self.data = Arc::new(data);
     }
 
     /// The interface elements as they show, as scripts read them in the next calls.
@@ -1882,6 +1892,127 @@ fn link_native(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
     Ok(())
 }
 
+/// A field of a data file, as `data_*` imports name them: the file's path and the field's name.
+fn data_field(
+    caller: &mut Caller<'_, HostState>,
+    what: &str,
+    file: (i32, i32),
+    field: (i32, i32),
+) -> Result<Option<(PropertyType, PropertyShape, PropertyValue)>, Error> {
+    let path = read_text(caller, file.0, file.1, bayleaf_scene::components::MAX_PROPERTY_PATH).map_err(|m| fault(caller, format!("{what}: {m}")))?;
+    let name = read_text(caller, field.0, field.1, 256).map_err(|m| fault(caller, format!("{what}: {m}")))?;
+    Ok(caller.data().data.get(&crate::data_key(&path)).and_then(|values| values.get(&name)).cloned())
+}
+
+/// Writes a value's three numbers (as `component_get` does) at `out`; 1 when it is a number, whole
+/// number, true/false, vector or colour, else 0 and zeros.
+fn write_numbers(caller: &mut Caller<'_, HostState>, out: i32, value: Option<&PropertyValue>, what: &str) -> Result<i32, Error> {
+    let numbers = value.and_then(PropertyValue::numbers);
+    let bytes: Vec<u8> = numbers.unwrap_or([0.0; 3]).iter().flat_map(|v| v.to_le_bytes()).collect();
+    write_guest(caller, out, &bytes, what)?;
+    Ok(i32::from(numbers.is_some()))
+}
+
+/// Copies at most `cap` bytes of a text value to `out` and returns its whole length; -1 when it is
+/// no text (text, an object's name or a file's path).
+fn write_text_value(caller: &mut Caller<'_, HostState>, out: i32, cap: i32, value: Option<&PropertyValue>, what: &str) -> Result<i32, Error> {
+    let Some(text) = value.and_then(PropertyValue::text).map(str::to_owned) else { return Ok(-1) };
+    let room = usize::try_from(cap).map_err(|_| fault(caller, format!("{what}: the room must not be negative")))?;
+    write_guest(caller, out, &text.as_bytes()[..text.len().min(room)], what)?;
+    Ok(i32::try_from(text.len()).unwrap_or(i32::MAX))
+}
+
+/// An item of a list field by place, or of a map field by its key as text (`3`, `true`, `1,2,3`).
+fn data_item(value: &PropertyValue, place: Result<usize, &str>) -> Option<PropertyValue> {
+    match (value, place) {
+        (PropertyValue::List { list }, Ok(index)) => list.get(index).cloned(),
+        (PropertyValue::Map { map }, Err(key)) => map.get(key).cloned(),
+        _ => None,
+    }
+}
+
+/// The one value of a field that holds one (not a list or map).
+fn single(field: Option<(PropertyType, PropertyShape, PropertyValue)>) -> Option<PropertyValue> {
+    field.filter(|(_, shape, _)| *shape == PropertyShape::Single).map(|(_, _, v)| v)
+}
+
+/// The data imports: scripts read the project's data files, as they were saved when play started.
+fn link_data(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
+    linker.func_wrap("bayleaf", "data_get", |mut caller: Caller<'_, HostState>, fp: i32, fl: i32, np: i32, nl: i32, out: i32| -> Result<i32, Error> {
+        let value = single(data_field(&mut caller, "data_get", (fp, fl), (np, nl))?);
+        write_numbers(&mut caller, out, value.as_ref(), "data_get")
+    })?;
+    linker.func_wrap(
+        "bayleaf",
+        "data_text",
+        |mut caller: Caller<'_, HostState>, fp: i32, fl: i32, np: i32, nl: i32, out: i32, cap: i32| -> Result<i32, Error> {
+            let value = single(data_field(&mut caller, "data_text", (fp, fl), (np, nl))?);
+            write_text_value(&mut caller, out, cap, value.as_ref(), "data_text")
+        },
+    )?;
+    linker.func_wrap("bayleaf", "data_len", |mut caller: Caller<'_, HostState>, fp: i32, fl: i32, np: i32, nl: i32| -> Result<i32, Error> {
+        let field = data_field(&mut caller, "data_len", (fp, fl), (np, nl))?;
+        Ok(match field.map(|(_, _, v)| v) {
+            Some(PropertyValue::List { list }) => i32::try_from(list.len()).unwrap_or(i32::MAX),
+            Some(PropertyValue::Map { map }) => i32::try_from(map.len()).unwrap_or(i32::MAX),
+            _ => -1,
+        })
+    })?;
+    linker.func_wrap(
+        "bayleaf",
+        "data_item",
+        |mut caller: Caller<'_, HostState>, fp: i32, fl: i32, np: i32, nl: i32, index: i32, out: i32| -> Result<i32, Error> {
+            let field = data_field(&mut caller, "data_item", (fp, fl), (np, nl))?;
+            let item = field.zip(usize::try_from(index).ok()).and_then(|((_, _, v), i)| data_item(&v, Ok(i)));
+            write_numbers(&mut caller, out, item.as_ref(), "data_item")
+        },
+    )?;
+    linker.func_wrap(
+        "bayleaf",
+        "data_item_text",
+        |mut caller: Caller<'_, HostState>, fp: i32, fl: i32, np: i32, nl: i32, index: i32, out: i32, cap: i32| -> Result<i32, Error> {
+            let field = data_field(&mut caller, "data_item_text", (fp, fl), (np, nl))?;
+            let item = field.zip(usize::try_from(index).ok()).and_then(|((_, _, v), i)| data_item(&v, Ok(i)));
+            write_text_value(&mut caller, out, cap, item.as_ref(), "data_item_text")
+        },
+    )?;
+    linker.func_wrap(
+        "bayleaf",
+        "data_key",
+        |mut caller: Caller<'_, HostState>, fp: i32, fl: i32, np: i32, nl: i32, index: i32, out: i32, cap: i32| -> Result<i32, Error> {
+            let field = data_field(&mut caller, "data_key", (fp, fl), (np, nl))?;
+            let key = match (field, usize::try_from(index)) {
+                (Some((_, _, PropertyValue::Map { map })), Ok(i)) => map.keys().nth(i).map(|k| PropertyValue::Text(k.clone())),
+                _ => None,
+            };
+            write_text_value(&mut caller, out, cap, key.as_ref(), "data_key")
+        },
+    )?;
+    linker.func_wrap(
+        "bayleaf",
+        "data_entry",
+        |mut caller: Caller<'_, HostState>, fp: i32, fl: i32, np: i32, nl: i32, kp: i32, kl: i32, out: i32| -> Result<i32, Error> {
+            let field = data_field(&mut caller, "data_entry", (fp, fl), (np, nl))?;
+            let key =
+                read_text(&mut caller, kp, kl, bayleaf_scene::components::MAX_PROPERTY_TEXT).map_err(|m| fault(&mut caller, format!("data_entry: {m}")))?;
+            let item = field.and_then(|(_, _, v)| data_item(&v, Err(&key)));
+            write_numbers(&mut caller, out, item.as_ref(), "data_entry")
+        },
+    )?;
+    linker.func_wrap(
+        "bayleaf",
+        "data_entry_text",
+        |mut caller: Caller<'_, HostState>, fp: i32, fl: i32, np: i32, nl: i32, kp: i32, kl: i32, out: i32, cap: i32| -> Result<i32, Error> {
+            let field = data_field(&mut caller, "data_entry_text", (fp, fl), (np, nl))?;
+            let key = read_text(&mut caller, kp, kl, bayleaf_scene::components::MAX_PROPERTY_TEXT)
+                .map_err(|m| fault(&mut caller, format!("data_entry_text: {m}")))?;
+            let item = field.and_then(|(_, _, v)| data_item(&v, Err(&key)));
+            write_text_value(&mut caller, out, cap, item.as_ref(), "data_entry_text")
+        },
+    )?;
+    Ok(())
+}
+
 fn make_linker(engine: &Engine) -> Linker<HostState> {
     let mut linker = Linker::new(engine);
     let result = (|| -> Result<(), LinkError> {
@@ -2474,6 +2605,7 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
         link_collections(&mut linker)?;
         link_frames(&mut linker)?;
         link_native(&mut linker)?;
+        link_data(&mut linker)?;
         Ok(())
     })();
     // The names are fixed and unique, so defining them cannot fail.
@@ -2569,7 +2701,8 @@ fn seeded(caller: &Caller<'_, HostState>, seed: &DeclaredProperty) -> Stored {
 fn seeded_key(world: &WorldView, ty: PropertyType, key: &str) -> Option<MapKey> {
     let number = |t: &str| t.trim().parse::<f32>().ok().filter(|v| v.is_finite());
     Some(match ty {
-        PropertyType::Text => MapKey::Text(key.to_owned()),
+        // A file's path is text to a script.
+        PropertyType::Text | PropertyType::Prefab | PropertyType::Sound | PropertyType::Material | PropertyType::Data => MapKey::Text(key.to_owned()),
         PropertyType::Object => MapKey::Object(world.get(world.find(key)).map(|(id, _)| id)?),
         PropertyType::Number => MapKey::Number(Ordered::new(number(key)?)),
         PropertyType::WholeNumber => MapKey::Whole(key.trim().parse().ok()?),

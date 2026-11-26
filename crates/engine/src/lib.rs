@@ -10,6 +10,7 @@ pub mod asset_info;
 mod builtin;
 pub mod code_scripts;
 pub mod confine;
+mod data_cmds;
 pub mod export;
 mod graph_cmds;
 pub mod import;
@@ -566,6 +567,7 @@ impl CommandRegistry {
         commands.extend(stream::commands());
         commands.extend(export::commands());
         commands.extend(lighting_cmds::commands());
+        commands.extend(data_cmds::commands());
         commands.extend(profiler::commands());
         commands.extend(graph_cmds::commands());
         commands.extend(project_cmds::commands());

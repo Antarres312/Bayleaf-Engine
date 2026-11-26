@@ -189,6 +189,12 @@ a `.wasm` script: same limits, same console, same hot reload when the file is sa
   ignore case, spaces, `_` and `-`. Found is false when nothing matches. Their Component, Tag or Script is
   picked from a list of components, the project's scripts and the scene's tags, or set by dragging
   a script from the Project panel onto it.
+- **Data File** reads a data file (`.bdata`, `docs/script-abi.md`): its File input is the file's
+  path (typed, or linked from a text property or other text), and its outputs are the fields of
+  the shape chosen in Shape, as the file was saved when play started (the shape's default where it
+  sets none). The node keeps the fields in its `fields` setting (`name:type`), which the editor
+  keeps in step with the shape; choosing a data file fills Shape with its shape. Lists and maps
+  have no pin.
 - **Get Component** shows the fields of the component named in Component (Point Light: Color,
   Intensity, Range, Shadows) as outputs, read from the linked object (else this object) as the step
   began; a missing component reads as zeros. **Try Get Component** adds Found. **Set Component**

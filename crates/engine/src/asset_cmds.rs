@@ -19,7 +19,7 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             label: "Create Asset",
             menu: "",
             shortcut: "",
-            params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\" | \"inputMap\" | \"lighting\" | \"postProcessing\" | \"interface\" | \"interfaceStyle\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
+            params: "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\" | \"inputMap\" | \"lighting\" | \"postProcessing\" | \"interface\" | \"interfaceStyle\" | \"dataShape\" | \"dataFile\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
             prompt: Prompt::None,
             mutates: Mutates::No,
             enabled: always,
@@ -173,6 +173,8 @@ fn asset_kind(path: &Path) -> &'static str {
         Some("bpost") => "Post-processing",
         Some("bui") => "Interface",
         Some("bstyle") => "Interface Style",
+        Some("bshape") => "Data Shape",
+        Some("bdata") => "Data File",
         Some("bproject") => "Project",
         Some(e) if bayleaf_render::assets::MODEL_EXTENSIONS.contains(&e) => "Model",
         Some(e) if bayleaf_render::assets::IMAGE_EXTENSIONS.contains(&e) => "Image",
@@ -281,6 +283,10 @@ pub enum AssetKind {
     Interface,
     /// A style file for game interfaces (`.bstyle`).
     InterfaceStyle,
+    /// A data shape (`.bshape`): the fields of data files, starting with one number.
+    DataShape,
+    /// A data file (`.bdata`) with no shape chosen yet; `data.set` or the Inspector chooses one.
+    DataFile,
 }
 
 impl AssetKind {
@@ -296,6 +302,8 @@ impl AssetKind {
             AssetKind::PostProcessing => Some(bayleaf_scene::post::EXTENSION),
             AssetKind::Interface => Some(bayleaf_interface::LAYOUT_EXTENSION),
             AssetKind::InterfaceStyle => Some(bayleaf_interface::STYLE_EXTENSION),
+            AssetKind::DataShape => Some(bayleaf_scene::data::SHAPE_EXTENSION),
+            AssetKind::DataFile => Some(bayleaf_scene::data::DATA_EXTENSION),
         }
     }
 }
@@ -351,6 +359,8 @@ fn asset_create(session: &mut Session, params: &Value) -> Result<Value, CommandE
         AssetKind::PostProcessing => std::fs::write(&path, bayleaf_scene::post::PostProcessing::default().to_text()).map_err(failed)?,
         AssetKind::Interface => std::fs::write(&path, bayleaf_interface::Layout::starter().to_text()).map_err(failed)?,
         AssetKind::InterfaceStyle => std::fs::write(&path, starter_style().to_text()).map_err(failed)?,
+        AssetKind::DataShape => std::fs::write(&path, bayleaf_scene::data::DataShape::starter().to_text()).map_err(failed)?,
+        AssetKind::DataFile => std::fs::write(&path, bayleaf_scene::data::DataFile::default().to_text()).map_err(failed)?,
     }
     Ok(json!({ "path": path }))
 }

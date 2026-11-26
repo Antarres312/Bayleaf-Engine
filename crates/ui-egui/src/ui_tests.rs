@@ -3762,3 +3762,46 @@ fn a_maps_keys_type_is_chosen_from_its_type_menu() {
     assert_eq!(graph(&harness).variable("waves").map(|v| v.start.clone()), Some(json!({ "0": "" })));
     assert!(harness.query_by_label("What waves holds: Map from Whole Number to Text").is_some());
 }
+
+#[test]
+fn data_files_show_their_shape_s_fields_in_groups_and_resets_and_new_fields_are_saved() {
+    let mut harness = harness();
+    let dir = std::env::temp_dir().join(format!("bayleaf-ui-data-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    harness.state_mut().dispatch("project.new", &json!({ "path": dir }), None);
+    let shape = json!({ "fields": [
+        { "name": "hp", "type": "number", "default": 100.0, "group": "Combat" },
+        { "name": "drop", "type": "prefab", "default": "" },
+    ] });
+    assert!(harness.state_mut().dispatch("data.shape.set", &json!({ "path": "Enemy.bshape", "shape": shape }), None).is_some());
+    let data = json!({ "shape": "Enemy.bshape", "values": { "hp": 40.0 } });
+    assert!(harness.state_mut().dispatch("data.set", &json!({ "path": "Goblin.bdata", "data": data }), None).is_some());
+    let hp = |harness: &mut Harness<'static, Editor>| {
+        let read = harness.state_mut().dispatch("data.get", &json!({ "path": "Goblin.bdata" }), None).unwrap();
+        (read["fields"][0]["value"].clone(), read["fields"][0]["set"].clone())
+    };
+
+    // The data file shows its shape's fields, a group's under its title, each with a reset.
+    harness.state_mut().inspect_file(dir.join("Goblin.bdata"));
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Combat").is_some(), "the group's title");
+    assert!(harness.query_by_label("Hp").is_some() && harness.query_by_label("Drop").is_some(), "a row per field");
+    harness.get_by_label("Reset Hp").click();
+    harness.run_steps(2);
+    assert_eq!(hp(&mut harness), (json!(100.0), json!(false)), "reset returns the field to the shape's default");
+
+    // The shape: Add Field writes a third field, which the data file then shows.
+    harness.state_mut().inspect_file(dir.join("Enemy.bshape"));
+    harness.run_steps(2);
+    // By keyboard: the button is below the fold of the Inspector's scroll area.
+    harness.get_by_label("Add Field").focus();
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    let fields = harness.state_mut().dispatch("data.shape.get", &json!({ "path": "Enemy.bshape" }), None).unwrap()["shape"]["fields"].clone();
+    assert_eq!(fields.as_array().map(Vec::len), Some(3));
+    harness.state_mut().inspect_file(dir.join("Goblin.bdata"));
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Field").is_some(), "the new field shows in the data file");
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bayleaf_core::StableId;
 use bayleaf_graph::{Graph, Link, PinRef, Shape, VariableType};
 use bayleaf_scene::Scene;
-use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue, ScriptRef, Transform};
+use bayleaf_scene::components::{DeclaredProperty, PropertyShape, PropertyType, PropertyValue, ScriptRef, Transform};
 use serde_json::json;
 
 use super::{CATALOG, FUNCTION_KINDS, compile};
@@ -669,6 +669,14 @@ fn every_node_kind_compiles_and_runs() {
         b.link(contact, "then", said, "run");
         b.link(other, "result", said, "text");
     }
+    // A data file's fields; the file is not there, so they read as nothing.
+    let data = b.node("dataFile", json!({ "file": "data/none.bdata", "fields": ["hp:number", "name:text"] }));
+    let hp = b.node("log", json!({ "message": "hp" }));
+    b.link(more, "then", hp, "run");
+    b.link(data, "hp", hp, "value");
+    let named = b.node("log", json!({ "message": "" }));
+    b.link(hp, "then", named, "run");
+    b.link(data, "name", named, "text");
     for kind in CATALOG.nodes.iter().map(|d| d.kind) {
         assert!(b.0.nodes.iter().any(|n| n.kind == kind), "{kind} is not in the test graph");
     }
@@ -2466,4 +2474,39 @@ fn objects_running_one_graph_lose_the_object_they_keep_when_it_goes() {
 fn wat_exports(bytes: &[u8]) -> Vec<String> {
     let module = wasmi::Module::new(&wasmi::Engine::default(), bytes).unwrap();
     module.exports().map(|e| e.name().to_owned()).collect()
+}
+
+#[test]
+fn data_file_nodes_read_the_fields_of_the_file_named_or_linked() {
+    let mut b = Builder::new();
+    let start = b.node("start", json!({}));
+    let fields = json!(["hp:number", "waves:list:whole", "name:text", "tough:bool"]);
+    let data = b.node("dataFile", json!({ "file": "data/goblin.bdata", "fields": fields }));
+    assert!(CATALOG.def_of(b.0.node(data).unwrap()).unwrap().outputs.iter().all(|p| p.name != "waves"), "a list field has no pin");
+    let hp = b.node("log", json!({ "message": "hp" }));
+    b.link(start, "then", hp, "run");
+    b.link(data, "hp", hp, "value");
+    let named = b.node("log", json!({ "message": "" }));
+    b.link(hp, "then", named, "run");
+    b.link(data, "name", named, "text");
+    // The file's path from a linked text: the same file again.
+    let path = b.node("text", json!({ "value": "data/goblin.bdata" }));
+    let linked = b.node("dataFile", json!({ "fields": fields }));
+    b.link(path, "result", linked, "file");
+    let again = b.node("log", json!({ "message": "again" }));
+    b.link(named, "then", again, "run");
+    b.link(linked, "hp", again, "value");
+
+    let mut scene = Scene::new();
+    let id = scene.create_object(None, "Goblin").unwrap();
+    let script = ScriptRef { module: "test.bscript".into(), properties: BTreeMap::new() };
+    let mut host = ScriptHost::new();
+    let mut goblin = crate::DataValues::new();
+    goblin.insert("hp".to_owned(), (PropertyType::Number, PropertyShape::Single, PropertyValue::Number(40.0)));
+    goblin.insert("name".to_owned(), (PropertyType::Text, PropertyShape::Single, PropertyValue::Text("Gob".to_owned())));
+    host.set_data(std::collections::HashMap::from([("data/goblin.bdata".to_owned(), goblin)]));
+    host.load_bytes(id, 0, Path::new("test.bscript"), None, &b.bytes(), &script, &mut scene, 0.0, &Arc::new(Input::default())).unwrap();
+    assert!(host.take_faults().is_empty());
+    let logs: Vec<String> = host.take_logs().into_iter().map(|l| l.text).collect();
+    assert_eq!(logs, ["hp 40", "Gob", "again 40"]);
 }

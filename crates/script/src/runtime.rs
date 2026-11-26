@@ -194,6 +194,11 @@ impl ScriptHost {
     }
 
     /// The interface elements as they show, as scripts read them (`ui_value`, `ui_text`).
+    /// The project's data files as scripts read them (`data_*`): set before scripts load.
+    pub fn set_data(&mut self, data: std::collections::HashMap<String, crate::DataValues>) {
+        each!(&mut self.0, host => host.set_data(data))
+    }
+
     pub fn set_interface_values(&mut self, values: crate::InterfaceValues) {
         each!(&mut self.0, host => host.set_interface_values(values))
     }

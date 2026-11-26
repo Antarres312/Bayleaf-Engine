@@ -394,12 +394,12 @@ fn readable_modules(session: &Session, scene: &Scene) -> Result<(), CommandError
     Ok(())
 }
 
-/// A script host with the project's Input Map and objects' own, before any script starts, and what
-/// could not be read.
+/// A script host with the project's Input Map and objects' own, and its data files, before any
+/// script starts, and what could not be read.
 fn fresh_host(session: &Session, runtime: Runtime) -> (ScriptHost, InputAssets, Vec<String>) {
     let mut problems = Vec::new();
     // Scripts that cannot run as asked are interpreted, and the console says so.
-    let host = ScriptHost::with_runtime(runtime)
+    let mut host = ScriptHost::with_runtime(runtime)
         .unwrap_or_else(|why| {
             problems.push(format!("Scripts are interpreted: {why}."));
             ScriptHost::new()
@@ -411,6 +411,10 @@ fn fresh_host(session: &Session, runtime: Runtime) -> (ScriptHost, InputAssets, 
     }
     let mut assets = InputAssets::new();
     problems.extend(sync_object_input(session, &host, &mut assets));
+    // Data files read as they were saved; play never writes them.
+    let (data, data_problems) = crate::data_cmds::load_all(session);
+    host.set_data(data);
+    problems.extend(data_problems);
     (host, assets, problems)
 }
 

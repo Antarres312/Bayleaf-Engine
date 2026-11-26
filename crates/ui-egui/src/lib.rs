@@ -8,6 +8,7 @@
 
 pub mod brand;
 mod console;
+mod data_editor;
 mod dialog;
 mod dock;
 mod drag_wrap;

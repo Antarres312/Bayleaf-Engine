@@ -15,7 +15,7 @@ use bayleaf_core::StableId;
 use bayleaf_core::math::{DMat4, DVec3};
 use bayleaf_scene::Scene;
 use bayleaf_scene::components::Transform;
-use bayleaf_scene::components::{DeclaredProperty, PropertyType, PropertyValue};
+use bayleaf_scene::components::{DeclaredProperty, PropertyShape, PropertyType, PropertyValue};
 
 pub mod actions;
 mod native;
@@ -270,6 +270,20 @@ impl GameState {
         self.outcome = Some(won);
         true
     }
+}
+
+/// One data file's fields as scripts read them (`data_*` imports): each field's type, shape and
+/// value, the shape's default where the file sets none.
+pub type DataValues = BTreeMap<String, (PropertyType, PropertyShape, PropertyValue)>;
+
+/// The project's data files by their path relative to the project folder (with `/`), read once
+/// when play starts: scripts see them as they were saved, and play never writes them.
+pub type SharedData = Arc<HashMap<String, DataValues>>;
+
+/// A data file's path as scripts give it and the host keeps it: `/` between folders, no leading `./`.
+pub fn data_key(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    path.trim_start_matches("./").to_owned()
 }
 
 /// The state shared by every script of a play session.
@@ -769,6 +783,8 @@ struct HostState<L> {
     interface: Arc<InterfaceValues>,
     input_maps: actions::SharedInput,
     state: SharedState,
+    /// The project's data files as play read them when it started.
+    data: SharedData,
     transform: [f32; 9],
     transform_changed: bool,
     properties: Properties,
@@ -1052,6 +1068,7 @@ impl<L> HostState<L> {
             interface: Arc::new(InterfaceValues::new()),
             input_maps: actions::SharedInput::default(),
             state: SharedState::default(),
+            data: SharedData::default(),
             transform,
             transform_changed: false,
             properties,
