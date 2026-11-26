@@ -263,17 +263,27 @@ internal static class InterfacePlay
             return;
         }
         var scene = session.Scene;
-        var values = new Dictionary<(StableId, string), (double, string)>();
-        foreach (var id in ScriptHost.Order(scene))
+        if (play.Changed("interface", scene))
         {
-            if (!scene.TryGet<GameInterfaceComponent>(id, out var component) || component.Layout.Length == 0)
+            play.InterfaceObjects = [.. ScriptHost.Order(scene)
+                .Select(id => (Id: id, Layout: scene.TryGet<GameInterfaceComponent>(id, out var c) ? c.Layout : ""))
+                .Where(o => o.Layout.Length > 0)];
+        }
+        if (play.InterfaceObjects.Count == 0)
+        {
+            if (play.Host.InterfaceValues.Count > 0)
             {
-                continue;
+                play.Host.InterfaceValues = new Dictionary<(StableId, string), (double, string)>();
             }
-            if (!play.InterfaceRoots.TryGetValue(id, out var cached) || cached.Layout != component.Layout)
+            return;
+        }
+        var values = new Dictionary<(StableId, string), (double, string)>();
+        foreach (var (id, layout) in play.InterfaceObjects)
+        {
+            if (!play.InterfaceRoots.TryGetValue(id, out var cached) || cached.Layout != layout)
             {
-                var read = Load(session, component.Layout);
-                cached = (component.Layout, read.IsOk ? read.Value.Root : null);
+                var read = Load(session, layout);
+                cached = (layout, read.IsOk ? read.Value.Root : null);
                 play.InterfaceRoots[id] = cached;
             }
             if (cached.Root is not { } root)

@@ -404,6 +404,94 @@ public sealed class HostTests : IDisposable
         Assert.Equal("True 12 2 gem True", host.TakeLogs()[0].Text);
     }
 
+    /// <summary>The repository's own example scripts (<c>scripts/</c>, the ports of <c>rust/scripts</c>), copied into the test's project.</summary>
+    private void CopyExamples()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Join(dir.FullName, "Bayleaf.slnx")))
+        {
+            dir = dir.Parent;
+        }
+        foreach (var file in Directory.EnumerateFiles(Path.Join(dir!.FullName, "scripts"), "*.cs"))
+        {
+            File.Copy(file, Path.Join(folder, Path.GetFileName(file)));
+        }
+    }
+
+    [Fact]
+    public void TheExampleSpinnerTurnsEachObjectByItsSpeedAndTheMoverWalksAndHops()
+    {
+        CopyExamples();
+        var (host, _) = Host();
+        using var _1 = host;
+        var scene = new SceneModel();
+        var slow = Add(scene, "Slow", Script("spinner.cs", ("speed", new PropertyValue.Number(60))));
+        var fast = Add(scene, "Fast", Script("spinner.cs", ("speed", new PropertyValue.Number(300))));
+        var walker = Add(scene, "Walker", Script("mover.cs"));
+        host.LoadScene(scene, 0);
+        Assert.Contains(host.TakeLogs(), l => l.Text == "spinner: started");
+        host.Held = PlayInput.None with { Keys = new HashSet<string>(["D", "Space"], StringComparer.Ordinal) };
+        var time = 0.0;
+        var highest = 0.0;
+        for (var i = 0; i < 20; i++)
+        {
+            time += 0.1;
+            host.Update(scene, 0.1f, time);
+            highest = Math.Max(highest, TransformOf(scene, walker).Position.Y);
+            host.Held = PlayInput.None with { Keys = new HashSet<string>(["D"], StringComparer.Ordinal) };
+        }
+        Assert.True(Math.Abs(TransformOf(scene, slow).Rotation.Y - 120f) < 1e-2f, $"two seconds at 60°/s: {TransformOf(scene, slow).Rotation.Y}");
+        Assert.True(Math.Abs(TransformOf(scene, fast).Rotation.Y - 240f) < 1e-2f, $"600° turns back past 360: {TransformOf(scene, fast).Rotation.Y}");
+        Assert.True(Math.Abs(TransformOf(scene, walker).Position.X - 6) < 1e-4, $"D held, 3 units per second: {TransformOf(scene, walker).Position.X}");
+        Assert.True(highest > 0.5 && TransformOf(scene, walker).Position.Y == 0, $"Space hopped up to {highest}, and it landed again");
+        Assert.Empty(host.TakeFaults());
+    }
+
+    [Fact]
+    public void AStepAllocatesNothingOnceWarmedUp()
+    {
+        Write("scripts/spinner.cs", Spinner);
+        CopyExamples();
+        Write("follow.cs", """
+            public class Follow : GameScript
+            {
+                private SceneObject target;
+                protected override void Begin() => target = Game.Find("Target");
+                protected override void Advance(float seconds)
+                {
+                    if (target.Pose is not { } goal) return;
+                    var pose = Pose;
+                    pose.Position.X += (goal.Position.X - pose.Position.X) * 0.5 * seconds;
+                    Pose = pose;
+                }
+            }
+            """);
+        var (host, _) = Host();
+        using var _1 = host;
+        var scene = new SceneModel();
+        Add(scene, "Target");
+        for (var i = 0; i < 200; i++)
+        {
+            Add(scene, $"O{i}", Script("scripts/spinner.cs"), Script("spinner.cs"), Script("follow.cs"));
+        }
+        host.LoadScene(scene, 0);
+        var time = 0.0;
+        for (var i = 0; i < 50; i++)
+        {
+            time += 1 / 60.0;
+            host.Update(scene, 1 / 60f, time);
+        }
+        var before = GC.GetTotalAllocatedBytes(precise: true);
+        for (var i = 0; i < 100; i++)
+        {
+            time += 1 / 60.0;
+            host.Update(scene, 1 / 60f, time);
+        }
+        var allocated = GC.GetTotalAllocatedBytes(precise: true) - before;
+        Assert.Equal(600, host.Running);
+        Assert.True(allocated < 1024, $"100 steps of 600 scripts allocated {allocated} bytes");
+    }
+
     [Fact]
     public void WhatIsNotInTheCSharpEngineYetSaysSoOnceAndDoesNothing()
     {

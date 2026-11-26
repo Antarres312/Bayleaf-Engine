@@ -51,7 +51,11 @@ public sealed partial class ScriptHost : IDisposable
     private readonly List<(StableId Object, string Key, string Name, Vector3 Value)> propertyWrites = [];
     private readonly HashSet<string> told = new(StringComparer.Ordinal);
     private LoadedScripts? scripts;
-    private List<int> own = [];
+    private int[] ownSlots = [];
+    private GameScript[] ownScripts = [];
+
+    /// <summary>A script broke a rule in the call running now (see <see cref="Broke"/>), so the call's end looks.</summary>
+    private bool brokeAny;
     private List<ManyGroup> groups = [];
     private (int Version, ulong Structure) grouped = (-1, ulong.MaxValue);
     private int version;
@@ -213,7 +217,7 @@ public sealed partial class ScriptHost : IDisposable
     /// <summary>Constructs, sets the properties of, prepares and begins the instances from <paramref name="first"/> on. On the script thread.</summary>
     private void StartFrom(SceneModel scene, int first)
     {
-        RefreshView(scene, first);
+        RefreshView(scene);
         for (var slot = first; slot < instances.Count; slot++)
         {
             var instance = instances[slot];
@@ -222,6 +226,7 @@ public sealed partial class ScriptHost : IDisposable
                 var made = instance.Type.Create();
                 made.World = world;
                 made.Slot = slot;
+                made.Place = instance.View;
                 instance.Script = made;
             });
             if (!instance.Stopped)
@@ -261,6 +266,7 @@ public sealed partial class ScriptHost : IDisposable
         var old = scripts;
         scripts = next;
         instances.Clear();
+        placed = 0;
         messages.Clear();
         propertyWrites.Clear();
         version++;
@@ -289,55 +295,64 @@ public sealed partial class ScriptHost : IDisposable
 
     private void StepJob()
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var scene = jobScene!;
         var seconds = jobSeconds;
-        RefreshView(scene, 0);
+        RefreshView(scene);
         if (grouped != (version, view.Structure))
         {
             Regroup(scene);
         }
-        foreach (var slot in own)
+        // The scripts that step per object, from arrays made when the grouping last changed: a script
+        // that stops changes the version, so it is out of the arrays from the next step on.
+        var scripts = ownScripts;
+        var slots = ownSlots;
+        callLimit = MaxAsksPerCall;
+        // The loop stays free of exception handling; an error ends it, and it goes on after the script that threw.
+        var next = 0;
+        while (next < scripts.Length)
         {
-            var instance = instances[slot];
-            if (instance.Stopped)
-            {
-                continue;
-            }
-            Begin(slot, 1);
+            var i = next;
             try
             {
-                instance.Script!.Advance(seconds);
+                for (; i < scripts.Length; i++)
+                {
+                    current = slots[i];
+                    calls++;
+                    scripts[i].Advance(seconds);
+                    if (brokeAny)
+                    {
+                        End(slots[i]);
+                    }
+                }
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
-                Stop(slot, "Advance", e);
+                Stop(slots[i], "Advance", e);
+                brokeAny = false;
+                i++;
             }
-            End(slot);
+            next = i;
         }
+        current = -1;
         foreach (var group in groups)
         {
             RunMany(group, seconds);
         }
+        var ran = System.Diagnostics.Stopwatch.GetTimestamp();
         WritePoses(scene);
+        var wrote = System.Diagnostics.Stopwatch.GetTimestamp();
         ApplyPropertyWrites();
         Deliver(scene);
         ApplyPropertyWrites();
+        LastStep = (System.Diagnostics.Stopwatch.GetElapsedTime(started, ran), System.Diagnostics.Stopwatch.GetElapsedTime(ran, wrote), System.Diagnostics.Stopwatch.GetElapsedTime(wrote));
     }
+
+    /// <summary>How long the last step's parts took: the scripts' calls, writing what moved to the scene, and the messages.</summary>
+    public (TimeSpan Scripts, TimeSpan Write, TimeSpan Messages) LastStep { get; private set; }
 
     private void RunMany(ManyGroup group, float seconds)
     {
-        var running = 0;
-        for (var i = 0; i < group.Count; i++)
-        {
-            if (!instances[group.Slots[i]].Stopped)
-            {
-                running++;
-            }
-        }
-        if (running == 0)
-        {
-            return;
-        }
         var poses = view.Poses;
         for (var i = 0; i < group.Count; i++)
         {
@@ -371,7 +386,8 @@ public sealed partial class ScriptHost : IDisposable
         {
             ref var pose = ref group.Poses[i];
             var at = group.Views[i];
-            if (pose != poses[at] && !instances[group.Slots[i]].Stopped)
+            // Bit for bit (a -0 for a 0 counts as a move, which only writes the same pose again).
+            if (!System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<Pose>(in pose)).SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<Pose>(in poses[at]))))
             {
                 if (!pose.IsFinite)
                 {
@@ -390,7 +406,9 @@ public sealed partial class ScriptHost : IDisposable
     /// <summary>Sorts the running instances for the step: those that step per object, and a group per script type that steps all of its objects in one call.</summary>
     private void Regroup(SceneModel scene)
     {
-        own = [];
+        // Properties the Inspector changed first: a script that stops on them is left out.
+        CheckInspector(scene);
+        var own = new List<int>();
         var byType = new Dictionary<ScriptType, (List<int> Slots, List<int> Views)>();
         var order = new List<ScriptType>();
         for (var slot = 0; slot < instances.Count; slot++)
@@ -427,7 +445,8 @@ public sealed partial class ScriptHost : IDisposable
             }
             return new ManyGroup(type, array, [.. slots], [.. views]);
         })];
-        CheckInspector(scene);
+        ownSlots = [.. own];
+        ownScripts = [.. own.Select(slot => instances[slot].Script!)];
         grouped = (version, view.Structure);
     }
 
@@ -484,7 +503,7 @@ public sealed partial class ScriptHost : IDisposable
         if (type == PropertyType.SceneObject)
         {
             var name = value.AsText() ?? "";
-            return name.Length > 0 && view.ByName.TryGetValue(name, out var at) ? new SceneObject(view.Ids[at].AsUInt128()) : SceneObject.None;
+            return name.Length > 0 && view.ByName.TryGetValue(name, out var at) ? new SceneObject(view.Ids[at].AsUInt128(), at, world) : SceneObject.None;
         }
         return value switch
         {
@@ -568,7 +587,7 @@ public sealed partial class ScriptHost : IDisposable
 
     /// <summary>Triggers each event on its object now, bringing the object as its one value: what a clip's marked moments become.</summary>
     public bool TriggerEvents(SceneModel scene, IEnumerable<(StableId Object, string Name)> events, double time) =>
-        SendAll(scene, [.. events.Select(e => ((StableId?)e.Object, e.Name, 0f, new[] { EventValue.Of(new SceneObject(e.Object.AsUInt128())) }))], time);
+        SendAll(scene, [.. events.Select(e => ((StableId?)e.Object, e.Name, 0f, new[] { EventValue.Of(new SceneObject(e.Object.AsUInt128(), -1, world)) }))], time);
 
     private bool SendAll(SceneModel scene, List<(StableId? To, string Name, float Value, EventValue[] Values)> sent, double time)
     {
@@ -583,7 +602,7 @@ public sealed partial class ScriptHost : IDisposable
         }
         return Guard(() =>
         {
-            RefreshView(scene, 0);
+            RefreshView(scene);
             Deliver(scene);
             ApplyPropertyWrites();
         });
@@ -595,6 +614,10 @@ public sealed partial class ScriptHost : IDisposable
     private int callAsks;
     private int callSends;
     private int callLimit = MaxAsksPerCall;
+
+    /// <summary>Counts the calls into scripts, so a call's budget of asks starts afresh without a write per call.</summary>
+    private long calls;
+    private long budgetCall = -1;
 
     /// <summary>Runs a job on the script thread under the watchdog. False when it took too long.</summary>
     private bool Run(Action job)
@@ -617,8 +640,7 @@ public sealed partial class ScriptHost : IDisposable
     private void Begin(int slot, int objects)
     {
         current = slot;
-        callAsks = 0;
-        callSends = 0;
+        calls++;
         callLimit = MaxAsksPerCall * objects;
     }
 
@@ -626,6 +648,7 @@ public sealed partial class ScriptHost : IDisposable
     private bool End(int slot)
     {
         current = -1;
+        brokeAny = false;
         var instance = instances[slot];
         if (instance.Broke is { } broke)
         {
@@ -673,6 +696,7 @@ public sealed partial class ScriptHost : IDisposable
         if (slot >= 0 && slot < instances.Count)
         {
             instances[slot].Broke ??= why;
+            brokeAny = true;
         }
         return new InvalidOperationException(why);
     }
@@ -680,12 +704,35 @@ public sealed partial class ScriptHost : IDisposable
     /// <summary>Asks made by the call running now, against its limit; false when it already asked too much.</summary>
     private bool Asked()
     {
+        Budget();
         if (callAsks >= callLimit)
         {
             return false;
         }
         callAsks++;
         return true;
+    }
+
+    /// <summary>A message sent by the call running now, against its limit; false when it already sent too many.</summary>
+    private bool SentOne()
+    {
+        Budget();
+        if (callSends >= callLimit)
+        {
+            return false;
+        }
+        callSends++;
+        return true;
+    }
+
+    private void Budget()
+    {
+        if (budgetCall != calls)
+        {
+            budgetCall = calls;
+            callAsks = 0;
+            callSends = 0;
+        }
     }
 
     private void AddLog(int slot, string text, bool error = false)
@@ -773,28 +820,22 @@ public sealed partial class ScriptHost : IDisposable
 
     private void WritePoses(SceneModel scene) => view.Write(scene);
 
+    /// <summary>How many instances, from the first, have found their object's place in the view.</summary>
+    private int placed;
+
     /// <summary>
     /// Brings the view up to date. When the scene's structure changed, every instance finds its object's
-    /// new place and those whose object went stop; else only the instances from <paramref name="first"/>
-    /// on that have no place yet look.
+    /// new place and those whose object went stop; else only the instances loaded since the last time look.
     /// </summary>
-    private void RefreshView(SceneModel scene, int first)
+    private void RefreshView(SceneModel scene)
     {
-        if (!view.Refresh(scene))
-        {
-            for (var slot = first; slot < instances.Count; slot++)
-            {
-                if (instances[slot].View < 0)
-                {
-                    Place(slot);
-                }
-            }
-            return;
-        }
-        for (var slot = 0; slot < instances.Count; slot++)
+        var rebuilt = view.Refresh(scene);
+        var from = rebuilt || placed > instances.Count ? 0 : placed;
+        for (var slot = from; slot < instances.Count; slot++)
         {
             Place(slot);
         }
+        placed = instances.Count;
     }
 
     private void Place(int slot)
@@ -803,9 +844,11 @@ public sealed partial class ScriptHost : IDisposable
         if (view.Index.TryGetValue(instance.Object, out var at))
         {
             instance.View = at;
+            instance.Script?.Place = at;
             return;
         }
         instance.View = -1;
+        instance.Script?.Place = -1;
         if (!instance.Stopped)
         {
             // Its object went: its scripts stop.
@@ -848,6 +891,11 @@ public sealed partial class ScriptHost : IDisposable
             {
                 Rebuild(scene);
                 return true;
+            }
+            if (scene.TransformMark == mark)
+            {
+                // Nothing but the scripts moved anything since: no list to read (and none made).
+                return false;
             }
             var written = scene.TransformsWrittenSince(mark);
             if (written is null)

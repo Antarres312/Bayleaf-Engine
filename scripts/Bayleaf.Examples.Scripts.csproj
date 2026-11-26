@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The example C# scripts (ports of rust/scripts), built here against the SDK so they keep
+       compiling as it changes. A game's scripts need no project: the engine compiles a project
+       folder's .cs files itself (docs/script-sdk.md); a project like this one is for an IDE. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Examples.Scripts</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\src\Bayleaf.Script.Sdk\Bayleaf.Script.Sdk.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -32,7 +32,7 @@ public sealed partial class ScriptHost
 
         private int? At(UInt128 id) => View.Index.TryGetValue(Id(id), out var at) ? at : null;
 
-        private SceneObject ObjectAt(int at) => new(View.Ids[at].AsUInt128());
+        private SceneObject ObjectAt(int at) => new(View.Ids[at].AsUInt128(), at, this);
 
         /// <summary>A name the calling script gave, checked: 1 to <paramref name="most"/> bytes and no control characters; a fault otherwise.</summary>
         private string Named(int slot, string? name, string what, int most = MaxMessageName)
@@ -54,28 +54,42 @@ public sealed partial class ScriptHost
 
         public void Log(int slot, string text) => Host.AddLog(slot, text ?? "");
 
-        public SceneObject Self(int slot) => Of(slot) is { } i ? new SceneObject(i.Object.AsUInt128()) : SceneObject.None;
+        public SceneObject Self(int slot) => Of(slot) is { } i ? new SceneObject(i.Object.AsUInt128(), i.View, this) : SceneObject.None;
 
-        public Pose OwnPose(int slot) => Of(slot) is { View: >= 0 } i && i.View < View.Poses.Length ? View.Poses[i.View] : Pose.Initial;
-
-        public void SetOwnPose(int slot, in Pose pose)
+        public Pose OwnPose(GameScript script)
         {
-            if (Of(slot) is not { View: >= 0 } instance)
+            var poses = View.Poses;
+            var at = script.Place;
+            return (uint)at < (uint)poses.Length ? poses[at] : Pose.Initial;
+        }
+
+        public void SetOwnPose(GameScript script, in Pose pose)
+        {
+            var at = script.Place;
+            if ((uint)at >= (uint)View.Poses.Length)
             {
                 return;
             }
             if (!pose.IsFinite)
             {
-                throw Host.Broke(slot, "the pose given is not finite");
+                throw Host.Broke(script.Slot, "the pose given is not finite");
             }
-            View.Move(instance.View, pose);
+            View.Move(at, pose);
         }
 
         public bool Exists(UInt128 id) => At(id) is not null;
 
         public string? NameOf(UInt128 id) => At(id) is { } at ? View.Names[at] : null;
 
-        public Pose? PoseOf(UInt128 id) => At(id) is { } at ? View.Poses[at] : null;
+        public Pose? PoseOf(UInt128 id, int hint)
+        {
+            var ids = View.Ids;
+            if ((uint)hint < (uint)ids.Length && ids[hint].AsUInt128() == id)
+            {
+                return View.Poses[hint];
+            }
+            return At(id) is { } at ? View.Poses[at] : null;
+        }
 
         public bool SetPoseOf(int slot, UInt128 id, in Pose pose)
         {
@@ -191,11 +205,10 @@ public sealed partial class ScriptHost
             {
                 return false;
             }
-            if (Host.callSends >= Host.callLimit)
+            if (!Host.SentOne())
             {
                 return false;
             }
-            Host.callSends++;
             Host.messages.Add(new Pending(to is { } t ? Id(t) : null, name, value, [.. values]));
             return true;
         }

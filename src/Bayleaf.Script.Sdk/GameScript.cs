@@ -21,6 +21,9 @@ public abstract class GameScript
     /// <summary>This script's place in the engine's host.</summary>
     internal int Slot { get; set; } = -1;
 
+    /// <summary>Its object's place in the host's packed poses, kept by the host while the scene's structure stays.</summary>
+    internal int Place { get; set; } = -1;
+
     private IWorld Engine => World ?? Runtime.Need();
 
     /// <summary>The object this script is on.</summary>
@@ -33,12 +36,15 @@ public abstract class GameScript
     /// </summary>
     public Pose Pose
     {
-        get => Engine.OwnPose(Slot);
-        set => Engine.SetOwnPose(Slot, value);
+        get => Engine.OwnPose(this);
+        set => Engine.SetOwnPose(this, value);
     }
 
     /// <summary>Writes to the editor console, labelled with the object and the script.</summary>
     public void Log(string text) => Engine.Log(Slot, text);
+
+    /// <summary>Seconds since play mode started, as <see cref="Game.Time"/> gives it; the quicker of the two inside a script's own calls.</summary>
+    protected double Time => Engine.Time;
 
     /// <summary>Its properties were set (before <see cref="Prepare"/>, and again when the Inspector or another script changes one): read what depends on them.</summary>
     protected internal virtual void PropertiesChanged()

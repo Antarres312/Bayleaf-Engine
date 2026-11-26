@@ -169,11 +169,14 @@ public sealed class Scene
     /// </summary>
     public bool SetTransform(ObjectKey key, Transform value)
     {
-        if (value.Validate().IsError)
+        // The check Validate makes, without the list it builds for its message.
+        if (!value.IsFinite)
         {
             return false;
         }
-        if (!World.Update(key.Entity, (ref Transform slot) => slot = value) && World.Insert(key.Entity, value).IsError)
+        // Insert replaces the transform where it is kept, with no closure made per write: play mode
+        // writes every moved object's transform each step.
+        if (World.Insert(key.Entity, value).IsError)
         {
             return false;
         }

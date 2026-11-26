@@ -18,6 +18,7 @@ internal static class Cli
           commands  Print every registered command as a JSON array
           run       Run one command and print its JSON result
           batch     Run a JSON array of steps [{"cmd": "...", "params": {...}}] in one session
+                    (run and batch take --allow-scripts: the projects' C# scripts may run in play mode)
           mcp       Run an MCP server on stdio for AI agents. It refuses to start without both automation roots, and refuses file access outside them (AA 18)
         """;
 
@@ -40,8 +41,11 @@ internal static class Cli
             return Mcp.Run(args.Skip(1).ToList(), input, output, errors);
         }
         var registry = CommandRegistry.WithBuiltins();
-        var session = new Session();
-        var options = Options(args.Skip(1).ToList(), out var positional, out var problem);
+        var session = NewSession();
+        var rest = args.Skip(1).ToList();
+        // The person running the command lets the projects' C# scripts run in play mode (they run in this process, with no sandbox).
+        session.ScriptsAllowedEverywhere = rest.Remove("--allow-scripts");
+        var options = Options(rest, out var positional, out var problem);
         if (problem is not null)
         {
             errors.WriteLine($"error: {problem}");
@@ -96,6 +100,15 @@ internal static class Cli
                 errors.WriteLine($"error: unrecognized subcommand '{args[0]}'");
                 return 2;
         }
+    }
+
+    /// <summary>A session with the opt-in modules the CLI turns on, as the Rust CLI builds the engine with gameplay and streaming (physics and sound come with stage 5).</summary>
+    internal static Session NewSession()
+    {
+        var session = new Session();
+        session.Use(new Gameplay.GameplayModule());
+        session.Use(new Streaming.StreamingModule());
+        return session;
     }
 
     /// <summary>Prints an error as the Rust CLI does (<c>Error: …</c>) and gives the exit code.</summary>

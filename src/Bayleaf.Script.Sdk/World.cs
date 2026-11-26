@@ -68,15 +68,16 @@ internal interface IWorld
 
     SceneObject Self(int slot);
 
-    Pose OwnPose(int slot);
+    Pose OwnPose(GameScript script);
 
-    void SetOwnPose(int slot, in Pose pose);
+    void SetOwnPose(GameScript script, in Pose pose);
 
     bool Exists(UInt128 id);
 
     string? NameOf(UInt128 id);
 
-    Pose? PoseOf(UInt128 id);
+    /// <summary>The object's pose; <paramref name="hint"/> is where it was last seen, checked before a lookup.</summary>
+    Pose? PoseOf(UInt128 id, int hint);
 
     bool SetPoseOf(int slot, UInt128 id, in Pose pose);
 

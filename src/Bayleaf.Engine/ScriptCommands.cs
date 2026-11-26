@@ -61,7 +61,7 @@ internal static class ScriptCommands
         {
             /// <summary>Turns per second about Y. The Inspector shows it for each object; the scene sets it.</summary>
             [ScriptProperty(Hint = "Turns per second")]
-            public float Speed = 1f;
+            private float speed = 1f;
 
             protected override void Begin()
             {
@@ -69,9 +69,9 @@ internal static class ScriptCommands
 
             protected override void Advance(float seconds)
             {
-                // An example to replace: turn around Y by Speed turns per second.
+                // An example to replace: turn around Y by speed turns per second.
                 var pose = Pose;
-                pose.Rotation.Y = (pose.Rotation.Y + Speed * 360f * seconds) % 360f;
+                pose.Rotation.Y = (pose.Rotation.Y + speed * 360f * seconds) % 360f;
                 Pose = pose;
             }
         }

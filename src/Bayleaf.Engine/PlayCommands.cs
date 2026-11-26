@@ -109,6 +109,7 @@ internal static class PlayCommands
         }
         var play = new PlayState(snapshot, host) { SavedOnDisk = saved.IsOk ? saved.Value : null, SeenScripts = seen };
         session.Play = play;
+        System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
         var loaded = host.LoadScene(session.Scene, 0);
         var (scripts, running) = (host.Count, host.Running);
         var held = problems.Count > 0 && problems[0].StartsWith("Scripts did not run", StringComparison.Ordinal);

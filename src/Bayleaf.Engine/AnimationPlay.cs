@@ -243,7 +243,14 @@ internal static partial class AnimationCommands
         {
             return;
         }
-        Sync(session);
+        if (play.Changed("animation", session.Scene))
+        {
+            Sync(session);
+        }
+        if (session.Animation.Objects.Count == 0)
+        {
+            return;
+        }
         var events = new List<(StableId, string)>();
         foreach (var (id, a) in session.Animation.Objects.ToList())
         {

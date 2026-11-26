@@ -51,6 +51,29 @@ internal sealed class PlayState(SceneDoc snapshot, ScriptHost host)
 
     /// <summary>Things play mode says once per play.</summary>
     public HashSet<string> Told { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The garbage collector's mode before play, put back on stop; play runs with sustained low latency (docs/csharp-redesign.md, "Data and speed").</summary>
+    public System.Runtime.GCLatencyMode LatencyBefore { get; } = System.Runtime.GCSettings.LatencyMode;
+
+    /// <summary>The objects with an Interface that names a layout, as of <see cref="Changed"/>("interface").</summary>
+    public List<(StableId Id, string Layout)> InterfaceObjects { get; set; } = [];
+
+    private readonly Dictionary<string, (SceneModel Scene, ulong Structure)> seen = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Whether the scene's structure (its objects, their order and components) changed since this was
+    /// last asked about <paramref name="what"/>, so the step's work that only depends on it (who has an
+    /// Input Map, a Model Animation or an Interface) is done again only then.
+    /// </summary>
+    public bool Changed(string what, SceneModel scene)
+    {
+        if (seen.TryGetValue(what, out var last) && ReferenceEquals(last.Scene, scene) && last.Structure == scene.Structure)
+        {
+            return false;
+        }
+        seen[what] = (scene, scene.Structure);
+        return true;
+    }
 }
 
 // Play mode in the session (docs/automation.md, the play.* commands): what scripts read of the player's
@@ -97,7 +120,10 @@ public sealed partial class Session
     /// says so. The editor asks and remembers the answer; the CLI takes <c>--allow-scripts</c>; agents
     /// cannot give it (<c>project.scripts.allow</c> refuses them).
     /// </summary>
-    public bool ScriptsAllowed => allowedScripts.Contains(ScriptFolder);
+    public bool ScriptsAllowed => ScriptsAllowedEverywhere || allowedScripts.Contains(ScriptFolder);
+
+    /// <summary>The person running the session allowed every project's scripts for this run (the CLI's <c>--allow-scripts</c>).</summary>
+    public bool ScriptsAllowedEverywhere { get; set; }
 
     /// <summary>Gives (or takes back) the consent to run the open project's scripts.</summary>
     public void AllowScripts(bool allow)
@@ -401,6 +427,7 @@ internal static partial class PlayLoop
         var play = session.Play ?? throw Stop.Failed("play mode is not running");
         session.Play = null;
         play.Host.Dispose();
+        System.Runtime.GCSettings.LatencyMode = play.LatencyBefore;
         session.Scene = SceneModel.FromDoc(play.Snapshot).OrFail();
         session.Animation.Clear();
         foreach (var module in session.Modules)
@@ -423,9 +450,13 @@ internal static partial class PlayLoop
             {
                 return;
             }
-            foreach (var problem in SyncObjectInput(session, play.Host, play.InputAssets))
+            // Objects that came or went (spawned, destroyed) get or drop their own Input Map.
+            if (play.Changed("input", session.Scene))
             {
-                session.Log(Level.Error, problem);
+                foreach (var problem in SyncObjectInput(session, play.Host, play.InputAssets))
+                {
+                    session.Log(Level.Error, problem);
+                }
             }
             play.Time += seconds;
             play.Host.Held = session.PlayInput;
@@ -477,7 +508,8 @@ internal static partial class PlayLoop
                 return;
             }
         }
-        if (!session.Modules.OfType<IStreamingModule>().Any() && ScriptHost.Order(session.Scene).Any(id => session.Scene.TryGet<StreamedArea>(id, out _)) && play.Told.Add("streaming"))
+        if (!play.Told.Contains("streaming") && play.Changed("streaming", session.Scene) && !session.Modules.OfType<IStreamingModule>().Any()
+            && ScriptHost.Order(session.Scene).Any(id => session.Scene.TryGet<StreamedArea>(id, out _)) && play.Told.Add("streaming"))
         {
             session.Log(Level.Info, "This build has no world streaming, so Streamed Areas stay empty.");
         }
