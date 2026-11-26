@@ -1,0 +1,35 @@
+{
+  "format": "bayleaf.interface",
+  "version": 2,
+  "root": {
+    "kind": "column",
+    "name": "Card",
+    "style": {
+      "background": "#161b20cc",
+      "gap": "2px",
+      "padding": "10px",
+      "radius": "8px",
+      "width": "230px"
+    },
+    "children": [
+      {
+        "kind": "text",
+        "name": "Name",
+        "text": "Feature",
+        "style": {
+          "color": "#f2f5f2",
+          "fontSize": "17px"
+        }
+      },
+      {
+        "kind": "text",
+        "name": "Detail",
+        "text": "What it does",
+        "style": {
+          "color": "#c3cfc6",
+          "fontSize": "13px"
+        }
+      }
+    ]
+  }
+}

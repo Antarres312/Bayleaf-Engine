@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L2: the node-graph model shared by the material editor, visual scripts and animation states:
+       node kinds given as a catalog, graph files (.bmaterial, .bscript, .banim), their checks and edits. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Graph</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Graph.Tests" />
+  </ItemGroup>
+
+</Project>

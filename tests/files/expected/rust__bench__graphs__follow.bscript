@@ -1,0 +1,322 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "script",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "start",
+      "position": [
+        40.0,
+        40.0
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "findNamed",
+      "position": [
+        40.0,
+        160.0
+      ],
+      "values": {
+        "name": "Target"
+      }
+    },
+    {
+      "id": 3,
+      "kind": "setObjectVariable",
+      "position": [
+        300.0,
+        40.0
+      ],
+      "values": {
+        "name": "target"
+      }
+    },
+    {
+      "id": 4,
+      "kind": "update",
+      "position": [
+        40.0,
+        320.0
+      ]
+    },
+    {
+      "id": 5,
+      "kind": "objectVariable",
+      "position": [
+        40.0,
+        480.0
+      ],
+      "values": {
+        "name": "target"
+      }
+    },
+    {
+      "id": 6,
+      "kind": "positionOf",
+      "position": [
+        280.0,
+        480.0
+      ]
+    },
+    {
+      "id": 7,
+      "kind": "split",
+      "position": [
+        520.0,
+        480.0
+      ]
+    },
+    {
+      "id": 8,
+      "kind": "position",
+      "position": [
+        280.0,
+        640.0
+      ]
+    },
+    {
+      "id": 9,
+      "kind": "split",
+      "position": [
+        520.0,
+        640.0
+      ]
+    },
+    {
+      "id": 10,
+      "kind": "property",
+      "position": [
+        280.0,
+        800.0
+      ],
+      "values": {
+        "default": 0.5,
+        "name": "rate"
+      }
+    },
+    {
+      "id": 11,
+      "kind": "multiply",
+      "position": [
+        520.0,
+        800.0
+      ]
+    },
+    {
+      "id": 12,
+      "kind": "lerp",
+      "position": [
+        760.0,
+        480.0
+      ]
+    },
+    {
+      "id": 13,
+      "kind": "lerp",
+      "position": [
+        760.0,
+        700.0
+      ]
+    },
+    {
+      "id": 14,
+      "kind": "vector",
+      "position": [
+        1000.0,
+        560.0
+      ]
+    },
+    {
+      "id": 15,
+      "kind": "setPosition",
+      "position": [
+        1240.0,
+        320.0
+      ]
+    }
+  ],
+  "links": [
+    {
+      "from": {
+        "node": 1,
+        "pin": "then"
+      },
+      "to": {
+        "node": 3,
+        "pin": "run"
+      }
+    },
+    {
+      "from": {
+        "node": 2,
+        "pin": "object"
+      },
+      "to": {
+        "node": 3,
+        "pin": "value"
+      }
+    },
+    {
+      "from": {
+        "node": 5,
+        "pin": "value"
+      },
+      "to": {
+        "node": 6,
+        "pin": "target"
+      }
+    },
+    {
+      "from": {
+        "node": 6,
+        "pin": "position"
+      },
+      "to": {
+        "node": 7,
+        "pin": "vector"
+      }
+    },
+    {
+      "from": {
+        "node": 8,
+        "pin": "position"
+      },
+      "to": {
+        "node": 9,
+        "pin": "vector"
+      }
+    },
+    {
+      "from": {
+        "node": 10,
+        "pin": "value"
+      },
+      "to": {
+        "node": 11,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 4,
+        "pin": "dt"
+      },
+      "to": {
+        "node": 11,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 9,
+        "pin": "x"
+      },
+      "to": {
+        "node": 12,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 7,
+        "pin": "x"
+      },
+      "to": {
+        "node": 12,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 11,
+        "pin": "result"
+      },
+      "to": {
+        "node": 12,
+        "pin": "factor"
+      }
+    },
+    {
+      "from": {
+        "node": 9,
+        "pin": "z"
+      },
+      "to": {
+        "node": 13,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 7,
+        "pin": "z"
+      },
+      "to": {
+        "node": 13,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 11,
+        "pin": "result"
+      },
+      "to": {
+        "node": 13,
+        "pin": "factor"
+      }
+    },
+    {
+      "from": {
+        "node": 12,
+        "pin": "result"
+      },
+      "to": {
+        "node": 14,
+        "pin": "x"
+      }
+    },
+    {
+      "from": {
+        "node": 9,
+        "pin": "y"
+      },
+      "to": {
+        "node": 14,
+        "pin": "y"
+      }
+    },
+    {
+      "from": {
+        "node": 13,
+        "pin": "result"
+      },
+      "to": {
+        "node": 14,
+        "pin": "z"
+      }
+    },
+    {
+      "from": {
+        "node": 4,
+        "pin": "then"
+      },
+      "to": {
+        "node": 15,
+        "pin": "run"
+      }
+    },
+    {
+      "from": {
+        "node": 14,
+        "pin": "vector"
+      },
+      "to": {
+        "node": 15,
+        "pin": "position"
+      }
+    }
+  ]
+}

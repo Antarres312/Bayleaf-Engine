@@ -1,0 +1,1 @@
+{"format":"bayleaf.graph","version":8,"domain":"script","nodes":[],"properties":[{"name":"a","type":"text","default":"","inspector":{"showIf":["b"]}}]}

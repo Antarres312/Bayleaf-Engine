@@ -57,7 +57,7 @@ internal static partial class Layers
         ["Bayleaf.Animation"] = 4,
         ["Bayleaf.Audio"] = 4,
         ["Bayleaf.Particles"] = 4,
-        ["Bayleaf.Interface"] = 4,
+        ["Bayleaf.Interface"] = 2,
         ["Bayleaf.Engine"] = 5,
         ["Bayleaf.Editor"] = 6,
         ["Bayleaf.Automation"] = 6,
