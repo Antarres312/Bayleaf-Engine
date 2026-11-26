@@ -1,0 +1,6 @@
+<Project>
+  <!-- Builds go under the repository's ignored target folder, as the Rust and C++ builds do. -->
+  <PropertyGroup>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)..\..\..\target\bench-runtime-csharp</ArtifactsPath>
+  </PropertyGroup>
+</Project>

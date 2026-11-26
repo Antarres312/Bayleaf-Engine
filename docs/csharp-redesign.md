@@ -1,7 +1,8 @@
 # Bayleaf in C#: a redesign
 
 Status: design, 2026-11-26. Asked for by the operator after the comparison of a C# port with the Rust
-engine. Nothing is built yet. Stage 0 below decides, by measurement, whether the rest goes ahead.
+engine. Stage 0 is done and its gate is met on the JIT (see Stages); nothing of the engine is ported
+yet.
 
 ## What is decided and what is not
 
@@ -76,8 +77,12 @@ the licences and the deny settings, as `cargo xtask layers` and `licences` do no
 - The play runtime keeps what the Rust rebuild reached: packed arrays per object place, one pass to
   fill and read script data, writes through kept keys (`Scene.Key`, `Scene.SetTransform`).
 - The editor and play mode run on the JIT, with tiered compilation and dynamic profile-guided
-  optimisation. The exported player is NativeAOT: one native file, no JIT and fast start. The GC runs
-  in `SustainedLowLatency` during play.
+  optimisation. The GC runs in `SustainedLowLatency` during play.
+- The exported player: NativeAOT gives one native file, no JIT and a fast start, but stage 0 measured
+  it 1.3 times slower than the JIT on the same code, since it compiles without the run's profile. So
+  stage 7 measures both for the player: NativeAOT (with a profile collected from a run, if that
+  closes the gap) and the JIT with ahead-of-time compiled startup code (ReadyToRun), and picks by
+  the numbers.
 
 ## Rendering
 
@@ -165,6 +170,12 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    Gate: the C# step within 1.5 times of Rust's (Rust: 0.24 ms at 20,000 objects, 1.2 to 1.3 ms at
    100,000), with no GC collection during the measured frames. If C# misses it, the port stops here
    and this document records why.
+   *Done, 2026-11-26* (`bench/runtime/csharp`, figures in `bench/README.md`, "The same runtime in
+   C#"): every checksum equal, no collection, no allocation in the timed steps. On the JIT the script
+   step is 1.23 to 1.30 times Rust's and the whole step 1.11 to 1.26: the gate is met. As NativeAOT
+   it is 1.60 to 1.63 and 1.36 to 1.59, just over the gate; see the player below. Reading the JIT's
+   output found one fix the runtime needed (`Frame.Seconds`), so later stages keep timing their hot
+   paths and reading the generated code.
 1. **Core, ECS, scene, files.** Every file in the test projects reads and writes back the same as the
    Rust engine reads and writes it.
 2. **Engine and commands.** Every command id with the same parameters and results, driven by
@@ -199,4 +210,4 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
 
 1. Keep the web player, at the cost above, or drop it?
 2. Keep sandboxed WebAssembly scripts as an opt-in module beside C# scripts?
-3. Run stage 0 now, before anything else is ported?
+3. Stage 0 met its gate on the JIT: start stage 1?

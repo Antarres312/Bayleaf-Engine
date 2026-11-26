@@ -1,12 +1,12 @@
-# The same small runtime in C++ and Rust, and as one WebAssembly module (bench/README.md, "The same
+# The same small runtime in C++, Rust and C#, and as one WebAssembly module (bench/README.md, "The same
 # runtime in C++ and Rust"): builds what this computer can build, runs each program -Repeats times
 # per size, writes bench/results/<name>-runtime.jsonl and .md, and prints the table.
 param(
     [int[]]$Objects = @(5000, 20000, 100000),
     [int]$Repeats = 3,
     [string]$Name = (Get-Date -Format 'yyyy-MM-dd'),
-    # Which programs run: any of cpp, rust, wasm (the table always shows every run in the file).
-    [string[]]$Programs = @('cpp', 'rust', 'wasm'),
+    # Which programs run: any of cpp, rust, wasm, csharp (the table always shows every run in the file).
+    [string[]]$Programs = @('cpp', 'rust', 'wasm', 'csharp'),
     # Where the WebAssembly host is built; wasmtime takes several minutes the first time.
     [string]$WasmHostTarget = ''
 )
@@ -16,6 +16,14 @@ $results = Join-Path $PSScriptRoot 'results'
 $out = Join-Path $results "$Name-runtime.jsonl"
 New-Item -ItemType Directory -Force $results | Out-Null
 $runs = @()
+
+# Runs a build command; it failed when its exit code says so. Windows PowerShell 5.1 would otherwise
+# stop the script at the first warning a compiler writes to stderr.
+function Invoke-Build([string]$What, [scriptblock]$Command) {
+    $ErrorActionPreference = 'Continue'
+    & $Command 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "$What did not build" }
+}
 
 # C++ with MSVC.
 $cppDir = Join-Path $root 'target\bench-runtime-cpp'
@@ -37,8 +45,8 @@ if ($Programs -contains 'rust' -or $Programs -contains 'wasm') {
     Push-Location $rustDir
     try {
         $env:CARGO_TARGET_DIR = $rustTarget
-        cargo build --release -j 2; if (-not $?) { throw 'the Rust program did not build' }
-        if ($Programs -contains 'wasm') { cargo build --release --lib --target wasm32-unknown-unknown -j 2; if (-not $?) { throw 'the module did not build' } }
+        Invoke-Build 'the Rust program' { cargo build --release -j 2 }
+        if ($Programs -contains 'wasm') { Invoke-Build 'the module' { cargo build --release --lib --target wasm32-unknown-unknown -j 2 } }
     } finally { Pop-Location }
     if ($Programs -contains 'rust') { $runs += , @("Rust ($((rustc --version) -replace '^rustc (\S+).*', '$1'))", (Join-Path $rustTarget 'release\runtime-rust.exe'), @()) }
 }
@@ -47,11 +55,26 @@ if ($Programs -contains 'wasm') {
     Push-Location (Join-Path $PSScriptRoot 'runtime\wasm-host')
     try {
         $env:CARGO_TARGET_DIR = $hostTarget
-        cargo build --release -j 2; if (-not $?) { throw 'the WebAssembly host did not build' }
+        Invoke-Build 'the WebAssembly host' { cargo build --release -j 2 }
     } finally { Pop-Location }
     $runs += , @('WebAssembly, one module', (Join-Path $hostTarget 'release\runtime-wasm-host.exe'), @((Join-Path $rustTarget 'wasm32-unknown-unknown\release\runtime_rust.wasm')))
 }
 Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+
+# C# on .NET 10 (docs/csharp-redesign.md, stage 0): on the JIT and as NativeAOT, from the same sources.
+# NativeAOT links with the Visual Studio tools, which it finds through vswhere.
+$dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+if ($dotnet -and $Programs -contains 'csharp') {
+    $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_NOLOGO = '1'
+    $env:PATH += ";${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+    $project = Join-Path $PSScriptRoot 'runtime\csharp\runtime-csharp.csproj'
+    Invoke-Build 'the C# program' { & $dotnet build $project -c Release }
+    Invoke-Build 'the NativeAOT program' { & $dotnet publish $project -c Release -r win-x64 -p:PublishAot=true }
+    $sdk = (& $dotnet --version)
+    $csDir = Join-Path $root 'target\bench-runtime-csharp'
+    $runs += , @("C# 14 (.NET SDK $sdk)", (Join-Path $csDir 'bin\runtime-csharp\release\runtime-csharp.exe'), @())
+    $runs += , @("C# 14 (.NET SDK $sdk)", (Join-Path $csDir 'publish\runtime-csharp\release_win-x64\runtime-csharp.exe'), @())
+}
 
 foreach ($n in $Objects) {
     for ($r = 1; $r -le $Repeats; $r++) {
@@ -76,11 +99,13 @@ $label = {
     $how = switch -Wildcard ($mode) {
         'wasm-compiled-*' { ', compiled' }
         'wasm-interpreted-*' { ', interpreted' }
+        'csharp-jit-*' { ', JIT' }
+        'csharp-aot-*' { ', NativeAOT' }
         default { '' }
     }
     "$how, $what"
 }
-$md = @("# The same runtime in C++ and Rust, $Name", '', 'Median over runs of the mean milliseconds per step; in brackets, times the C++ runtime with typed scripts.', '')
+$md = @("# The same runtime in C++, Rust and C#, $Name", '', 'Median over runs of the mean milliseconds per step; in brackets, times the C++ runtime with typed scripts.', '')
 $checks = @($rows | ForEach-Object { '{0}:{1}' -f $_.objects, ([double]$_.check).ToString('0.000000000e+00', $inv) } | Sort-Object -Unique)
 $md += "Every version agrees on the checksum after 100 steps: $(if ($checks.Count -eq @($Objects).Count) { 'yes' } else { 'NO (' + ($checks -join ', ') + ')' })."
 $md += ''

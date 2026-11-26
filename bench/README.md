@@ -390,6 +390,46 @@ Limits: one computer; MSVC only (clang was not installed, and Rust's compiler sh
 generator, not MSVC's); a runtime of 300 lines, which shows the cost of the core design and not of
 physics, rendering or a real game's scripts.
 
+## The same runtime in C# (2026-11-26)
+
+Stage 0 of `docs/csharp-redesign.md`: is C# fast enough to write the engine in? `runtime/csharp/` is
+the runtime and game above in C# 14 on .NET 10 (SDK 10.0.404), written as a C# engine would write
+it: components as structs in arrays reached by reference, scripts as structs in one array per type
+(the compiler specialises the update for each), interfaces for the virtual style. It runs on the JIT
+and as NativeAOT from the same sources. `bench\run-runtime.ps1` builds and runs it with the others
+(`-Programs cpp,rust,csharp`); all runs in [results/2026-11-26-runtime.md](results/2026-11-26-runtime.md).
+Every version printed the same checksum, and no garbage collection ran during any timed step (the
+steps allocate nothing).
+
+Times Rust with typed scripts, median of three runs' means:
+
+| | 5000 | 20,000 | 100,000 |
+|---|---:|---:|---:|
+| Script step: Rust, typed (ms) | 0.057 | 0.235 | 1.22 |
+| C# on the JIT, typed | 1.30 | 1.23 | 1.25 |
+| C# as NativeAOT, typed | 1.63 | 1.62 | 1.60 |
+| C# on the JIT, virtual (against Rust, virtual) | 1.11 | 0.89 | 0.31 |
+| With world matrices and the moved list: Rust, typed (ms) | 0.154 | 0.777 | 4.45 |
+| C# on the JIT, typed | 1.26 | 1.18 | 1.11 |
+| C# as NativeAOT, typed | 1.59 | 1.47 | 1.36 |
+
+What it says:
+
+- **C# on the JIT is 1.1 to 1.3 times Rust**, with the same design; the gate (1.5) is met.
+- **NativeAOT is slower than the JIT** (1.4 to 1.6 times Rust): it compiles once, without the
+  measurements the JIT optimises from while running.
+- **The virtual style costs less in C#** than in Rust at 100,000 objects (3.0 ms against 9.5); likely
+  because .NET allocates the script objects one after another in memory, where Rust's boxes land
+  wherever the allocator puts them (not looked into).
+- **Two details of .NET's code generation mattered.** Converting the time to single precision inside
+  each object's update made each object wait for the previous object's sine (the conversion writes
+  into a register the sine's result still holds), and cost 2.7 times on that script; the runtime now
+  hands scripts the time already converted (`Frame.Seconds`, the same value). A `%` on floats goes
+  through a helper call, about 0.02 ms of the 0.074 ms script step at 5000 objects (measured with an
+  exact replacement that a script cannot use in general); it is left in, as the other languages
+  have it. A C# engine needs its hot paths read in the JIT's output
+  (`DOTNET_JitDisasm`), as these were.
+
 ## The runtime rebuild (from 2026-11-25)
 
 `docs/runtime-rebuild.md` is the plan and says where each stage stands. Its figures come from runs
