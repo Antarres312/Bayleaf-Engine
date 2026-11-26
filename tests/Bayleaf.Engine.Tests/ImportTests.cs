@@ -136,6 +136,14 @@ public class ImportTests
             Run("edit.undo", JsonValue.Null);
             Assert.True(session.Scene.Component(sound, "audioSource").IsError, "undone");
 
+            // An image as an object's look: a mesh gets a material beside the image that shows it.
+            var cube = session.Scene.Children(null).First(o => session.Scene.NameOf(o) == "Cube");
+            var applied = Run("scene.image.apply", Params(("id", new JsonString(cube.ToHex())), ("image", new JsonString("assets/logo.png"))));
+            var material = applied.Get("material")!.AsString()!;
+            Assert.Equal(material, session.Scene.Component(cube, "mesh").Value.Get("material")!.AsString());
+            var opened = Run("graph.open", Params(("path", new JsonString(Path.Join(project, material)))));
+            Assert.Empty(opened.Get("problems")!.AsArray()!);
+
             // Confined: a file outside the read roots is refused.
             session.Confinement = Confinement.Create([project], [project]).Value;
             Assert.True(registry.Execute(session, "asset.import", Params(("files", Strings(In("logo.png"))), ("folder", new JsonString("assets")))).IsError);

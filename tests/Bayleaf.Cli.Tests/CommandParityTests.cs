@@ -155,13 +155,55 @@ public class CommandParityTests
         return data;
     }
 
+    /// <summary>
+    /// The differences from the Rust engine this engine keeps on purpose, each with why
+    /// (<c>tests/commands/differences/known.json</c>): a field of some steps' results that must be
+    /// what <c>csharp</c> says here and what the Rust engine gave there.
+    /// </summary>
+    private static List<(string Batch, List<int> Steps, string Field, JsonValue CSharp)> KnownDifferences()
+    {
+        var path = Path.Join(Root(), "tests", "commands", "differences", "known.json");
+        if (!File.Exists(path))
+        {
+            return [];
+        }
+        var listed = (JsonArray)JsonReader.Parse(File.ReadAllText(path)).Value;
+        return [.. listed.Select(d => (
+            d.Get("batch")!.AsString()!,
+            ((JsonArray)d.Get("steps")!).Select(s => (int)((JsonNumber)s).AsUInt64()!.Value).ToList(),
+            d.Get("field")!.AsString()!,
+            d.Get("csharp")!))];
+    }
+
+    /// <summary>The printed report with each known difference checked and then put back as the Rust engine gave it.</summary>
+    private static string WithKnownDifferences(string name, string printed, string expected)
+    {
+        var differences = KnownDifferences().Where(d => d.Batch == name).ToList();
+        if (differences.Count == 0)
+        {
+            return printed;
+        }
+        var ours = (JsonObject)JsonReader.Parse(printed).Value;
+        var rust = (JsonObject)JsonReader.Parse(expected).Value;
+        foreach (var (_, steps, field, csharp) in differences)
+        {
+            foreach (var step in steps)
+            {
+                var mine = (JsonObject)((JsonArray)ours.Get("results")!)[step];
+                Assert.Equal(csharp.Canonical().ToCompact(), mine.Get(field)?.Canonical().ToCompact());
+                mine.Set(field, ((JsonArray)rust.Get("results")!)[step].Get(field)!);
+            }
+        }
+        return ours.ToPretty() + "\n";
+    }
+
     [Theory]
     [MemberData(nameof(Batches))]
     public void EachBatchGivesBackWhatTheRustEngineGaveBack(string name)
     {
         var root = Root();
         var expected = File.ReadAllText(Path.Join(root, "tests", "commands", "expected", name)).ReplaceLineEndings("\n");
-        Assert.Equal(expected, RunBatch(Path.Join(root, "tests", "commands", name)));
+        Assert.Equal(expected, WithKnownDifferences(name, RunBatch(Path.Join(root, "tests", "commands", name)), expected));
     }
 
     [Fact]

@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: $root/tests/files/goblin.bdata is not an image of the project (.png or .jpg)",
+  "failedStep": 1,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    }
+  ]
+}

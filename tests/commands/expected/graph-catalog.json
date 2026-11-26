@@ -1,0 +1,6494 @@
+{
+  "results": [
+    {
+      "domain": "material",
+      "extension": "bmaterial",
+      "label": "Material",
+      "nodes": [
+        {
+          "category": "Output",
+          "description": "What the surface looks like, lit by the engine. A material has one output: this or Custom Lighting Output.",
+          "inputs": [
+            {
+              "label": "Base Color",
+              "name": "baseColor",
+              "type": "color"
+            },
+            {
+              "label": "Metallic",
+              "name": "metallic",
+              "type": "float"
+            },
+            {
+              "label": "Roughness",
+              "name": "roughness",
+              "type": "float"
+            },
+            {
+              "label": "Emission",
+              "name": "emissive",
+              "type": "color"
+            },
+            {
+              "label": "Opacity",
+              "name": "opacity",
+              "type": "float"
+            }
+          ],
+          "kind": "output",
+          "label": "Material Output",
+          "outputs": [],
+          "settings": [
+            {
+              "label": "Outline Width",
+              "name": "outlineWidth"
+            },
+            {
+              "label": "Outline Color",
+              "name": "outlineColor"
+            }
+          ]
+        },
+        {
+          "category": "Output",
+          "description": "The colour the surface shows, worked out by the graph itself (with Main Light and Other Lights) instead of the engine's lighting.",
+          "inputs": [
+            {
+              "label": "Color",
+              "name": "color",
+              "type": "color"
+            },
+            {
+              "label": "Opacity",
+              "name": "alpha",
+              "type": "float"
+            }
+          ],
+          "kind": "customLighting",
+          "label": "Custom Lighting Output",
+          "outputs": [],
+          "settings": [
+            {
+              "label": "Outline Width",
+              "name": "outlineWidth"
+            },
+            {
+              "label": "Outline Color",
+              "name": "outlineColor"
+            }
+          ]
+        },
+        {
+          "category": "Lights",
+          "description": "The main light at this point (the sun when there is one): the direction towards it, its colour and strength, and how much of it the shadows let through (1 lit).",
+          "inputs": [],
+          "kind": "mainLight",
+          "label": "Main Light",
+          "outputs": [
+            {
+              "label": "Direction",
+              "name": "direction",
+              "type": "vec3"
+            },
+            {
+              "label": "Color",
+              "name": "color",
+              "type": "color"
+            },
+            {
+              "label": "Shadow",
+              "name": "shadow",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Lights",
+          "description": "The light every other light gives this point, added up (facing them, past shadows).",
+          "inputs": [],
+          "kind": "otherLights",
+          "label": "Other Lights",
+          "outputs": [
+            {
+              "label": "Color",
+              "name": "color",
+              "type": "color"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "From the point towards the camera.",
+          "inputs": [],
+          "kind": "viewDirection",
+          "label": "View Direction",
+          "outputs": [
+            {
+              "label": "Direction",
+              "name": "direction",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "Where the pixel is on the screen, 0 to 1 from the top left, as a vector (x, y, 0).",
+          "inputs": [],
+          "kind": "screenPosition",
+          "label": "Screen Position",
+          "outputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "How much two directions agree: 1 the same, 0 at right angles, −1 opposite (for unit vectors).",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "vec3"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "vec3"
+            }
+          ],
+          "kind": "dot",
+          "label": "Dot Product",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "The same direction with length 1.",
+          "inputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "kind": "normalize",
+          "label": "Normalize",
+          "outputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "0 below the edge, 1 from the edge up: a hard band.",
+          "inputs": [
+            {
+              "label": "Edge",
+              "name": "edge",
+              "type": "float"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "step",
+          "label": "Step",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "0 below Low, 1 above High, a smooth curve between: a soft band.",
+          "inputs": [
+            {
+              "label": "Low",
+              "name": "low",
+              "type": "float"
+            },
+            {
+              "label": "High",
+              "name": "high",
+              "type": "float"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "smoothstep",
+          "label": "Smooth Step",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "Cuts values from 0 to 1 into a number of flat bands (2 or more).",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            },
+            {
+              "label": "Bands",
+              "name": "steps",
+              "type": "float"
+            }
+          ],
+          "kind": "posterize",
+          "label": "Posterize",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "Moves a value from one range to another: From Low becomes To Low and From High To High.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            },
+            {
+              "label": "From Low",
+              "name": "fromLow",
+              "type": "float"
+            },
+            {
+              "label": "From High",
+              "name": "fromHigh",
+              "type": "float"
+            },
+            {
+              "label": "To Low",
+              "name": "toLow",
+              "type": "float"
+            },
+            {
+              "label": "To High",
+              "name": "toHigh",
+              "type": "float"
+            }
+          ],
+          "kind": "remap",
+          "label": "Remap",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Values",
+          "description": "A fixed number.",
+          "inputs": [],
+          "kind": "number",
+          "label": "Number",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Value",
+              "name": "value"
+            }
+          ]
+        },
+        {
+          "category": "Values",
+          "description": "A fixed colour.",
+          "inputs": [],
+          "kind": "color",
+          "label": "Color",
+          "outputs": [
+            {
+              "label": "Color",
+              "name": "color",
+              "type": "color"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Color",
+              "name": "color"
+            }
+          ]
+        },
+        {
+          "category": "Values",
+          "description": "A vector from three numbers.",
+          "inputs": [
+            {
+              "label": "X",
+              "name": "x",
+              "type": "float"
+            },
+            {
+              "label": "Y",
+              "name": "y",
+              "type": "float"
+            },
+            {
+              "label": "Z",
+              "name": "z",
+              "type": "float"
+            }
+          ],
+          "kind": "vector",
+          "label": "Make Vector",
+          "outputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Values",
+          "description": "The three numbers of a vector or colour.",
+          "inputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "kind": "split",
+          "label": "Split Vector",
+          "outputs": [
+            {
+              "label": "X",
+              "name": "x",
+              "type": "float"
+            },
+            {
+              "label": "Y",
+              "name": "y",
+              "type": "float"
+            },
+            {
+              "label": "Z",
+              "name": "z",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "The colour set on the object's Mesh component.",
+          "inputs": [],
+          "kind": "objectColor",
+          "label": "Object Color",
+          "outputs": [
+            {
+              "label": "Color",
+              "name": "color",
+              "type": "color"
+            },
+            {
+              "label": "Alpha",
+              "name": "alpha",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "Seconds since the view started; animates the material.",
+          "inputs": [],
+          "kind": "time",
+          "label": "Time",
+          "outputs": [
+            {
+              "label": "Seconds",
+              "name": "seconds",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "Where the pixel is in the world.",
+          "inputs": [],
+          "kind": "position",
+          "label": "World Position",
+          "outputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "Where on the shape's surface the pixel is: 0 to 1 across each face, as a vector (u, v, 0).",
+          "inputs": [],
+          "kind": "uv",
+          "label": "Texture Coordinates",
+          "outputs": [
+            {
+              "label": "Coordinates",
+              "name": "uv",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "Colours from a PNG image, laid over the surface by its texture coordinates.",
+          "inputs": [
+            {
+              "label": "Coordinates",
+              "name": "uv",
+              "type": "vec3"
+            }
+          ],
+          "kind": "texture",
+          "label": "Image",
+          "outputs": [
+            {
+              "label": "Color",
+              "name": "color",
+              "type": "color"
+            },
+            {
+              "label": "Alpha",
+              "name": "alpha",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Image File",
+              "name": "image"
+            }
+          ]
+        },
+        {
+          "category": "Inputs",
+          "description": "Which way the surface faces, in world space.",
+          "inputs": [],
+          "kind": "normal",
+          "label": "Normal",
+          "outputs": [
+            {
+              "label": "Normal",
+              "name": "normal",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "1 where the surface turns away from the viewer, 0 where it faces them.",
+          "inputs": [
+            {
+              "label": "Sharpness",
+              "name": "power",
+              "type": "float"
+            }
+          ],
+          "kind": "fresnel",
+          "label": "Edge Glow",
+          "outputs": [
+            {
+              "label": "Factor",
+              "name": "factor",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "A + B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            }
+          ],
+          "kind": "add",
+          "label": "Add",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "A − B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            }
+          ],
+          "kind": "subtract",
+          "label": "Subtract",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "A × B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            }
+          ],
+          "kind": "multiply",
+          "label": "Multiply",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "A ÷ B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            }
+          ],
+          "kind": "divide",
+          "label": "Divide",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "Linear interpolation (a blend): from A (factor 0) to B (factor 1) on a straight line; factors outside 0 to 1 go past A or B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            },
+            {
+              "label": "Factor",
+              "name": "factor",
+              "type": "float"
+            }
+          ],
+          "kind": "blend",
+          "label": "Lerp",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "Where the value lies from A to B: 0 at A, 1 at B, 0.5 halfway, and past 0 or 1 beyond them; 0 when A and B are equal.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "float"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "float"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "inverseLerp",
+          "label": "Inverse Lerp",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "Base to the power of the exponent.",
+          "inputs": [
+            {
+              "label": "Base",
+              "name": "base",
+              "type": "any"
+            },
+            {
+              "label": "Exponent",
+              "name": "exponent",
+              "type": "float"
+            }
+          ],
+          "kind": "power",
+          "label": "Power",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "The number that times itself gives the input (0 below 0); for a vector, of each part.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "squareRoot",
+          "label": "Square Root",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "How long a vector is: the distance from 0 to the point it names.",
+          "inputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "kind": "vectorLength",
+          "label": "Vector Length",
+          "outputs": [
+            {
+              "label": "Length",
+              "name": "length",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "1 − the input.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "oneMinus",
+          "label": "One Minus",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "Keeps the input between 0 and 1.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "clamp",
+          "label": "Clamp 0 to 1",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "The sine of the input, in radians.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "sine",
+          "label": "Sine",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Patterns",
+          "description": "Alternating 0 and 1 cubes in space.",
+          "inputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            },
+            {
+              "label": "Cells per Unit",
+              "name": "scale",
+              "type": "float"
+            }
+          ],
+          "kind": "checker",
+          "label": "Checker",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Patterns",
+          "description": "Smooth random values between 0 and 1.",
+          "inputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            },
+            {
+              "label": "Scale",
+              "name": "scale",
+              "type": "float"
+            }
+          ],
+          "kind": "noise",
+          "label": "Noise",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Patterns",
+          "description": "Noise in layers, each finer and fainter than the one before: Smooth for clouds and terrain, Ridged for sharp crests, Billowy for puffy shapes. Detail is how many layers (1 to 8), Roughness how strong each finer one is, Lacunarity how much finer.",
+          "inputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            },
+            {
+              "label": "Scale",
+              "name": "scale",
+              "type": "float"
+            },
+            {
+              "label": "Detail",
+              "name": "detail",
+              "type": "float"
+            },
+            {
+              "label": "Roughness",
+              "name": "roughness",
+              "type": "float"
+            },
+            {
+              "label": "Lacunarity",
+              "name": "lacunarity",
+              "type": "float"
+            }
+          ],
+          "kind": "fractalNoise",
+          "label": "Fractal Noise",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Kind",
+              "name": "kind"
+            }
+          ]
+        },
+        {
+          "category": "Patterns",
+          "description": "Cells round scattered points: Distance to the nearest point (0 at it), Edge (0 on a border between cells), and a random value 0 to 1 for each cell. Randomness 0 lines the points up in a grid.",
+          "inputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            },
+            {
+              "label": "Scale",
+              "name": "scale",
+              "type": "float"
+            },
+            {
+              "label": "Randomness",
+              "name": "randomness",
+              "type": "float"
+            }
+          ],
+          "kind": "voronoi",
+          "label": "Voronoi",
+          "outputs": [
+            {
+              "label": "Distance",
+              "name": "distance",
+              "type": "float"
+            },
+            {
+              "label": "Edge",
+              "name": "edge",
+              "type": "float"
+            },
+            {
+              "label": "Cell Value",
+              "name": "cell",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Patterns",
+          "description": "Soft stripes from 0 to 1: Bands along X, or Rings round the centre. Distortion bends them with noise.",
+          "inputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            },
+            {
+              "label": "Scale",
+              "name": "scale",
+              "type": "float"
+            },
+            {
+              "label": "Distortion",
+              "name": "distortion",
+              "type": "float"
+            }
+          ],
+          "kind": "waves",
+          "label": "Waves",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Kind",
+              "name": "kind"
+            }
+          ]
+        },
+        {
+          "category": "Patterns",
+          "description": "0 to 1 across the coordinates: Linear along X, Quadratic (eased), Spherical (1 at the middle, 0 half a unit away) or Radial (round the middle); the middle is X and Y 0.5, the centre of texture coordinates.",
+          "inputs": [
+            {
+              "label": "Coordinates",
+              "name": "uv",
+              "type": "vec3"
+            }
+          ],
+          "kind": "gradient",
+          "label": "Gradient",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Kind",
+              "name": "kind"
+            }
+          ]
+        },
+        {
+          "category": "Patterns",
+          "description": "A different random value 0 to 1 for every point (white noise), and a random colour; Scale sets how fine.",
+          "inputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            },
+            {
+              "label": "Scale",
+              "name": "scale",
+              "type": "float"
+            }
+          ],
+          "kind": "random",
+          "label": "Random",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            },
+            {
+              "label": "Color",
+              "name": "color",
+              "type": "color"
+            }
+          ],
+          "settings": []
+        }
+      ]
+    },
+    {
+      "domain": "script",
+      "extension": "bscript",
+      "label": "Visual Script",
+      "nodes": [
+        {
+          "category": "Events",
+          "description": "Runs once when the object is ready, before any script's On Start: every script of the scene runs On Init first.",
+          "inputs": [],
+          "kind": "init",
+          "label": "On Init",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Events",
+          "description": "Runs once when play mode starts, after every script ran On Init.",
+          "inputs": [],
+          "kind": "start",
+          "label": "On Start",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Events",
+          "description": "Runs every simulation step.",
+          "inputs": [],
+          "kind": "update",
+          "label": "On Update",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            },
+            {
+              "label": "Step Seconds",
+              "name": "dt",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Events",
+          "description": "Runs when a script sends this message to this object, or to every object. Value is the number sent with it.",
+          "inputs": [],
+          "kind": "message",
+          "label": "On Message",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Message",
+              "name": "message"
+            }
+          ]
+        },
+        {
+          "category": "Physics",
+          "description": "Runs when another collider comes into this object's trigger, or this object comes into another's (needs physics).",
+          "inputs": [],
+          "kind": "triggerEntered",
+          "label": "On Trigger Entered",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            },
+            {
+              "label": "Other Object",
+              "name": "other",
+              "type": "object"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Physics",
+          "description": "Runs when another collider leaves this object's trigger, or this object leaves another's (needs physics).",
+          "inputs": [],
+          "kind": "triggerLeft",
+          "label": "On Trigger Left",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            },
+            {
+              "label": "Other Object",
+              "name": "other",
+              "type": "object"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Physics",
+          "description": "Runs when this object's collider starts touching another (needs physics).",
+          "inputs": [],
+          "kind": "collisionStarted",
+          "label": "On Collision Started",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            },
+            {
+              "label": "Other Object",
+              "name": "other",
+              "type": "object"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Physics",
+          "description": "Runs when this object's collider stops touching another (needs physics).",
+          "inputs": [],
+          "kind": "collisionEnded",
+          "label": "On Collision Ended",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            },
+            {
+              "label": "Other Object",
+              "name": "other",
+              "type": "object"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Sends a message and a number to the scripts of the linked object, else the first object named in Object Name, else every object. It arrives after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "sendMessage",
+          "label": "Send Message",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Message",
+              "name": "message"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Inputs",
+          "description": "An input action's value by its kind (a trigger 1 in the step it goes down, held 1 while down, value how far it is pressed), and whether it is down. Name it Jump for the active map, or Player/Jump; actions of maps that are not active read 0.",
+          "inputs": [],
+          "kind": "action",
+          "label": "Action",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            },
+            {
+              "label": "Held",
+              "name": "held",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Action",
+              "name": "action"
+            }
+          ]
+        },
+        {
+          "category": "Events",
+          "description": "Runs once in the step an input action goes down, while its map is active.",
+          "inputs": [],
+          "kind": "actionPressed",
+          "label": "On Action Pressed",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Action",
+              "name": "action"
+            }
+          ]
+        },
+        {
+          "category": "Events",
+          "description": "Runs once in the step when the key goes down (names like W, Space, ArrowUp).",
+          "inputs": [],
+          "kind": "keyPressed",
+          "label": "On Key Pressed",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Key",
+              "name": "key"
+            }
+          ]
+        },
+        {
+          "category": "Events",
+          "description": "Runs every given number of seconds of play.",
+          "inputs": [],
+          "kind": "timer",
+          "label": "On Timer",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Seconds",
+              "name": "seconds"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "Keeps a vector under a name, for this script on this object. It starts where the Variables panel says, or at 0, 0, 0.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "vec3"
+            }
+          ],
+          "kind": "setVectorVariable",
+          "label": "Set Vector Variable",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "The vector Set Vector Variable last kept under this name, or 0, 0, 0.",
+          "inputs": [],
+          "kind": "vectorVariable",
+          "label": "Vector Variable",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "vec3"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "Keeps true or false under a name, for this script on this object. It starts as the Variables panel says, or false.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "bool"
+            }
+          ],
+          "kind": "setFlag",
+          "label": "Set True/False Variable",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "What Set True/False Variable last kept under this name, or false.",
+          "inputs": [],
+          "kind": "flag",
+          "label": "True/False Variable",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "Keeps a whole number under a name, for this script on this object. It starts where the Variables panel says, or at 0.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "int"
+            }
+          ],
+          "kind": "setWholeVariable",
+          "label": "Set Whole Number Variable",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "The whole number Set Whole Number Variable last kept under this name, or what it starts at.",
+          "inputs": [],
+          "kind": "wholeVariable",
+          "label": "Whole Number Variable",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "int"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "Keeps text under a name, for this script on this object (up to 1024 bytes; longer text is cut). It starts as the Variables panel says, or empty.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "text"
+            }
+          ],
+          "kind": "setTextVariable",
+          "label": "Set Text Variable",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "The text Set Text Variable last kept under this name, or what it starts as.",
+          "inputs": [],
+          "kind": "textVariable",
+          "label": "Text Variable",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "text"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "Keeps an object under a name, for this script on this object, from step to step. It starts as none.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "object"
+            }
+          ],
+          "kind": "setObjectVariable",
+          "label": "Set Object Variable",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "The object Set Object Variable last kept under this name; none (Found false) before that, or once the object is gone.",
+          "inputs": [],
+          "kind": "objectVariable",
+          "label": "Object Variable",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "object"
+            },
+            {
+              "label": "Found",
+              "name": "found",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "Keeps a colour under a name, for this script on this object. It starts as the Variables panel says, or white.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "color"
+            }
+          ],
+          "kind": "setColorVariable",
+          "label": "Set Color Variable",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "The colour Set Color Variable last kept under this name, or what it starts as.",
+          "inputs": [],
+          "kind": "colorVariable",
+          "label": "Color Variable",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "color"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "Keeps a number under a name, for this script on this object. It starts where the Variables panel says, or at 0.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "setVariable",
+          "label": "Set Variable",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Variables",
+          "description": "The number Set Variable last kept under this name, or 0.",
+          "inputs": [],
+          "kind": "variable",
+          "label": "Variable",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Writes the message, and the value if one is linked, to the console.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "log",
+          "label": "Log",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Message",
+              "name": "message"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Moves the object to a position (relative to its parent).",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            }
+          ],
+          "kind": "setPosition",
+          "label": "Set Position",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Moves the object by an offset.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Offset",
+              "name": "offset",
+              "type": "vec3"
+            }
+          ],
+          "kind": "moveBy",
+          "label": "Move By",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Sets the rotation, in degrees about X, Y and Z.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Rotation",
+              "name": "rotation",
+              "type": "vec3"
+            }
+          ],
+          "kind": "setRotation",
+          "label": "Set Rotation",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Turns the object by degrees about X, Y and Z.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Degrees",
+              "name": "degrees",
+              "type": "vec3"
+            }
+          ],
+          "kind": "rotateBy",
+          "label": "Rotate By",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Sets the size along X, Y and Z.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Scale",
+              "name": "scale",
+              "type": "vec3"
+            }
+          ],
+          "kind": "setScale",
+          "label": "Set Scale",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Flow",
+          "description": "Continues with True or False, depending on the condition.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Condition",
+              "name": "condition",
+              "type": "bool"
+            }
+          ],
+          "kind": "branch",
+          "label": "Branch",
+          "outputs": [
+            {
+              "label": "True",
+              "name": "true",
+              "type": "flow"
+            },
+            {
+              "label": "False",
+              "name": "false",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Values",
+          "description": "A fixed number.",
+          "inputs": [],
+          "kind": "number",
+          "label": "Number",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Value",
+              "name": "value"
+            }
+          ]
+        },
+        {
+          "category": "Values",
+          "description": "A vector from three numbers.",
+          "inputs": [
+            {
+              "label": "X",
+              "name": "x",
+              "type": "float"
+            },
+            {
+              "label": "Y",
+              "name": "y",
+              "type": "float"
+            },
+            {
+              "label": "Z",
+              "name": "z",
+              "type": "float"
+            }
+          ],
+          "kind": "vector",
+          "label": "Make Vector",
+          "outputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Values",
+          "description": "The three numbers of a vector.",
+          "inputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "kind": "split",
+          "label": "Split Vector",
+          "outputs": [
+            {
+              "label": "X",
+              "name": "x",
+              "type": "float"
+            },
+            {
+              "label": "Y",
+              "name": "y",
+              "type": "float"
+            },
+            {
+              "label": "Z",
+              "name": "z",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Properties",
+          "description": "A number property: set per object in the Inspector, else its default in the script's panel.",
+          "inputs": [],
+          "kind": "property",
+          "label": "Property",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "A whole-number property: set per object in the Inspector, else its default.",
+          "inputs": [],
+          "kind": "wholeProperty",
+          "label": "Whole Number Property",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "int"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "A true/false property: set per object in the Inspector, else its default.",
+          "inputs": [],
+          "kind": "flagProperty",
+          "label": "True/False Property",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "A vector property: set per object in the Inspector, else its default.",
+          "inputs": [],
+          "kind": "vectorProperty",
+          "label": "Vector Property",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "vec3"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "A colour property: set per object in the Inspector, else its default.",
+          "inputs": [],
+          "kind": "colorProperty",
+          "label": "Color Property",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "color"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "A text property: set per object in the Inspector, else its default.",
+          "inputs": [],
+          "kind": "textProperty",
+          "label": "Text Property",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "text"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "An object property: the object of the scene chosen per object in the Inspector (by its name); none (Found false) when none is chosen or it is not there.",
+          "inputs": [],
+          "kind": "objectProperty",
+          "label": "Object Property",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "object"
+            },
+            {
+              "label": "Found",
+              "name": "found",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "Sets this script's number property on this object, for the rest of play.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "setProperty",
+          "label": "Set Property",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "Sets this script's whole-number property on this object, for the rest of play.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "int"
+            }
+          ],
+          "kind": "setWholeProperty",
+          "label": "Set Whole Number Property",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "Sets this script's true/false property on this object, for the rest of play.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "bool"
+            }
+          ],
+          "kind": "setFlagProperty",
+          "label": "Set True/False Property",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "Sets this script's vector property on this object, for the rest of play.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "vec3"
+            }
+          ],
+          "kind": "setVectorProperty",
+          "label": "Set Vector Property",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "Sets this script's colour property on this object, for the rest of play.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "color"
+            }
+          ],
+          "kind": "setColorProperty",
+          "label": "Set Color Property",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "Sets this script's text property on this object, for the rest of play.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "text"
+            }
+          ],
+          "kind": "setTextProperty",
+          "label": "Set Text Property",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Properties",
+          "description": "Sets this script's object property on this object to the linked object (by its name), for the rest of play.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "value",
+              "type": "object"
+            }
+          ],
+          "kind": "setObjectProperty",
+          "label": "Set Object Property",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Property",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Functions",
+          "description": "Where a function's actions begin; its outputs are the values the function is called with.",
+          "inputs": [],
+          "kind": "functionStart",
+          "label": "Function",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Function",
+              "name": "function"
+            },
+            {
+              "label": "Inputs",
+              "name": "inputs"
+            },
+            {
+              "label": "Outputs",
+              "name": "outputs"
+            }
+          ]
+        },
+        {
+          "category": "Functions",
+          "description": "Ends the function and gives back its outputs to the Call Function that ran it.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            }
+          ],
+          "kind": "functionReturn",
+          "label": "Return",
+          "outputs": [],
+          "settings": [
+            {
+              "label": "Function",
+              "name": "function"
+            },
+            {
+              "label": "Inputs",
+              "name": "inputs"
+            },
+            {
+              "label": "Outputs",
+              "name": "outputs"
+            }
+          ]
+        },
+        {
+          "category": "Functions",
+          "description": "Runs a function of this script with its inputs, then goes on; its outputs are what the function gave back.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            }
+          ],
+          "kind": "callFunction",
+          "label": "Call Function",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Function",
+              "name": "function"
+            },
+            {
+              "label": "Inputs",
+              "name": "inputs"
+            },
+            {
+              "label": "Outputs",
+              "name": "outputs"
+            }
+          ]
+        },
+        {
+          "category": "Events",
+          "description": "Runs when the event is triggered on this object (by a script's Trigger Event, by the interface, or by every object's); its outputs are the values the event brings.",
+          "inputs": [],
+          "kind": "eventStart",
+          "label": "On Event",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Event",
+              "name": "event"
+            },
+            {
+              "label": "Values",
+              "name": "params"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Triggers an event with its values on the linked object, else the first object named in Object Name, else every object; their On Event nodes run after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "triggerEvent",
+          "label": "Trigger Event",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Event",
+              "name": "event"
+            },
+            {
+              "label": "Values",
+              "name": "params"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Find",
+          "description": "This script, as a component of its object: what other scripts trigger events on and subscribe to.",
+          "inputs": [],
+          "kind": "thisComponent",
+          "label": "This Component",
+          "outputs": [
+            {
+              "label": "Component",
+              "name": "component",
+              "type": "component"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Find",
+          "description": "The object a component is on, or none.",
+          "inputs": [
+            {
+              "label": "Component",
+              "name": "component",
+              "type": "component"
+            }
+          ],
+          "kind": "componentObject",
+          "label": "Object of Component",
+          "outputs": [
+            {
+              "label": "Object",
+              "name": "object",
+              "type": "object"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Triggers an event its script declares on one component (a script on an object), with its values; the script's On Event, and the scripts subscribed to it, run after this step. The event is picked from the script's own list.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Component",
+              "name": "component",
+              "type": "component"
+            }
+          ],
+          "kind": "triggerComponentEvent",
+          "label": "Trigger Component Event",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Script",
+              "name": "script"
+            },
+            {
+              "label": "Event",
+              "name": "event"
+            },
+            {
+              "label": "Values",
+              "name": "params"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "From now on, this script hears the event whenever it happens on the component, with On Component Event; once per component and event.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Component",
+              "name": "component",
+              "type": "component"
+            }
+          ],
+          "kind": "subscribeEvent",
+          "label": "Subscribe to Event",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Script",
+              "name": "script"
+            },
+            {
+              "label": "Event",
+              "name": "event"
+            },
+            {
+              "label": "Values",
+              "name": "params"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Stops this script hearing the event of the component it subscribed to.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Component",
+              "name": "component",
+              "type": "component"
+            }
+          ],
+          "kind": "unsubscribeEvent",
+          "label": "Unsubscribe from Event",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Script",
+              "name": "script"
+            },
+            {
+              "label": "Event",
+              "name": "event"
+            },
+            {
+              "label": "Values",
+              "name": "params"
+            }
+          ]
+        },
+        {
+          "category": "Events",
+          "description": "Runs when the event happens on a component this script subscribed to; Source is that component, and the other outputs are the values the event brings.",
+          "inputs": [],
+          "kind": "componentEventStart",
+          "label": "On Component Event",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Script",
+              "name": "script"
+            },
+            {
+              "label": "Event",
+              "name": "event"
+            },
+            {
+              "label": "Values",
+              "name": "params"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "The list itself, to pass on: into a list node, a function or an event.",
+          "inputs": [],
+          "kind": "getList",
+          "label": "Get List",
+          "outputs": [
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "Puts the value at the end of the list: the one linked in, else the one named.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "listAdd",
+          "label": "Add to List",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "Puts the value in the list at the index (from 0), moving the items from there on along; an index past the end does nothing.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            },
+            {
+              "label": "Index",
+              "name": "index",
+              "type": "int"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "listInsert",
+          "label": "Insert into List",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "Replaces the list's item at the index (from 0); an index past the end does nothing.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            },
+            {
+              "label": "Index",
+              "name": "index",
+              "type": "int"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "listSet",
+          "label": "Set List Item",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "Takes the item at the index (from 0) out of the list; the items after it move back.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            },
+            {
+              "label": "Index",
+              "name": "index",
+              "type": "int"
+            }
+          ],
+          "kind": "listRemove",
+          "label": "Remove from List",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "Takes every item out of the list.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            }
+          ],
+          "kind": "listClear",
+          "label": "Clear List",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "The list's item at the index (from 0). Past the end, Found is false and the value is empty.",
+          "inputs": [
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            },
+            {
+              "label": "Index",
+              "name": "index",
+              "type": "int"
+            }
+          ],
+          "kind": "listItem",
+          "label": "List Item",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            },
+            {
+              "label": "Found",
+              "name": "found",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "How many items the list holds.",
+          "inputs": [
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            }
+          ],
+          "kind": "listLength",
+          "label": "List Length",
+          "outputs": [
+            {
+              "label": "Length",
+              "name": "length",
+              "type": "int"
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "The index of the first item equal to the value, or -1 when there is none.",
+          "inputs": [
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "listFind",
+          "label": "Find in List",
+          "outputs": [
+            {
+              "label": "Index",
+              "name": "index",
+              "type": "int"
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Lists",
+          "description": "Runs Each once for every item of the list, in order, with the item and its index (from 0); then runs Then. Items added or taken out on the way count.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "List",
+              "name": "list",
+              "type": {
+                "list": "number"
+              }
+            }
+          ],
+          "kind": "listForEach",
+          "label": "For Each in List",
+          "outputs": [
+            {
+              "label": "Each",
+              "name": "each",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            },
+            {
+              "label": "Index",
+              "name": "index",
+              "type": "int"
+            },
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "List",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Maps",
+          "description": "The map itself, to pass on: into a map node, a function or an event.",
+          "inputs": [],
+          "kind": "getMap",
+          "label": "Get Map",
+          "outputs": [
+            {
+              "label": "Map",
+              "name": "map",
+              "type": {
+                "map": [
+                  "text",
+                  "number"
+                ]
+              }
+            }
+          ],
+          "settings": [
+            {
+              "label": "Map",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Maps",
+          "description": "Keeps the value under the key, in place of what was there, in the map linked in, else the one named.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Map",
+              "name": "map",
+              "type": {
+                "map": [
+                  "text",
+                  "number"
+                ]
+              }
+            },
+            {
+              "label": "Key",
+              "name": "key",
+              "type": "text"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "mapSet",
+          "label": "Set Map Value",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Map",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Maps",
+          "description": "Takes the key, and its value, out of the map.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Map",
+              "name": "map",
+              "type": {
+                "map": [
+                  "text",
+                  "number"
+                ]
+              }
+            },
+            {
+              "label": "Key",
+              "name": "key",
+              "type": "text"
+            }
+          ],
+          "kind": "mapRemove",
+          "label": "Remove from Map",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Map",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Maps",
+          "description": "Takes every key out of the map.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Map",
+              "name": "map",
+              "type": {
+                "map": [
+                  "text",
+                  "number"
+                ]
+              }
+            }
+          ],
+          "kind": "mapClear",
+          "label": "Clear Map",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Map",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Maps",
+          "description": "The value under the key. When the map has no such key, Found is false and the value is empty.",
+          "inputs": [
+            {
+              "label": "Map",
+              "name": "map",
+              "type": {
+                "map": [
+                  "text",
+                  "number"
+                ]
+              }
+            },
+            {
+              "label": "Key",
+              "name": "key",
+              "type": "text"
+            }
+          ],
+          "kind": "mapGet",
+          "label": "Map Value",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            },
+            {
+              "label": "Found",
+              "name": "found",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Map",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Maps",
+          "description": "How many keys the map holds.",
+          "inputs": [
+            {
+              "label": "Map",
+              "name": "map",
+              "type": {
+                "map": [
+                  "text",
+                  "number"
+                ]
+              }
+            }
+          ],
+          "kind": "mapCount",
+          "label": "Map Count",
+          "outputs": [
+            {
+              "label": "Count",
+              "name": "count",
+              "type": "int"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Map",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Maps",
+          "description": "Runs Each once for every key of the map, in the keys' order (sorted by their characters), with the key and its value; then runs Then. Keys added or taken out on the way count.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Map",
+              "name": "map",
+              "type": {
+                "map": [
+                  "text",
+                  "number"
+                ]
+              }
+            }
+          ],
+          "kind": "mapForEach",
+          "label": "For Each in Map",
+          "outputs": [
+            {
+              "label": "Each",
+              "name": "each",
+              "type": "flow"
+            },
+            {
+              "label": "Key",
+              "name": "key",
+              "type": "text"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            },
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Map",
+              "name": "name"
+            },
+            {
+              "label": "Holds",
+              "name": "item"
+            }
+          ]
+        },
+        {
+          "category": "Object",
+          "description": "The object's position, relative to its parent.",
+          "inputs": [],
+          "kind": "position",
+          "label": "Position",
+          "outputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Object",
+          "description": "The object's rotation in degrees.",
+          "inputs": [],
+          "kind": "rotation",
+          "label": "Rotation",
+          "outputs": [
+            {
+              "label": "Rotation",
+              "name": "rotation",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Object",
+          "description": "The object's size along X, Y and Z.",
+          "inputs": [],
+          "kind": "scale",
+          "label": "Scale",
+          "outputs": [
+            {
+              "label": "Scale",
+              "name": "scale",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "Seconds since play mode started.",
+          "inputs": [],
+          "kind": "time",
+          "label": "Time",
+          "outputs": [
+            {
+              "label": "Seconds",
+              "name": "seconds",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "Where the pointer is over the game view, from -1 to 1 (x right, y up), whether it is over the view, and whether it is over an interface element that takes it (its clicks are then the interface's, not the game's).",
+          "inputs": [],
+          "kind": "pointer",
+          "label": "Pointer Position",
+          "outputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            },
+            {
+              "label": "Over the View",
+              "name": "inside",
+              "type": "bool"
+            },
+            {
+              "label": "Over the Interface",
+              "name": "overInterface",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "True while the mouse button (Left, Right or Middle) is held.",
+          "inputs": [],
+          "kind": "mouseDown",
+          "label": "Mouse Button Held",
+          "outputs": [
+            {
+              "label": "Held",
+              "name": "down",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Button",
+              "name": "button"
+            }
+          ]
+        },
+        {
+          "category": "Object",
+          "description": "The position of the linked object, else the first object named in Object Name (relative to its parent).",
+          "inputs": [
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "positionOf",
+          "label": "Position Of",
+          "outputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Moves the linked object, else the first object named in Object Name, to a position.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            }
+          ],
+          "kind": "setPositionOf",
+          "label": "Set Position Of",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Places a copy of a prefab file at a world position, after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            }
+          ],
+          "kind": "spawn",
+          "label": "Spawn Prefab",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Prefab File",
+              "name": "prefab"
+            }
+          ]
+        },
+        {
+          "category": "Find",
+          "description": "The object this script runs on.",
+          "inputs": [],
+          "kind": "thisObject",
+          "label": "This Object",
+          "outputs": [
+            {
+              "label": "Object",
+              "name": "object",
+              "type": "object"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Values",
+          "description": "The fields of a data file (.bdata) as it was saved when play started, each the shape's default where the file sets none. The fields are the chosen shape's; lists and maps have no pin.",
+          "inputs": [
+            {
+              "label": "File",
+              "name": "file",
+              "type": "text"
+            }
+          ],
+          "kind": "dataFile",
+          "label": "Data File",
+          "outputs": [],
+          "settings": [
+            {
+              "label": "Shape",
+              "name": "shape"
+            },
+            {
+              "label": "Fields",
+              "name": "fields"
+            }
+          ]
+        },
+        {
+          "category": "Find",
+          "description": "The first object with this name, in hierarchy order, as the step began. Found is false when there is none.",
+          "inputs": [
+            {
+              "label": "Name",
+              "name": "named",
+              "type": "text"
+            }
+          ],
+          "kind": "findNamed",
+          "label": "Find Object Named",
+          "outputs": [
+            {
+              "label": "Object",
+              "name": "object",
+              "type": "object"
+            },
+            {
+              "label": "Found",
+              "name": "found",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Find",
+          "description": "An object that has a component (Point Light, Character…), a tag, or runs a script (by its name), in hierarchy order as the step began: Index 0 is the first. Found is false when there is none.",
+          "inputs": [
+            {
+              "label": "Index",
+              "name": "index",
+              "type": "float"
+            }
+          ],
+          "kind": "findWith",
+          "label": "Find Object With",
+          "outputs": [
+            {
+              "label": "Object",
+              "name": "object",
+              "type": "object"
+            },
+            {
+              "label": "Found",
+              "name": "found",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Component, Tag or Script",
+              "name": "kind"
+            }
+          ]
+        },
+        {
+          "category": "Find",
+          "description": "How many objects have a component (Point Light, Character…), a tag, or run a script (by its name), as the step began.",
+          "inputs": [],
+          "kind": "countWith",
+          "label": "Count Objects With",
+          "outputs": [
+            {
+              "label": "Count",
+              "name": "count",
+              "type": "int"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Component, Tag or Script",
+              "name": "kind"
+            }
+          ]
+        },
+        {
+          "category": "Find",
+          "description": "Runs Each once for every object that has a component, a tag, or runs a script, in hierarchy order as the step began, with that object and its index (from 0); then runs Then.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            }
+          ],
+          "kind": "forEachWith",
+          "label": "For Each Object With",
+          "outputs": [
+            {
+              "label": "Each",
+              "name": "each",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "object",
+              "type": "object"
+            },
+            {
+              "label": "Index",
+              "name": "index",
+              "type": "int"
+            },
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Component, Tag or Script",
+              "name": "kind"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Deletes the linked object (else this object) and its children after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "destroyObject",
+          "label": "Destroy Object",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Find",
+          "description": "The fields of a component on the linked object (else this object), as the step began. A missing component reads as zeros; Try Get Component says whether it was found.",
+          "inputs": [
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "getComponent",
+          "label": "Get Component",
+          "outputs": [],
+          "settings": [
+            {
+              "label": "Component",
+              "name": "component"
+            },
+            {
+              "label": "Fields",
+              "name": "fields"
+            }
+          ]
+        },
+        {
+          "category": "Find",
+          "description": "The fields of a component on the linked object (else this object), as the step began, and whether the object has it.",
+          "inputs": [
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "tryGetComponent",
+          "label": "Try Get Component",
+          "outputs": [
+            {
+              "label": "Found",
+              "name": "found",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Component",
+              "name": "component"
+            },
+            {
+              "label": "Fields",
+              "name": "fields"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Sets the linked fields of a component on the linked object (else this object), after this step. Fields without a link keep their values.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "setComponent",
+          "label": "Set Component",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Component",
+              "name": "component"
+            },
+            {
+              "label": "Fields",
+              "name": "fields"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Plays the Audio Source of the linked object (else this object), after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "playSound",
+          "label": "Play Sound",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Stops the sounds the linked object (else this object) plays, after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "stopSound",
+          "label": "Stop Sound",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Plays the Keyframe Animation of the linked object (else this object) from its start, after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "playKeyframes",
+          "label": "Play Keyframe Animation",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Stops the Keyframe Animation of the linked object (else this object) where it is, after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "stopKeyframes",
+          "label": "Stop Keyframe Animation",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Actions",
+          "description": "Plays a sound file once from a world position, after this step, heard from the first camera.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            },
+            {
+              "label": "Volume",
+              "name": "volume",
+              "type": "float"
+            }
+          ],
+          "kind": "playSoundAt",
+          "label": "Play Sound At",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Sound File",
+              "name": "sound"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "After this step, loads a scene file: in place of the playing scene (every script starts again; the game's values stay), or, with Add to This Scene, its objects join this one and Unload Scene removes them again.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Add to This Scene",
+              "name": "additive",
+              "type": "bool"
+            }
+          ],
+          "kind": "loadScene",
+          "label": "Load Scene",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Scene File",
+              "name": "scene"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "After this step, removes the objects of the scenes added from this file while playing.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            }
+          ],
+          "kind": "unloadScene",
+          "label": "Unload Scene",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Scene File",
+              "name": "scene"
+            }
+          ]
+        },
+        {
+          "category": "Actions",
+          "description": "Deletes this object and its children after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            }
+          ],
+          "kind": "destroySelf",
+          "label": "Destroy This Object",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Game",
+          "description": "A number the game keeps under a name: the game's own (Scope Game), a player's (Scope Player: the object named in Player, else the first player) or this object's (Scope This Object, when it has Player Control); Scope Saved keeps it from one play to the next, as for a best score. Nothing is set at first: Value is 0 and Is Set is false until something sets it.",
+          "inputs": [],
+          "kind": "gameValue",
+          "label": "Game Value",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            },
+            {
+              "label": "Is Set",
+              "name": "set",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            },
+            {
+              "label": "Scope",
+              "name": "scope"
+            },
+            {
+              "label": "Player",
+              "name": "player"
+            }
+          ]
+        },
+        {
+          "category": "Game",
+          "description": "Keeps a number under a name in the game's state or a player's (see Game Value for the scopes).",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "setGameValue",
+          "label": "Set Game Value",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            },
+            {
+              "label": "Scope",
+              "name": "scope"
+            },
+            {
+              "label": "Player",
+              "name": "player"
+            }
+          ]
+        },
+        {
+          "category": "Game",
+          "description": "Adds an amount to a number in the game's state or a player's; a name not set yet counts as 0.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Amount",
+              "name": "amount",
+              "type": "float"
+            }
+          ],
+          "kind": "changeGameValue",
+          "label": "Change Game Value",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            },
+            {
+              "label": "Scope",
+              "name": "scope"
+            },
+            {
+              "label": "Player",
+              "name": "player"
+            }
+          ]
+        },
+        {
+          "category": "Inputs",
+          "description": "Makes another map of an Input Map active (Player, Menu…): the project's, or this object's own when it has an Input Map component. Only the active map's actions work.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            }
+          ],
+          "kind": "setInputMap",
+          "label": "Set Input Map",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Map",
+              "name": "map"
+            },
+            {
+              "label": "Scope",
+              "name": "scope"
+            }
+          ]
+        },
+        {
+          "category": "Game",
+          "description": "Ends the game, won or lost; every script then gets the message gameWon or gameLost. Only the first ending counts.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Won",
+              "name": "won",
+              "type": "bool"
+            }
+          ],
+          "kind": "endGame",
+          "label": "End Game",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Effects",
+          "description": "Starts the Particle Emitter of the linked object, else the first object named in Object Name, else this object's: a new cycle, with its burst. After this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "playParticles",
+          "label": "Play Particles",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Effects",
+          "description": "Stops the emitter starting particles; those alive live out their lives. Which emitter: as Play Particles.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "stopParticles",
+          "label": "Stop Particles",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Effects",
+          "description": "Starts Count particles at once from the emitter (as many as it has room for). Which emitter: as Play Particles.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Count",
+              "name": "count",
+              "type": "int"
+            }
+          ],
+          "kind": "burstParticles",
+          "label": "Burst Particles",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Animation",
+          "description": "Plays the clip named in Clip on the model of the linked object, else the first object named in Object Name, else this object, fading from what played over Fade seconds (0 to 60). After this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Clip",
+              "name": "clip",
+              "type": "text"
+            },
+            {
+              "label": "Fade",
+              "name": "fade",
+              "type": "float"
+            },
+            {
+              "label": "Loop",
+              "name": "loop",
+              "type": "bool"
+            }
+          ],
+          "kind": "playClip",
+          "label": "Play Clip",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Animation",
+          "description": "Fades the model to its rest pose over Fade seconds. Which object: as Play Clip.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Fade",
+              "name": "fade",
+              "type": "float"
+            }
+          ],
+          "kind": "stopClip",
+          "label": "Stop Clip",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Animation",
+          "description": "Sets the number parameter named in Parameter, which mixes and animation states read. Which object: as Play Clip.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "setAnimationNumber",
+          "label": "Set Animation Number",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Parameter",
+              "name": "parameter"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Animation",
+          "description": "Sets the true/false parameter named in Parameter. Which object: as Play Clip.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "bool"
+            }
+          ],
+          "kind": "setAnimationFlag",
+          "label": "Set Animation Flag",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Parameter",
+              "name": "parameter"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Animation",
+          "description": "Sets the trigger named in Parameter, which the first transition it lets through uses up. Which object: as Play Clip.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "triggerAnimation",
+          "label": "Trigger Animation",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Parameter",
+              "name": "parameter"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Animation",
+          "description": "The animation state the object is in, as of the last step (empty, and In States false, when it runs none). Which object: as Play Clip.",
+          "inputs": [
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "animationState",
+          "label": "Animation State",
+          "outputs": [
+            {
+              "label": "State",
+              "name": "state",
+              "type": "text"
+            },
+            {
+              "label": "In States",
+              "name": "running",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Animation",
+          "description": "Where the joint named in Joint of the object's model is in the world, as the last step posed it (Found is false when the object is not animated or has no such joint). Which object: as Play Clip.",
+          "inputs": [
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "jointPosition",
+          "label": "Joint Position",
+          "outputs": [
+            {
+              "label": "Position",
+              "name": "position",
+              "type": "vec3"
+            },
+            {
+              "label": "Found",
+              "name": "found",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Joint",
+              "name": "joint"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Interface",
+          "description": "Runs when the player presses the button named in Element, in this object's Interface.",
+          "inputs": [],
+          "kind": "interfacePressed",
+          "label": "On Interface Pressed",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Element",
+              "name": "element"
+            }
+          ]
+        },
+        {
+          "category": "Interface",
+          "description": "Runs when the player changes the toggle, slider or text field named in Element, in this object's Interface. Value is its new value (a text field's length).",
+          "inputs": [],
+          "kind": "interfaceChanged",
+          "label": "On Interface Changed",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Element",
+              "name": "element"
+            }
+          ]
+        },
+        {
+          "category": "Interface",
+          "description": "Sets the text of the element named in Element, in the Interface of the linked object, else the first object named in Object Name, else this object. It shows after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            }
+          ],
+          "kind": "setInterfaceText",
+          "label": "Set Interface Text",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Element",
+              "name": "element"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Interface",
+          "description": "Sets an element's value: a toggle's state (0 or 1), a slider's number, a progress bar's fill (0 to 1). Which interface: as Set Interface Text.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "setInterfaceValue",
+          "label": "Set Interface Value",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Element",
+              "name": "element"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Interface",
+          "description": "Shows or hides the element named in Element, or the whole interface when Element is empty. Which interface: as Set Interface Text.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Visible",
+              "name": "visible",
+              "type": "bool"
+            }
+          ],
+          "kind": "showInterface",
+          "label": "Show Interface",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Element",
+              "name": "element"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Interface",
+          "description": "Builds the interface while the game plays: adds an element named Name into the element named in Into (the root when empty). What is a kind (button, text, progress...) or a layout file (.bui) used as a part, whose elements are then named Name/element.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Name",
+              "name": "name",
+              "type": "text"
+            }
+          ],
+          "kind": "addInterfaceElement",
+          "label": "Add Interface Element",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Into",
+              "name": "into"
+            },
+            {
+              "label": "What",
+              "name": "what"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Interface",
+          "description": "The value of the element named in Element as it shows now: a toggle's 0 or 1, a slider's number, a bound game value. Found is false when the interface has no such element. Which interface: the linked object's, else the first object named in Object Name, else this object's.",
+          "inputs": [
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "interfaceValue",
+          "label": "Interface Value",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            },
+            {
+              "label": "Found",
+              "name": "found",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Element",
+              "name": "element"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Interface",
+          "description": "The text of the element named in Element as it shows now, what the player typed into a text field too; empty when there is no such element. Which interface: as Interface Value.",
+          "inputs": [
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "interfaceText",
+          "label": "Interface Text",
+          "outputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Element",
+              "name": "element"
+            },
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Interface",
+          "description": "Removes the element named Name, with what it holds. Which interface: as Set Interface Text.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Name",
+              "name": "name",
+              "type": "text"
+            }
+          ],
+          "kind": "removeInterfaceElement",
+          "label": "Remove Interface Element",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Physics",
+          "description": "Sets a character's walking velocity (the linked object, else the first one named in Object Name, else this object), in world units per second, until changed.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Velocity",
+              "name": "velocity",
+              "type": "vec3"
+            }
+          ],
+          "kind": "walk",
+          "label": "Walk",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Physics",
+          "description": "Makes a character on the ground jump with an upward speed (the linked object, else the first one named in Object Name, else this object).",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Speed",
+              "name": "speed",
+              "type": "float"
+            }
+          ],
+          "kind": "jump",
+          "label": "Jump",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Physics",
+          "description": "True while this object's character stands on something.",
+          "inputs": [],
+          "kind": "onGround",
+          "label": "On Ground",
+          "outputs": [
+            {
+              "label": "On Ground",
+              "name": "grounded",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Physics",
+          "description": "Pushes a physics body (the linked object, else the first one named in Object Name, else this object) by an impulse in world space, after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Impulse",
+              "name": "impulse",
+              "type": "vec3"
+            }
+          ],
+          "kind": "addImpulse",
+          "label": "Add Impulse",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Physics",
+          "description": "Sets a physics body's velocity (the linked object, else the first one named in Object Name, else this object), in world units per second, after this step.",
+          "inputs": [
+            {
+              "label": "Run",
+              "name": "run",
+              "type": "flow"
+            },
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            },
+            {
+              "label": "Velocity",
+              "name": "velocity",
+              "type": "vec3"
+            }
+          ],
+          "kind": "setVelocity",
+          "label": "Set Velocity",
+          "outputs": [
+            {
+              "label": "Then",
+              "name": "then",
+              "type": "flow"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Object Name",
+              "name": "object"
+            }
+          ]
+        },
+        {
+          "category": "Physics",
+          "description": "This object's physics velocity as the step began (0 without a body).",
+          "inputs": [],
+          "kind": "velocity",
+          "label": "Velocity",
+          "outputs": [
+            {
+              "label": "Velocity",
+              "name": "velocity",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Object",
+          "description": "Sends a ray from Origin along Direction, up to Distance, and says whether it hits another object's shape or sprite, how far, and where.",
+          "inputs": [
+            {
+              "label": "Origin",
+              "name": "origin",
+              "type": "vec3"
+            },
+            {
+              "label": "Direction",
+              "name": "direction",
+              "type": "vec3"
+            },
+            {
+              "label": "Distance",
+              "name": "distance",
+              "type": "float"
+            }
+          ],
+          "kind": "raycast",
+          "label": "Cast Ray",
+          "outputs": [
+            {
+              "label": "Hit",
+              "name": "hit",
+              "type": "bool"
+            },
+            {
+              "label": "Hit Distance",
+              "name": "distance",
+              "type": "float"
+            },
+            {
+              "label": "Hit Point",
+              "name": "point",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Inputs",
+          "description": "Where a gamepad stick (Left or Right) points, from -1 to 1 (x right, y up); 0 without a gamepad.",
+          "inputs": [],
+          "kind": "padStick",
+          "label": "Gamepad Stick",
+          "outputs": [
+            {
+              "label": "Direction",
+              "name": "direction",
+              "type": "vec3"
+            },
+            {
+              "label": "Gamepad Connected",
+              "name": "connected",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Stick",
+              "name": "stick"
+            }
+          ]
+        },
+        {
+          "category": "Inputs",
+          "description": "How far a gamepad trigger (Left or Right) is pressed, from 0 to 1.",
+          "inputs": [],
+          "kind": "padTrigger",
+          "label": "Gamepad Trigger",
+          "outputs": [
+            {
+              "label": "Amount",
+              "name": "amount",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Trigger",
+              "name": "trigger"
+            }
+          ]
+        },
+        {
+          "category": "Inputs",
+          "description": "True while the gamepad button is held: South, East, West, North, LeftBumper, RightBumper, Select, Start, Up, Down, Left, Right and others.",
+          "inputs": [],
+          "kind": "padButton",
+          "label": "Gamepad Button Held",
+          "outputs": [
+            {
+              "label": "Held",
+              "name": "down",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Button",
+              "name": "button"
+            }
+          ]
+        },
+        {
+          "category": "Inputs",
+          "description": "True while the key is held (names like W, Space, ArrowUp).",
+          "inputs": [],
+          "kind": "keyDown",
+          "label": "Key Held",
+          "outputs": [
+            {
+              "label": "Held",
+              "name": "down",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Key",
+              "name": "key"
+            }
+          ]
+        },
+        {
+          "category": "Math",
+          "description": "A + B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            }
+          ],
+          "kind": "add",
+          "label": "Add",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "A − B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            }
+          ],
+          "kind": "subtract",
+          "label": "Subtract",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "A × B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            }
+          ],
+          "kind": "multiply",
+          "label": "Multiply",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "The value with its sign turned: 5 becomes −5 and −5 becomes 5; a vector points the other way.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "negate",
+          "label": "Negate",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "A ÷ B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            }
+          ],
+          "kind": "divide",
+          "label": "Divide",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "The sine of the input, in radians.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "sine",
+          "label": "Sine",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "Base to the power of the exponent: whole numbers stay whole (a negative exponent gives 0, or ±1 for 1 and −1); for a vector, each part.",
+          "inputs": [
+            {
+              "label": "Base",
+              "name": "base",
+              "type": "any"
+            },
+            {
+              "label": "Exponent",
+              "name": "exponent",
+              "type": "float"
+            }
+          ],
+          "kind": "power",
+          "label": "Power",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "The number that times itself gives the input (0 below 0); for a vector, of each part.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "squareRoot",
+          "label": "Square Root",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "How long a vector is: the distance from 0 to the point it names.",
+          "inputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "kind": "vectorLength",
+          "label": "Vector Length",
+          "outputs": [
+            {
+              "label": "Length",
+              "name": "length",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "The vector's direction at length 1: a move as fast diagonally as straight. A vector of length 0 stays 0, so a player standing still stays still.",
+          "inputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "kind": "normalize",
+          "label": "Normalize",
+          "outputs": [
+            {
+              "label": "Vector",
+              "name": "vector",
+              "type": "vec3"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "Linear interpolation: from A (factor 0) to B (factor 1) on a straight line; factors outside 0 to 1 go past A or B. For vectors, each part.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            },
+            {
+              "label": "Factor",
+              "name": "factor",
+              "type": "float"
+            }
+          ],
+          "kind": "lerp",
+          "label": "Lerp",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "Where the value lies from A to B: 0 at A, 1 at B, 0.5 halfway, and past 0 or 1 beyond them; 0 when A and B are equal.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "float"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "float"
+            },
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "inverseLerp",
+          "label": "Inverse Lerp",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "A when the condition is true, otherwise B.",
+          "inputs": [
+            {
+              "label": "Condition",
+              "name": "condition",
+              "type": "bool"
+            },
+            {
+              "label": "A",
+              "name": "a",
+              "type": "any"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "any"
+            }
+          ],
+          "kind": "choose",
+          "label": "Choose",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "any"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Logic",
+          "description": "True when A > B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "float"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "float"
+            }
+          ],
+          "kind": "greater",
+          "label": "Greater Than",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Logic",
+          "description": "True when both are true.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "bool"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "bool"
+            }
+          ],
+          "kind": "and",
+          "label": "And",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Logic",
+          "description": "True when either is true.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "bool"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "bool"
+            }
+          ],
+          "kind": "or",
+          "label": "Or",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Logic",
+          "description": "True when the input is false.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "bool"
+            }
+          ],
+          "kind": "not",
+          "label": "Not",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Values",
+          "description": "A whole number typed here.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "int"
+            }
+          ],
+          "kind": "wholeNumber",
+          "label": "Whole Number",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "int"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Math",
+          "description": "A number made whole: Nearest (halves away from zero), Down, Up or Toward Zero. Numbers past the 32-bit range stop at its ends.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "kind": "toWhole",
+          "label": "To Whole Number",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "int"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Rounding",
+              "name": "rounding"
+            }
+          ]
+        },
+        {
+          "category": "Math",
+          "description": "What is left after dividing A by B as whole numbers (its sign is A's); 0 when B is 0.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "int"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "int"
+            }
+          ],
+          "kind": "remainder",
+          "label": "Remainder",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "int"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "Text typed here.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "text"
+            }
+          ],
+          "kind": "text",
+          "label": "Text",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "text"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "A followed by B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "text"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "text"
+            }
+          ],
+          "kind": "joinText",
+          "label": "Join Text",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "text"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "How many characters the text has.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            }
+          ],
+          "kind": "textLength",
+          "label": "Text Length",
+          "outputs": [
+            {
+              "label": "Length",
+              "name": "result",
+              "type": "int"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "A number (up to three decimals), a whole number (every digit) or a vector, as (x, y, z), written as text.",
+          "inputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "any"
+            }
+          ],
+          "kind": "numberToText",
+          "label": "To Text",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "text"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "The number the text spells, such as -2.5 (spaces around it are fine). Valid is false, and the number 0, when it spells none.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            }
+          ],
+          "kind": "textToNumber",
+          "label": "Text to Number",
+          "outputs": [
+            {
+              "label": "Number",
+              "name": "result",
+              "type": "float"
+            },
+            {
+              "label": "Valid",
+              "name": "valid",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "True when A and B are the same text (upper and lower case differ).",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "text"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "text"
+            }
+          ],
+          "kind": "sameText",
+          "label": "Same Text",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "True when Part appears in the text.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            },
+            {
+              "label": "Part",
+              "name": "part",
+              "type": "text"
+            }
+          ],
+          "kind": "textContains",
+          "label": "Text Contains",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "True when the text begins with Part.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            },
+            {
+              "label": "Part",
+              "name": "part",
+              "type": "text"
+            }
+          ],
+          "kind": "startsWith",
+          "label": "Starts With",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "True when the text ends with Part.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            },
+            {
+              "label": "Part",
+              "name": "part",
+              "type": "text"
+            }
+          ],
+          "kind": "endsWith",
+          "label": "Ends With",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "Where Part first appears in the text, counted in characters from 0; -1 when it does not.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            },
+            {
+              "label": "Part",
+              "name": "part",
+              "type": "text"
+            }
+          ],
+          "kind": "findText",
+          "label": "Find in Text",
+          "outputs": [
+            {
+              "label": "Index",
+              "name": "result",
+              "type": "int"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "Count characters of the text from Start (0 is the first), cut short at its end.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            },
+            {
+              "label": "Start",
+              "name": "start",
+              "type": "float"
+            },
+            {
+              "label": "Count",
+              "name": "count",
+              "type": "float"
+            }
+          ],
+          "kind": "textPart",
+          "label": "Part of Text",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "text"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "The text with every Find replaced by With.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            },
+            {
+              "label": "Find",
+              "name": "find",
+              "type": "text"
+            },
+            {
+              "label": "With",
+              "name": "with",
+              "type": "text"
+            }
+          ],
+          "kind": "replaceText",
+          "label": "Replace Text",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "text"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "The text with a to z made A to Z.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            }
+          ],
+          "kind": "upperCase",
+          "label": "Upper Case",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "text"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "The text with A to Z made a to z.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            }
+          ],
+          "kind": "lowerCase",
+          "label": "Lower Case",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "text"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "The text without spaces, tabs and line breaks at its start and end.",
+          "inputs": [
+            {
+              "label": "Text",
+              "name": "text",
+              "type": "text"
+            }
+          ],
+          "kind": "trimText",
+          "label": "Trim Text",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "text"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Text",
+          "description": "The name of the linked object, else this object.",
+          "inputs": [
+            {
+              "label": "Object",
+              "name": "target",
+              "type": "object"
+            }
+          ],
+          "kind": "nameOf",
+          "label": "Name Of",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "text"
+            }
+          ],
+          "settings": []
+        }
+      ]
+    },
+    {
+      "domain": "animation",
+      "extension": "banim",
+      "label": "Animation States",
+      "nodes": [
+        {
+          "category": "States",
+          "description": "The state an object starts in. Without one, it starts in the first state.",
+          "inputs": [],
+          "kind": "entry",
+          "label": "Start State",
+          "outputs": [],
+          "settings": [
+            {
+              "label": "State",
+              "name": "state"
+            }
+          ]
+        },
+        {
+          "category": "States",
+          "description": "A state the object can be in, by its name, playing the motion linked in (at rest when none is).",
+          "inputs": [
+            {
+              "label": "Motion",
+              "name": "motion",
+              "type": "motion"
+            }
+          ],
+          "kind": "state",
+          "label": "State",
+          "outputs": [],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "States",
+          "description": "Goes from one state (or, with From left empty, from any other) to another while When is true, fading over Fade seconds. Transitions are tried in the order they were placed.",
+          "inputs": [
+            {
+              "label": "When",
+              "name": "when",
+              "type": "bool"
+            }
+          ],
+          "kind": "transition",
+          "label": "Transition",
+          "outputs": [],
+          "settings": [
+            {
+              "label": "From",
+              "name": "from"
+            },
+            {
+              "label": "To",
+              "name": "to"
+            },
+            {
+              "label": "Fade",
+              "name": "fade"
+            }
+          ]
+        },
+        {
+          "category": "Motions",
+          "description": "One of the model's clips by name, at a speed, looping or once.",
+          "inputs": [],
+          "kind": "clip",
+          "label": "Clip",
+          "outputs": [
+            {
+              "label": "Motion",
+              "name": "motion",
+              "type": "motion"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Clip",
+              "name": "clip"
+            },
+            {
+              "label": "Speed",
+              "name": "speed"
+            },
+            {
+              "label": "Play",
+              "name": "play"
+            }
+          ]
+        },
+        {
+          "category": "Motions",
+          "description": "A and B by where By lies from At A to At B (walk and run by speed, aiming up and down by angle); before At A all A, past At B all B. Both play in step. Link a Mix into A or B to mix more.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "motion"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "motion"
+            },
+            {
+              "label": "By",
+              "name": "by",
+              "type": "float"
+            }
+          ],
+          "kind": "mix",
+          "label": "Mix",
+          "outputs": [
+            {
+              "label": "Motion",
+              "name": "motion",
+              "type": "motion"
+            }
+          ],
+          "settings": [
+            {
+              "label": "At A",
+              "name": "atA"
+            },
+            {
+              "label": "At B",
+              "name": "atB"
+            }
+          ]
+        },
+        {
+          "category": "Motions",
+          "description": "Top over Base on the joint named Joint and every joint under it (a wave on the arm while the legs walk), by Weight from 0 to 1.",
+          "inputs": [
+            {
+              "label": "Base",
+              "name": "base",
+              "type": "motion"
+            },
+            {
+              "label": "Top",
+              "name": "top",
+              "type": "motion"
+            },
+            {
+              "label": "Weight",
+              "name": "weight",
+              "type": "float"
+            }
+          ],
+          "kind": "layer",
+          "label": "Layer",
+          "outputs": [
+            {
+              "label": "Motion",
+              "name": "motion",
+              "type": "motion"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Joint",
+              "name": "joint"
+            }
+          ]
+        },
+        {
+          "category": "Parameters",
+          "description": "A number parameter scripts set (0 until one does).",
+          "inputs": [],
+          "kind": "number",
+          "label": "Number Parameter",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "float"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Parameters",
+          "description": "A true/false parameter scripts set (false until one does).",
+          "inputs": [],
+          "kind": "flag",
+          "label": "True/False Parameter",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Parameters",
+          "description": "True once a script triggers it, until a transition it lets through uses it up.",
+          "inputs": [],
+          "kind": "trigger",
+          "label": "Trigger Parameter",
+          "outputs": [
+            {
+              "label": "Value",
+              "name": "value",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Name",
+              "name": "name"
+            }
+          ]
+        },
+        {
+          "category": "Conditions",
+          "description": "Seconds since the state began, and Runs: how many times its motion has played through (1 at the end of its first run).",
+          "inputs": [],
+          "kind": "stateTime",
+          "label": "Time in State",
+          "outputs": [
+            {
+              "label": "Seconds",
+              "name": "seconds",
+              "type": "float"
+            },
+            {
+              "label": "Runs",
+              "name": "runs",
+              "type": "float"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Conditions",
+          "description": "Whether A is greater than, less than, at least, at most, equal to or not equal to B.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "float"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "float"
+            }
+          ],
+          "kind": "compare",
+          "label": "Compare",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": [
+            {
+              "label": "Test",
+              "name": "test"
+            }
+          ]
+        },
+        {
+          "category": "Conditions",
+          "description": "True when A and B both are.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "bool"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "bool"
+            }
+          ],
+          "kind": "and",
+          "label": "And",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Conditions",
+          "description": "True when A or B is.",
+          "inputs": [
+            {
+              "label": "A",
+              "name": "a",
+              "type": "bool"
+            },
+            {
+              "label": "B",
+              "name": "b",
+              "type": "bool"
+            }
+          ],
+          "kind": "or",
+          "label": "Or",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        },
+        {
+          "category": "Conditions",
+          "description": "True when In is false.",
+          "inputs": [
+            {
+              "label": "In",
+              "name": "in",
+              "type": "bool"
+            }
+          ],
+          "kind": "not",
+          "label": "Not",
+          "outputs": [
+            {
+              "label": "Result",
+              "name": "result",
+              "type": "bool"
+            }
+          ],
+          "settings": []
+        }
+      ]
+    }
+  ]
+}

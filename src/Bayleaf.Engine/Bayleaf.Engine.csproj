@@ -12,6 +12,10 @@
     <ProjectReference Include="..\Bayleaf.Scene\Bayleaf.Scene.csproj" />
     <ProjectReference Include="..\Bayleaf.Assets\Bayleaf.Assets.csproj" />
     <ProjectReference Include="..\Bayleaf.Interface\Bayleaf.Interface.csproj" />
+    <ProjectReference Include="..\Bayleaf.Graph\Bayleaf.Graph.csproj" />
+    <ProjectReference Include="..\Bayleaf.Render\Bayleaf.Render.csproj" />
+    <ProjectReference Include="..\Bayleaf.Animation\Bayleaf.Animation.csproj" />
+    <ProjectReference Include="..\Bayleaf.Script\Bayleaf.Script.csproj" />
   </ItemGroup>
 
   <ItemGroup>

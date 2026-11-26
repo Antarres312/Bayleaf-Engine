@@ -209,18 +209,20 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    `Bayleaf.Cli`. A parity harness runs the same command lists against both CLIs and compares what
    comes back. From here on, new features land in C# only; the Rust tree takes fixes.
    *In progress, 2026-11-26.* `src/Bayleaf.Engine` holds the session, the command registry with its
-   undo steps (merged by key, as the editor drags), the automation confinement, and 94 of the Rust
+   undo steps (merged by key, as the editor drags), the automation confinement, and 129 of the Rust
    engine's 172 commands: the scene's files, objects, hierarchy, components and scripts, its settings,
    lighting and post-processing assets, data files and shapes, Input Maps, projects and prefabs (with
-   overrides, nesting and editing a prefab on its own) and keyframe animations (editing, the playhead's pose, recording, copying keys; their undo steps share the scene's history), the console, clearing saved values and splitting a scene into Streamed Areas (`src/Bayleaf.Streaming`, the opt-in module that streams them in play mode, is ported with its tests and waits for play mode), and the project's files (`asset.create`, `asset.list`, `asset.rename`, `asset.delete`; for now without a Recycle Bin, so a delete needs `permanent: true`, and without new materials, visual scripts and Rust scripts, each refused with why), and bringing files in (`asset.import` with its import settings, `asset.importSettings.get`/`.set`, `scene.file.place`; until sound is ported a sound is checked only for its size, as the Rust engine does without its `audio` feature), and editing game interface layouts and their style files (`ui.layout.*`, `ui.element.*`, `ui.style.*`). `apps/Bayleaf.Cli` runs `commands`, `run` and
-   `batch` as the Rust CLI does. The other 78 are listed with the Rust engine's id, label, menu,
+   overrides, nesting and editing a prefab on its own) and keyframe animations (editing, the playhead's pose, recording, copying keys; their undo steps share the scene's history), the console, clearing saved values and splitting a scene into Streamed Areas (`src/Bayleaf.Streaming`, the opt-in module that streams them in play mode, is ported with its tests and waits for play mode), and the project's files (`asset.create`, `asset.list`, `asset.rename`, `asset.delete`; for now without a Recycle Bin, so a delete needs `permanent: true`, and without Rust scripts, refused with why), what a file is and holds (`asset.info`; a visual script's properties are the ones its graph declares, and a `.wasm` module is not described, since the C# engine's scripts are C#), the graph editor's commands (`graph.*`: material graphs, visual scripts and animation states, several open at once, their edits undo steps in the scene's history; a visual script's problems say it is not compiled, until the script host compiles visual scripts to C#), making an image an object's look (`scene.image.apply`), and bringing files in (`asset.import` with its import settings, `asset.importSettings.get`/`.set`, `scene.file.place`; until sound is ported a sound is checked only for its size, as the Rust engine does without its `audio` feature), and editing game interface layouts and their style files (`ui.layout.*`, `ui.element.*`, `ui.style.*`). `apps/Bayleaf.Cli` runs `commands`, `run` and
+   `batch` as the Rust CLI does. The other 43 are listed with the Rust engine's id, label, menu,
    shortcut, params and prompt, but disabled with a reason, until their part is ported
-   (`src/Bayleaf.Engine/Pending.json` is the Rust engine's list): graphs, play mode, sound, streaming,
-   export, the profiler, `asset.info` and `scene.image.apply` (both wait for the graph catalogs), the game interface in play mode, playing timelines, skeletal animation, and
+   (`src/Bayleaf.Engine/Pending.json` is the Rust engine's list): play mode, sound, streaming,
+   export, the profiler, the game interface in play mode, playing timelines, skeletal animation, and
    `scene.render`. The harness: each batch in `tests/commands/` runs in both engines' tests
    (`rust/crates/engine/src/parity_tests.rs`, `tests/Bayleaf.Cli.Tests`), as `bayleaf-cli batch` runs
    it, and what comes back (folders as `$root`/`$out`, ids as `<id N>`) is compared with
-   `tests/commands/expected/`, which the Rust test writes with `BAYLEAF_BLESS=1`. All 31 batches agree,
+   `tests/commands/expected/`, which the Rust test writes with `BAYLEAF_BLESS=1`. A difference kept on purpose
+   is listed, with why, in `tests/commands/differences/known.json`: the C# test checks this engine's value
+   there and compares the rest. All 52 batches agree,
    and every ported command lists the same as in Rust. Running both CLIs as programs comes with the
    automation port, which also brings `mcp`.
 3. **Rendering.** `scene.render` images of the test scenes close to the Rust ones (a difference

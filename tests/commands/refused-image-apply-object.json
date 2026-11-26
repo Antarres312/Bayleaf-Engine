@@ -1,0 +1,1 @@
+[{"cmd": "project.new", "params": {"path": "$out/p"}}, {"cmd": "asset.import", "params": {"files": ["$root/tests/files/assets/png-rgba8.png"]}}, {"cmd": "scene.image.apply", "params": {"id": "0b1f6e3a8c2d4e5f9a7b6c5d4e3f2a10", "image": "png-rgba8.png"}}]

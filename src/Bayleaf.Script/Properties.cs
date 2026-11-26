@@ -4,7 +4,6 @@ using Bayleaf.Graph;
 using Bayleaf.Scene;
 using Bayleaf.Scene.Components;
 
-using SceneProperty = Bayleaf.Scene.Components.DeclaredProperty;
 using Shape = Bayleaf.Graph.Shape;
 
 namespace Bayleaf.Script;
@@ -256,13 +255,7 @@ public static partial class Visual
         {
             return Result.Ok<string>();
         }
-        var declared = graph.Properties.Select(p =>
-        {
-            var (type, shape) = (ScenePropertyType(p.Type), ScenePropertyShape(p.Shape, p.Key));
-            var value = PropertyValue.FromDescribed(DescribedValue(p.Type, p.Shape, p.Default), type, shape) ?? type.ZeroOf(shape);
-            return new SceneProperty(p.Name, type, shape, value);
-        }).ToList();
-        var parsed = InspectorItem.Parse(layout, declared);
+        var parsed = InspectorItem.Parse(layout, DeclaredProperties(graph));
         return parsed.IsOk ? Result.Ok<string>() : Result.Fail(parsed.Error);
     }
 }

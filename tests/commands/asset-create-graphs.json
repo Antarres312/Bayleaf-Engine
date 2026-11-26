@@ -1,0 +1,9 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/a"}},
+  {"cmd": "asset.create", "params": {"kind": "material", "folder": "materials", "name": "Rock"}},
+  {"cmd": "asset.create", "params": {"kind": "visualScript", "folder": "scripts", "name": "Door.bscript"}},
+  {"cmd": "graph.open", "params": {"path": "$1.path"}},
+  {"cmd": "graph.open", "params": {"path": "$2.path"}},
+  {"cmd": "asset.list", "params": {"recursive": true}},
+  {"cmd": "asset.create", "params": {"kind": "material", "folder": "materials", "name": "Rock"}}
+]

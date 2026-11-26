@@ -36,7 +36,8 @@ public sealed record GraphError(GraphErrorKind Kind, string Message)
 /// <summary>One end of a link.</summary>
 public sealed record PinRef(uint Node, string Pin)
 {
-    internal static PinRef Read(JsonValue value)
+    /// <summary>Reads <c>{node, pin}</c>, as files and commands give one.</summary>
+    public static PinRef Read(JsonValue value)
     {
         var f = JsonFields.Of(value, "struct PinRef", true, "node", "pin");
         return new(f.Required("node", JsonRead.U32), f.Required("pin", JsonRead.Str));
@@ -197,7 +198,8 @@ public sealed record PropertyOptions(
     public bool IsEmpty =>
         Label.Length == 0 && Hint.Length == 0 && Group.Length == 0 && Range is null && !Slider && !ReadOnly && Choices.Count == 0 && ShowIf is null;
 
-    internal static PropertyOptions Read(JsonValue value)
+    /// <summary>Reads the options as files and commands give them.</summary>
+    public static PropertyOptions Read(JsonValue value)
     {
         var f = JsonFields.Of(value, "struct PropertyOptions", true, "label", "hint", "group", "range", "slider", "readOnly", "choices", "showIf");
         return new(
@@ -318,7 +320,8 @@ public sealed record Param(string Name, VariableType Type, Shape Shape, Variable
     {
     }
 
-    internal static Param Read(JsonValue value)
+    /// <summary>Reads <c>{name, type, shape?, key?}</c>, as files and commands give one.</summary>
+    public static Param Read(JsonValue value)
     {
         var f = JsonFields.Of(value, "struct Param", true, "name", "type", "shape", "key");
         var name = f.Required("name", JsonRead.Str);
@@ -392,9 +395,11 @@ public sealed record Fragment(string Format, string Domain, IReadOnlyList<Node> 
         });
     }
 
-    public string ToJson() =>
-        new JsonObject { { "format", J.S(Format) }, { "domain", J.S(Domain) }, { "nodes", new JsonArray(Nodes.Select(n => n.Write())) }, { "links", new JsonArray(Links.Select(l => l.Write())) } }
-            .ToPretty();
+    public string ToJson() => ToValue().ToPretty();
+
+    /// <summary>The copied nodes as a JSON value (numbers in single precision, as written).</summary>
+    public JsonObject ToValue() =>
+        new() { { "format", J.S(Format) }, { "domain", J.S(Domain) }, { "nodes", new JsonArray(Nodes.Select(n => n.Write())) }, { "links", new JsonArray(Links.Select(l => l.Write())) } };
 }
 
 /// <summary>What a paste added.</summary>

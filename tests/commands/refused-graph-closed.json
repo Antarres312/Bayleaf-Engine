@@ -1,0 +1,1 @@
+[{"cmd": "graph.new", "params": {"domain": "material"}}, {"cmd": "graph.node.add", "params": {"kind": "color"}}, {"cmd": "graph.close"}, {"cmd": "edit.undo"}]

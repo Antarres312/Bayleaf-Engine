@@ -1,0 +1,1 @@
+[{"cmd": "graph.new", "params": {"domain": "script"}}, {"cmd": "graph.property.add", "params": {"name": "speed", "type": "number"}}, {"cmd": "graph.property.set", "params": {"name": "speed", "inspector": {"slider": true}}}]

@@ -1,0 +1,5 @@
+[
+  {"cmd": "graph.catalog", "params": {"domain": "material"}},
+  {"cmd": "graph.catalog", "params": {"domain": "script"}},
+  {"cmd": "graph.catalog", "params": {"domain": "animation"}}
+]

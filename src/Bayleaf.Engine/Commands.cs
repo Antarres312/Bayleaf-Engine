@@ -138,12 +138,14 @@ public sealed class CommandRegistry
         all.AddRange(SceneCommands.All());
         all.AddRange(LightingCommands.All());
         all.AddRange(DataCommands.All());
+        all.AddRange(GraphCommands.All());
         all.AddRange(ProjectCommands.All());
         all.AddRange(PrefabCommands.All());
         all.AddRange(InputCommands.All());
         all.AddRange(TimelineCommands.All());
         all.AddRange(ConsoleCommands.All());
         all.AddRange(StreamCommands.All());
+        all.AddRange(AssetInfoCommands.All());
         all.AddRange(AssetCommands.All());
         all.AddRange(ImportCommands.All());
         all.AddRange(InterfaceCommands.All());
@@ -221,6 +223,13 @@ public sealed class CommandRegistry
                     return Result.Fail(CommandError.Failed(TimelineCommands.NoTimeline));
                 }
                 break;
+            case Mutates.Graph:
+                if (session.GraphSnapshot() is not { } graph)
+                {
+                    return Result.Fail(CommandError.Failed(GraphCommands.NoGraph));
+                }
+                before = graph;
+                break;
             default:
                 return Result.Fail(CommandError.Failed($"{id} changes a document the C# engine does not hold yet"));
         }
@@ -240,7 +249,7 @@ public sealed class CommandRegistry
                 return result;
             }
         }
-        else if (session.IsPlaying)
+        else if (session.IsPlaying && spec.Mutates == Mutates.Scene)
         {
             // Play-mode changes to the scene are thrown away on stop: they are no undo steps.
             return result;
@@ -250,6 +259,10 @@ public sealed class CommandRegistry
         {
             session.Timeline!.Dirty = true;
             TimelineCommands.AfterChange(session);
+        }
+        else if (spec.Mutates == Mutates.Graph)
+        {
+            session.Graph?.Dirty = true;
         }
         else
         {

@@ -44,7 +44,8 @@ public static class Shapes
     /// <summary>The word a description uses before a type code (<c>list:number</c>).</summary>
     public static string Code(this Shape shape) => Names[(int)shape];
 
-    internal static Shape Read(JsonValue value) => (Shape)JsonRead.Variant(value, Names);
+    /// <summary>Reads a shape by the name files keep it as.</summary>
+    public static Shape Read(JsonValue value) => (Shape)JsonRead.Variant(value, Names);
 }
 
 public static class VariableTypes
@@ -64,7 +65,8 @@ public static class VariableTypes
 
     internal static string FileName(this VariableType type) => Names[(int)type];
 
-    internal static VariableType Read(JsonValue value) => (VariableType)JsonRead.Variant(value, Names);
+    /// <summary>Reads a type by the name files keep it as.</summary>
+    public static VariableType Read(JsonValue value) => (VariableType)JsonRead.Variant(value, Names);
 
     /// <summary>The word nodes keep a pin's type as (<c>name:type</c>).</summary>
     public static string Code(this VariableType type) => type switch
