@@ -23,8 +23,9 @@ scene with its files; the Rust tree is still the one users run.
   `.bscript`, `.banim`, `.btimeline`, `.bshape`, `.bdata`, `.blight`, `.bimport`, `.build` and the
   rest), with the same `VERSION` numbers. A project made in the Rust editor opens in the C# one and
   back, with no conversion.
-- **Not decided:** whether the web player stays (see Risks), and whether sandboxed WebAssembly
-  scripts stay beside C# scripts (see Scripts). Both are questions for the operator before stage 4.
+- **Decided by the operator, 2026-11-26:** game scripts are C# only (with visual scripts compiled to C#);
+  there is no WebAssembly script module, so the Rust tree's `.wasm` scripts are rewritten in C# when their
+  games move. The web player stays, on .NET's WebAssembly build, at the cost named under Risks.
 
 ## Why it can work, and what it costs
 
@@ -53,9 +54,9 @@ stays buildable and takes fixes until stage 8 removes it. `examples/`, `assets/`
 |---|---|
 | L0 | `Bayleaf.Core`: ids, handles, results, math (`Double3` for positions, since `System.Numerics` has only `float` vectors) |
 | L1 | `Bayleaf.Ecs`: archetype storage, queries, schedule, the thread pool option |
-| L2 | `Bayleaf.Scene`, `Bayleaf.Assets`, `Bayleaf.Graph` |
+| L2 | `Bayleaf.Scene`, `Bayleaf.Assets`, `Bayleaf.Graph`, `Bayleaf.Interface` (namespace `Bayleaf.GameInterface`) |
 | L3 | `Bayleaf.Render` |
-| L4 | `Bayleaf.Script`, `Bayleaf.Gameplay`, `Bayleaf.Streaming`, `Bayleaf.Physics`, `Bayleaf.Animation`, `Bayleaf.Audio`, `Bayleaf.Particles`, `Bayleaf.Interface` |
+| L4 | `Bayleaf.Script`, `Bayleaf.Gameplay`, `Bayleaf.Streaming`, `Bayleaf.Physics`, `Bayleaf.Animation`, `Bayleaf.Audio`, `Bayleaf.Particles` |
 | L5 | `Bayleaf.Engine`: session, command registry, undo, play mode |
 | L6 | `Bayleaf.Editor` (the editor's UI), `Bayleaf.Automation` |
 | L7 | `apps/Bayleaf` (editor), `apps/Bayleaf.Cli`, `apps/Bayleaf.Player` |
@@ -147,9 +148,8 @@ This is the part that changes most, and the part that gains most.
   A C# script runs in the process, and an `AssemblyLoadContext` is not a security boundary. So:
   - opening a project for the first time asks before running its scripts, as a code editor does;
   - limits on run time become a watchdog that stops play mode, not fuel;
-  - if sandboxed scripts must stay (mods, scripts from people one does not trust, the Rust scripts
-    written so far), `Bayleaf.Script.Wasm` keeps the WebAssembly ABI as an opt-in module, on
-    wasmtime's .NET bindings (Apache-2.0 WITH LLVM-exception). This is one of the open questions.
+  - a WebAssembly module that kept the sandbox (for mods and the Rust scripts written so far) was
+    considered and turned down by the operator on 2026-11-26: scripts are C# only.
 
 ## The other parts
 
@@ -157,8 +157,8 @@ This is the part that changes most, and the part that gains most.
 |---|---|---|
 | Physics | Rapier | BepuPhysics v2 (Apache-2.0, to be confirmed): multi-threaded already; determinism for the same input and thread count to be checked by test before it is relied on |
 | Audio | cpal, craft-audio | SDL3 audio output; our mixer and effects ported from craft-audio-dsp |
-| glTF | Rust loader in `rust/crates/assets` | SharpGLTF (MIT, to be confirmed) or a port of ours |
-| PNG, JPEG | `png` and others | StbImageSharp (licence to be confirmed); EXR, DDS and OBJ ported from our craft libraries |
+| glTF | Rust loader in `rust/crates/assets` | Our own reader, from the glTF 2.0 specification (`src/Bayleaf.Assets`, ported) |
+| PNG, JPEG, EXR | `png`, `zune-jpeg`, craft-exr | Our own readers from the specifications (PNG through .NET's zlib; baseline and progressive JPEG within 3 per channel of the Rust output; OpenEXR without PIZ, B44 and DWA yet); DDS and OBJ ported from our craft libraries (ported) |
 | CLI | clap | System.CommandLine (MIT) |
 | MCP | `rust/crates/automation` | a port of ours (800 lines); the official C# SDK (MIT) if it saves work |
 | JSON | serde | System.Text.Json, with the same field names |
@@ -243,6 +243,6 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
 
 ## Questions for the operator
 
-1. Keep the web player, at the cost above, or drop it?
-2. Keep sandboxed WebAssembly scripts as an opt-in module beside C# scripts?
+1. ~~Keep the web player?~~ Kept (2026-11-26).
+2. ~~Keep sandboxed WebAssembly scripts?~~ No: C# scripts only (2026-11-26).
 3. Stage 1 is done: start stage 2 (the engine, its commands and the parity harness)?
