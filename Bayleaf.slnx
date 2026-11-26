@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Bayleaf.Core/Bayleaf.Core.csproj" />
+    <Project Path="src/Bayleaf.Script.Sdk/Bayleaf.Script.Sdk.csproj" />
     <Project Path="src/Bayleaf.Ecs/Bayleaf.Ecs.csproj" />
     <Project Path="src/Bayleaf.Graph/Bayleaf.Graph.csproj" />
     <Project Path="src/Bayleaf.Interface/Bayleaf.Interface.csproj" />

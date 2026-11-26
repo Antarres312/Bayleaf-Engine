@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- L4: game scripts. For now the visual script catalog: node kinds, the pins their settings give
-       them, the upgrade of older .bscript files, and the checks the editor makes of a script's
-       Inspector layout. Scripts are C# (docs/csharp-redesign.md); the compiler from visual scripts to
-       C# and the script host come with stage 4. -->
+  <!-- L4: game scripts. The script host compiles a project's C# scripts (written against
+       Bayleaf.Script.Sdk) with Roslyn into a collectible load context, describes their properties
+       without running them, and runs them in play mode on a script thread that a watchdog keeps an eye
+       on. Also the visual script catalog: node kinds, the pins their settings give them, the upgrade
+       of older .bscript files, and the checks the editor makes of a script's Inspector layout. Visual
+       scripts compile to C# in a later step (docs/csharp-redesign.md, stage 4). -->
   <PropertyGroup>
     <RootNamespace>Bayleaf.Script</RootNamespace>
   </PropertyGroup>
@@ -12,6 +14,11 @@
     <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
     <ProjectReference Include="..\Bayleaf.Graph\Bayleaf.Graph.csproj" />
     <ProjectReference Include="..\Bayleaf.Scene\Bayleaf.Scene.csproj" />
+    <ProjectReference Include="..\Bayleaf.Script.Sdk\Bayleaf.Script.Sdk.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>
 
   <ItemGroup>

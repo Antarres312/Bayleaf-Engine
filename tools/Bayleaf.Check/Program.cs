@@ -45,6 +45,7 @@ internal static partial class Layers
     {
         ["Bayleaf.Core"] = 0,
         ["Bayleaf.Native"] = 0,
+        ["Bayleaf.Script.Sdk"] = 0,
         ["Bayleaf.Ecs"] = 1,
         ["Bayleaf.Scene"] = 2,
         ["Bayleaf.Assets"] = 2,
