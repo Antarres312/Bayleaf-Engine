@@ -1,0 +1,69 @@
+{
+  "format": "bayleaf.shape",
+  "version": 1,
+  "fields": [
+    {
+      "name": "health",
+      "type": "number",
+      "default": 100.0,
+      "label": "Health",
+      "hint": "Points before it falls",
+      "range": [
+        0.0,
+        1000.0
+      ],
+      "slider": true,
+      "group": "Combat"
+    },
+    {
+      "name": "speed",
+      "type": "number",
+      "default": 2.5
+    },
+    {
+      "name": "damage",
+      "type": "whole",
+      "default": 7.0,
+      "group": "Combat"
+    },
+    {
+      "name": "tint",
+      "type": "color",
+      "default": [
+        1.0,
+        0.5,
+        0.25
+      ]
+    },
+    {
+      "name": "waves",
+      "type": "list:whole",
+      "default": {
+        "list": [
+          1.0,
+          2.0,
+          3.0
+        ]
+      }
+    },
+    {
+      "name": "loot",
+      "type": "map:whole:prefab",
+      "default": {
+        "map": {
+          "1": "prefabs/coin.bprefab"
+        }
+      }
+    },
+    {
+      "name": "drop",
+      "type": "prefab",
+      "default": ""
+    },
+    {
+      "name": "boss",
+      "type": "bool",
+      "default": false
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "format": "bayleaf.timeline",
+  "version": 1,
+  "prefab": "prefabs/door.bprefab",
+  "length": 2.5,
+  "looping": true,
+  "parts": [
+    {"id": "00000000000000000000000000000010", "tracks": [
+      {"target": {"component": "transform", "field": "position"}, "keys": [
+        {"time": 0, "value": [0, 0, 0], "ease": "step"},
+        {"time": 1.25, "value": [0.5, 1e-7, 2], "ease": "linear"},
+        {"time": 2.5, "value": [1, 2, 3]}
+      ]},
+      {"target": {"script": "scripts/door.wasm", "property": "open"}, "keys": [
+        {"time": 0.1, "value": false},
+        {"time": 2, "value": true}
+      ]}
+    ]},
+    {"id": "00000000000000000000000000000011", "tracks": [
+      {"target": {"component": "pointLight", "field": "intensity"}, "keys": [{"time": 0.5, "value": 8}, {"time": 1, "value": -3}, {"time": 1.5, "value": 2.75}]},
+      {"target": {"script": "scripts/sign.wasm", "property": "say"}, "keys": [{"time": 0, "value": "Łódź \"open\""}]}
+    ]},
+    {"id": "00000000000000000000000000000012"}
+  ]
+}

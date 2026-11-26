@@ -1,0 +1,50 @@
+{
+  "format": "bayleaf.scene",
+  "version": 26,
+  "objects": [
+    {
+      "id": "abcdefabcdefabcdefabcdefabcdef01",
+      "parent": null,
+      "components": {
+        "environment": {
+          "ambient": 2.0,
+          "fogDistance": 50.0,
+          "groundColor": [
+            0.20000000298023224,
+            0.20000000298023224,
+            0.20000000298023224
+          ],
+          "horizonColor": [
+            0.4000000059604645,
+            0.5,
+            0.6000000238418579
+          ],
+          "showSky": true,
+          "skyColor": [
+            0.10000000149011612,
+            0.20000000298023224,
+            0.30000001192092896
+          ]
+        },
+        "name": "World",
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    }
+  ]
+}

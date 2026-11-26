@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L1: archetype entity storage, queries and the system scheduler. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Ecs</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Ecs.Tests" />
+  </ItemGroup>
+
+</Project>

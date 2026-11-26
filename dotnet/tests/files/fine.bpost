@@ -1,0 +1,1 @@
+{"format": "bayleaf.post", "version": 3, "post": {"bloom": {"enabled": true, "strength": 1.5, "threshold": 0.9}, "antialiasing": "fine", "color": {"enabled": true, "contrast": 1.1, "saturation": 0.9}}}

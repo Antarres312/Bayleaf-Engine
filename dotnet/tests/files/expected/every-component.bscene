@@ -1,0 +1,453 @@
+{
+  "format": "bayleaf.scene",
+  "version": 26,
+  "settings": {
+    "lighting": "scenes/daylight.blight",
+    "postProcessing": "post/warm.bpost"
+  },
+  "objects": [
+    {
+      "id": "00000000000000000000000000000001",
+      "parent": null,
+      "components": {
+        "camera": {
+          "far": 1000.0,
+          "fov": 60.0,
+          "near": 0.10000000149011612,
+          "postProcessing": "post/cam.bpost",
+          "projection": "orthographic",
+          "size": 5.5
+        },
+        "mesh": {
+          "color": [
+            0.800000011920929,
+            0.10000000149011612,
+            0.20000000298023224,
+            1.0
+          ],
+          "material": "materials/a.bmaterial",
+          "metallic": 0.25,
+          "model": "models/a.glb",
+          "roughness": 0.5,
+          "shape": "sphere"
+        },
+        "name": "Łódź \"quoted\"\ttab\u0001 😀 \\ / end",
+        "prefab": {
+          "overrides": [
+            "0/mesh",
+            "2/transform"
+          ],
+          "source": "prefabs/door.bprefab"
+        },
+        "scripts": [
+          {
+            "module": "scripts/spinner.wasm",
+            "properties": {
+              "big": 1e+30,
+              "by": {
+                "map": {
+                  "a": 3.0,
+                  "z": 1.0,
+                  "é": 2.0,
+                  "～": 5.0,
+                  "😀": 4.0
+                }
+              },
+              "dir": [
+                0.10000000149011612,
+                0.20000000298023224,
+                0.30000001192092896
+              ],
+              "on": true,
+              "say": "hi",
+              "speed": 3.0,
+              "waves": {
+                "list": [
+                  1.0,
+                  2.5,
+                  3.0
+                ]
+              }
+            }
+          },
+          {
+            "module": "scripts/door_opener.bscript"
+          }
+        ],
+        "tags": [
+          "enemy",
+          "boss",
+          ""
+        ],
+        "transform": {
+          "position": [
+            1e-7,
+            123456789.125,
+            -2.5e+20
+          ],
+          "rotation": [
+            10.0,
+            -90.0,
+            33.29999923706055
+          ],
+          "scale": [
+            1.0,
+            0.5,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "00000000000000000000000000000002",
+      "parent": "00000000000000000000000000000001",
+      "components": {
+        "directionalLight": {
+          "color": [
+            1.0,
+            0.9599999785423279,
+            0.8999999761581421
+          ],
+          "intensity": 3.0,
+          "shadows": true
+        },
+        "environment": {
+          "ambient": 1.0,
+          "fogDistance": 0.0,
+          "groundColor": [
+            0.2199999988079071,
+            0.20000000298023224,
+            0.18000000715255737
+          ],
+          "horizonColor": [
+            0.6200000047683716,
+            0.7200000286102295,
+            0.8199999928474426
+          ],
+          "showSky": false,
+          "skyColor": [
+            0.18000000715255737,
+            0.36000001430511475,
+            0.7200000286102295
+          ]
+        },
+        "name": "Lights",
+        "pointLight": {
+          "color": [
+            1.0,
+            0.949999988079071,
+            0.8500000238418579
+          ],
+          "intensity": 8.0,
+          "range": 8.0,
+          "shadows": true
+        },
+        "spotLight": {
+          "angle": 45.0,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "intensity": 12.0,
+          "range": 12.0,
+          "shadows": false,
+          "softness": 0.30000001192092896
+        },
+        "sprite": {
+          "color": [
+            1.0,
+            1.0,
+            1.0,
+            0.5
+          ],
+          "image": "ui/marker.png",
+          "size": [
+            2.0,
+            1.0
+          ]
+        },
+        "transform": {
+          "position": [
+            0.0,
+            0.00001,
+            1000000000000000.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "00000000000000000000000000000003",
+      "parent": "00000000000000000000000000000002",
+      "components": {
+        "characterBody": {
+          "height": 1.7999999523162842,
+          "maxSlope": 45.0,
+          "radius": 0.4000000059604645,
+          "stepHeight": 0.30000001192092896
+        },
+        "collider": {
+          "friction": 0.699999988079071,
+          "restitution": 0.10000000149011612,
+          "shape": "capsule",
+          "size": [
+            0.5,
+            2.0,
+            0.5
+          ],
+          "trigger": false
+        },
+        "gameRules": {
+          "playerPrefab": "prefabs/player.bprefab",
+          "respawn": true,
+          "respawnHeight": -20.0,
+          "timeLimit": 90.0,
+          "timeUp": "win"
+        },
+        "inputMap": {
+          "asset": "input/game.binput",
+          "start": "menu_1"
+        },
+        "joint": {
+          "anchor": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "axis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "connected": "Lights",
+          "kind": "slider",
+          "limited": true,
+          "lower": -2.0,
+          "motorForce": 10.0,
+          "motorSpeed": 0.5,
+          "upper": 2.0
+        },
+        "name": "Physics",
+        "playerControl": {
+          "camera": "none",
+          "cameraDistance": 6.0,
+          "cameraHeight": -3.0,
+          "jumpSpeed": 6.0,
+          "speed": 5.0,
+          "turnToMove": false
+        },
+        "playerStart": {},
+        "rigidBody": {
+          "gravityScale": -1.0,
+          "kind": "kinematic",
+          "lockRotation": true,
+          "mass": 2.5
+        },
+        "transform": {
+          "position": [
+            1e+16,
+            -0.0,
+            3.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "00000000000000000000000000000004",
+      "parent": "00000000000000000000000000000001",
+      "components": {
+        "audioSource": {
+          "clip": "sounds/hum.ogg",
+          "looping": true,
+          "playOnStart": true,
+          "range": 30.0,
+          "spatial": false,
+          "volume": 0.800000011920929
+        },
+        "followJoint": {
+          "joint": "hand_r"
+        },
+        "interface": {
+          "faceCamera": true,
+          "layout": "ui/hud.bui",
+          "order": -5,
+          "pointsPerUnit": 200.0,
+          "size": [
+            2.0,
+            1.0
+          ],
+          "space": "world",
+          "visible": true
+        },
+        "keyframeAnimation": {
+          "animation": "anim/door.btimeline",
+          "playOnStart": false,
+          "speed": 0.5
+        },
+        "modelAnimation": {
+          "animation": "Walk",
+          "events": [
+            {
+              "clip": "Walk",
+              "event": "step",
+              "time": 0.5
+            }
+          ],
+          "looping": false,
+          "playing": true,
+          "rootJoint": "hips",
+          "rootMotion": true,
+          "speed": 1.25,
+          "states": "anim/hero.banim"
+        },
+        "name": "Effects",
+        "particleEmitter": {
+          "angle": 25.0,
+          "blend": "additive",
+          "boxSize": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "burst": 3,
+          "colorKeys": [
+            {
+              "at": 0.5,
+              "color": [
+                1.0,
+                0.5,
+                0.0,
+                1.0
+              ]
+            }
+          ],
+          "drag": 0.0,
+          "duration": 5.0,
+          "endColor": [
+            1.0,
+            1.0,
+            1.0,
+            0.0
+          ],
+          "endSize": 0.10000000149011612,
+          "flipbookColumns": 2,
+          "flipbookRows": 2,
+          "gravity": 9.999999974752427e-7,
+          "image": "",
+          "lifetime": [
+            1.5,
+            2.5
+          ],
+          "looping": true,
+          "material": "",
+          "maxParticles": 500,
+          "meshShape": "quad",
+          "middleColor": [
+            1.0,
+            1.0,
+            1.0,
+            0.800000011920929
+          ],
+          "middleSize": 0.25,
+          "playing": true,
+          "radius": 0.20000000298023224,
+          "rate": 10.0,
+          "render": "mesh",
+          "shape": "surface",
+          "sizeKeys": [
+            {
+              "at": 0.0,
+              "size": 0.10000000149011612
+            },
+            {
+              "at": 1.0,
+              "size": 0.30000001192092896
+            }
+          ],
+          "space": "local",
+          "speed": [
+            1.0,
+            2.0
+          ],
+          "spin": [
+            -90.0,
+            90.0
+          ],
+          "startColor": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "startSize": 0.20000000298023224
+        },
+        "streamedArea": {
+          "keepMargin": 20.0,
+          "loadDistance": 100.5,
+          "scene": "scenes/far.bscene"
+        },
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "00000000000000000000000000000005",
+      "parent": null,
+      "components": {
+        "name": "Bare",
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    }
+  ]
+}

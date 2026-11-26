@@ -1,0 +1,6 @@
+{"format": "bayleaf.scene", "version": 26, "objects": [
+  {"id": "000000000000000000000000000000aa", "parent": null, "components": {
+    "name": "First", "name": "Second",
+    "camera": {"projection": "perspective", "fov": 10, "fov": 75, "size": 5, "near": 0.5, "far": 50}
+  }}
+]}

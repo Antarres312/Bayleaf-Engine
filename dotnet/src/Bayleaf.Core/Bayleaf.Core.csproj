@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L0: ids, results, JSON written as the Rust engine writes it, the game's files and
+       double-precision math, shared by every Bayleaf project. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Core.Tests" />
+  </ItemGroup>
+
+</Project>

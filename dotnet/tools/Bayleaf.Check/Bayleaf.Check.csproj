@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The C# tree's repository checks, as `cargo xtask` is the Rust tree's:
+       run it with the argument layers or licences. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Bayleaf.Check</RootNamespace>
+  </PropertyGroup>
+
+</Project>

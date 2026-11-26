@@ -1,0 +1,38 @@
+{
+  "format": "bayleaf.scene",
+  "version": 26,
+  "objects": [
+    {
+      "id": "0123456789abcdef0123456789abcdef",
+      "parent": null,
+      "components": {
+        "name": "Old",
+        "scripts": [
+          {
+            "module": "scripts/spinner.wasm",
+            "properties": {
+              "speed": 60.0
+            }
+          }
+        ],
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    }
+  ]
+}

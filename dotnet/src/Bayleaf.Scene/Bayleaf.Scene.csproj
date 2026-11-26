@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L2: object hierarchy with attached components and prefabs, stored on top of the ECS, and the
+       scene's own file kinds (.bscene, .blight, .bpost, .bshape, .bdata, .btimeline). -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Scene</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+    <ProjectReference Include="..\Bayleaf.Ecs\Bayleaf.Ecs.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Scene.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,5 @@
+{"format": "bayleaf.scene", "version": 1, "objects": [
+  {"id": "0123456789abcdef0123456789abcdef", "parent": null, "components": {
+    "name": "Old", "script": {"module": "scripts/spinner.wasm", "properties": {"speed": 60}}
+  }}
+]}

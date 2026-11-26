@@ -1,0 +1,1 @@
+{"format": "bayleaf.timeline", "version": 1, "prefab": "a.bprefab", "length": 2, "parts": [{"id": "00000000000000000000000000000001", "tracks": [{"target": {"component": "transform", "field": "scale"}, "keys": [{"time": 1, "value": 1}, {"time": 0.5, "value": 2}]}]}]}

@@ -1,0 +1,95 @@
+{
+  "format": "bayleaf.scene",
+  "version": 26,
+  "settings": {
+    "lighting": "scenes/daylight.blight",
+    "postProcessing": "post/warm.bpost"
+  },
+  "objects": [
+    {
+      "id": "00000000000000000000000000000001",
+      "parent": null,
+      "components": {
+        "name": "Łódź \"quoted\"\ttab\u0001 😀 \\ / end",
+        "transform": {
+          "position": [1e-7, 123456789.125, -2.5e20],
+          "rotation": [10, -90, 33.3],
+          "scale": [1, 0.5, 2]
+        },
+        "mesh": {"shape": "sphere", "color": [0.8, 0.1, 0.2, 1], "metallic": 0.25, "roughness": 0.5, "material": "materials/a.bmaterial", "model": "models/a.glb"},
+        "camera": {"projection": "orthographic", "fov": 60, "size": 5.5, "near": 0.1, "far": 1000, "postProcessing": "post/cam.bpost"},
+        "tags": ["enemy", "boss", ""],
+        "scripts": [
+          {"module": "scripts/spinner.wasm", "properties": {
+            "speed": 3,
+            "big": 1e30,
+            "on": true,
+            "dir": [0.1, 0.2, 0.3],
+            "say": "hi",
+            "waves": {"list": [1, 2.5, 3]},
+            "by": {"map": {"z": 1, "é": 2, "a": 3, "😀": 4, "～": 5}}
+          }},
+          {"module": "scripts/door_opener.bscript"}
+        ],
+        "prefab": {"source": "prefabs/door.bprefab", "overrides": ["0/mesh", "2/transform"]}
+      }
+    },
+    {
+      "id": "00000000000000000000000000000002",
+      "parent": "00000000000000000000000000000001",
+      "components": {
+        "name": "Lights",
+        "transform": {"position": [0, 1e-5, 1e15], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+        "directionalLight": {"color": [1, 0.96, 0.9], "intensity": 3},
+        "pointLight": {"color": [1, 0.95, 0.85], "intensity": 8, "range": 8, "shadows": true},
+        "spotLight": {"color": [1, 1, 1], "intensity": 12, "range": 12, "angle": 45, "softness": 0.3},
+        "environment": {"skyColor": [0.18, 0.36, 0.72], "horizonColor": [0.62, 0.72, 0.82], "groundColor": [0.22, 0.2, 0.18], "ambient": 1, "showSky": false},
+        "sprite": {"color": [1, 1, 1, 0.5], "size": [2, 1], "image": "ui/marker.png"}
+      }
+    },
+    {
+      "id": "00000000000000000000000000000003",
+      "parent": "00000000000000000000000000000002",
+      "components": {
+        "name": "Physics",
+        "transform": {"position": [1e16, -0.0, 3], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+        "rigidBody": {"kind": "kinematic", "mass": 2.5, "gravityScale": -1, "lockRotation": true},
+        "collider": {"shape": "capsule", "size": [0.5, 2, 0.5], "friction": 0.7, "restitution": 0.1, "trigger": false},
+        "characterBody": {"height": 1.8, "radius": 0.4, "maxSlope": 45, "stepHeight": 0.3},
+        "joint": {"kind": "slider", "connected": "Lights", "anchor": [0, 1, 0], "axis": [1, 0, 0], "limited": true, "lower": -2, "upper": 2, "motorSpeed": 0.5, "motorForce": 10},
+        "playerControl": {"speed": 5, "jumpSpeed": 6, "turnToMove": false, "camera": "none", "cameraDistance": 6, "cameraHeight": -3},
+        "gameRules": {"playerPrefab": "prefabs/player.bprefab", "respawn": true, "respawnHeight": -20, "timeLimit": 90, "timeUp": "win"},
+        "playerStart": {},
+        "inputMap": {"asset": "input/game.binput", "start": "menu_1"}
+      }
+    },
+    {
+      "id": "00000000000000000000000000000004",
+      "parent": "00000000000000000000000000000001",
+      "components": {
+        "name": "Effects",
+        "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0], "scale": [1, 1, 1]},
+        "modelAnimation": {"animation": "Walk", "playing": true, "looping": false, "speed": 1.25, "states": "anim/hero.banim", "rootMotion": true, "rootJoint": "hips",
+          "events": [{"clip": "Walk", "time": 0.5, "event": "step"}]},
+        "keyframeAnimation": {"animation": "anim/door.btimeline", "playOnStart": false, "speed": 0.5},
+        "followJoint": {"joint": "hand_r"},
+        "audioSource": {"clip": "sounds/hum.ogg", "volume": 0.8, "looping": true, "playOnStart": true, "spatial": false, "range": 30},
+        "interface": {"layout": "ui/hud.bui", "visible": true, "order": -5, "space": "world", "size": [2, 1], "pointsPerUnit": 200, "faceCamera": true},
+        "streamedArea": {"scene": "scenes/far.bscene", "loadDistance": 100.5, "keepMargin": 20},
+        "particleEmitter": {
+          "playing": true, "looping": true, "duration": 5, "rate": 10, "burst": 3, "maxParticles": 500, "shape": "surface", "radius": 0.2, "angle": 25,
+          "boxSize": [1, 1, 1], "lifetime": [1.5, 2.5], "speed": [1, 2], "gravity": 0.000001, "drag": 0, "startSize": 0.2, "middleSize": 0.25, "endSize": 0.1,
+          "startColor": [1, 1, 1, 1], "middleColor": [1, 1, 1, 0.8], "endColor": [1, 1, 1, 0],
+          "sizeKeys": [{"at": 0, "size": 0.1}, {"at": 1, "size": 0.3}], "colorKeys": [{"at": 0.5, "color": [1, 0.5, 0, 1]}],
+          "spin": [-90, 90], "render": "mesh", "image": "", "flipbookColumns": 2, "flipbookRows": 2, "meshShape": "quad", "material": "", "blend": "additive", "space": "local"
+        }
+      }
+    },
+    {
+      "id": "00000000000000000000000000000005",
+      "components": {
+        "name": "Bare"
+      }
+    }
+  ]
+}

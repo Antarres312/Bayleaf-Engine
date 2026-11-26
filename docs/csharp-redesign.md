@@ -1,8 +1,8 @@
 # Bayleaf in C#: a redesign
 
 Status: design, 2026-11-26. Asked for by the operator after the comparison of a C# port with the Rust
-engine. Stage 0 is done and its gate is met on the JIT (see Stages); nothing of the engine is ported
-yet.
+engine. Stages 0 and 1 are done (see Stages): the C# tree in `dotnet/` holds the core, the ECS and the
+scene with its files; the Rust tree is still the one users run.
 
 ## What is decided and what is not
 
@@ -41,9 +41,13 @@ behaviour, not line by line.
 
 ## Layout
 
-One solution, `Bayleaf.sln`, with one project per layer's part. A project may reference only
+One solution, `dotnet/Bayleaf.slnx`, with one project per layer's part. A project may reference only
 projects in lower layers; `tools/Bayleaf.Check` (the `xtask` of the C# tree) checks the references,
 the licences and the deny settings, as `cargo xtask layers` and `licences` do now.
+
+The C# tree lives in `dotnet/` (`src/`, `tests/`, `tools/`, later `apps/`), beside the Rust crates
+until stage 8: at the root, `apps/Bayleaf` would be the same folder as the Rust editor's `apps/bayleaf`
+on a file system that ignores case.
 
 | Layer | Projects |
 |---|---|
@@ -66,8 +70,11 @@ the licences and the deny settings, as `cargo xtask layers` and `licences` do no
 - **Code rules.** Every project: nullable reference types on, warnings as errors, the .NET analyzers
   at their recommended level, no suppressions (rule 13). Expected failures are results, not
   exceptions; an exception that escapes non-test code is a bug, as a panic is now.
-- **Tests.** One test project per project (rule 30), xUnit. The editor's tests run headless (see
-  Editor), as the egui_kittest tests do now.
+- **Tests.** One test project per project (rule 30), xUnit v3 on Microsoft.Testing.Platform
+  (`dotnet/global.json` picks it; run `dotnet test --solution Bayleaf.slnx` in `dotnet/`). The editor's
+  tests run headless (see Editor), as the egui_kittest tests do now. The test platform reports usage to
+  Microsoft unless `TESTINGPLATFORM_TELEMETRY_OPTOUT=1` (or `DOTNET_CLI_TELEMETRY_OPTOUT=1`) is set, as the
+  `dotnet` command itself does.
 
 ## Data and speed
 
@@ -178,6 +185,19 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    paths and reading the generated code.
 1. **Core, ECS, scene, files.** Every file in the test projects reads and writes back the same as the
    Rust engine reads and writes it.
+   *Done, 2026-11-26* (`dotnet/src/Bayleaf.Core`, `Bayleaf.Ecs`, `Bayleaf.Scene`, with a test project
+   each and `dotnet/tools/Bayleaf.Check`). The files are the scene's own kinds (`.bscene`, `.blight`,
+   `.bpost`, `.bshape`, `.bdata`, `.btimeline`); the other kinds belong to the stages that port their
+   crates. Each file of `examples/` and `dotnet/tests/files/` (all 27 component types, every kind of
+   script property, version 1 and 16 scenes, duplicate keys, numbers from 1e-7 to 1e30, escapes and
+   characters past U+FFFF, and 13 files that must be refused) is read and written back by both engines
+   and compared byte for byte with `dotnet/tests/files/expected/`, which the Rust test writes with
+   `BAYLEAF_BLESS=1` and checks otherwise. To give the same bytes, `Bayleaf.Core.Json` writes and reads
+   JSON as the Rust engine's library does: the same shortest digits and exponent form (`1e+20`), single
+   precision widened to double in untyped values (`0.10000000149011612`), keys sorted by UTF-8 and the
+   same rounding when reading decimals. Two differences remain, for a later stage: error messages that
+   come from reading JSON are worded differently (the engine's own messages are the same), and the Rust
+   reader's leniencies that no file uses (a struct written as an array of its fields) are not copied.
 2. **Engine and commands.** Every command id with the same parameters and results, driven by
    `Bayleaf.Cli`. A parity harness runs the same command lists against both CLIs and compares what
    comes back. From here on, new features land in C# only; the Rust tree takes fixes.
@@ -210,4 +230,4 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
 
 1. Keep the web player, at the cost above, or drop it?
 2. Keep sandboxed WebAssembly scripts as an opt-in module beside C# scripts?
-3. Stage 0 met its gate on the JIT: start stage 1?
+3. Stage 1 is done: start stage 2 (the engine, its commands and the parity harness)?

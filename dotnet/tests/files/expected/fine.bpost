@@ -1,0 +1,43 @@
+{
+  "format": "bayleaf.post",
+  "version": 3,
+  "post": {
+    "toneMapping": {
+      "enabled": true,
+      "exposure": 1.0
+    },
+    "bloom": {
+      "enabled": true,
+      "strength": 1.5,
+      "threshold": 0.9
+    },
+    "color": {
+      "enabled": true,
+      "contrast": 1.1,
+      "saturation": 0.9,
+      "lookup": "",
+      "lookupStrength": 1.0
+    },
+    "vignette": {
+      "enabled": false,
+      "strength": 0.4,
+      "smoothness": 0.5
+    },
+    "depthFog": {
+      "enabled": false,
+      "color": [
+        0.7,
+        0.75,
+        0.8
+      ],
+      "start": 20.0,
+      "end": 200.0
+    },
+    "occlusion": {
+      "enabled": false,
+      "strength": 0.6,
+      "radius": 0.5
+    },
+    "antialiasing": "fine"
+  }
+}

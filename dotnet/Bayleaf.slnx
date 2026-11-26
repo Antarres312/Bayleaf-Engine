@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Bayleaf.Core/Bayleaf.Core.csproj" />
+    <Project Path="src/Bayleaf.Ecs/Bayleaf.Ecs.csproj" />
+    <Project Path="src/Bayleaf.Scene/Bayleaf.Scene.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Bayleaf.Core.Tests/Bayleaf.Core.Tests.csproj" />
+    <Project Path="tests/Bayleaf.Ecs.Tests/Bayleaf.Ecs.Tests.csproj" />
+    <Project Path="tests/Bayleaf.Scene.Tests/Bayleaf.Scene.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Bayleaf.Check/Bayleaf.Check.csproj" />
+  </Folder>
+</Solution>

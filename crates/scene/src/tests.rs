@@ -381,6 +381,67 @@ fn shapes_refuse_fields_that_cannot_be_read_and_lay_groups_out_together() {
     assert!(matches!(&layout[0], InspectorItem::Group { items, .. } if items.len() == 2));
 }
 
+/// What this engine writes back after reading `path` (a scene, lighting, post-processing, data shape,
+/// data or timeline file), or `refused` when it does not read it.
+fn rewrite(path: &std::path::Path) -> Option<String> {
+    let refused = || "refused\n".to_owned();
+    let text = match path.extension().and_then(|e| e.to_str())? {
+        "bscene" => Scene::load(path).map(|s| format!("{}\n", serde_json::to_string_pretty(&s.to_doc()).unwrap_or_default())).unwrap_or_else(|_| refused()),
+        "blight" => crate::lighting::Lighting::load(path).map(|l| l.to_text()).unwrap_or_else(|_| refused()),
+        "bpost" => crate::post::PostProcessing::load(path).map(|p| p.to_text()).unwrap_or_else(|_| refused()),
+        "bshape" => crate::data::DataShape::load(path).map(|s| s.to_text()).unwrap_or_else(|_| refused()),
+        "bdata" => crate::data::DataFile::load(path).map(|d| d.to_text()).unwrap_or_else(|_| refused()),
+        "btimeline" => std::fs::read_to_string(path)
+            .ok()
+            .and_then(|t| crate::timeline::Timeline::from_json(&t).ok())
+            .map_or_else(refused, |t| format!("{}\n", t.to_json())),
+        _ => return None,
+    };
+    Some(text)
+}
+
+fn files_below(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|n| n != "expected") {
+                files_below(&path, out);
+            }
+        } else {
+            out.push(path);
+        }
+    }
+}
+
+/// The C# engine must read and write every file of the examples and of `dotnet/tests/files` as this
+/// one does (docs/csharp-redesign.md, stage 1). Both engines' tests compare their rewrite of each file
+/// with `dotnet/tests/files/expected/`, which this test writes when `BAYLEAF_BLESS=1` is set.
+#[test]
+fn the_shared_files_rewrite_as_the_expected_files_say() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let expected_dir = root.join("dotnet").join("tests").join("files").join("expected");
+    let bless = std::env::var_os("BAYLEAF_BLESS").is_some_and(|v| v == "1");
+    let mut inputs = Vec::new();
+    files_below(&root.join("examples"), &mut inputs);
+    files_below(&root.join("dotnet").join("tests").join("files"), &mut inputs);
+    let mut checked = 0;
+    for input in inputs {
+        let Some(written) = rewrite(&input) else { continue };
+        let relative = input.strip_prefix(&root).unwrap_or(&input).components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>();
+        let name = relative.iter().skip_while(|c| *c == "dotnet" || *c == "tests" || *c == "files").cloned().collect::<Vec<_>>().join("__");
+        let expected_path = expected_dir.join(&name);
+        if bless {
+            std::fs::create_dir_all(&expected_dir).unwrap();
+            std::fs::write(&expected_path, &written).unwrap();
+        }
+        let expected = std::fs::read_to_string(&expected_path).unwrap_or_default().replace("\r\n", "\n");
+        assert_eq!(written, expected, "{} rewrites differently from {}", input.display(), expected_path.display());
+        checked += 1;
+    }
+    assert!(checked > 20, "only {checked} shared files were found");
+}
+
 #[test]
 fn file_properties_hold_paths_of_their_kind_or_nothing() {
     let path = |t: &str| PropertyValue::Text(t.to_owned());

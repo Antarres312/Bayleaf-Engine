@@ -1,0 +1,9 @@
+{
+  "format": "bayleaf.scene",
+  "version": 16,
+  "objects": [
+    {"id": "abcdefabcdefabcdefabcdefabcdef01", "parent": null, "components": {
+      "name": "World", "environment": {"skyColor": [0.1, 0.2, 0.3], "horizonColor": [0.4, 0.5, 0.6], "groundColor": [0.2, 0.2, 0.2], "ambient": 2, "showSky": true, "fogDistance": 50}
+    }}
+  ]
+}

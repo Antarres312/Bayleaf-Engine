@@ -1,0 +1,13 @@
+{
+  "format": "bayleaf.data",
+  "version": 1,
+  "shape": "data/enemy.bshape",
+  "values": {
+    "health": 40,
+    "tint": [1e-7, 3e20, 0.000001],
+    "waves": {"list": [4, 5]},
+    "zeta": "kept but not read",
+    "boss": true,
+    "alpha": {"map": {"z": 1, "～": 2, "😀": 3}}
+  }
+}

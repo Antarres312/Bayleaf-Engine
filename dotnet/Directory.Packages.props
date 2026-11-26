@@ -1,0 +1,13 @@
+<Project>
+
+  <!-- Every package of the C# tree, at one version. A package's licence must be on the Craft list
+       (AGENTS.md rule 26); the licences check of tools/Bayleaf.Check reads them. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="xunit.v3" Version="4.0.3" />
+  </ItemGroup>
+
+</Project>

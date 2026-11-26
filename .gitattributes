@@ -1,0 +1,2 @@
+# The files both engines' tests read and the rewrites they must give stay byte for byte as written.
+/dotnet/tests/files/** text eol=lf

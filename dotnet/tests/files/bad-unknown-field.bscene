@@ -1,0 +1,1 @@
+{"format": "bayleaf.scene", "version": 26, "objects": [{"id": "00000000000000000000000000000001", "components": {"name": "A", "mesh": {"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 0.5, "shine": 1}}}]}
