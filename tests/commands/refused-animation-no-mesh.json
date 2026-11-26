@@ -1,0 +1,4 @@
+[
+  {"cmd": "scene.object.create", "params": {"name": "Empty"}},
+  {"cmd": "animation.get", "params": {"id": "$0.id"}}
+]

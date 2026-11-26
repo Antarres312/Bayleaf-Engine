@@ -209,18 +209,18 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    `Bayleaf.Cli`. A parity harness runs the same command lists against both CLIs and compares what
    comes back. From here on, new features land in C# only; the Rust tree takes fixes.
    *In progress, 2026-11-26.* `src/Bayleaf.Engine` holds the session, the command registry with its
-   undo steps (merged by key, as the editor drags), the automation confinement, and 94 of the Rust
+   undo steps (merged by key, as the editor drags), the automation confinement, and 103 of the Rust
    engine's 172 commands: the scene's files, objects, hierarchy, components and scripts, its settings,
    lighting and post-processing assets, data files and shapes, Input Maps, projects and prefabs (with
-   overrides, nesting and editing a prefab on its own) and keyframe animations (editing, the playhead's pose, recording, copying keys; their undo steps share the scene's history), the console, clearing saved values and splitting a scene into Streamed Areas (`src/Bayleaf.Streaming`, the opt-in module that streams them in play mode, is ported with its tests and waits for play mode), and the project's files (`asset.create`, `asset.list`, `asset.rename`, `asset.delete`; for now without a Recycle Bin, so a delete needs `permanent: true`, and without new materials, visual scripts and Rust scripts, each refused with why), and bringing files in (`asset.import` with its import settings, `asset.importSettings.get`/`.set`, `scene.file.place`; until sound is ported a sound is checked only for its size, as the Rust engine does without its `audio` feature), and editing game interface layouts and their style files (`ui.layout.*`, `ui.element.*`, `ui.style.*`). `apps/Bayleaf.Cli` runs `commands`, `run` and
-   `batch` as the Rust CLI does. The other 78 are listed with the Rust engine's id, label, menu,
+   overrides, nesting and editing a prefab on its own) and keyframe animations (editing, the playhead's pose, recording, copying keys; their undo steps share the scene's history), the console, clearing saved values and splitting a scene into Streamed Areas (`src/Bayleaf.Streaming`, the opt-in module that streams them in play mode, is ported with its tests and waits for play mode), and the project's files (`asset.create`, `asset.list`, `asset.rename`, `asset.delete`; for now without a Recycle Bin, so a delete needs `permanent: true`, and without new materials, visual scripts and Rust scripts, each refused with why), and bringing files in (`asset.import` with its import settings, `asset.importSettings.get`/`.set`, `scene.file.place`; until sound is ported a sound is checked only for its size, as the Rust engine does without its `audio` feature), and editing game interface layouts and their style files (`ui.layout.*`, `ui.element.*`, `ui.style.*`), and skeletal animation outside play mode (the `animation.*` commands on a player the first command makes for an object, the editor's preview that scrubs and plays a clip, `Session.Animate` moving previews on, and the poses the views will draw; what Rust does only while playing, a Model Animation's own clip or animation states, root motion, clip events and scripts' animation, comes with play mode; joint places agree to the bit except where a turn is interpolated, which the Rust engine does with glam's approximate arc cosine and sine, so the last digit can differ and the batch reads joints where no turn is interpolated). `apps/Bayleaf.Cli` runs `commands`, `run` and
+   `batch` as the Rust CLI does. The other 69 are listed with the Rust engine's id, label, menu,
    shortcut, params and prompt, but disabled with a reason, until their part is ported
    (`src/Bayleaf.Engine/Pending.json` is the Rust engine's list): graphs, play mode, sound, streaming,
-   export, the profiler, `asset.info` and `scene.image.apply` (both wait for the graph catalogs), the game interface in play mode, playing timelines, skeletal animation, and
+   export, the profiler, `asset.info` and `scene.image.apply` (both wait for the graph catalogs), the game interface in play mode, playing timelines, and
    `scene.render`. The harness: each batch in `tests/commands/` runs in both engines' tests
    (`rust/crates/engine/src/parity_tests.rs`, `tests/Bayleaf.Cli.Tests`), as `bayleaf-cli batch` runs
    it, and what comes back (folders as `$root`/`$out`, ids as `<id N>`) is compared with
-   `tests/commands/expected/`, which the Rust test writes with `BAYLEAF_BLESS=1`. All 31 batches agree,
+   `tests/commands/expected/`, which the Rust test writes with `BAYLEAF_BLESS=1`. All 45 batches agree,
    and every ported command lists the same as in Rust. Running both CLIs as programs comes with the
    automation port, which also brings `mcp`.
 3. **Rendering.** `scene.render` images of the test scenes close to the Rust ones (a difference
@@ -232,8 +232,9 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    *Animation ported, 2026-11-26* (`src/Bayleaf.Animation`: clips, motions, players, animation states
    with their node kinds and compiler). Each `.banim` file of `tests/files` is read with the animation
    states' catalog, written back, compiled and run on the arm fixture in both engines, and compared with
-   what the Rust engine writes (`BAYLEAF_BLESS=1 cargo test -p bayleaf-animation`); the players in the
-   session and the `animation.*` commands wait for play mode.
+   what the Rust engine writes (`BAYLEAF_BLESS=1 cargo test -p bayleaf-animation`). The `animation.*`
+   commands and the editor's previews are in the engine (stage 2); the players play mode makes and
+   steps wait for play mode.
 6. **The editor.** Panel by panel, each with its headless tests and its accessibility check.
 7. **The player and export.** NativeAOT players for Windows, macOS and Linux; the web decision.
 8. **Switch.** The C# editor becomes the release; the Rust tree stays for one release and is then

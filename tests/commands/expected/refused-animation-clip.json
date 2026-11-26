@@ -1,0 +1,9 @@
+{
+  "error": "there is no clip named \"Walk\"; the model has Animation 2, Bend",
+  "failedStep": 1,
+  "results": [
+    {
+      "id": "<id 0>"
+    }
+  ]
+}

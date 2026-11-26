@@ -1,0 +1,9 @@
+{
+  "error": "$root/tests/files/assets/gltf-hierarchy.gltf has no skeleton or animations",
+  "failedStep": 1,
+  "results": [
+    {
+      "id": "<id 0>"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+[
+  {"cmd": "scene.object.create", "params": {"name": "Leg", "components": {"mesh": {"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "$root/tests/files/assets/gltf-skinned.gltf"}}}},
+  {"cmd": "animation.play", "params": {"id": "$0.id", "clip": "Walk"}}
+]
