@@ -772,7 +772,16 @@ impl ScriptHost {
             let (module_name, script_name) = (first.module_name.clone(), first.script_name.clone());
             let started = self.timing.then(bayleaf_core::time::Instant::now);
             let fuel = FUEL_PER_CALL.saturating_mul(batch.places.len() as u64);
-            let result = call(&mut store, &module_name, fuel, |store| batch.update_all.call(store, dt));
+            let mut result = call(&mut store, &module_name, fuel, |store| batch.update_all.call(store, dt));
+            // The frame the module gave back, read where it is in the module's memory.
+            let memory = first.module.get_export(&mut *store, "memory").and_then(rt::Extern::into_memory);
+            let returned = store.data_mut().step.returned_at.take().zip(memory);
+            if result.is_ok()
+                && let Some(((at, count), memory)) = returned
+                && !frame_finite(memory.data(&*store).get(at..at + count * FRAME_ENTRY).unwrap_or_default())
+            {
+                result = Err(ScriptError::Trapped { module: module_name.clone(), message: "frame_set: values must be finite numbers".to_owned() });
+            }
             if let Some(started) = started {
                 add_timing(&mut self.timings, &script_name, started.elapsed());
             }
@@ -799,8 +808,13 @@ impl ScriptHost {
             if result.is_ok() {
                 after_shared_posed(state, &layout, &mut self.poses, &mut self.requests, &mut self.messages, &mut self.property_writes);
                 // The frame the module gave back: each running object's changed transform.
-                for slot in 0..state.step.returned_count {
-                    let Some((values, precise, flags)) = StepFrame::entry(&state.step.returned, slot) else { break };
+                let (bytes, count) = match &returned {
+                    Some(((at, count), memory)) => (memory.data(&*store).get(*at..*at + *count * FRAME_ENTRY).unwrap_or_default(), *count),
+                    None => (&[][..], 0),
+                };
+                let state = store.data();
+                for slot in 0..count {
+                    let Some((values, precise, flags)) = StepFrame::entry(bytes, slot) else { break };
                     if flags & FRAME_CHANGED == 0 {
                         continue;
                     }
@@ -824,7 +838,7 @@ impl ScriptHost {
                     }
                 }
             }
-            release_view(state);
+            release_view(store.data_mut());
             drop(store);
             if let Err(error) = result {
                 // An error stops the module, and with it every object it runs: the error is the one
@@ -934,7 +948,7 @@ impl ScriptHost {
             let (values, position) = (self.poses.values[index], self.poses.positions[index]);
             self.poses.set[index] = false;
             // The host functions already refused non-finite numbers.
-            if scene.set(layout.ids[index], transform_from(&values, position)).is_ok() {
+            if layout.keys.get(index).copied().flatten().is_some_and(|key| scene.set_transform(key, transform_from(&values, position))) {
                 view.set(index, values, position);
             }
         }
@@ -1266,9 +1280,18 @@ fn failing_object(store: &mut Store<HostState>, module: &rt::Instance, instances
     if usize::try_from(at).ok().and_then(|at| memory.read(&*store, at, &mut bytes).ok()).is_none() {
         return selected;
     }
+    // The last marked: a module that gives its objects out together marks each as it goes.
     let marked =
-        bytes.as_chunks::<FRAME_ENTRY>().0.iter().position(|entry| u32::from_le_bytes([entry[36], entry[37], entry[38], entry[39]]) & FRAME_CURRENT != 0);
+        bytes.as_chunks::<FRAME_ENTRY>().0.iter().rposition(|entry| u32::from_le_bytes([entry[36], entry[37], entry[38], entry[39]]) & FRAME_CURRENT != 0);
     marked.and_then(|slot| places.iter().map(|p| &instances[*p]).find(|i| i.slot == slot)).map_or(selected, |i| i.object)
+}
+
+/// Whether every entry of a frame a module gave back that it marks changed holds finite numbers.
+fn frame_finite(bytes: &[u8]) -> bool {
+    bytes.as_chunks::<FRAME_ENTRY>().0.iter().all(|entry| {
+        let flags = u32::from_le_bytes([entry[36], entry[37], entry[38], entry[39]]);
+        flags & FRAME_CHANGED == 0 || entry[..36].as_chunks::<4>().0.iter().all(|v| f32::from_le_bytes(*v).is_finite())
+    })
 }
 
 /// Adds a script's time to the profiler's, by its name.
@@ -2637,23 +2660,19 @@ fn link_frames(linker: &mut Linker<HostState>) -> Result<(), LinkError> {
         if count > slots {
             return Err(fault(&mut caller, format!("frame_set: {count} objects, but the module runs {slots}")));
         }
-        let bytes =
-            read_guest(&mut caller, ptr, (count * FRAME_ENTRY) as i32, slots * FRAME_ENTRY).map_err(|m| fault(&mut caller, format!("frame_set: {m}")))?;
         if caller.data().step.active {
-            // Checked here, applied when the call ends (`ScriptHost::update`).
-            for slot in 0..count {
-                if let Some((values, _, flags)) = StepFrame::entry(&bytes, slot)
-                    && flags & FRAME_CHANGED != 0
-                    && !values.iter().all(|v| v.is_finite())
-                {
-                    return Err(fault(&mut caller, "frame_set: values must be finite numbers".to_owned()));
-                }
-            }
-            let state = caller.data_mut();
-            state.step.returned = bytes;
-            state.step.returned_count = count;
+            // Read where it is, checked and applied when the call ends (`ScriptHost::update`).
+            let memory = caller.get_export("memory").and_then(rt::Extern::into_memory).ok_or_else(|| fault(&mut caller, "frame_set: no memory".to_owned()))?;
+            let len = count * FRAME_ENTRY;
+            let at = usize::try_from(ptr).ok().filter(|at| at.checked_add(len).is_some_and(|end| end <= memory.data_size(&caller)));
+            let Some(at) = at else {
+                return Err(fault(&mut caller, format!("frame_set: reading {len} bytes at {ptr} is outside the script's memory")));
+            };
+            caller.data_mut().step.returned_at = Some((at, count));
             return Ok(());
         }
+        let bytes =
+            read_guest(&mut caller, ptr, (count * FRAME_ENTRY) as i32, slots * FRAME_ENTRY).map_err(|m| fault(&mut caller, format!("frame_set: {m}")))?;
         for (slot, entry) in bytes.as_chunks::<FRAME_ENTRY>().0.iter().enumerate() {
             let word = |at: usize| [entry[at], entry[at + 1], entry[at + 2], entry[at + 3]];
             if u32::from_le_bytes(word(36)) & FRAME_CHANGED == 0 {

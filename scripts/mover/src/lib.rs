@@ -5,6 +5,8 @@ use bayleaf_script_sdk::{Property, Script, Transform, key_down, property, script
 
 #[derive(Default)]
 struct Mover {
+    speed: f32,
+    jump: f32,
     ground: Option<f32>,
     vertical: f32,
 }
@@ -12,9 +14,13 @@ struct Mover {
 impl Script for Mover {
     const PROPERTIES: &'static [Property] = &[Property::Number("speed", 3.0), Property::Number("jump", 1.0)];
 
+    fn read_properties(&mut self) {
+        self.speed = property("speed").unwrap_or(3.0);
+        self.jump = property("jump").unwrap_or(1.0);
+    }
+
     fn update(&mut self, dt: f32) {
-        let speed = property("speed").unwrap_or(3.0);
-        let jump = property("jump").unwrap_or(1.0);
+        let (speed, jump) = (self.speed, self.jump);
         let axis = |plus: &[&str], minus: &[&str]| {
             let held = |keys: &[&str]| keys.iter().any(|k| key_down(k));
             f32::from(u8::from(held(plus))) - f32::from(u8::from(held(minus)))

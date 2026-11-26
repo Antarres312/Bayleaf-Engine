@@ -343,6 +343,9 @@ mod raw {
     pub unsafe fn object_ref(handle: i32) -> i32 {
         plain("object_ref", &[I32(handle)])
     }
+    pub unsafe fn slot_select(slot: i32) -> i32 {
+        plain("slot_select", &[I32(slot)])
+    }
     pub unsafe fn scene_load(ptr: *const u8, n: usize, additive: i32) -> i32 {
         // SAFETY: the safe wrappers pass a live slice.
         text_call("scene_load", unsafe { bytes(ptr, n) }, &[I32(additive)])
@@ -1347,8 +1350,8 @@ pub(crate) fn event_source_component() -> i32 {
 }
 
 /// Makes `slot` the object the next calls are about, in a module that runs many objects: 0 when it
-/// does not run, 1 when it does, 2 when its properties changed since last asked.
-#[cfg(target_arch = "wasm32")]
+/// does not run, 1 when it does, 2 when its properties changed since last asked. A native script
+/// asks it of its own object, slot 0.
 pub(crate) fn slot_select(slot: i32) -> i32 {
     // SAFETY: a plain number in and out.
     unsafe { raw::slot_select(slot) }
@@ -1357,10 +1360,12 @@ pub(crate) fn slot_select(slot: i32) -> i32 {
 /// Writes every object's frame entry of a module that runs many objects at `buffer` when it has room
 /// for all; how many objects there are.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn frame_get(buffer: &mut [u8], room: usize) -> i32 {
-    let room = i32::try_from(room.min(buffer.len() / 64)).unwrap_or(0);
-    // SAFETY: the host writes at most `room` entries of 64 bytes, which `buffer` holds.
-    unsafe { raw::frame_get(buffer.as_mut_ptr(), room) }
+pub(crate) fn frame_get(buffer: &mut [crate::Entry]) -> i32 {
+    let room = i32::try_from(buffer.len()).unwrap_or(0);
+    // SAFETY: the host writes at most `room` entries of 64 bytes, which `buffer` holds; an entry is
+    // 64 bytes laid out as the host writes them (`repr(C)`, checked at compile time), and any bytes
+    // are valid numbers.
+    unsafe { raw::frame_get(buffer.as_mut_ptr().cast::<u8>(), room) }
 }
 
 /// A number that stays the same while handles name the same objects (the world's structure).
@@ -1372,8 +1377,8 @@ pub(crate) fn world_stamp() -> i64 {
 
 /// Hands the frame back: the host applies the transforms marked changed.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn frame_set(buffer: &[u8], count: usize) {
-    let count = i32::try_from(count.min(buffer.len() / 64)).unwrap_or(0);
+pub(crate) fn frame_set(buffer: &[crate::Entry]) {
+    let count = i32::try_from(buffer.len()).unwrap_or(0);
     // SAFETY: the host reads `count` entries of 64 bytes, which `buffer` holds.
-    unsafe { raw::frame_set(buffer.as_ptr(), count) }
+    unsafe { raw::frame_set(buffer.as_ptr().cast::<u8>(), count) }
 }

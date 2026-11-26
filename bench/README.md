@@ -93,6 +93,10 @@ target\release\bayleaf-bench.exe --mode compiled --scripts graph --part scripts 
 target\bench-cpp\bench.exe 5000
 ```
 
+`--scripts rust-many` runs the same three Rust scripts written for many objects
+(`bench/scripts/*-many`: properties read into fields, one `update_many` for all), with the same
+`check` as `--scripts rust`.
+
 ## Results (2026-11-24)
 
 AMD Ryzen 7 260 (8 cores), 31 GB, Windows 11; Rust 1.100, wasmi 2.0.2, wasmtime 51, MSVC 14.44.
@@ -398,6 +402,7 @@ third with other work going on. Script step at 20,000 objects, compiled, millise
 | The SDK serves reads of other objects (8cbfddf) | | 15 to 21 | |
 | The frame in one pass, only selected objects looked at (8efed7b) | 2.3 to 3.0 | 7.7 to 7.9 | 22.8 |
 | Visual scripts select an object only when needed | | | 7.1 |
+| Properties in fields, all objects in one update, writes by key (stage 4) | 1.2 | 4.0; written for many 2.2 | about 0.6 of before |
 
 Rows were measured on different hours; compare along a row's own before and after (in
 `docs/runtime-rebuild.md`), not down a column. The benchmark prints `check`, a sum over the scene;

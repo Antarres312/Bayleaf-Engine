@@ -196,7 +196,7 @@ object a *slot* (0, 1, 2, … in the order the objects load) and calls these ins
 |---|---|---|
 | `slot_select` | `(slot: i32) -> i32` | makes that object the one every other import is about ("this object": its transform, properties, logs, lists and maps, subscriptions); `0` when it does not run (its object stopped or went), `1` when it does, `2` when its properties changed since last asked (another script or the Inspector set one) |
 | `frame_get` | `(out, cap: i32) -> i32` | how many slots the module has; when `cap` slots fit, writes for each, at `out + slot × 64`, its transform (nine `f32`, as `transform_get`), at byte 36 a word whose low four bits are flags (`1` it runs, `2` its properties changed since last asked) and whose other bits are the object's handle, and at byte 40 its position in double precision (three `f64`) |
-| `frame_set` | `(ptr, count: i32) -> ()` | takes back `count` such entries: each whose flags have `4` (changed) set becomes its object's transform, as `transform_set` would make it. A module sets `8` on the entry of the object it is updating, so an error is reported on that object even when it made no call for it |
+| `frame_set` | `(ptr, count: i32) -> ()` | takes back `count` such entries: each whose flags have `4` (changed) set becomes its object's transform, as `transform_set` would make it. A module sets `8` on the entry of the object it is updating, so an error is reported on that object even when it made no call for it; when several entries have it, the last one is that object |
 | `world_stamp` | `() -> i64` | a number that stays the same while handles name the same objects (it changes when an object comes or goes, is renamed or moved in the hierarchy, or a component changes), so a module may keep a handle from step to step until it does |
 
 Within `bayleaf_update_all` the module selects each object before a call about it (`slot_select`; the SDK does it only before a call that needs it); the host
@@ -206,7 +206,12 @@ through the frame reaches the host when `frame_set` gives it back, so within the
 still see the object where the step began. Rust scripts built with `bayleaf-script-sdk` run this
 way: `script!` keeps each object's value by slot, reads the frame before the update of all and
 writes it back after it, and keeps each object's number properties and the play time as last read,
-so `Transform::get`, `set`, `property` and `time` need no host call during it. Nor do `Object::this`, a kept object's handle (`Kept::object`, kept until `world_stamp` changes) and another object's transform after the module first reads it in a step (four are kept, until the module sets one). Visual scripts run this way too, unless one keeps more than 4 KB per object (each text variable keeps 1 KB): their variables, timers and the places of their loops are kept per object in the module's memory and loaded before that object's code runs. During the update of all the frame says which objects run and whose properties changed, and the host is asked to select an object only before a call that needs it (every import but `slot_select`, the frame's, `world_stamp`, `time` and `math_pow`). Their own transform and position, number, whole-number and vector properties, and the time come from the frame and from what each object last read, as for Rust scripts (a property is read again when the host says it changed, or when the script set one). Other objects' transforms they read are kept for the update of all too, four at a time, until the module sets one; the object's own handle comes from its frame entry, and the object an object variable names is kept per object until `world_stamp` changes.
+so `Transform::get`, `set`, `property` and `time` need no host call during it. Before the update
+of all, each object whose properties changed (or that set one itself) runs `read_properties`; the
+update of all is the script's `update_many`, which by default selects each object and runs its
+`update`. A script's own `update_many` takes the frame's entries for its items instead
+(`Many::iter_mut`) and marks each item it gives out `4` and `8`; the imports it calls meanwhile are
+about the object of the item given out last. Nor do `Object::this`, a kept object's handle (`Kept::object`, kept until `world_stamp` changes) and another object's transform after the module first reads it in a step (four are kept, until the module sets one). Visual scripts run this way too, unless one keeps more than 4 KB per object (each text variable keeps 1 KB): their variables, timers and the places of their loops are kept per object in the module's memory and loaded before that object's code runs. During the update of all the frame says which objects run and whose properties changed, and the host is asked to select an object only before a call that needs it (every import but `slot_select`, the frame's, `world_stamp`, `time` and `math_pow`). Their own transform and position, number, whole-number and vector properties, and the time come from the frame and from what each object last read, as for Rust scripts (a property is read again when the host says it changed, or when the script set one). Other objects' transforms they read are kept for the update of all too, four at a time, until the module sets one; the object's own handle comes from its frame entry, and the object an object variable names is kept per object until `world_stamp` changes.
 
 ## Limits
 
@@ -228,6 +233,27 @@ project); right-click the folder, Build Script, to build again. Building needs R
 `rustup target add wasm32-unknown-unknown`. A script that is already running reloads when its
 `.wasm` changes.
 
+Two parts of `Script` are there for speed when a script runs on many objects. `read_properties`
+reads the properties the script uses into its own fields: it runs before `init`, and again before
+the script next runs whenever they may have changed (set in the Inspector during play, by another
+script or by the script itself), so `update` reads fields instead of looking a property up by name
+every step. `update_many` runs once a step for every object of the script, in place of `update`:
+`Many::iter_mut` gives each running object's script and transform with no host call, and the step
+keeps each transform it gave out. Inside it, `Transform::get` and `Transform::set` are about where
+the object was when the step began; the item's transform is the one that counts.
+
+```rust
+fn read_properties(&mut self) {
+    self.speed = property("speed").unwrap_or(90.0);
+}
+
+fn update_many(objects: &mut Many<'_, Self>, dt: f32) {
+    for (spin, t) in objects.iter_mut() {
+        t.rotation[1] = (t.rotation[1] + spin.speed * dt) % 360.0;
+    }
+}
+```
+
 ## Native scripts
 
 A game exported in native mode builds its Rust scripts into its own player: the same crates, built
@@ -241,7 +267,8 @@ value of the script, as each gets its own instance in WebAssembly; a `static` in
 by every object, unlike in WebAssembly. Host calls are the same imports: the SDK copies their texts
 and numbers through a small exchange module that imports every host function, so each check and
 fault applies as for a WebAssembly script. Modules without a crate beside them, and visual
-scripts, stay compiled WebAssembly.
+scripts, stay compiled WebAssembly. A native script asks `slot_select(0)` before each of its
+functions, to know whether to run `read_properties`; its `update_many` gets its one object.
 
 The export writes a Cargo workspace in `.build/native/<platform>/` in the project (the player,
 copies of the script crates, the engine's patches and `Cargo.lock`) and builds it with the engine's
