@@ -38,9 +38,9 @@ public static class Eases
     /// <summary>English label; the translation key.</summary>
     public static string Label(this Ease ease) => ease.ToString();
 
-    internal static string Code(this Ease ease) => Names[(int)ease];
+    public static string Code(this Ease ease) => Names[(int)ease];
 
-    internal static Ease Read(JsonValue value) => (Ease)JsonRead.Variant(value, Names);
+    public static Ease Read(JsonValue value) => (Ease)JsonRead.Variant(value, Names);
 }
 
 /// <summary>What a track animates: a component's field, or a property of the object's script.</summary>
@@ -83,7 +83,8 @@ public abstract record Target
         return this is Field { Component: "name" or "prefab" } ? Checks.Fail("an object's name and prefab link are not animated") : Checks.Ok;
     }
 
-    internal static Target Read(JsonValue value)
+    /// <summary>Reads a target as files and commands hold it; throws <see cref="JsonShapeException"/> for another shape.</summary>
+    public static Target Read(JsonValue value)
     {
         if (value is JsonObject o)
         {
@@ -99,7 +100,7 @@ public abstract record Target
         throw new JsonShapeException("data did not match any variant of untagged enum Target");
     }
 
-    internal JsonValue Write() => this switch
+    public JsonValue Write() => this switch
     {
         Field f => new JsonObject { { "component", J.S(f.Component) }, { "field", J.S(f.Name) } },
         ScriptProperty p => new JsonObject { { "script", J.S(p.Script) }, { "property", J.S(p.Name) } },
@@ -111,13 +112,13 @@ public abstract record Target
 /// <summary>One moment of a track: the value at that moment and how it eases to the next key.</summary>
 public sealed record Key(float Time, JsonValue Value, Ease Ease)
 {
-    internal static Key Read(JsonValue value)
+    public static Key Read(JsonValue value)
     {
         var f = JsonFields.Of(value, "struct Key", true, "time", "value", "ease");
         return new(f.Required("time", JsonRead.F32), f.Required("value", v => v.Canonical()), f.Optional("ease", Eases.Read, Ease.Smooth));
     }
 
-    internal JsonValue Write() => new JsonObject { { "time", J.F(Time) }, { "value", Value }, { "ease", J.S(Ease.Code()) } };
+    public JsonObject Write() => new() { { "time", J.F(Time) }, { "value", Value }, { "ease", J.S(Ease.Code()) } };
 }
 
 /// <summary>One animated value of a part, with its keys in time order.</summary>
@@ -290,7 +291,10 @@ public sealed class Timeline
     }
 
     /// <summary>The file's text.</summary>
-    public string ToJson() => new JsonObject
+    public string ToJson() => ToJsonObject().ToPretty();
+
+    /// <summary>The timeline as its file holds it.</summary>
+    public JsonObject ToJsonObject() => new()
     {
         { "format", J.S(Format) },
         { "version", J.U(Version) },
@@ -298,7 +302,7 @@ public sealed class Timeline
         { "length", J.F(Length) },
         { "looping", J.B(Looping) },
         { "parts", new JsonArray(Parts.Select(p => p.Write())) },
-    }.ToPretty();
+    };
 
     /// <summary>Checks limits, finite times inside the length, keys in time order and values of a kind a track can hold.</summary>
     public Result<Unit, string> Validate()

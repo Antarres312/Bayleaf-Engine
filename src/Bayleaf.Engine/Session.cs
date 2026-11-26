@@ -30,7 +30,16 @@ public sealed class Session
     /// <summary>Console lines kept; older ones are dropped.</summary>
     private const int ConsoleLimit = 2000;
 
-    internal sealed record HistoryStep(string Command, string Before, string? MergeKey);
+    /// <summary>What an undo step restores: a document as compact JSON.</summary>
+    internal enum SnapshotKind
+    {
+        Scene,
+        Timeline,
+    }
+
+    internal sealed record Snapshot(SnapshotKind Kind, string Text);
+
+    internal sealed record HistoryStep(string Command, Snapshot Before, string? MergeKey);
 
     private readonly List<ConsoleLine> console = [];
 
@@ -83,7 +92,10 @@ public sealed class Session
     public bool CanRedo => Redo.Count > 0;
 
     /// <summary>Bytes the undo and redo steps keep.</summary>
-    public long HistoryBytes => Undo.Concat(Redo).Sum(s => (long)s.Before.Length);
+    public long HistoryBytes => Undo.Concat(Redo).Sum(s => (long)s.Before.Text.Length);
+
+    /// <summary>The keyframe animation the <c>timeline.*</c> commands work on.</summary>
+    internal TimelineDoc? Timeline { get; set; }
 
     /// <summary>The prefabs open on their own, outermost first, by their paths in the project.</summary>
     public IReadOnlyList<string> OpenPrefabs => PrefabEdits.Select(e => e.Source).ToList();
@@ -150,27 +162,69 @@ public sealed class Session
             Log(level, message);
             problems.Add(message);
         }
-        Undo.Clear();
-        Redo.Clear();
+        Forget(SnapshotKind.Scene);
         return problems;
     }
 
     /// <summary>The scene as an undo step keeps it: its document as compact JSON.</summary>
-    internal string Snapshot() => Scene.ToDoc().ToJson().ToCompact();
+    internal Snapshot SceneSnapshot() => new(SnapshotKind.Scene, Scene.ToDoc().ToJson().ToCompact());
 
-    /// <summary>Puts a scene snapshot back.</summary>
-    internal void Restore(string snapshot)
+    /// <summary>The open timeline as an undo step keeps it; null without one.</summary>
+    internal Snapshot? TimelineSnapshot() => Timeline is null ? null : new(SnapshotKind.Timeline, Timeline.Timeline.ToJson());
+
+    /// <summary>Drops the undo and redo steps of one kind.</summary>
+    internal void Forget(SnapshotKind kind)
     {
-        var doc = SceneDoc.FromText(snapshot);
-        if (doc.IsError)
-        {
-            throw Stop.Failed($"the undo step cannot be read: {doc.Error}");
-        }
-        Scene = SceneModel.FromDoc(doc.Value).OrFail();
+        Undo.RemoveAll(s => s.Before.Kind == kind);
+        Redo.RemoveAll(s => s.Before.Kind == kind);
     }
 
+    /// <summary>Puts a snapshot's document back as it was, with nothing else (a failed command's undoing).</summary>
+    internal void PutBack(Snapshot snapshot)
+    {
+        if (snapshot.Kind == SnapshotKind.Timeline)
+        {
+            if (Timeline is not null && Bayleaf.Scene.Timeline.FromJson(snapshot.Text) is { IsOk: true } restored)
+            {
+                Timeline.Timeline = restored.Value;
+            }
+            return;
+        }
+        if (SceneDoc.FromText(snapshot.Text) is { IsOk: true } doc && SceneModel.FromDoc(doc.Value) is { IsOk: true } scene)
+        {
+            Scene = scene.Value;
+        }
+    }
+
+    /// <summary>Puts a snapshot back and gives the state it replaced, for the opposite stack.</summary>
+    internal Snapshot Restore(Snapshot snapshot)
+    {
+        if (snapshot.Kind == SnapshotKind.Timeline)
+        {
+            var doc = Timeline ?? throw Stop.Failed("the timeline of this step is closed");
+            var current = TimelineSnapshot()!;
+            var restored = Bayleaf.Scene.Timeline.FromJson(snapshot.Text);
+            if (restored.IsError)
+            {
+                throw Stop.Failed($"the undo step cannot be read: {restored.Error}");
+            }
+            doc.Timeline = restored.Value;
+            doc.Playhead = Math.Min(doc.Playhead, doc.Timeline.Length);
+            doc.Dirty = true;
+            TimelineCommands.AfterChange(this);
+            return current;
+        }
+        var scene = SceneSnapshot();
+        var parsed = SceneDoc.FromText(snapshot.Text);
+        if (parsed.IsError)
+        {
+            throw Stop.Failed($"the undo step cannot be read: {parsed.Error}");
+        }
+        Scene = SceneModel.FromDoc(parsed.Value).OrFail();
+        return scene;
+    }
     /// <summary>Records an undo step for <paramref name="command"/>; with a merge key equal to the last step's, the last step stays.</summary>
-    internal void Record(string command, string before, string? mergeKey)
+    internal void Record(string command, Snapshot before, string? mergeKey)
     {
         var merges = mergeKey is not null && Undo.Count > 0 && Undo[^1].MergeKey == mergeKey;
         Redo.Clear();
@@ -188,7 +242,7 @@ public sealed class Session
         var drop = 0;
         while (Undo.Count - drop > 1 && (Undo.Count - drop > MaxUndoSteps || total > UndoBudgetBytes))
         {
-            total -= Undo[drop].Before.Length;
+            total -= Undo[drop].Before.Text.Length;
             drop++;
         }
         Undo.RemoveRange(0, drop);

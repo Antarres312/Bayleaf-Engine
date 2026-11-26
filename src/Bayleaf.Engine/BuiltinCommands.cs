@@ -49,9 +49,11 @@ internal static class BuiltinCommands
         }
         var step = from[^1];
         from.RemoveAt(from.Count - 1);
-        var current = session.Snapshot();
-        session.Restore(step.Before);
-        session.Dirty = true;
+        var current = session.Restore(step.Before);
+        if (step.Before.Kind == Session.SnapshotKind.Scene)
+        {
+            session.Dirty = true;
+        }
         to.Add(new Session.HistoryStep(step.Command, current, null));
         return J.Obj((key, new JsonString(step.Command)));
     }

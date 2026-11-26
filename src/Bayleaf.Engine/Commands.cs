@@ -141,6 +141,7 @@ public sealed class CommandRegistry
         all.AddRange(ProjectCommands.All());
         all.AddRange(PrefabCommands.All());
         all.AddRange(InputCommands.All());
+        all.AddRange(TimelineCommands.All());
         all.AddRange(PendingCommands.All(all.Select(c => c.Id).ToHashSet(StringComparer.Ordinal)));
         return new CommandRegistry(all);
     }
@@ -183,10 +184,17 @@ public sealed class CommandRegistry
         {
             return Result.Fail(CommandError.ParamsNotObject);
         }
+        // While recording, edits of the posed parts become keys.
+        if (TimelineCommands.Redirect(session, id, parameters))
+        {
+            id = "timeline.key.record";
+        }
         if (Get(id) is not { } spec)
         {
             return Result.Fail(CommandError.Unknown(id));
         }
+        // The timeline's pose is only shown: it goes before anything else sees or saves the scene.
+        TimelineCommands.BeforeCommand(session, id);
         if (spec.Enabled(session) is { } reason)
         {
             return Result.Fail(CommandError.Disabled(id, reason));
@@ -195,25 +203,53 @@ public sealed class CommandRegistry
         {
             return Run(spec, session, parameters);
         }
-        if (spec.Mutates != Mutates.Scene)
+        Session.Snapshot before;
+        switch (spec.Mutates)
         {
-            return Result.Fail(CommandError.Failed($"{id} changes a document the C# engine does not hold yet"));
+            case Mutates.Scene:
+                before = session.SceneSnapshot();
+                break;
+            case Mutates.Timeline:
+                before = session.TimelineSnapshot() ?? new Session.Snapshot(Session.SnapshotKind.Timeline, "");
+                if (session.Timeline is null)
+                {
+                    return Result.Fail(CommandError.Failed(TimelineCommands.NoTimeline));
+                }
+                break;
+            default:
+                return Result.Fail(CommandError.Failed($"{id} changes a document the C# engine does not hold yet"));
         }
-        var before = session.Snapshot();
         var result = Run(spec, session, parameters);
         if (result.IsError)
         {
             // A failed command leaves its document as it was.
-            session.Restore(before);
+            session.PutBack(before);
             return result;
         }
-        // Play-mode changes to the scene are thrown away on stop: they are no undo steps.
-        if (session.IsPlaying)
+        if (spec.Mutates == Mutates.Timeline)
         {
+            // A timeline edit that changed nothing is no undo step.
+            if (session.TimelineSnapshot() is { } now && now.Text == before.Text)
+            {
+                TimelineCommands.AfterChange(session);
+                return result;
+            }
+        }
+        else if (session.IsPlaying)
+        {
+            // Play-mode changes to the scene are thrown away on stop: they are no undo steps.
             return result;
         }
         session.Record(id, before, mergeKey);
-        session.Dirty = true;
+        if (spec.Mutates == Mutates.Timeline)
+        {
+            session.Timeline!.Dirty = true;
+            TimelineCommands.AfterChange(session);
+        }
+        else
+        {
+            session.Dirty = true;
+        }
         return result;
     }
 
