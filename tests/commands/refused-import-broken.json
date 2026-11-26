@@ -1,0 +1,4 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/p"}},
+  {"cmd": "asset.import", "params": {"files": ["$root/tests/files/assets/png-rgba8.png", "$root/tests/files/assets/bad-obj-no-faces.obj"]}}
+]

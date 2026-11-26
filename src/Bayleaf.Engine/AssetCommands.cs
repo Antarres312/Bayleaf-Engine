@@ -65,12 +65,12 @@ internal static class AssetCommands
             && !trimmed.EnumerateRunes().Any(r => r.Value is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' || System.Text.Rune.IsControl(r));
     }
 
-    private static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
+    internal static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
 
-    private static string Canonical(string path) => Exists(path) ? Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar) : path;
+    internal static string Canonical(string path) => Exists(path) ? Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar) : path;
 
     /// <summary>Whether <paramref name="inner"/> is <paramref name="outer"/> or inside it, by path parts.</summary>
-    private static bool StartsWith(string inner, string outer)
+    internal static bool StartsWith(string inner, string outer)
     {
         var (innerRoot, innerNames) = Files.Parts(inner);
         var (outerRoot, outerNames) = Files.Parts(outer);

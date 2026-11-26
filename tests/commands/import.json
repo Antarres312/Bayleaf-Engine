@@ -1,0 +1,20 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/p"}},
+  {"cmd": "asset.import", "params": {"files": ["$root/tests/files/assets/png-rgba8.png", "$root/tests/files/assets/gltf-hierarchy.gltf", "$root/tests/files/assets/obj-polygons.obj", "$root/tests/files/assets/gltf-textured.glb"]}},
+  {"cmd": "asset.create", "params": {"kind": "folder", "folder": "", "name": "art"}},
+  {"cmd": "asset.import", "params": {"files": ["$root/tests/files/assets/png-rgba8.png", "$root/tests/files/assets/flat-bc1.png"], "folder": "art"}},
+  {"cmd": "asset.import", "params": {"files": ["$root/tests/files/assets/png-rgba8.png"], "folder": "art"}},
+  {"cmd": "asset.import", "params": {"files": ["art/png-rgba8.png"]}},
+  {"cmd": "asset.list", "params": {"recursive": true}},
+  {"cmd": "asset.importSettings.get", "params": {"path": "png-rgba8.png"}},
+  {"cmd": "asset.importSettings.set", "params": {"path": "png-rgba8.png", "settings": {"image": {"mipmaps": false, "colorSpace": "data"}}}},
+  {"cmd": "asset.importSettings.get", "params": {"path": "png-rgba8.png"}},
+  {"cmd": "asset.importSettings.set", "params": {"path": "art/flat-bc1.png", "settings": {"image": {"compression": "bc3"}}}},
+  {"cmd": "asset.importSettings.set", "params": {"path": "gltf-hierarchy/gltf-hierarchy.gltf", "settings": {"model": {"scale": 0.01, "upAxis": "z"}}}},
+  {"cmd": "asset.importSettings.get", "params": {"path": "gltf-hierarchy/gltf-hierarchy.gltf"}},
+  {"cmd": "asset.importSettings.get", "params": {"path": "obj-polygons/obj-polygons.obj"}},
+  {"cmd": "scene.file.place", "params": {"path": "gltf-hierarchy/gltf-hierarchy.gltf", "position": [1.5, 2, -3]}},
+  {"cmd": "scene.file.place", "params": {"path": "gltf-textured.glb", "parent": "$14.id"}},
+  {"cmd": "scene.file.place", "params": {"path": "obj-polygons/obj-polygons.obj", "index": 0}},
+  {"cmd": "scene.document"}
+]

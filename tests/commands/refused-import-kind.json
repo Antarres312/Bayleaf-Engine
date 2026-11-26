@@ -1,0 +1,4 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/p"}},
+  {"cmd": "asset.import", "params": {"files": ["$root/tests/files/door.btimeline"]}}
+]

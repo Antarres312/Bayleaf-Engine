@@ -1,0 +1,5 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/p"}},
+  {"cmd": "asset.import", "params": {"files": ["$root/tests/files/assets/odd-bc1.png"]}},
+  {"cmd": "asset.importSettings.set", "params": {"path": "odd-bc1.png", "settings": {"image": {"compression": "bc1"}}}}
+]

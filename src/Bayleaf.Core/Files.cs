@@ -213,6 +213,24 @@ public static class Files
         return (root, names);
     }
 
+    /// <summary>
+    /// The folder <paramref name="path"/> is in, keeping its text as written (as Rust's
+    /// <c>Path::parent</c> does, where <see cref="Path.GetDirectoryName(string)"/> turns separators):
+    /// "" for a bare name, null for a root or an empty path.
+    /// </summary>
+    public static string? Parent(string path)
+    {
+        // The root as written: GetPathRoot turns its separators.
+        var root = path[..(Path.GetPathRoot(path) ?? "").Length];
+        var rest = path[root.Length..].TrimEnd('/', Path.DirectorySeparatorChar);
+        if (rest.Length == 0)
+        {
+            return null;
+        }
+        var at = rest.LastIndexOfAny(['/', Path.DirectorySeparatorChar]);
+        return at < 0 ? root : root + rest[..at].TrimEnd('/', Path.DirectorySeparatorChar);
+    }
+
     /// <summary><paramref name="path"/> with <c>.</c> and <c>..</c> worked out without asking the file system, so the same file has one name.</summary>
     public static string Plain(string path)
     {

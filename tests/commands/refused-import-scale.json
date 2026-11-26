@@ -1,0 +1,5 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/p"}},
+  {"cmd": "asset.import", "params": {"files": ["$root/tests/files/assets/obj-zup.obj"]}},
+  {"cmd": "asset.importSettings.set", "params": {"path": "obj-zup.obj", "settings": {"model": {"scale": 0}}}}
+]

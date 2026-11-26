@@ -1,0 +1,20 @@
+{
+  "error": "invalid params: block compression needs sides that are multiples of 4; $out/p\\odd-bc1.png is 6 x 4",
+  "failedStep": 2,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "imported": [
+        {
+          "kind": "image",
+          "path": "odd-bc1.png",
+          "source": "$root/tests/files/assets/odd-bc1.png"
+        }
+      ]
+    }
+  ]
+}

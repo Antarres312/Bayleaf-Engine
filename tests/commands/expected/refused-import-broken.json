@@ -1,0 +1,11 @@
+{
+  "error": "$root/tests/files/assets/bad-obj-no-faces.obj: OBJ: no faces",
+  "failedStep": 1,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    }
+  ]
+}

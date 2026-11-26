@@ -126,7 +126,7 @@ public sealed class Session
             {
                 return ProjectDir;
             }
-            return ScenePath is not null && Path.GetDirectoryName(ScenePath) is { } dir ? dir : ".";
+            return ScenePath is not null && Core.Files.Parent(ScenePath) is { } dir ? dir : ".";
         }
     }
 

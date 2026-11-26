@@ -1,0 +1,20 @@
+{
+  "error": "invalid params: a model's scale must be between 0.0001 and 10000",
+  "failedStep": 2,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "imported": [
+        {
+          "kind": "model",
+          "path": "obj-zup.obj",
+          "source": "$root/tests/files/assets/obj-zup.obj"
+        }
+      ]
+    }
+  ]
+}

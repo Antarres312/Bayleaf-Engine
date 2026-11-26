@@ -48,13 +48,13 @@ public sealed record ModelImport(float Scale, UpAxis UpAxis)
 {
     public static readonly ModelImport Default = new(1f, UpAxis.Y);
 
-    internal static ModelImport Read(JsonValue value)
+    public static ModelImport Read(JsonValue value)
     {
         var f = JsonFields.Of(value, "struct ModelImport", true, "scale", "upAxis");
         return new(f.Required("scale", JsonRead.F32), (UpAxis)f.Required("upAxis", v => JsonRead.Variant(v, "y", "z")));
     }
 
-    internal JsonObject Write() => new() { { "scale", JsonNumber.Of(Scale) }, { "upAxis", new JsonString(UpAxis == UpAxis.Y ? "y" : "z") } };
+    public JsonObject Write() => new() { { "scale", JsonNumber.Of(Scale) }, { "upAxis", new JsonString(UpAxis == UpAxis.Y ? "y" : "z") } };
 }
 
 /// <summary>How an image is read.</summary>
@@ -65,7 +65,7 @@ public sealed record ImageImport(bool Mipmaps, ColorSpace ColorSpace, Compressio
 {
     public static readonly ImageImport Default = new(true, ColorSpace.Color, Compression.None);
 
-    internal static ImageImport Read(JsonValue value)
+    public static ImageImport Read(JsonValue value)
     {
         var f = JsonFields.Of(value, "struct ImageImport", true, "mipmaps", "colorSpace", "compression");
         return new(
@@ -74,7 +74,7 @@ public sealed record ImageImport(bool Mipmaps, ColorSpace ColorSpace, Compressio
             (Compression)f.Optional("compression", v => JsonRead.Variant(v, "none", "bc1", "bc3"), 0));
     }
 
-    internal JsonObject Write() => new()
+    public JsonObject Write() => new()
     {
         { "mipmaps", JsonValue.From(Mipmaps) },
         { "colorSpace", new JsonString(ColorSpace == ColorSpace.Color ? "color" : "data") },
@@ -88,13 +88,13 @@ public sealed record SoundImport(bool Stream)
 {
     public static readonly SoundImport Default = new(false);
 
-    internal static SoundImport Read(JsonValue value)
+    public static SoundImport Read(JsonValue value)
     {
         var f = JsonFields.Of(value, "struct SoundImport", true, "stream");
         return new(f.Required("stream", JsonRead.Bool));
     }
 
-    internal JsonObject Write() => new() { { "stream", JsonValue.From(Stream) } };
+    public JsonObject Write() => new() { { "stream", JsonValue.From(Stream) } };
 }
 
 /// <summary>
@@ -191,7 +191,10 @@ public sealed record ImportSettings(string Format, uint Version, ModelImport? Mo
         return valid.IsOk ? settings : valid.AsFailure();
     }
 
-    public string ToText()
+    public string ToText() => ToJson().ToPretty() + "\n";
+
+    /// <summary>The settings as their file holds them, with only the sections they have.</summary>
+    public JsonObject ToJson()
     {
         var o = new JsonObject { { "format", new JsonString(Format) }, { "version", JsonNumber.Of((ulong)Version) } };
         if (Model is not null)
@@ -206,7 +209,7 @@ public sealed record ImportSettings(string Format, uint Version, ModelImport? Mo
         {
             o.Add("sound", Sound.Write());
         }
-        return o.ToPretty() + "\n";
+        return o;
     }
 
     /// <summary>

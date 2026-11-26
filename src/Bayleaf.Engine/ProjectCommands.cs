@@ -337,14 +337,14 @@ internal static class ProjectCommands
     /// <summary>The project folder a scene file belongs to: the nearest folder above it with a project file.</summary>
     internal static string? ProjectDirOf(string scene)
     {
-        var dir = Path.GetDirectoryName(scene);
+        var dir = Files.Parent(scene);
         while (dir is not null)
         {
             if (ProjectFileIn(dir) is not null)
             {
                 return dir;
             }
-            dir = dir.Length == 0 ? null : Path.GetDirectoryName(dir);
+            dir = dir.Length == 0 ? null : Files.Parent(dir);
         }
         return null;
     }

@@ -1,0 +1,20 @@
+{
+  "error": "invalid params: an image is not placed on its own: apply it to an object with scene.image.apply",
+  "failedStep": 2,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "imported": [
+        {
+          "kind": "image",
+          "path": "png-rgba8.png",
+          "source": "$root/tests/files/assets/png-rgba8.png"
+        }
+      ]
+    }
+  ]
+}
