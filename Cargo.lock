@@ -504,6 +504,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bayleaf-animation"
+version = "0.3.0"
+dependencies = [
+ "bayleaf-assets",
+ "bayleaf-core",
+ "bayleaf-graph",
+ "serde_json",
+]
+
+[[package]]
 name = "bayleaf-assets"
 version = "0.3.0"
 dependencies = [
@@ -601,6 +611,7 @@ dependencies = [
 name = "bayleaf-engine"
 version = "0.3.0"
 dependencies = [
+ "bayleaf-animation",
  "bayleaf-audio",
  "bayleaf-core",
  "bayleaf-gameplay",

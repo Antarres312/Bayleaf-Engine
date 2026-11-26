@@ -471,6 +471,11 @@ impl Editor {
     /// In play mode: passes the held keys to the scripts and advances the simulation by one frame.
     fn run_play_frame(&mut self, ctx: &egui::Context) {
         if !self.session.is_playing() {
+            // Outside play mode only the animation previews move.
+            if self.session.animation_previewing() {
+                self.session.animate(ctx.input(|i| i.stable_dt).min(0.1));
+                ctx.request_repaint();
+            }
             return;
         }
         // Keys typed into a text field are not game input.

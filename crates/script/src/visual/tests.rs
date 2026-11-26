@@ -664,6 +664,34 @@ fn every_node_kind_compiles_and_runs() {
     let more = b.node("log", json!({ "message": "keys" }));
     b.link(sizes, "then", more, "run");
     b.link(keys, "count", more, "value");
+    // Animation: a clip played, parameters set and the clip stopped (the object has no model, so
+    // the engine would report it); its state and a joint read and logged.
+    let mut previous = more;
+    for (kind, settings) in [
+        ("playClip", json!({ "clip": "Walk" })),
+        ("setAnimationNumber", json!({ "parameter": "speed", "value": 2.0 })),
+        ("setAnimationFlag", json!({ "parameter": "moving" })),
+        ("triggerAnimation", json!({ "parameter": "jump" })),
+        ("stopClip", json!({})),
+    ] {
+        let action = b.node(kind, settings);
+        b.link(previous, "then", action, "run");
+        previous = action;
+    }
+    let state = b.node("animationState", json!({}));
+    let joint = b.node("jointPosition", json!({ "joint": "Hand" }));
+    let joint_x = b.node("split", json!({}));
+    b.link(joint, "position", joint_x, "vector");
+    let posed = b.node("branch", json!({}));
+    b.link(previous, "then", posed, "run");
+    let either_way = b.node("or", json!({}));
+    b.link(state, "running", either_way, "a");
+    b.link(joint, "found", either_way, "b");
+    b.link(either_way, "result", posed, "condition");
+    let said_joint = b.node("log", json!({ "message": "joint" }));
+    b.link(posed, "false", said_joint, "run");
+    b.link(joint_x, "x", said_joint, "value");
+    b.link(state, "state", said_joint, "text");
     // Physics contacts: each names the other object (none arrive here).
     for kind in ["triggerEntered", "triggerLeft", "collisionStarted", "collisionEnded"] {
         let contact = b.node(kind, json!({}));

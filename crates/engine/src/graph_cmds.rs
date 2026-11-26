@@ -33,9 +33,9 @@ impl GraphDoc {
 }
 
 /// The catalogs of every graph domain.
-const CATALOGS: [&Catalog; 2] = [&bayleaf_render::material::CATALOG, &bayleaf_script::visual::CATALOG];
+const CATALOGS: [&Catalog; 3] = [&bayleaf_render::material::CATALOG, &bayleaf_script::visual::CATALOG, &bayleaf_animation::states::CATALOG];
 
-/// The node kinds of `domain` (`material` or `script`).
+/// The node kinds of `domain` (`material`, `script` or `animation`).
 pub fn catalog_for_domain(domain: &str) -> Option<&'static Catalog> {
     CATALOGS.into_iter().find(|c| c.domain == domain)
 }
@@ -51,6 +51,7 @@ pub fn problems(graph: &Graph) -> Vec<Problem> {
     let result = match graph.domain.as_str() {
         "material" => bayleaf_render::material::compile(graph).map(|_| ()),
         "script" => bayleaf_script::visual::compile(graph).map(|_| ()),
+        "animation" => bayleaf_animation::states::compile(graph).map(|_| ()),
         other => Err(vec![Problem::graph(format!("unknown graph domain {other}"))]),
     };
     result.err().unwrap_or_default()
@@ -72,8 +73,8 @@ fn spec(id: &'static str, label: &'static str, params: &'static str, mutates: Mu
 
 pub(crate) fn commands() -> Vec<CommandSpec> {
     vec![
-        spec("graph.catalog", "Graph Node Kinds", "{domain: \"material\" | \"script\"}", Mutates::No, graph_catalog),
-        spec("graph.new", "New Graph", "{domain: \"material\" | \"script\"}", Mutates::No, graph_new),
+        spec("graph.catalog", "Graph Node Kinds", "{domain: \"material\" | \"script\" | \"animation\"}", Mutates::No, graph_catalog),
+        spec("graph.new", "New Graph", "{domain: \"material\" | \"script\" | \"animation\"}", Mutates::No, graph_new),
         spec("graph.open", "Open Graph", "{path} (.bmaterial or .bscript)", Mutates::No, graph_open),
         spec("graph.save", "Save Graph", "{path?} (needed for a graph that has no file yet)", Mutates::No, graph_save),
         spec(
@@ -540,7 +541,8 @@ struct DomainParams {
 
 fn domain(params: &Value) -> Result<&'static Catalog, CommandError> {
     let p: DomainParams = parse(params)?;
-    catalog_for_domain(&p.domain).ok_or_else(|| CommandError::BadParams(format!("unknown domain \"{}\"; use \"material\" or \"script\"", p.domain)))
+    catalog_for_domain(&p.domain)
+        .ok_or_else(|| CommandError::BadParams(format!("unknown domain \"{}\"; use \"material\", \"script\" or \"animation\"", p.domain)))
 }
 
 fn graph_catalog(_: &mut Session, params: &Value) -> Result<Value, CommandError> {

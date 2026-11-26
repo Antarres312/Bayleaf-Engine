@@ -1171,3 +1171,88 @@ fn a_material_shader_the_gpu_refuses_is_reported_without_waiting_on_the_gpu() {
     let refused = gpu.render(&frame, 32, 32);
     assert!(matches!(&refused, Err(RenderError::Gpu(m)) if m.contains("refused")), "{:?}", refused.err());
 }
+
+#[test]
+fn a_skinned_model_bends_on_the_gpu_as_on_the_cpu() {
+    let dir = asset_folder("skinned");
+    bayleaf_assets::fixtures::skinned_arm(&dir).unwrap();
+    let mut scene = Scene::new();
+    let wall =
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "arm.gltf"}), [0.0; 3], [0.0; 3]);
+    scene.add_component(wall, "modelAnimation").unwrap();
+    scene.set_component(wall, "modelAnimation", json!({"animation": "Stretch", "playing": true, "looping": false, "speed": 1})).unwrap();
+    object(&mut scene, "directionalLight", json!({"color": [1, 1, 1], "intensity": 3}), [0.0; 3], [0.0; 3]);
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 60.0, 1.0);
+    let mut cache = bayleaf_assets::AssetCache::new();
+    let mut materials = crate::MaterialLibrary::new();
+    let allow = |p: &std::path::Path| Ok(p.to_path_buf());
+    let mut frame_at = |time: f32| {
+        let mut assets = crate::FileAssets { base: dir.clone(), materials: &mut materials, cache: &mut cache, allow: &allow, warnings: Vec::new() };
+        let frame = extract_with(&scene, camera, FrameOptions { time, ..OPTIONS }, &mut assets);
+        assert!(assets.warnings.is_empty(), "{:?}", assets.warnings);
+        frame
+    };
+    let (rest, stretched) = (frame_at(0.0), frame_at(0.9));
+    assert!(rest.items[0].skin.is_some(), "a model with a skeleton is drawn by its skin");
+    let right = |frame: &crate::Frame| frame.items[0].local_bounds().1.x;
+    assert!(right(&stretched) > right(&rest) + 1.0, "the stretched wall's box reaches further: {} then {}", right(&rest), right(&stretched));
+
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = crate::Renderer::new(&gpu.device);
+    let target = crate::RenderTarget::new(&gpu.device, 64, 64);
+    let mut lit_columns = |frame: &crate::Frame, cpu: bool| {
+        renderer.set_cpu_skinning(cpu);
+        renderer.render(&gpu.device, &gpu.queue, &target, frame);
+        let image = gpu.read_back(&target).unwrap();
+        (0..64).filter(|x| brightness(image.pixel(*x, 40).unwrap()) > 300).collect::<Vec<u32>>()
+    };
+    let (gpu_rest, gpu_stretched) = (lit_columns(&rest, false), lit_columns(&stretched, false));
+    let (cpu_rest, cpu_stretched) = (lit_columns(&rest, true), lit_columns(&stretched, true));
+    assert!(!gpu_rest.is_empty() && !gpu_stretched.is_empty(), "the wall shows: {gpu_rest:?} {gpu_stretched:?}");
+    let ends = |c: &[u32]| (c[0], c[c.len() - 1]);
+    let (left, right) = (ends(&gpu_rest), ends(&gpu_stretched));
+    assert!(right.1 > left.1 + 8, "its right edge follows the Arm joint: {gpu_rest:?} then {gpu_stretched:?}");
+    assert!(right.0.abs_diff(left.0) <= 1, "its left edge stays with Root: {gpu_rest:?} then {gpu_stretched:?}");
+    for (on_gpu, on_cpu) in [(&gpu_rest, &cpu_rest), (&gpu_stretched, &cpu_stretched)] {
+        let (g, c) = (ends(on_gpu), ends(on_cpu));
+        assert!(g.0.abs_diff(c.0) <= 1 && g.1.abs_diff(c.1) <= 1, "the GPU and the CPU pose it alike: {on_gpu:?} and {on_cpu:?}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_object_following_a_joint_moves_with_it_and_the_skeleton_can_be_drawn() {
+    let dir = asset_folder("follow");
+    bayleaf_assets::fixtures::skinned_arm(&dir).unwrap();
+    let mut scene = Scene::new();
+    let arm =
+        object(&mut scene, "mesh", json!({"shape": "cube", "color": [1, 1, 1, 1], "metallic": 0, "roughness": 1, "model": "arm.gltf"}), [0.0; 3], [0.0; 3]);
+    scene.add_component(arm, "modelAnimation").unwrap();
+    scene.set_component(arm, "modelAnimation", json!({"animation": "Stretch", "playing": true, "looping": false, "speed": 1})).unwrap();
+    // A sword in the hand: half a unit above the Hand joint.
+    let sword = scene.create_object(Some(arm), "Sword").unwrap();
+    scene.add_component(sword, "mesh").unwrap();
+    scene.set_component(sword, "transform", json!({"position": [0.0, 0.5, 0.0], "rotation": [0, 0, 0], "scale": [1, 1, 1]})).unwrap();
+    scene.add_component(sword, "followJoint").unwrap();
+    scene.set_component(sword, "followJoint", json!({"joint": "Hand"})).unwrap();
+    let mut cache = bayleaf_assets::AssetCache::new();
+    let mut materials = crate::MaterialLibrary::new();
+    let allow = |p: &std::path::Path| Ok(p.to_path_buf());
+    let camera = CameraView::look_at(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, 60.0, 1.0);
+    let mut sword_at = |scene: &Scene, time: f32| {
+        let mut assets = crate::FileAssets { base: dir.clone(), materials: &mut materials, cache: &mut cache, allow: &allow, warnings: Vec::new() };
+        let frame = extract_with(scene, camera, FrameOptions { time, ..OPTIONS }, &mut assets);
+        let lines = crate::skeleton_lines(scene, arm, time, &mut assets).expect("the arm has a skeleton");
+        (frame.items.iter().find(|i| i.object == sword).expect("the sword is drawn").model.w_axis.truncate(), lines)
+    };
+    let ((rest, rest_lines), (stretched, stretched_lines)) = (sword_at(&scene, 0.0), sword_at(&scene, 0.9));
+    assert!((rest.x - 1.0).abs() < 1e-3 && (rest.y - 0.5).abs() < 1e-3, "at rest, the Hand joint's place plus its own: {rest}");
+    assert!(stretched.x > rest.x + 1.0 && (stretched.y - 0.5).abs() < 1e-3, "it goes where the joint goes: {stretched}");
+    assert_eq!(rest_lines.len(), 2, "Root to Arm, Arm to Hand");
+    let reach = |lines: &[(Vec3, Vec3)]| lines.iter().map(|(_, b)| b.x).fold(f32::MIN, f32::max);
+    assert!(reach(&stretched_lines) > reach(&rest_lines) + 1.0, "the drawn skeleton follows the pose");
+    // Without its component, the sword stays where its Transform puts it.
+    scene.remove_component(sword, "followJoint").unwrap();
+    assert!(sword_at(&scene, 0.9).0.x.abs() < 1e-3);
+    std::fs::remove_dir_all(&dir).ok();
+}

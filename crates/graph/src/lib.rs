@@ -61,6 +61,8 @@ pub enum PinType {
     /// A map of values of one type under keys of one type (visual scripts): the key's type, then
     /// the value's.
     Map(VariableType, VariableType),
+    /// What plays on a skeleton (animation states): a clip, a mix or a layer.
+    Motion,
 }
 
 impl PinType {
@@ -79,6 +81,7 @@ impl PinType {
             PinType::Component => "Component",
             PinType::List(item) => item.list_label(),
             PinType::Map(key, item) => item.map_label(key),
+            PinType::Motion => "Motion",
         }
     }
 
@@ -86,12 +89,15 @@ impl PinType {
     /// and colours; vectors and colours convert into each other. Whether an `Any` output really
     /// fits is checked when the graph is compiled.
     pub fn connects_to(self, to: PinType) -> bool {
-        use PinType::{Any, Bool, Color, Component, Float, Flow, Int, List, Map, Object, Text, Vec3};
+        use PinType::{Any, Bool, Color, Component, Float, Flow, Int, List, Map, Motion, Object, Text, Vec3};
         match (self, to) {
             // A list or map goes only where one of the same type is taken.
             (List(a), List(b)) => a == b,
             (Map(k, a), Map(l, b)) => k == l && a == b,
             (List(_) | Map(..), _) | (_, List(_) | Map(..)) => false,
+            // A motion goes only into a motion input.
+            (Motion, Motion) => true,
+            (Motion, _) | (_, Motion) => false,
             (Flow, Flow) | (Bool, Bool) | (Object, Object) | (Text, Text) | (Int, Int) | (Component, Component) => true,
             (Flow | Bool | Object | Text | Component, _) | (_, Flow | Bool | Object | Text | Component) => false,
             // A whole number widens to a number (and on to a vector); a number becomes whole only
@@ -1699,6 +1705,7 @@ fn check_value(def: &NodeDef, name: &str, value: &Value) -> Result<(), GraphErro
         PinType::Object => Err(GraphError::Refused(format!("{} · {name} takes an object only from a link", def.label))),
         PinType::Component => Err(GraphError::Refused(format!("{} · {name} takes a component only from a link", def.label))),
         PinType::List(_) | PinType::Map(..) => Err(GraphError::Refused(format!("{} · {name} takes a list or map only from a link", def.label))),
+        PinType::Motion => Err(GraphError::Refused(format!("{} · {name} takes a motion only from a link", def.label))),
         PinType::Int => match value.as_i64() {
             Some(n) if i32::try_from(n).is_ok() => Ok(()),
             _ => Err(bad("a whole number from -2147483648 to 2147483647")),

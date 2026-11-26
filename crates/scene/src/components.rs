@@ -1030,11 +1030,50 @@ pub struct ModelAnimation {
     pub looping: bool,
     /// 1 as made; 0.5 half as fast.
     pub speed: f32,
+    /// Animation states (`.banim`, relative to the project folder) the object runs in play mode in
+    /// place of playing `animation` alone; empty for none (version 26).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub states: String,
+    /// In play mode the root joint's movement along the ground moves the object, and the joint is
+    /// drawn in place: root motion (version 26).
+    #[serde(default)]
+    pub root_motion: bool,
+    /// The joint root motion follows, by name; empty for the first joint the clips move.
+    #[serde(default)]
+    pub root_joint: String,
+    /// Moments the clips mark: each becomes a script event on the object when its clip plays past
+    /// it (version 26).
+    #[serde(default)]
+    pub events: Vec<ClipMark>,
 }
+
+/// A moment of a clip that becomes a script event (a footstep).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClipMark {
+    /// The clip, by name.
+    pub clip: String,
+    /// Seconds from the clip's start.
+    pub time: f32,
+    /// The event the object's scripts get, with the object as its value.
+    pub event: String,
+}
+
+/// Most marked moments one Model Animation holds.
+pub const MAX_CLIP_MARKS: usize = 256;
 
 impl Default for ModelAnimation {
     fn default() -> Self {
-        Self { animation: String::new(), playing: true, looping: true, speed: 1.0 }
+        Self {
+            animation: String::new(),
+            playing: true,
+            looping: true,
+            speed: 1.0,
+            states: String::new(),
+            root_motion: false,
+            root_joint: String::new(),
+            events: Vec::new(),
+        }
     }
 }
 
@@ -1047,6 +1086,23 @@ impl SceneComponent for ModelAnimation {
     fn validate(&self) -> Result<(), String> {
         if self.animation.len() > 256 {
             return Err("animation is longer than 256 bytes".to_owned());
+        }
+        if self.states.len() > 1024 || !(self.states.is_empty() || self.states.ends_with(".banim")) {
+            return Err("states must be a .banim file of at most 1024 bytes, or empty".to_owned());
+        }
+        if self.root_joint.len() > 256 {
+            return Err("rootJoint is longer than 256 bytes".to_owned());
+        }
+        if self.events.len() > MAX_CLIP_MARKS {
+            return Err(format!("at most {MAX_CLIP_MARKS} events"));
+        }
+        for mark in &self.events {
+            if mark.clip.len() > 256 || mark.event.is_empty() || mark.event.len() > 64 || mark.event.chars().any(char::is_control) {
+                return Err("each event needs a clip name of at most 256 bytes and an event name of 1 to 64 bytes".to_owned());
+            }
+            if !(mark.time.is_finite() && (0.0..=100_000.0).contains(&mark.time)) {
+                return Err("each event's time must be from 0 to 100000 seconds".to_owned());
+            }
         }
         if !(self.speed.is_finite() && (0.0..=10.0).contains(&self.speed)) {
             return Err("speed must be between 0 and 10".to_owned());
@@ -1089,6 +1145,31 @@ impl SceneComponent for KeyframeAnimation {
         }
         if !(self.speed.is_finite() && (0.0..=10.0).contains(&self.speed)) {
             return Err("speed must be between 0 and 10".to_owned());
+        }
+        Ok(())
+    }
+}
+
+/// Follows a joint of its parent's model (a sword in the hand): the object stands where the joint
+/// is, as the parent's animation moves it, and its own Transform is measured from the joint. The
+/// parent needs a Mesh whose model has a joint of that name; otherwise the object stays where its
+/// Transform puts it. Applies where the scene is drawn (version 26).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FollowJoint {
+    /// The joint, by its name in the parent's model.
+    pub joint: String,
+}
+
+impl SceneComponent for FollowJoint {
+    const NAME: &'static str = "followJoint";
+    const LABEL: &'static str = "Follow Joint";
+    const MENU: &'static str = "Rendering/Follow Joint";
+    const REMOVABLE: bool = true;
+
+    fn validate(&self) -> Result<(), String> {
+        if self.joint.len() > 256 {
+            return Err("joint is longer than 256 bytes".to_owned());
         }
         Ok(())
     }

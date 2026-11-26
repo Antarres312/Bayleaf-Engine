@@ -5,7 +5,7 @@ use bayleaf_core::math::{DMat4, DVec3, Mat3, Mat4, Vec2, Vec3, Vec4};
 use bayleaf_scene::Scene;
 use std::sync::Arc;
 
-use bayleaf_scene::components::{Camera, DirectionalLight, Environment, Mesh, PointLight, Projection, Shape, SpotLight, Sprite};
+use bayleaf_scene::components::{Camera, DirectionalLight, Environment, FollowJoint, Mesh, PointLight, Projection, Shape, SpotLight, Sprite, Transform};
 
 use bayleaf_assets::{Image, MeshData};
 use bayleaf_scene::lighting::Lighting;
@@ -24,6 +24,13 @@ pub trait AssetSource {
     }
     /// A post-processing asset (`.bpost`) the scene's settings or a camera name.
     fn post(&mut self, _path: &str) -> Option<Arc<bayleaf_scene::post::PostProcessing>> {
+        None
+    }
+    /// Where the nodes of `object`'s model are now, each its matrix in the model (before the
+    /// import scale and axes, as [`bayleaf_assets::skeleton::Skeleton::world`] gives them), when
+    /// something animates it: the engine's animation states, clips scripts play, or a preview.
+    /// `None` leaves it to the object's Model Animation at the frame's time.
+    fn pose(&mut self, _object: StableId) -> Option<Arc<Vec<Mat4>>> {
         None
     }
 }
@@ -204,6 +211,18 @@ pub struct DrawItem {
     /// The part of its images it shows: offset x and y, then width and height, in texture
     /// coordinates; `[0, 0, 1, 1]` for all (a flipbook's frame is less).
     pub uv_rect: [f32; 4],
+    /// A model with a skeleton: where its vertices go now (the renderer moves them there on the
+    /// GPU). `None` draws such a model at rest.
+    pub skin: Option<Arc<Skin>>,
+}
+
+/// Where a skinned model's vertices go: the matrix each of its bindings moves them by (see
+/// [`bayleaf_assets::skeleton::Skeleton::skin_matrices`]), and the box round the posed model.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Skin {
+    pub matrices: Vec<Mat4>,
+    pub min: Vec3,
+    pub max: Vec3,
 }
 
 /// The whole image, as most items show it.
@@ -212,6 +231,9 @@ pub const WHOLE_IMAGE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 impl DrawItem {
     /// The box around the item before its model matrix: the model's, or the unit shape's.
     pub fn local_bounds(&self) -> (Vec3, Vec3) {
+        if let Some(skin) = &self.skin {
+            return (skin.min, skin.max);
+        }
         if let Some(mesh) = &self.mesh {
             return (Vec3::from(mesh.min), Vec3::from(mesh.max));
         }
@@ -351,18 +373,93 @@ impl EffectsAllowed {
         EffectsAllowed { tone_mapping: true, bloom: true, color: true, vignette: true, depth_fog: true, occlusion: true, antialiasing: true };
 }
 
-/// `model` as the object's Model Animation poses it at `time` seconds, or as it is when the object
-/// has none playing or the model has no such animation.
-fn animated(scene: &Scene, id: StableId, model: Arc<MeshData>, time: f32) -> Arc<MeshData> {
-    let Some(animation) = scene.get::<bayleaf_scene::components::ModelAnimation>(id).filter(|a| a.playing) else { return model };
-    let Some(skeleton) = model.skeleton.clone() else { return model };
-    let Some(index) = skeleton.animation(&animation.animation) else { return model };
-    let at = time * animation.speed;
-    // Its own id, so each object's pose is its own mesh, and a version for each moment.
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&(model.id, id), &mut hasher);
-    let own = std::hash::Hasher::finish(&hasher) | 1;
-    Arc::new(skeleton.posed(&model, Some(index), at, animation.looping, own, u64::from(at.to_bits()) + 1))
+/// Where the vertices of object `id`'s `model` go: as `assets` says the object is posed, else as
+/// its Model Animation poses it at `time` seconds, else at rest. `None` for a model without a
+/// skeleton.
+fn skin_of(scene: &Scene, id: StableId, model: &MeshData, time: f32, assets: &mut dyn AssetSource) -> Option<Arc<Skin>> {
+    let skeleton = model.skeleton.as_ref()?;
+    let world = model_pose(scene, id, skeleton, time, assets);
+    Some(Arc::new(skin_for(skeleton, &world)))
+}
+
+/// Where object `id`'s model's nodes are now (their matrices in the model, before the import scale
+/// and axes): as `assets` says the object is posed, else as its Model Animation poses it at `time`
+/// seconds, else at rest.
+fn model_pose(scene: &Scene, id: StableId, skeleton: &bayleaf_assets::skeleton::Skeleton, time: f32, assets: &mut dyn AssetSource) -> Vec<Mat4> {
+    match assets.pose(id).filter(|w| w.len() == skeleton.nodes.len()) {
+        Some(world) => world.as_ref().clone(),
+        None => {
+            let animation = scene.get::<bayleaf_scene::components::ModelAnimation>(id).filter(|a| a.playing);
+            let index = animation.and_then(|a| skeleton.animation(&a.animation));
+            let at = animation.map_or(0.0, |a| skeleton.clip_time(index, time * a.speed, a.looping));
+            skeleton.pose(index, at)
+        }
+    }
+}
+
+/// The skeleton of object `id`'s model, when it has one.
+fn skeleton_of(scene: &Scene, id: StableId, assets: &mut dyn AssetSource) -> Option<Arc<bayleaf_assets::skeleton::Skeleton>> {
+    let mesh = scene.get::<Mesh>(id)?;
+    if mesh.model.is_empty() {
+        return None;
+    }
+    assets.model(&mesh.model)?.skeleton.clone()
+}
+
+/// The matrix of the joint named `joint` of object `id`'s model in the object's own space (with the
+/// import scale and axes), as the model stands now (see [`model_pose`]).
+pub fn joint_matrix(scene: &Scene, id: StableId, joint: &str, time: f32, assets: &mut dyn AssetSource) -> Option<Mat4> {
+    let skeleton = skeleton_of(scene, id, assets)?;
+    let node = skeleton.node_named(joint)?;
+    let world = model_pose(scene, id, &skeleton, time, assets);
+    Some(skeleton.root * *world.get(node)?)
+}
+
+/// Lines from each joint of object `id`'s model to its parent joint, in the object's own space, as
+/// the model stands now: what the scene view draws of a skeleton. `None` for an object whose model
+/// has no skeleton.
+pub fn skeleton_lines(scene: &Scene, id: StableId, time: f32, assets: &mut dyn AssetSource) -> Option<Vec<(Vec3, Vec3)>> {
+    let skeleton = skeleton_of(scene, id, assets)?;
+    let world = model_pose(scene, id, &skeleton, time, assets);
+    let at = |node: usize| world.get(node).map(|m| (skeleton.root * *m).w_axis.truncate());
+    let lines: Vec<(Vec3, Vec3)> = skeleton.nodes.iter().enumerate().filter_map(|(i, n)| Some((at(n.parent?)?, at(i)?))).collect();
+    (!lines.is_empty()).then_some(lines)
+}
+
+/// Every object's world matrix in hierarchy order, as [`Scene::world_matrices`] gives them, with
+/// each object that follows a joint (Follow Joint) and the objects under it placed on that joint of
+/// its parent's model as the model stands now.
+pub fn followed_worlds(scene: &Scene, time: f32, assets: &mut dyn AssetSource) -> Vec<(StableId, DMat4)> {
+    let worlds = scene.world_matrices();
+    if !worlds.iter().any(|(id, _)| scene.get::<FollowJoint>(*id).is_some()) {
+        return worlds;
+    }
+    let mut placed: std::collections::HashMap<StableId, DMat4> = std::collections::HashMap::with_capacity(worlds.len());
+    let mut out = Vec::with_capacity(worlds.len());
+    for (id, world) in worlds {
+        let parent = scene.parent(id);
+        let local = scene.get::<Transform>(id).map_or(DMat4::IDENTITY, Transform::matrix);
+        let mut new = match parent.and_then(|p| placed.get(&p)) {
+            Some(parent_world) => *parent_world * local,
+            None => world,
+        };
+        if let (Some(follow), Some(p)) = (scene.get::<FollowJoint>(id), parent)
+            && let Some(parent_world) = placed.get(&p).copied()
+            && let Some(joint) = joint_matrix(scene, p, &follow.joint, time, assets)
+        {
+            new = parent_world * joint.as_dmat4() * local;
+        }
+        placed.insert(id, new);
+        out.push((id, new));
+    }
+    out
+}
+
+/// The skin of `skeleton` with its nodes at `world` (from [`bayleaf_assets::skeleton::Skeleton::world`]).
+pub fn skin_for(skeleton: &bayleaf_assets::skeleton::Skeleton, world: &[Mat4]) -> Skin {
+    let matrices = skeleton.skin_matrices(world);
+    let (min, max) = skeleton.skinned_bounds(&matrices).unwrap_or((Vec3::ZERO, Vec3::ZERO));
+    Skin { matrices, min, max }
 }
 
 /// What a post-processing asset asks for, as far as `allowed` lets it; its lookup image is for the
@@ -471,7 +568,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
     let lighting = Some(scene.settings().lighting.as_str()).filter(|p| !p.is_empty()).and_then(|path| assets.lighting(path));
     let mut environment: Option<Environment> = lighting.as_ref().map(|l| l.environment());
     let mut has_sun = false;
-    for (id, world) in scene.world_matrices() {
+    for (id, world) in followed_worlds(scene, options.time, assets) {
         let world = camera.relative(world);
         if environment.is_none() {
             environment = scene.get::<Environment>(id).cloned();
@@ -480,7 +577,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
         if let Some(mesh) = scene.get::<Mesh>(id) {
             let material = if mesh.material.is_empty() { None } else { assets.material(&mesh.material) };
             let model = if mesh.model.is_empty() { None } else { assets.model(&mesh.model) };
-            let model = model.map(|model| animated(scene, id, model, options.time));
+            let skin = model.as_ref().and_then(|model| skin_of(scene, id, model, options.time, assets));
             let mut item = DrawItem {
                 object: id,
                 shape: mesh.shape,
@@ -495,6 +592,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
                 part: None,
                 additive: false,
                 uv_rect: WHOLE_IMAGE,
+                skin,
             };
             // A model's own materials tint the mesh colour and set metallic and roughness, unless a
             // material graph is chosen; a model with several draws one item per part.
@@ -534,6 +632,7 @@ pub fn extract_with(scene: &Scene, camera: CameraView, options: FrameOptions, as
                 part: None,
                 additive: false,
                 uv_rect: WHOLE_IMAGE,
+                skin: None,
             });
         }
         let direction = world.transform_vector3(Vec3::NEG_Z).normalize_or(Vec3::NEG_Y);
@@ -642,6 +741,7 @@ pub fn material_preview(material: Arc<CompiledMaterial>, textures: Vec<Option<Ar
         part: None,
         additive: false,
         uv_rect: WHOLE_IMAGE,
+        skin: None,
     };
     Frame {
         camera: CameraView::look_at(Vec3::new(0.0, 0.3, 1.9), Vec3::ZERO, 36.0, aspect),

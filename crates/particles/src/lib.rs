@@ -429,6 +429,7 @@ impl Particles {
                     part: None,
                     additive: e.blend == "additive",
                     uv_rect,
+                    skin: None,
                 });
             }
         }

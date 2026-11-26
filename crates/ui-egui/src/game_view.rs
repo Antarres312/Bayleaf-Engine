@@ -100,7 +100,10 @@ fn viewport(view: &mut GameView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &e
     let mut assets = bayleaf_render::FileAssets { base, materials: &mut shared.materials, cache: &mut shared.assets, allow: &allow, warnings: Vec::new() };
     let options = FrameOptions { show_grid: false, selected: None, time: editor.session.play_time() as f32, shadows, effects };
     let gathering = std::time::Instant::now();
-    let mut frame = bayleaf_render::extract_with(scene, camera, options, &mut assets);
+    let mut frame = {
+        let mut posed = bayleaf_engine::animation::Posed { assets: &mut assets, poses: editor.session.animation_poses() };
+        bayleaf_render::extract_with(scene, camera, options, &mut posed)
+    };
     if let Some(particles) = editor.session.particles() {
         frame.items.extend(particles.draw_items(scene, &frame.camera, &mut assets));
     }

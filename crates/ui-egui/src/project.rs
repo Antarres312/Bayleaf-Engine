@@ -81,6 +81,8 @@ enum Kind {
     DataShape,
     /// A data file (`.bdata`): values of a shape's fields, shared by scripts and scenes.
     DataFile,
+    /// Animation states (`.banim`).
+    AnimationStates,
     Image,
     /// A sound file an Audio Source plays.
     Sound,
@@ -98,6 +100,7 @@ impl Kind {
             Some(bayleaf_engine::prefab_cmds::PREFAB_EXTENSION) => Kind::Prefab,
             Some("bscript") => Kind::VisualScript,
             Some("bmaterial") => Kind::Material,
+            Some("banim") => Kind::AnimationStates,
             Some(bayleaf_engine::input_cmds::INPUT_EXTENSION) => Kind::InputMap,
             Some(bayleaf_engine::scene::lighting::EXTENSION) => Kind::Lighting,
             Some(bayleaf_engine::scene::post::EXTENSION) => Kind::PostProcessing,
@@ -124,6 +127,7 @@ impl Kind {
             Kind::Script => "Script",
             Kind::VisualScript => "Visual Script",
             Kind::Material => "Material",
+            Kind::AnimationStates => "Animation States",
             Kind::InputMap => "Input Map",
             Kind::Lighting => "Lighting",
             Kind::PostProcessing => "Post-processing",
@@ -252,6 +256,11 @@ impl ProjectView {
     /// Every material graph in the project, as paths relative to the project folder.
     pub(crate) fn material_files(&self) -> Vec<String> {
         self.files_of(&[Kind::Material])
+    }
+
+    /// Every animation states file (`.banim`) in the project.
+    pub(crate) fn animation_states_files(&self) -> Vec<String> {
+        self.files_of(&[Kind::AnimationStates])
     }
 
     /// Every prefab (`.bprefab`) in the project.
@@ -1328,7 +1337,7 @@ fn interact(ui: &egui::Ui, response: &egui::Response, view: &ProjectView, entry:
             outcome.action = Some(Action::OpenScene(entry.path.clone()));
             ui.close();
         }
-        if matches!(entry.kind, Kind::Material | Kind::VisualScript) && ui.button(tl("Open in Graph Editor")).clicked() {
+        if matches!(entry.kind, Kind::Material | Kind::VisualScript | Kind::AnimationStates) && ui.button(tl("Open in Graph Editor")).clicked() {
             outcome.action = Some(Action::OpenGraph(entry.path.clone()));
             ui.close();
         }
@@ -1397,7 +1406,7 @@ fn default_action(entry: &Entry) -> Option<Action> {
         Kind::Folder | Kind::InputMap | Kind::Lighting | Kind::PostProcessing | Kind::InterfaceStyle | Kind::DataShape | Kind::DataFile => None,
         Kind::Interface => Some(Action::OpenInterface(path)),
         Kind::Scene | Kind::Project => Some(Action::OpenScene(path)),
-        Kind::Material | Kind::VisualScript => Some(Action::OpenGraph(path)),
+        Kind::Material | Kind::VisualScript | Kind::AnimationStates => Some(Action::OpenGraph(path)),
         Kind::Prefab => Some(Action::OpenPrefab(path)),
         Kind::KeyframeAnimation => Some(Action::OpenKeyframes(path)),
         // A Rust script: its source, in the code editor.
@@ -1522,6 +1531,7 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
         Kind::Script
         | Kind::ScriptSource
         | Kind::VisualScript
+        | Kind::AnimationStates
         | Kind::InputMap
         | Kind::Lighting
         | Kind::PostProcessing
@@ -1539,6 +1549,7 @@ fn paint_icon(painter: &egui::Painter, rect: egui::Rect, kind: Kind, t: &Tokens)
             let accent = match kind {
                 Kind::Script | Kind::ScriptSource => t.axis_z,
                 Kind::VisualScript => t.pin_any,
+                Kind::AnimationStates => t.pin_motion,
                 Kind::InputMap => t.pin_bool,
                 Kind::Lighting => t.warning,
                 Kind::PostProcessing => t.pin_vector,

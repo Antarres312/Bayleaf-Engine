@@ -238,6 +238,7 @@ pub struct ScriptHost {
     subscriptions: Vec<Subscription>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
+    animation: Arc<crate::AnimationView>,
     interface: Arc<crate::InterfaceValues>,
     input_maps: actions::SharedInput,
     state: SharedState,
@@ -283,6 +284,7 @@ impl ScriptHost {
             subscriptions: Vec::new(),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
+            animation: Arc::new(crate::AnimationView::default()),
             interface: Arc::new(crate::InterfaceValues::new()),
             input_maps: actions::SharedInput::default(),
             state: SharedState::default(),
@@ -710,6 +712,7 @@ impl ScriptHost {
             input,
             velocities: &self.velocities,
             grounded: &self.grounded,
+            animation: &self.animation,
             interface: &self.interface,
             input_maps: &self.input_maps,
             state: &self.state,
@@ -989,6 +992,7 @@ impl ScriptHost {
             input,
             velocities: &self.velocities,
             grounded: &self.grounded,
+            animation: &self.animation,
             interface: &self.interface,
             input_maps: &self.input_maps,
             state: &self.state,
@@ -1140,10 +1144,28 @@ impl ScriptHost {
         self.deliver(scene, time, input);
     }
 
+    /// Triggers the event `name` on the scripts of each `(object, name)` now, bringing the object
+    /// as its one value: what a clip's marked moments (a footstep) become.
+    pub fn trigger_events(&mut self, scene: &mut Scene, events: &[(StableId, String)], time: f64, input: &Arc<Input>) {
+        if events.is_empty() {
+            return;
+        }
+        for (object, name) in events {
+            let args: Arc<[EventArg]> = Arc::from([EventArg::Object(Some(*object))]);
+            self.messages.push(Message { to: Some(*object), name: name.clone(), value: 0.0, args, script: None, from: None });
+        }
+        self.deliver(scene, time, input);
+    }
+
     /// The input maps scripts read with `action` and switch with `input_map_set`: the project's and
     /// objects' own. The engine fills them when play starts and steps them each step.
     pub fn with_input<T>(&self, change: impl FnOnce(&mut actions::InputSet) -> T) -> T {
         change(&mut actions::lock(&self.input_maps))
+    }
+
+    /// The animated objects' states and joints, as scripts read them in the next calls.
+    pub fn set_animation(&mut self, view: crate::AnimationView) {
+        self.animation = Arc::new(view);
     }
 
     /// The characters standing on something, as scripts see them in the next calls.
@@ -1227,6 +1249,7 @@ struct Shares<'a> {
     input: &'a Arc<Input>,
     velocities: &'a Arc<Velocities>,
     grounded: &'a Arc<HashSet<StableId>>,
+    animation: &'a Arc<crate::AnimationView>,
     interface: &'a Arc<crate::InterfaceValues>,
     input_maps: &'a actions::SharedInput,
     state: &'a SharedState,
@@ -1254,6 +1277,7 @@ impl Shares<'_> {
         state.world = Arc::clone(self.world);
         state.velocities = Arc::clone(self.velocities);
         state.grounded = Arc::clone(self.grounded);
+        state.animation = Arc::clone(self.animation);
         state.interface = Arc::clone(self.interface);
         state.input_maps = Arc::clone(self.input_maps);
         state.state = Arc::clone(self.state);
@@ -1737,6 +1761,28 @@ fn particles_request(caller: &mut Caller<'_, HostState>, what: &str, handle: i32
     }
     let by = state.object;
     state.requests.push(Request::Particles { by, object, action });
+    Ok(1)
+}
+
+/// Longest clip, parameter or joint name a script passes, in bytes.
+const MAX_ANIMATION_NAME: usize = 256;
+
+/// A fade a script asks for: 0 to 60 seconds; anything else is the script's fault.
+fn animation_fade(caller: &mut Caller<'_, HostState>, what: &str, fade: f32) -> Result<f32, Error> {
+    if fade.is_finite() && (0.0..=60.0).contains(&fade) { Ok(fade) } else { Err(fault(caller, format!("{what}: the fade must be from 0 to 60 seconds"))) }
+}
+
+/// Records an animation change for the object with `handle`, done after the step.
+fn animation_request(caller: &mut Caller<'_, HostState>, what: &str, handle: i32, action: crate::AnimationAction) -> Result<i32, Error> {
+    let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
+        return Err(fault(caller, format!("{what}: there is no object with handle {handle}")));
+    };
+    let state = caller.data_mut();
+    if state.requests.len() >= MAX_REQUESTS_PER_CALL {
+        return Ok(0);
+    }
+    let by = state.object;
+    state.requests.push(Request::Animation { by, object, action });
     Ok(1)
 }
 
@@ -2438,6 +2484,71 @@ fn make_linker(engine: &Engine) -> Linker<HostState> {
             let count = u32::try_from(count).map_err(|_| fault(&mut caller, "particles_burst: the count must not be negative".to_owned()))?;
             particles_request(&mut caller, "particles_burst", handle, crate::ParticleAction::Burst(count))
         })?;
+        linker.func_wrap(
+            "bayleaf",
+            "animation_play",
+            |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32, len: i32, fade: f32, looping: i32| -> Result<i32, Error> {
+                let clip = read_text(&mut caller, ptr, len, MAX_ANIMATION_NAME).map_err(|m| fault(&mut caller, format!("animation_play: {m}")))?;
+                let fade = animation_fade(&mut caller, "animation_play", fade)?;
+                animation_request(&mut caller, "animation_play", handle, crate::AnimationAction::Play { clip, fade, looping: looping != 0 })
+            },
+        )?;
+        linker.func_wrap("bayleaf", "animation_stop", |mut caller: Caller<'_, HostState>, handle: i32, fade: f32| -> Result<i32, Error> {
+            let fade = animation_fade(&mut caller, "animation_stop", fade)?;
+            animation_request(&mut caller, "animation_stop", handle, crate::AnimationAction::Stop { fade })
+        })?;
+        linker.func_wrap(
+            "bayleaf",
+            "animation_number",
+            |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32, len: i32, value: f32| -> Result<i32, Error> {
+                let name = read_text(&mut caller, ptr, len, MAX_ANIMATION_NAME).map_err(|m| fault(&mut caller, format!("animation_number: {m}")))?;
+                if !value.is_finite() {
+                    return Err(fault(&mut caller, "animation_number: the value must be a finite number".to_owned()));
+                }
+                animation_request(&mut caller, "animation_number", handle, crate::AnimationAction::Number { name, value })
+            },
+        )?;
+        linker.func_wrap(
+            "bayleaf",
+            "animation_flag",
+            |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32, len: i32, value: i32| -> Result<i32, Error> {
+                let name = read_text(&mut caller, ptr, len, MAX_ANIMATION_NAME).map_err(|m| fault(&mut caller, format!("animation_flag: {m}")))?;
+                animation_request(&mut caller, "animation_flag", handle, crate::AnimationAction::Flag { name, value: value != 0 })
+            },
+        )?;
+        linker.func_wrap("bayleaf", "animation_trigger", |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32, len: i32| -> Result<i32, Error> {
+            let name = read_text(&mut caller, ptr, len, MAX_ANIMATION_NAME).map_err(|m| fault(&mut caller, format!("animation_trigger: {m}")))?;
+            animation_request(&mut caller, "animation_trigger", handle, crate::AnimationAction::Trigger { name })
+        })?;
+        linker.func_wrap("bayleaf", "animation_state", |mut caller: Caller<'_, HostState>, handle: i32, out: i32, cap: i32| -> Result<i32, Error> {
+            let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
+                return Err(fault(&mut caller, format!("animation_state: there is no object with handle {handle}")));
+            };
+            let room = usize::try_from(cap).map_err(|_| fault(&mut caller, "animation_state: negative length".to_owned()))?;
+            let Some(state) = caller.data().animation.objects.get(&object).and_then(|a| a.state.clone()) else { return Ok(-1) };
+            let bytes = state.as_bytes();
+            write_guest(&mut caller, out, bytes.get(..room.min(bytes.len())).unwrap_or_default(), "animation_state")?;
+            Ok(i32::try_from(bytes.len()).unwrap_or(i32::MAX))
+        })?;
+        linker.func_wrap(
+            "bayleaf",
+            "joint_transform",
+            |mut caller: Caller<'_, HostState>, handle: i32, ptr: i32, len: i32, out: i32| -> Result<i32, Error> {
+                let joint = read_text(&mut caller, ptr, len, MAX_ANIMATION_NAME).map_err(|m| fault(&mut caller, format!("joint_transform: {m}")))?;
+                let Some(object) = caller.data().world.get(handle).map(|(id, _)| id) else {
+                    return Err(fault(&mut caller, format!("joint_transform: there is no object with handle {handle}")));
+                };
+                let found =
+                    caller.data().animation.objects.get(&object).and_then(|a| a.names.iter().position(|n| *n == joint).and_then(|i| a.joints.get(i).copied()));
+                let (values, result) = match found {
+                    Some(values) => (values, 1),
+                    None => ([0.0; 9], 0),
+                };
+                let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+                write_guest(&mut caller, out, &bytes, "joint_transform")?;
+                Ok(result)
+            },
+        )?;
         linker.func_wrap(
             "bayleaf",
             "ui_set_text",

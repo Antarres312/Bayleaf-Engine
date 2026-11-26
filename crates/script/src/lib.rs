@@ -93,6 +93,51 @@ pub enum InterfaceChange {
     Remove,
 }
 
+/// What a script asks of an object's animation (`animation_*` host functions), done after the step
+/// as the `animation.*` commands do it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AnimationAction {
+    /// Play a clip on the whole skeleton, fading from what played over `fade` seconds.
+    Play {
+        clip: String,
+        fade: f32,
+        looping: bool,
+    },
+    /// Fade to the rest pose over `fade` seconds.
+    Stop {
+        fade: f32,
+    },
+    Number {
+        name: String,
+        value: f32,
+    },
+    Flag {
+        name: String,
+        value: bool,
+    },
+    Trigger {
+        name: String,
+    },
+}
+
+/// What scripts read of the animated objects: each one's animation state, and its joints' places in
+/// the world (position, rotation in degrees, scale), as the engine posed them after the last step.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AnimationView {
+    pub objects: HashMap<StableId, AnimatedView>,
+}
+
+/// One animated object, as scripts read it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AnimatedView {
+    /// The animation state it is in, when it runs animation states.
+    pub state: Option<String>,
+    /// Its model's joints' names, by node.
+    pub names: Arc<[String]>,
+    /// Each joint's place in the world: position, rotation (Euler degrees, X then Y then Z), scale.
+    pub joints: Vec<[f32; 9]>,
+}
+
 /// What a script asks of a Particle Emitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticleAction {
@@ -188,6 +233,8 @@ pub enum Request {
     Jump { by: StableId, object: StableId, speed: f32 },
     /// Start, stop or burst the object's Particle Emitter.
     Particles { by: StableId, object: StableId, action: ParticleAction },
+    /// Play, fade or stop a clip, or set a parameter, of the object's animation.
+    Animation { by: StableId, object: StableId, action: AnimationAction },
     /// Change an element of the object's Interface (an empty `element`: the whole interface).
     Interface { by: StableId, object: StableId, element: String, change: InterfaceChange },
     /// Play the object's Audio Source.
@@ -781,6 +828,7 @@ struct HostState<L> {
     seeds: HashMap<String, DeclaredProperty>,
     velocities: Arc<Velocities>,
     grounded: Arc<HashSet<StableId>>,
+    animation: Arc<AnimationView>,
     /// Interface elements as they show, for `ui_value` and `ui_text`.
     interface: Arc<InterfaceValues>,
     input_maps: actions::SharedInput,
@@ -1067,6 +1115,7 @@ impl<L> HostState<L> {
             seeds: HashMap::new(),
             velocities: Arc::new(Velocities::new()),
             grounded: Arc::new(HashSet::new()),
+            animation: Arc::new(AnimationView::default()),
             interface: Arc::new(InterfaceValues::new()),
             input_maps: actions::SharedInput::default(),
             state: SharedState::default(),

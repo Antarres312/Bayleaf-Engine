@@ -310,6 +310,7 @@ fn pin_color(t: &Tokens, ty: PinType) -> Color32 {
         PinType::Text => t.pin_text,
         PinType::Int => t.pin_int,
         PinType::Component => t.pin_component,
+        PinType::Motion => t.pin_motion,
         // A list or map has its item's colour; its shape says it is many.
         PinType::List(item) | PinType::Map(_, item) => pin_color(t, item.pin(bayleaf_engine::graph::Shape::Single, item)),
     }
@@ -318,8 +319,10 @@ fn pin_color(t: &Tokens, ty: PinType) -> Color32 {
 /// A graph's tab name: its file's name (or what it is, before it has a file), with a dot while it
 /// has unsaved changes.
 pub(crate) fn tab_title(doc: &bayleaf_engine::GraphDoc) -> String {
-    let name = doc.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| {
-        if doc.graph.domain == bayleaf_engine::render::material::CATALOG.domain { tl("New Material").to_owned() } else { tl("New Visual Script").to_owned() }
+    let name = doc.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| match doc.graph.domain.as_str() {
+        "material" => tl("New Material").to_owned(),
+        "animation" => tl("New Animation States").to_owned(),
+        _ => tl("New Visual Script").to_owned(),
     });
     if doc.dirty { format!("{name} •") } else { name }
 }
@@ -503,10 +506,12 @@ fn empty_state(editor: &mut Editor, ui: &mut egui::Ui) {
         ui.add_space((ui.available_height() * 0.3).max(12.0));
         ui.label(egui::RichText::new(tl("No graph open")).heading().color(t.text));
         ui.add_space(theme::GAP);
-        ui.label(egui::RichText::new(tl("Make a material or a visual script, or double-click one in the Project panel.")).color(t.text_muted));
+        ui.label(
+            egui::RichText::new(tl("Make a material, a visual script or animation states, or double-click one in the Project panel.")).color(t.text_muted),
+        );
         ui.add_space(theme::GAP * 2.0);
         ui.horizontal(|ui| {
-            let width = 3.0 * 150.0 + 2.0 * ui.spacing().item_spacing.x;
+            let width = 4.0 * 150.0 + 3.0 * ui.spacing().item_spacing.x;
             ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
             if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new(tl("New Material"))).clicked() {
                 editor.dispatch("graph.new", &json!({ "domain": "material" }), None);
@@ -514,8 +519,11 @@ fn empty_state(editor: &mut Editor, ui: &mut egui::Ui) {
             if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new(tl("New Visual Script"))).clicked() {
                 editor.dispatch("graph.new", &json!({ "domain": "script" }), None);
             }
+            if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new(tl("New Animation States"))).clicked() {
+                editor.dispatch("graph.new", &json!({ "domain": "animation" }), None);
+            }
             if ui.add_sized([150.0, theme::ROW_HEIGHT], egui::Button::new(tl("Open Graph…"))).clicked()
-                && let Some(path) = crate::dialog::FileDialog::new().add_filter("Graphs", &["bmaterial", "bscript"]).pick_file()
+                && let Some(path) = crate::dialog::FileDialog::new().add_filter("Graphs", &["bmaterial", "bscript", "banim"]).pick_file()
             {
                 editor.open_graph(&path);
             }
@@ -1452,6 +1460,7 @@ fn pin_hint(pin: &PinDef) -> String {
         PinType::Text => "letters, words and numbers as written",
         PinType::Int => "a whole number",
         PinType::Component => "a script on an object, or none",
+        PinType::Motion => "what plays on a skeleton: a clip, a mix or a layer",
         PinType::List(_) => "values of one type in order, by index from 0",
         PinType::Map(..) => "values of one type under keys of one type",
     };
@@ -1541,7 +1550,7 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
             commit(&response, requests, || ("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": text })), key);
         }
         // An unlinked object input means the node's own choice (named in its settings, or this object).
-        PinType::Flow | PinType::Object | PinType::Component => {}
+        PinType::Flow | PinType::Object | PinType::Component | PinType::Motion => {}
         // A list or map comes only from a link; unlinked, the node works on the one it names.
         PinType::List(_) | PinType::Map(..) => {}
     }

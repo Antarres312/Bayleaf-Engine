@@ -82,10 +82,12 @@ struct InstanceRaw {
     color: [f32; 4],
     params: [f32; 4],
     uv_rect: [f32; 4],
+    // x: the first of its skin's matrices in the joint texture, y: 1 when skinned there.
+    skin: [f32; 4],
 }
 
 impl InstanceRaw {
-    fn new(item: &DrawItem, selected: bool) -> Self {
+    fn new(item: &DrawItem, selected: bool, skin: Option<u32>) -> Self {
         let n = normal_matrix(item.model);
         Self {
             model: item.model.to_cols_array_2d(),
@@ -93,6 +95,7 @@ impl InstanceRaw {
             color: item.color.to_array(),
             params: [item.metallic, item.roughness, f32::from(u8::from(selected)), f32::from(u8::from(item.unlit))],
             uv_rect: item.uv_rect,
+            skin: skin.map_or([0.0; 4], |first| [first as f32, 1.0, 0.0, 0.0]),
         }
     }
 }
@@ -294,6 +297,16 @@ pub struct Renderer {
     texture_groups: HashMap<TextureKey, wgpu::BindGroup>,
     /// Uploaded models by id.
     models: HashMap<u64, GpuMesh>,
+    /// Every skinned item's matrices this frame, four texels a matrix, [`JOINTS_PER_ROW`] to a row;
+    /// the vertex shader reads it (group 0, binding 1). Its rows, grown as needed.
+    joints: wgpu::Texture,
+    joint_rows: u32,
+    globals_layout: wgpu::BindGroupLayout,
+    /// Moves skinned models' vertices on the CPU and uploads them per item, instead of on the GPU:
+    /// for devices without the vertex inputs GPU skinning needs, and for tests.
+    cpu_skinning: bool,
+    /// A version for each frame's CPU-posed models.
+    posed_version: u64,
     /// Draw calls and triangles of the last frame's scene.
     drawn: (u32, u64),
     /// The GPU's time for each frame: made at the first frame (it needs the queue), `None` inside
@@ -318,18 +331,27 @@ impl Renderer {
         });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bayleaf globals layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
-                count: None,
-            }],
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
         });
-        let globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bayleaf globals group"),
-            layout: &globals_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
-        });
+        let joints = joint_texture(device, 1);
+        let globals_group = globals_group(device, &globals_layout, &globals, &joints);
         // Each layer's matrix, at its own offset, for the shadow pass.
         let shadow_faces = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("bayleaf shadow faces"),
@@ -496,6 +518,12 @@ impl Renderer {
             textures: HashMap::new(),
             texture_groups: HashMap::new(),
             models: HashMap::new(),
+            joints,
+            joint_rows: 1,
+            globals_layout,
+            // Sixteen vertex inputs: the vertex's five (with its joints and weights) and the item's eleven.
+            cpu_skinning: device.limits().max_vertex_attributes < 16,
+            posed_version: 0,
             drawn: (0, 0),
             timer: None,
             samples,
@@ -645,6 +673,108 @@ impl Renderer {
         }
     }
 
+    /// Moves skinned models' vertices on the CPU (and tests) instead of on the GPU, from the next
+    /// frame. A device without the vertex inputs GPU skinning needs does so from the start.
+    pub fn set_cpu_skinning(&mut self, on: bool) {
+        self.cpu_skinning = on;
+    }
+
+    /// Whether skinned models are moved on the CPU (see [`Self::set_cpu_skinning`]).
+    pub fn cpu_skinning(&self) -> bool {
+        self.cpu_skinning
+    }
+
+    /// `frame` with each skinned model posed on the CPU: a mesh of its own per object, drawn as
+    /// it is.
+    fn pose_on_cpu(&mut self, frame: &Frame) -> Frame {
+        self.posed_version += 1;
+        let mut frame = frame.clone();
+        let mut posed: HashMap<u64, std::sync::Arc<bayleaf_assets::MeshData>> = HashMap::new();
+        for item in &mut frame.items {
+            let Some(mesh) = item.mesh.clone() else { continue };
+            let Some(skeleton) = mesh.skeleton.clone() else { continue };
+            // Its own id, so each object's pose is its own mesh; its parts share it.
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&(mesh.id, item.object), &mut hasher);
+            let id = std::hash::Hasher::finish(&hasher) | 1;
+            let version = self.posed_version;
+            let skin = item.skin.take();
+            let own = posed.entry(id).or_insert_with(|| {
+                let matrices = skin.as_ref().map_or_else(|| skeleton.skin_matrices(&skeleton.pose(None, 0.0)), |s| s.matrices.clone());
+                let mut moved = skeleton.skin_on_cpu(&mesh, &matrices, id, version);
+                moved.skeleton = None;
+                std::sync::Arc::new(moved)
+            });
+            item.mesh = Some(own.clone());
+        }
+        frame
+    }
+
+    /// Writes the matrices of every skinned item of `items` into the joint texture (each skin once,
+    /// however many items share it), growing it as needed; gives each item the first of its
+    /// matrices there, or `None` for an item not skinned on the GPU. A model without a skin of its
+    /// own stands at rest.
+    fn write_joints(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, items: &[&DrawItem]) -> Vec<Option<u32>> {
+        let mut data: Vec<[f32; 4]> = Vec::new();
+        let mut written: HashMap<*const crate::extract::Skin, u32> = HashMap::new();
+        let mut at_rest: HashMap<u64, u32> = HashMap::new();
+        let capacity = (MAX_JOINT_ROWS * JOINTS_PER_ROW) as usize;
+        let mut firsts = Vec::with_capacity(items.len());
+        for item in items {
+            let Some((mesh, skeleton)) = item.mesh.as_ref().and_then(|m| gpu_skeleton(m).map(|s| (m, s))) else {
+                firsts.push(None);
+                continue;
+            };
+            let count = skeleton.bindings.len();
+            let first = (data.len() / 4) as u32;
+            let known = match &item.skin {
+                Some(skin) => written.get(&std::sync::Arc::as_ptr(skin)).copied(),
+                None => at_rest.get(&mesh.id).copied(),
+            };
+            if let Some(known) = known {
+                firsts.push(Some(known));
+                continue;
+            }
+            if data.len() / 4 + count > capacity {
+                firsts.push(None);
+                continue;
+            }
+            let matrices = match &item.skin {
+                Some(skin) => {
+                    written.insert(std::sync::Arc::as_ptr(skin), first);
+                    skin.matrices.clone()
+                }
+                None => {
+                    at_rest.insert(mesh.id, first);
+                    skeleton.skin_matrices(&skeleton.pose(None, 0.0))
+                }
+            };
+            // Exactly one matrix per binding, so no vertex reads another skin's.
+            for i in 0..count {
+                let m = matrices.get(i).copied().unwrap_or(skeleton.root);
+                data.extend(m.to_cols_array_2d());
+            }
+            firsts.push(Some(first));
+        }
+        if data.is_empty() {
+            return firsts;
+        }
+        let rows = (data.len() / 4).div_ceil(JOINTS_PER_ROW as usize) as u32;
+        if rows > self.joint_rows {
+            self.joint_rows = rows.next_power_of_two().min(MAX_JOINT_ROWS);
+            self.joints = joint_texture(device, self.joint_rows);
+            self.globals_group = globals_group(device, &self.globals_layout, &self.globals, &self.joints);
+        }
+        data.resize(rows as usize * JOINTS_PER_ROW as usize * 4, [0.0; 4]);
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &self.joints, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            bytemuck::cast_slice(&data),
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(JOINTS_PER_ROW * 4 * 16), rows_per_image: Some(rows) },
+            wgpu::Extent3d { width: JOINTS_PER_ROW * 4, height: rows, depth_or_array_layers: 1 },
+        );
+        firsts
+    }
+
     /// The GPU mesh an item draws.
     fn gpu_mesh(&self, item: &DrawItem) -> Option<&GpuMesh> {
         match &item.mesh {
@@ -666,8 +796,17 @@ impl Renderer {
         // Pipelines are made for one sample count: a target of another (multisampling turned on or
         // off) needs them made again, and the images and models are uploaded again with them.
         if target.samples() != self.samples {
+            let cpu_skinning = self.cpu_skinning;
             *self = Self::with_samples(device, target.samples());
+            self.cpu_skinning |= cpu_skinning;
         }
+        let posed;
+        let frame = if self.cpu_skinning {
+            posed = self.pose_on_cpu(frame);
+            &posed
+        } else {
+            frame
+        };
         // The shadow map as large as the settings ask, with a layer for each face the frame's
         // shadow-casting lights use (a sun one per cascade, a point light six).
         let settings = frame.shadows.clamped();
@@ -694,8 +833,12 @@ impl Renderer {
         let eye = frame.camera.position;
         transparent.sort_by(|a, b| distance(b.model, eye).total_cmp(&distance(a.model, eye)));
         let ordered: Vec<&DrawItem> = opaque.iter().chain(transparent.iter()).copied().collect();
-        let raw: Vec<InstanceRaw> =
-            ordered.iter().map(|i| InstanceRaw::new(i, frame.selected == Some(i.object) || frame.highlighted.contains(&i.object))).collect();
+        let skins = self.write_joints(device, queue, &ordered);
+        let raw: Vec<InstanceRaw> = ordered
+            .iter()
+            .zip(&skins)
+            .map(|(i, skin)| InstanceRaw::new(i, frame.selected == Some(i.object) || frame.highlighted.contains(&i.object), *skin))
+            .collect();
         if raw.len() > self.instance_capacity {
             self.instance_capacity = raw.len().next_power_of_two();
             self.instances = instance_buffer(device, self.instance_capacity);
@@ -1268,12 +1411,45 @@ fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
     })
 }
 
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 11 => Float32x2];
-const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 5] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 11 => Float32x2, 13 => Uint16x4, 14 => Float32x4];
+const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 11] = wgpu::vertex_attr_array![
     2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
     6 => Float32x4, 7 => Float32x4, 8 => Float32x4,
-    9 => Float32x4, 10 => Float32x4, 12 => Float32x4,
+    9 => Float32x4, 10 => Float32x4, 12 => Float32x4, 15 => Float32x4,
 ];
+
+/// Matrices in each row of the joint texture (four texels each).
+const JOINTS_PER_ROW: u32 = 256;
+/// Most rows the joint texture grows to: 2048, the smallest texture side every device takes.
+const MAX_JOINT_ROWS: u32 = 2048;
+
+/// A joint texture of `rows` rows.
+fn joint_texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("bayleaf joints"),
+        size: wgpu::Extent3d { width: JOINTS_PER_ROW * 4, height: rows.max(1), depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+/// The per-frame group: the globals and the joint texture.
+fn globals_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, globals: &wgpu::Buffer, joints: &wgpu::Texture) -> wgpu::BindGroup {
+    let view = joints.create_view(&wgpu::TextureViewDescriptor::default());
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("bayleaf globals group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
+        ],
+    })
+}
 
 fn mesh_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, shader: &wgpu::ShaderModule, transparent: bool, samples: u32) -> wgpu::RenderPipeline {
     mesh_pipeline_build(device, layout, shader, Kind { transparent, outline: false, additive: false }, samples)
@@ -1544,14 +1720,27 @@ fn upload_model(device: &wgpu::Device, mesh: &bayleaf_assets::MeshData) -> GpuMe
     GpuMesh { vertices, indices, index_count: mesh.indices.len() as u32, version: mesh.version }
 }
 
+/// A model's vertices: for one skinned on the GPU, in the bound pose with their joints and weights;
+/// else as the model holds them.
 fn model_vertices(mesh: &bayleaf_assets::MeshData) -> Vec<Vertex> {
-    (0..mesh.positions.len())
-        .map(|i| Vertex {
-            position: mesh.positions[i],
-            normal: mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
-            uv: mesh.uvs.get(i).copied().unwrap_or([0.0; 2]),
-        })
-        .collect()
+    let uv = |i: usize| mesh.uvs.get(i).copied().unwrap_or([0.0; 2]);
+    if let Some(skeleton) = gpu_skeleton(mesh) {
+        return (0..mesh.positions.len())
+            .map(|i| Vertex {
+                position: skeleton.positions[i],
+                normal: skeleton.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]),
+                uv: uv(i),
+                joints: skeleton.vertex_bindings.get(i).copied().unwrap_or_default(),
+                weights: skeleton.vertex_weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0]),
+            })
+            .collect();
+    }
+    (0..mesh.positions.len()).map(|i| Vertex::new(mesh.positions[i], mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]), uv(i))).collect()
+}
+
+/// The skeleton a model is skinned by on the GPU: one whose bound-pose vertices match the model's.
+fn gpu_skeleton(mesh: &bayleaf_assets::MeshData) -> Option<&bayleaf_assets::skeleton::Skeleton> {
+    mesh.skeleton.as_deref().filter(|s| s.positions.len() == mesh.positions.len() && !s.bindings.is_empty())
 }
 
 /// Which mesh an item draws: a built-in shape (its index) or a model (its id, with the top bit set).

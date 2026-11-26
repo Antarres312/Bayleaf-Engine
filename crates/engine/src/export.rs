@@ -606,6 +606,7 @@ const REFERENCED_EXTENSIONS: &[&str] = &[
     "bprefab",
     "bmaterial",
     "bscript",
+    "banim",
     "wasm",
     "binput",
     "bdata",

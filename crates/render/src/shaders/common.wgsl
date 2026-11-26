@@ -57,6 +57,31 @@ struct Globals {
 
 @group(0) @binding(0) var<uniform> globals: Globals;
 
+// Skinned models' matrices this frame, four texels (columns) a matrix, 256 to a row.
+@group(0) @binding(1) var joints: texture_2d<f32>;
+
+fn bl_joint(index: u32) -> mat4x4<f32> {
+    let x = i32((index % 256u) * 4u);
+    let y = i32(index / 256u);
+    return mat4x4<f32>(
+        textureLoad(joints, vec2<i32>(x, y), 0),
+        textureLoad(joints, vec2<i32>(x + 1, y), 0),
+        textureLoad(joints, vec2<i32>(x + 2, y), 0),
+        textureLoad(joints, vec2<i32>(x + 3, y), 0),
+    );
+}
+
+// Where a vertex's skin puts it in its model: its four joints' matrices by its weights, from the
+// item's first matrix `skin.x`; the identity for an item that is not skinned (`skin.y` 0).
+fn bl_skin(joint: vec4<u32>, weight: vec4<f32>, skin: vec4<f32>) -> mat4x4<f32> {
+    if (skin.y < 0.5) {
+        return mat4x4<f32>(vec4<f32>(1.0, 0.0, 0.0, 0.0), vec4<f32>(0.0, 1.0, 0.0, 0.0), vec4<f32>(0.0, 0.0, 1.0, 0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0));
+    }
+    let first = u32(skin.x);
+    return bl_joint(first + joint.x) * weight.x + bl_joint(first + joint.y) * weight.y
+        + bl_joint(first + joint.z) * weight.z + bl_joint(first + joint.w) * weight.w;
+}
+
 // The sky's colour in direction `dir` (unit length): from the horizon up to the top, or down to the
 // ground. Drawn behind the scene and seen in reflections.
 fn bl_sky(dir: vec3<f32>) -> vec3<f32> {

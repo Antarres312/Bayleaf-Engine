@@ -38,6 +38,9 @@ enum Pending {
     /// Open a script to change it: a visual script in its graph tab, a Rust script's source in the
     /// code editor.
     EditScript(std::path::PathBuf),
+    /// An animation preview command (`animation.preview` or `animation.preview.stop`) for this object,
+    /// with its params but the id.
+    Preview(&'static str, Value),
 }
 
 /// One script card's data, gathered before drawing.
@@ -100,6 +103,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
     let script_menus: Vec<(String, Option<String>)> =
         editor.project.script_files().into_iter().map(|module| (module.clone(), editor.script_info.menu(&script_dir.join(&module)))).collect();
     let file_fields = file_fields(editor, id, &script_dir);
+    let preview = preview_of(editor, id, &script_dir);
     let mut open_material: Option<std::path::PathBuf> = None;
     let mut pending = None;
     let mut gesture_ended = false;
@@ -203,6 +207,12 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut egui::Ui) {
                         }
                         pending = Some(Pending::Set { component: kind.name, value });
                     }
+                }
+                if *name == "modelAnimation"
+                    && let Some(preview) = &preview
+                    && let Some(command) = preview_rows(ui, t, preview)
+                {
+                    pending = Some(command);
                 }
             });
             if chosen.removed {
@@ -636,6 +646,12 @@ fn apply(editor: &mut Editor, id: bayleaf_core::StableId, pending: Option<Pendin
             editor.dispatch("play.message", &json!({ "id": id, "name": name }), None);
         }
         Some(Pending::EditScript(path)) => edit_script(editor, &path),
+        Some(Pending::Preview(command, mut params)) => {
+            if let Some(object) = params.as_object_mut() {
+                object.insert("id".to_owned(), json!(id));
+            }
+            editor.dispatch(command, &params, None);
+        }
         Some(Pending::ScriptProperty { index, name, value }) => {
             let key = format!("script property:{id}:{index}:{name}:{}", editor.gesture);
             editor.dispatch("scene.script.setProperty", &json!({ "id": id, "index": index, "name": name, "value": value }), Some(&key));
@@ -792,6 +808,19 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
             editable: true,
         });
     }
+    if let Some(animation) = scene.get::<bayleaf_engine::scene::components::ModelAnimation>(id) {
+        let missing = !animation.states.is_empty() && !base.join(&animation.states).is_file();
+        fields.push(FileField {
+            component: "modelAnimation",
+            field: "states",
+            label: "States",
+            none: "None (plays the animation above)",
+            no_files: "No .banim files in the project folder",
+            files: editor.project.animation_states_files(),
+            problem: missing.then(|| crate::i18n::tf("{file} is not there", &[("file", &animation.states.to_string())])),
+            editable: true,
+        });
+    }
     if let Some(camera) = camera {
         let missing = !camera.post_processing.is_empty() && !base.join(&camera.post_processing).is_file();
         fields.push(FileField {
@@ -894,4 +923,76 @@ fn file_fields(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path
         });
     }
     fields
+}
+
+/// What the Model Animation card's clip preview shows: the model's clips and lengths, and the
+/// preview playing now, if any.
+struct Preview {
+    clips: Vec<(String, f32)>,
+    current: Option<bayleaf_engine::animation::PreviewState>,
+}
+
+/// The preview of `id`'s Model Animation, outside play mode, when its model has clips.
+fn preview_of(editor: &mut Editor, id: bayleaf_core::StableId, base: &std::path::Path) -> Option<Preview> {
+    if editor.session.is_playing() {
+        return None;
+    }
+    let scene = editor.session.scene();
+    scene.get::<bayleaf_engine::scene::components::ModelAnimation>(id)?;
+    let model = scene.get::<bayleaf_engine::scene::components::Mesh>(id)?.model.clone();
+    if model.is_empty() {
+        return None;
+    }
+    let data = editor.scene_view.assets.model(&base.join(&model)).ok()?;
+    let clips: Vec<(String, f32)> = data.skeleton.as_ref()?.animations.iter().map(|a| (a.name.clone(), a.duration)).collect();
+    if clips.is_empty() {
+        return None;
+    }
+    Some(Preview { clips, current: editor.session.animation_preview(id) })
+}
+
+/// The clip preview's rows: which clip, play or pause, stop, and a time to scrub. Gives the
+/// command to send, if any.
+fn preview_rows(ui: &mut egui::Ui, t: &theme::Tokens, preview: &Preview) -> Option<Pending> {
+    let mut out = None;
+    let clip = preview.current.as_ref().map_or_else(|| preview.clips.first().map(|c| c.0.clone()).unwrap_or_default(), |c| c.clip.clone());
+    let duration = preview.clips.iter().find(|c| c.0 == clip).map_or(0.0, |c| c.1);
+    let playing = preview.current.as_ref().is_some_and(|c| c.playing);
+    crate::value_editor::row(ui, t, "Preview", |ui, label, width| {
+        craft_ui::ComboBox::from_id_salt("animation preview clip")
+            .width(width)
+            .truncate()
+            .selected_text(egui::RichText::new(&clip).color(t.text))
+            .show_ui(ui, |ui| {
+                for (name, _) in &preview.clips {
+                    if ui.selectable_label(*name == clip, name).clicked() && *name != clip {
+                        out = Some(Pending::Preview("animation.preview", json!({ "clip": name, "time": 0.0, "playing": playing })));
+                    }
+                }
+            })
+            .response
+            .labelled_by(label)
+            .on_hover_text(tl("The clip shown on the model in the scene view, without play mode"));
+    });
+    ui.horizontal(|ui| {
+        let (text, hint) = if playing { ("Pause", "Hold the clip where it is") } else { ("Play", "Play the clip on the model, looping") };
+        if ui.add(egui::Button::new(tl(text)).min_size(egui::vec2(0.0, ROW_HEIGHT))).on_hover_text(tl(hint)).clicked() {
+            out = Some(Pending::Preview("animation.preview", json!({ "clip": clip, "playing": !playing })));
+        }
+        let stop = ui.add_enabled(preview.current.is_some(), egui::Button::new(tl("Stop")).min_size(egui::vec2(0.0, ROW_HEIGHT)));
+        if stop.on_hover_text(tl("End the preview; the model shows its Model Animation again")).clicked() {
+            out = Some(Pending::Preview("animation.preview.stop", json!({})));
+        }
+    });
+    if duration > 0.0 {
+        let mut time = preview.current.as_ref().map_or(0.0, |c| c.time.rem_euclid(duration));
+        crate::value_editor::row(ui, t, "Time", |ui, label, width| {
+            ui.spacing_mut().slider_width = (width - 64.0).max(40.0);
+            let slider = ui.add(egui::Slider::new(&mut time, 0.0..=duration).suffix(" s").max_decimals(2)).labelled_by(label);
+            if slider.changed() {
+                out = Some(Pending::Preview("animation.preview", json!({ "clip": clip, "time": time, "playing": false })));
+            }
+        });
+    }
+    out
 }

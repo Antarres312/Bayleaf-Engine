@@ -85,6 +85,8 @@ pub(crate) struct SceneView {
     pub show_grid: bool,
     /// Outlines every collider and character, not only the selected objects'.
     pub show_colliders: bool,
+    /// Draws the skeleton of every animated model, not only the selected objects'.
+    pub show_skeletons: bool,
     /// Shows the scene's post-processing; off, the plain picture.
     pub show_effects: bool,
     /// The selected emitter's particles while the game is not playing, paused or not.
@@ -293,6 +295,8 @@ fn toolbar(view: &mut SceneView, editor: &Editor, ui: &mut egui::Ui) -> Option<&
         }
         ui.checkbox(&mut view.show_grid, tl("Grid"));
         ui.checkbox(&mut view.show_colliders, tl("Colliders")).on_hover_text(tl("Outline every physics shape; selected objects always show theirs"));
+        ui.checkbox(&mut view.show_skeletons, tl("Skeletons"))
+            .on_hover_text(tl("Draw the joints of every model with a skeleton; selected objects always show theirs"));
         ui.checkbox(&mut view.show_effects, tl("Effects"))
             .on_hover_text(tl("Show the scene's post-processing (its settings name the asset); off, the plain picture"));
         ui.separator();
@@ -384,7 +388,19 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
     let allow = |path: &std::path::Path| Ok(path.to_path_buf());
     let mut assets = bayleaf_render::FileAssets { base, materials: &mut view.materials, cache: &mut view.assets, allow: &allow, warnings: Vec::new() };
     let options = FrameOptions { show_grid: view.show_grid, selected: editor.selected, time, shadows, effects };
-    let mut frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut assets);
+    let mut skeletons = Vec::new();
+    let mut frame = {
+        let mut posed = bayleaf_engine::animation::Posed { assets: &mut assets, poses: editor.session.animation_poses() };
+        let frame = bayleaf_render::extract_with(editor.session.scene(), view.orbit.view(aspect), options, &mut posed);
+        let scene = editor.session.scene();
+        for (id, world) in scene.world_matrices() {
+            let shown = view.show_skeletons || editor.selected == Some(id) || editor.also_selected.contains(&id);
+            if shown && let Some(lines) = bayleaf_render::skeleton_lines(scene, id, time, &mut posed) {
+                skeletons.push((world, lines));
+            }
+        }
+        frame
+    };
     add_particles(&view.preview, editor, &mut frame, &mut assets);
     frame.highlighted = editor.also_selected.clone();
     // The object a dragged script would go to is outlined too.
@@ -512,6 +528,7 @@ fn viewport(view: &mut SceneView, editor: &mut Editor, ui: &mut egui::Ui, gpu: &
         }
     }
     paint_colliders(ui, editor, &projector, view.show_colliders, response.rect);
+    paint_skeletons(ui, &projector, &skeletons, response.rect);
     let icons = scene_icons(editor, &projector);
     paint_icons(ui, &icons, editor.selected, response.rect);
     if let Some((_, world, _, _)) = &target {
@@ -821,6 +838,24 @@ fn paint_handles(
     }
     if let Some(center) = projector.project(world.w_axis.truncate()) {
         painter.circle(center, 3.5, t.text, egui::Stroke::new(1.0, t.backdrop));
+    }
+}
+
+/// Draws each skeleton: a line from every joint to its parent, in the model's place (`world`), with
+/// a dot at each joint.
+fn paint_skeletons(ui: &egui::Ui, projector: &gizmo::Projector, skeletons: &[(bayleaf_core::math::DMat4, Vec<(Vec3, Vec3)>)], clip: egui::Rect) {
+    let t = crate::theme::tokens(ui);
+    let painter = ui.painter().with_clip_rect(clip);
+    for (world, lines) in skeletons {
+        let m = projector.relative(*world);
+        for (a, b) in lines {
+            if let (Some(a), Some(b)) = (projector.project(m.transform_point3(*a)), projector.project(m.transform_point3(*b))) {
+                // A dark edge under the line keeps it visible over light and dark surfaces alike.
+                painter.line_segment([a, b], egui::Stroke::new(3.0, t.backdrop));
+                painter.line_segment([a, b], egui::Stroke::new(1.5, t.accent));
+                painter.circle_filled(b, 2.5, t.accent);
+            }
+        }
     }
 }
 

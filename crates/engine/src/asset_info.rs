@@ -85,7 +85,7 @@ pub fn describe(session: &Session, path: &Path) -> Info {
         e if bayleaf_render::assets::MODEL_EXTENSIONS.contains(&e) => model(path),
         "bscene" => scene(path),
         "bprefab" => prefab(session, path),
-        "bmaterial" | "bscript" => graph(path, &extension),
+        "bmaterial" | "bscript" | "banim" => graph(path, &extension),
         "wasm" => script(path),
         "bproject" => project(path),
         "binput" => input_map(session, path),
@@ -206,7 +206,11 @@ fn prefab(session: &Session, path: &Path) -> Info {
 }
 
 fn graph(path: &Path, extension: &str) -> Info {
-    let kind = if extension == "bmaterial" { "Material" } else { "Visual Script" };
+    let kind = match extension {
+        "bmaterial" => "Material",
+        "banim" => "Animation States",
+        _ => "Visual Script",
+    };
     let mut info = Info { kind, ..Info::default() };
     let Some(catalog) = crate::catalog_for_path(path) else { return info };
     let loaded = std::fs::read_to_string(path).map_err(|e| e.to_string()).and_then(|t| bayleaf_graph::Graph::from_json(&t, catalog).map_err(|e| e.to_string()));
