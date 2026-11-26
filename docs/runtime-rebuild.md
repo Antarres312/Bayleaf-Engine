@@ -93,6 +93,35 @@ they change, not lookups by name. Typed access to the module's objects' transfor
 (a system over many objects) for the hot cases. Gate: within 3 times of the one-module WebAssembly
 figures in `bench/README.md` (about 1.5 ms at 20,000 objects).
 
+State: the SDK half is done. `Script::read_properties` reads a script's properties into its fields
+before `init` and whenever they may have changed; `Script::update_many` runs every object of a
+script in one go, `Many::iter_mut` giving each one's script and transform straight from the frame,
+which the SDK now holds as typed entries. Scripts that do neither run as before, with fewer locks
+and no byte decoding. Timing the step in parts showed where the rest went, and two host changes
+followed: moved transforms are written back through a key the scene gives for each object
+(`Scene::key`, `Scene::set_transform`: 8 ns a write against 27 ns by id), and the frame a module
+gives back is read where it is in the module's memory instead of copied out. `bench/scripts/*-many`
+are the benchmark's scripts written the new way (`--scripts rust-many`).
+
+Run in turns against the program before this stage, same `check` each time. The computer was busy
+with other work during these runs (single runs differed by half), so the ratios are what to read:
+
+| Objects | Three empty scripts | Rust scripts | The same, written for many | Visual scripts |
+|---:|---:|---:|---:|---:|
+| 20,000 | 0.52 to 0.63 of before | 0.43 to 0.50 | 0.29 to 0.33 | 0.56 to 0.65 |
+| 100,000 | 0.74 to 0.78 | 0.41 to 0.58 | 0.30 to 0.33 | 0.64 to 0.67 |
+
+On the quieter morning before, at 20,000 objects: three empty scripts 1.6 to 1.2 ms, Rust scripts
+6.9 to 4.0 ms, the same written for many 2.2 ms. The gate is not met yet. What is left, by the
+step's parts at 20,000 objects (written for many): filling the frames, 0.33 ms; the modules' calls,
+1.1 ms, mostly copying 64 bytes per object per module in and the modules' loops; applying what came
+back, 0.38 ms; writing to the scene, 0.4 ms. At 100,000 objects every part is memory bound: three
+modules pass about 19 MB of frames each way, and the step grows faster than the scene. Keeping each
+module's frame in its memory and writing only what others moved helps only when most objects stand
+still; in this benchmark every object moves in every script, so the next gains are fewer bytes per
+entry and fewer passes over them (filling the frame in the module's memory directly), and stage 6's
+moved list for the scene.
+
 **Stage 5: native scripts run directly.** In an exported game, Rust scripts built into the player
 call the runtime as ordinary functions on the same arrays, with no bridge module. Gate: within 2
 times of `bench/runtime/rust` (about 0.5 ms at 20,000 objects).
@@ -108,3 +137,5 @@ moved.
 - Ids are hashed with a seeded folded multiply (faef7cc).
 - Modules run every object of their file in one instance with one call per step, transforms going
   in and out in one frame (4da90c9, bf4c6f8, 64c5b13).
+- Rust scripts keep their properties in fields and may run all their objects in one update; moved
+  transforms reach the scene through kept keys (stage 4).

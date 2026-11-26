@@ -8,28 +8,42 @@
 //! use bayleaf_script_sdk::{Property, Script, Transform, property, script};
 //!
 //! #[derive(Default)]
-//! struct Spinner;
+//! struct Spinner {
+//!     speed: f32,
+//! }
 //!
 //! impl Script for Spinner {
 //!     // The Inspector shows Speed on each object; property("speed") reads it.
 //!     const PROPERTIES: &'static [Property] = &[Property::Number("speed", 90.0)];
 //!
+//!     // Runs before init and whenever the properties may have changed, not every step.
+//!     fn read_properties(&mut self) {
+//!         self.speed = property("speed").unwrap_or(90.0);
+//!     }
+//!
 //!     fn update(&mut self, dt: f32) {
-//!         let speed = property("speed").unwrap_or(90.0);
 //!         let mut t = Transform::get();
-//!         t.rotation[1] += speed * dt;
+//!         t.rotation[1] += self.speed * dt;
 //!         t.set();
 //!     }
 //! }
 //!
 //! script!(Spinner);
 //! ```
+//!
+//! A script on many objects can run them all in one go instead, with [`Script::update_many`]:
+//! [`Many::iter_mut`] gives each object's script and transform with no call to the host.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod abi;
 mod inspector;
 pub use inspector::{Is, Layout};
+mod many;
+pub use many::Many;
+#[cfg(target_arch = "wasm32")]
+#[doc(hidden)]
+pub use many::ready;
 pub mod native;
 
 /// ABI version this SDK implements; the host checks it at load.
@@ -37,6 +51,7 @@ pub const ABI_VERSION: i32 = 1;
 
 /// The object's local transform: position, rotation (Euler degrees, X then Y then Z) and scale.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
 pub struct Transform {
     pub position: [f32; 3],
     pub rotation: [f32; 3],
@@ -44,16 +59,28 @@ pub struct Transform {
 }
 
 impl Transform {
+    /// At the origin, not turned, at scale 1.
+    pub const IDENTITY: Transform = Transform { position: [0.0; 3], rotation: [0.0; 3], scale: [1.0; 3] };
+
     /// Reads the object's transform.
     pub fn get() -> Self {
-        let v = abi::transform_get();
-        Self { position: [v[0], v[1], v[2]], rotation: [v[3], v[4], v[5]], scale: [v[6], v[7], v[8]] }
+        Self::from_values(&abi::transform_get())
     }
 
     /// Writes the object's transform. Non-finite numbers stop the script with an error.
     pub fn set(&self) {
+        abi::transform_set(&self.values());
+    }
+
+    /// From the nine numbers the host passes: position, rotation, scale.
+    pub(crate) fn from_values(v: &[f32; 9]) -> Self {
+        Self { position: [v[0], v[1], v[2]], rotation: [v[3], v[4], v[5]], scale: [v[6], v[7], v[8]] }
+    }
+
+    /// The nine numbers the host takes.
+    pub(crate) fn values(&self) -> [f32; 9] {
         let [p, r, s] = [self.position, self.rotation, self.scale];
-        abi::transform_set(&[p[0], p[1], p[2], r[0], r[1], r[2], s[0], s[1], s[2]]);
+        [p[0], p[1], p[2], r[0], r[1], r[2], s[0], s[1], s[2]]
     }
 }
 
@@ -880,6 +907,11 @@ pub trait Script: Default + Send + 'static {
     /// trigger on its component, and subscribe to. They arrive in [`Script::message`] under their name.
     const EVENTS: &'static [Event] = &[];
 
+    /// Reads the properties the script uses into its own fields. Runs before `init`, and again
+    /// before the script next runs whenever they may have changed: set in the Inspector during
+    /// play, by another script or by this one. Reading them here instead of in `update` saves a
+    /// lookup by name every step.
+    fn read_properties(&mut self) {}
     /// Runs once when the script's object is ready: every script loaded with it (all of a scene
     /// when play starts) runs `init` before any runs `start`.
     fn init(&mut self) {}
@@ -889,6 +921,12 @@ pub trait Script: Default + Send + 'static {
     /// Runs every simulation step; `dt` is the step length in seconds.
     fn update(&mut self, dt: f32) {
         let _ = dt;
+    }
+    /// Runs every simulation step for every object of this script at once, in place of `update`:
+    /// the hot path for a script on many objects. [`Many::iter_mut`] gives each running object's
+    /// script and transform. The default runs `update` for each object.
+    fn update_many(objects: &mut Many<'_, Self>, dt: f32) {
+        objects.update_each(dt);
     }
     /// Runs when a script sends a message to this object or to every object.
     fn message(&mut self, name: &str, value: f32) {
@@ -960,7 +998,7 @@ macro_rules! script {
         pub extern "C" fn bayleaf_init_slot(slot: i32) {
             let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(Some(script)) = usize::try_from(slot).ok().and_then(|slot| slots.get_mut(slot))
-                && $crate::batch::select(slot)
+                && $crate::ready(script, slot)
             {
                 $crate::Script::init(script);
             }
@@ -971,7 +1009,7 @@ macro_rules! script {
         pub extern "C" fn bayleaf_start_slot(slot: i32) {
             let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(Some(script)) = usize::try_from(slot).ok().and_then(|slot| slots.get_mut(slot))
-                && $crate::batch::select(slot)
+                && $crate::ready(script, slot)
             {
                 $crate::Script::start(script);
             }
@@ -982,12 +1020,9 @@ macro_rules! script {
         pub extern "C" fn bayleaf_update_all(dt: f32) {
             let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
             $crate::batch::begin();
-            for (slot, script) in slots.iter_mut().enumerate() {
-                if let Some(script) = script
-                    && $crate::batch::select(slot as i32)
-                {
-                    $crate::Script::update(script, dt);
-                }
+            {
+                let mut many = $crate::Many::of_frame(&mut slots[..]);
+                <$ty as $crate::Script>::update_many(&mut many, dt);
             }
             $crate::batch::end();
         }
@@ -997,7 +1032,7 @@ macro_rules! script {
         pub extern "C" fn bayleaf_message_slot(slot: i32, value: f32) {
             let mut slots = BAYLEAF_SLOTS.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(Some(script)) = usize::try_from(slot).ok().and_then(|slot| slots.get_mut(slot))
-                && $crate::batch::select(slot)
+                && $crate::ready(script, slot)
             {
                 $crate::Script::message(script, &$crate::message_name(), value);
             }
@@ -1005,25 +1040,39 @@ macro_rules! script {
     };
 }
 
+/// One object's entry in the frame of a module that runs many objects, as `frame_get` writes it
+/// (see `docs/script-abi.md`): 64 bytes, the transform first.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
+pub(crate) struct Entry {
+    pub(crate) transform: Transform,
+    pub(crate) flags: u32,
+    pub(crate) position: [f64; 3],
+}
+
+const _: () = assert!(std::mem::size_of::<Entry>() == 64);
+
+impl Entry {
+    pub(crate) const EMPTY: Entry = Entry { transform: Transform::IDENTITY, flags: 0, position: [0.0; 3] };
+}
+
 /// What a module that runs many objects keeps about the update of all of them (used by
-/// [`script!`]): which object the calls are about, every object's transform for the step (read from
-/// the host in one call and written back in one), and each object's properties as last read, so its
+/// [`script!`]): which object the calls are about, every object's entry for the step (read from the
+/// host in one call and written back in one), and each object's properties as last read, so its
 /// update needs no host call for them. Outside such an update (and off WebAssembly) every call goes
 /// to the host as usual.
 #[doc(hidden)]
 pub mod batch {
-    /// Bytes of one object's entry in the frame, and its flags (see `docs/script-abi.md`).
     #[cfg(target_arch = "wasm32")]
-    const ENTRY: usize = 64;
-    #[cfg(target_arch = "wasm32")]
-    const RUNNING: u32 = 1;
+    use crate::Entry;
+
+    /// The entry's flags (see `docs/script-abi.md`).
+    pub(crate) const RUNNING: u32 = 1;
     #[cfg(target_arch = "wasm32")]
     const PROPERTIES: u32 = 2;
-    #[cfg(target_arch = "wasm32")]
-    const CHANGED: u32 = 4;
+    pub(crate) const CHANGED: u32 = 4;
     /// The object being updated, so the host knows whose update an error was in.
-    #[cfg(target_arch = "wasm32")]
-    const CURRENT: u32 = 8;
+    pub(crate) const CURRENT: u32 = 8;
     /// The flags take the low bits of their word; the object's handle is the rest.
     #[cfg(target_arch = "wasm32")]
     const HANDLE_SHIFT: u32 = 4;
@@ -1033,15 +1082,19 @@ pub mod batch {
 
     #[cfg(target_arch = "wasm32")]
     struct Frame {
-        data: Vec<u8>,
+        data: Vec<Entry>,
         /// How many objects the frame holds; 0 outside an update of all.
         count: usize,
         /// The object the calls are about, while the frame holds it.
         current: Option<usize>,
+        /// The entries are out with a [`crate::Many`]: the object the calls are about is its item's.
+        many: bool,
         /// The play time, once asked in this update of all.
         time: Option<f64>,
         /// Each object's number properties as last read, by slot.
         properties: Vec<Vec<(String, f32)>>,
+        /// The slots whose script is to read its properties before it runs again.
+        due: Vec<bool>,
         /// The object the host has selected, as far as this module knows: it is selected only before
         /// a call to the host needs it.
         host: Option<usize>,
@@ -1060,8 +1113,10 @@ pub mod batch {
         data: Vec::new(),
         count: 0,
         current: None,
+        many: false,
         time: None,
         properties: Vec::new(),
+        due: Vec::new(),
         host: None,
         others: [(0, [0.0; 9]); OTHERS],
         next_other: 0,
@@ -1070,38 +1125,59 @@ pub mod batch {
     });
 
     #[cfg(target_arch = "wasm32")]
+    thread_local! {
+        /// The slot of the item a [`crate::Many`] gave out last, while its entries are out.
+        static ITEM: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    }
+
+    #[cfg(target_arch = "wasm32")]
     fn frame() -> std::sync::MutexGuard<'static, Frame> {
         FRAME.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The object the calls are about: the selected one, or a [`crate::Many`]'s item.
+    #[cfg(target_arch = "wasm32")]
+    fn current(frame: &Frame) -> Option<usize> {
+        if frame.many { ITEM.with(std::cell::Cell::get) } else { frame.current }
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn flags(frame: &Frame, slot: usize) -> u32 {
-        let at = slot * ENTRY + 36;
-        frame.data.get(at..at + 4).map_or(0, |w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+        frame.data.get(slot).map_or(0, |e| e.flags)
     }
 
     #[cfg(target_arch = "wasm32")]
     fn set_flags(frame: &mut Frame, slot: usize, change: impl FnOnce(u32) -> u32) {
-        let at = slot * ENTRY + 36;
-        if let Some(word) = frame.data.get_mut(at..at + 4) {
-            let flags = change(u32::from_le_bytes([word[0], word[1], word[2], word[3]]));
-            word.copy_from_slice(&flags.to_le_bytes());
+        if let Some(entry) = frame.data.get_mut(slot) {
+            entry.flags = change(entry.flags);
         }
     }
 
-    /// Reads every object's transform before an update of all.
+    /// `slot`'s script is to read its properties again; what was kept of them is gone.
+    #[cfg(target_arch = "wasm32")]
+    fn make_due(frame: &mut Frame, slot: usize) {
+        if frame.due.len() <= slot {
+            frame.due.resize(slot + 1, false);
+        }
+        frame.due[slot] = true;
+        if let Some(kept) = frame.properties.get_mut(slot) {
+            kept.clear();
+        }
+    }
+
+    /// Reads every object's entry before an update of all.
     pub fn begin() {
         #[cfg(target_arch = "wasm32")]
         {
             let mut frame = frame();
             loop {
-                let room = frame.data.len() / ENTRY;
-                let count = usize::try_from(crate::abi::frame_get(&mut frame.data, room)).unwrap_or(0);
+                let room = frame.data.len();
+                let count = usize::try_from(crate::abi::frame_get(&mut frame.data)).unwrap_or(0);
                 if count <= room {
                     frame.count = count;
                     break;
                 }
-                frame.data.resize(count * ENTRY, 0);
+                frame.data.resize(count, Entry::EMPTY);
             }
             if frame.properties.len() < frame.count {
                 let count = frame.count;
@@ -1121,6 +1197,13 @@ pub mod batch {
                 let count = frame.count;
                 frame.kept.resize_with(count, Vec::new);
             }
+            // Whose properties changed: their scripts read them before they run.
+            for slot in 0..frame.count {
+                if frame.data[slot].flags & PROPERTIES != 0 {
+                    frame.data[slot].flags &= !PROPERTIES;
+                    make_due(&mut frame, slot);
+                }
+            }
         }
     }
 
@@ -1130,7 +1213,7 @@ pub mod batch {
         {
             let mut frame = frame();
             let count = frame.count;
-            crate::abi::frame_set(&frame.data[..count * ENTRY], count);
+            crate::abi::frame_set(&frame.data[..count]);
             frame.count = 0;
             frame.current = None;
             frame.host = None;
@@ -1145,12 +1228,8 @@ pub mod batch {
         {
             let mut frame = frame();
             if at < frame.count {
-                let flags = flags(&frame, at);
-                if flags & RUNNING == 0 {
+                if flags(&frame, at) & RUNNING == 0 {
                     return false;
-                }
-                if flags & PROPERTIES != 0 {
-                    frame.properties[at].clear();
                 }
                 // The host selects it only when one of its calls needs it (`sync`); the frame says
                 // which object it is, for an error.
@@ -1164,13 +1243,40 @@ pub mod batch {
             frame.current = None;
         }
         let selected = crate::abi::slot_select(slot);
-        frame().host = (selected != 0).then_some(at);
-        if selected == 2
-            && let Some(kept) = frame().properties.get_mut(at)
-        {
-            kept.clear();
+        let mut frame = frame();
+        frame.host = (selected != 0).then_some(at);
+        if selected == 2 {
+            make_due(&mut frame, at);
         }
         selected != 0
+    }
+
+    /// Whether `slot`'s script is to read its properties before it runs (once: it is not due after).
+    pub fn take_due(slot: usize) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            frame().due.get_mut(slot).is_some_and(std::mem::take)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = slot;
+            false
+        }
+    }
+
+    /// The running slots whose script is to read its properties, in order; none is due after.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn take_all_due(into: &mut Vec<usize>) {
+        let mut frame = frame();
+        let count = frame.count;
+        let Frame { due, data, .. } = &mut *frame;
+        for (slot, due) in due.iter_mut().enumerate().filter(|(_, d)| **d) {
+            if slot < count && data[slot].flags & RUNNING == 0 {
+                continue;
+            }
+            *due = false;
+            into.push(slot);
+        }
     }
 
     /// Before a call to the host: the object the calls are about is the one the host has selected.
@@ -1178,16 +1284,14 @@ pub mod batch {
         #[cfg(target_arch = "wasm32")]
         {
             let mut frame = frame();
-            let Some(current) = frame.current else { return };
+            let Some(current) = current(&frame) else { return };
             if frame.host == Some(current) {
                 return;
             }
             frame.host = Some(current);
             drop(frame);
-            if crate::abi::slot_select(current as i32) == 2
-                && let Some(kept) = self::frame().properties.get_mut(current)
-            {
-                kept.clear();
+            if crate::abi::slot_select(current as i32) == 2 {
+                make_due(&mut self::frame(), current);
             }
         }
     }
@@ -1197,9 +1301,7 @@ pub mod batch {
         #[cfg(target_arch = "wasm32")]
         {
             let mut frame = frame();
-            if let Some(kept) = frame.properties.get_mut(slot) {
-                kept.clear();
-            }
+            make_due(&mut frame, slot);
             if let Some(kept) = frame.kept.get_mut(slot) {
                 kept.clear();
             }
@@ -1208,12 +1310,49 @@ pub mod batch {
         let _ = slot;
     }
 
+    /// The frame's entries, for a [`crate::Many`] to hand out its items from; none outside an update
+    /// of all. The calls are then about the item given out last ([`item`]).
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn take_entries() -> Option<Vec<Entry>> {
+        let mut frame = frame();
+        if frame.count == 0 || frame.many {
+            return None;
+        }
+        if let Some(before) = frame.current.take() {
+            set_flags(&mut frame, before, |f| f & !CURRENT);
+        }
+        frame.many = true;
+        ITEM.with(|item| item.set(None));
+        let count = frame.count;
+        let mut entries = std::mem::take(&mut frame.data);
+        entries.truncate(count);
+        Some(entries)
+    }
+
+    /// The entries a [`crate::Many`] took, back in the frame.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn give_back(mut entries: Vec<Entry>) {
+        for entry in &mut entries {
+            entry.flags &= !CURRENT;
+        }
+        let mut frame = frame();
+        frame.data = entries;
+        frame.many = false;
+        ITEM.with(|item| item.set(None));
+    }
+
+    /// A [`crate::Many`] gave out `slot`'s item: the calls are about its object now.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn item(slot: usize) {
+        ITEM.with(|item| item.set(Some(slot)));
+    }
+
     /// The current object's handle from the frame, during an update of all.
     pub(crate) fn own_handle() -> Option<i32> {
         #[cfg(target_arch = "wasm32")]
         {
             let frame = frame();
-            let handle = flags(&frame, frame.current?) >> HANDLE_SHIFT;
+            let handle = flags(&frame, current(&frame)?) >> HANDLE_SHIFT;
             (handle != 0).then_some(handle as i32)
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -1226,7 +1365,7 @@ pub mod batch {
         #[cfg(target_arch = "wasm32")]
         {
             let frame = frame();
-            let Some(slot) = frame.current else {
+            let Some(slot) = current(&frame) else {
                 drop(frame);
                 return read();
             };
@@ -1253,7 +1392,7 @@ pub mod batch {
         #[cfg(target_arch = "wasm32")]
         {
             let frame = frame();
-            let Some(slot) = frame.current.filter(|_| handle > 0) else {
+            let Some(slot) = current(&frame).filter(|_| handle > 0) else {
                 drop(frame);
                 return read();
             };
@@ -1292,9 +1431,7 @@ pub mod batch {
         #[cfg(target_arch = "wasm32")]
         {
             let frame = frame();
-            let at = frame.current? * ENTRY;
-            let bytes = frame.data.get(at..at + 36)?;
-            Some(std::array::from_fn(|i| f32::from_le_bytes([bytes[i * 4], bytes[i * 4 + 1], bytes[i * 4 + 2], bytes[i * 4 + 3]])))
+            Some(frame.data.get(current(&frame)?)?.transform.values())
         }
         #[cfg(not(target_arch = "wasm32"))]
         None
@@ -1306,14 +1443,10 @@ pub mod batch {
         #[cfg(target_arch = "wasm32")]
         {
             let mut frame = frame();
-            let Some(slot) = frame.current else { return false };
-            let at = slot * ENTRY;
-            let Some(bytes) = frame.data.get_mut(at..at + 40) else { return false };
-            for (i, v) in values.iter().enumerate() {
-                bytes[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
-            }
-            let flags = u32::from_le_bytes([bytes[36], bytes[37], bytes[38], bytes[39]]) | CHANGED;
-            bytes[36..40].copy_from_slice(&flags.to_le_bytes());
+            let Some(slot) = current(&frame) else { return false };
+            let Some(entry) = frame.data.get_mut(slot) else { return false };
+            entry.transform = crate::Transform::from_values(values);
+            entry.flags |= CHANGED;
             true
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -1328,7 +1461,7 @@ pub mod batch {
         #[cfg(target_arch = "wasm32")]
         {
             let frame = frame();
-            let Some(slot) = frame.current else {
+            let Some(slot) = current(&frame) else {
                 drop(frame);
                 return read();
             };
@@ -1349,17 +1482,32 @@ pub mod batch {
         }
     }
 
-    /// The current object's script set a property itself: read them again.
+    /// The current object's script set a property itself: read them again, and its script reads
+    /// them before it runs again.
     pub(crate) fn forget_properties() {
         #[cfg(target_arch = "wasm32")]
         {
             let mut frame = frame();
-            if let Some(slot) = frame.current
-                && let Some(kept) = frame.properties.get_mut(slot)
-            {
-                kept.clear();
+            if let Some(slot) = current(&frame) {
+                make_due(&mut frame, slot);
             }
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        OWN_SET.with(|set| set.set(true));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    thread_local! {
+        /// A native script set one of its own properties during the call that runs.
+        static OWN_SET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Whether the native script that ran set one of its own properties (once: not after).
+    pub(crate) fn take_own_set() -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return OWN_SET.with(|set| set.replace(false));
+        #[cfg(target_arch = "wasm32")]
+        false
     }
 
     /// The play time, read once per update of all.

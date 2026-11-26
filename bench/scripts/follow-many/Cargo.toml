@@ -1,0 +1,13 @@
+[package]
+name = "bench-follow-many"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "follow_many"
+crate-type = ["cdylib"]
+
+[dependencies]
+bayleaf-script-sdk = { workspace = true }

@@ -56,6 +56,13 @@ pub enum SceneError {
     Internal(String),
 }
 
+/// Where an object is kept in its scene ([`Scene::key`]), to reach it without a lookup by id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObjectKey {
+    id: StableId,
+    entity: Entity,
+}
+
 /// The objects of one scene and their hierarchy.
 pub struct Scene {
     world: World,
@@ -198,6 +205,29 @@ impl Scene {
             self.transform_written(id);
         }
         Ok(())
+    }
+
+    /// Where `id` is kept, to set its transform again and again without looking it up
+    /// ([`Scene::set_transform`]). It stays valid while the object is in the scene.
+    pub fn key(&self, id: StableId) -> Option<ObjectKey> {
+        self.entities.get(&id).map(|entity| ObjectKey { id, entity: *entity })
+    }
+
+    /// Sets an object's transform as [`Scene::set`] does, the fast way for many in a row (play mode
+    /// writes back what scripts moved). False when the object is no longer in the scene or the
+    /// transform is not finite.
+    pub fn set_transform(&mut self, key: ObjectKey, value: Transform) -> bool {
+        if components::SceneComponent::validate(&value).is_err() {
+            return false;
+        }
+        let ObjectKey { id, entity } = key;
+        if let Some(slot) = self.world.get_mut::<Transform>(entity) {
+            *slot = value;
+        } else if self.world.insert(entity, value).is_err() {
+            return false;
+        }
+        self.transform_written(id);
+        true
     }
 
     /// Local-to-world matrix of every object, parents before children in hierarchy order.

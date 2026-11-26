@@ -68,25 +68,52 @@ pub trait NativeObject: Send {
     fn message(&mut self, value: f32);
 }
 
-impl<T: Script> NativeObject for T {
+/// One object's value of a native script `T`, kept as a module keeps each slot's.
+struct Native<T> {
+    script: Option<T>,
+    /// Whether it has read its properties yet.
+    read: bool,
+}
+
+impl<T: Script> Native<T> {
+    /// Runs `f` on the script, after it read its properties if they may have changed since it last
+    /// did: the host says so when asked about the object (slot 0 of its own), and a script that set
+    /// one itself reads them again before it next runs.
+    fn run(&mut self, f: impl FnOnce(&mut Option<T>)) {
+        let Some(script) = self.script.as_mut() else { return };
+        if crate::abi::slot_select(0) == 2 || !std::mem::replace(&mut self.read, true) {
+            script.read_properties();
+        }
+        f(&mut self.script);
+        if crate::batch::take_own_set() {
+            self.read = false;
+        }
+    }
+}
+
+impl<T: Script> NativeObject for Native<T> {
     fn describe(&self) -> String {
         crate::describe(T::PROPERTIES, T::MENU, T::INSPECTOR, T::EVENTS)
     }
 
     fn init(&mut self) {
-        Script::init(self);
+        self.run(|script| script.iter_mut().for_each(Script::init));
     }
 
     fn start(&mut self) {
-        Script::start(self);
+        self.run(|script| script.iter_mut().for_each(Script::start));
     }
 
     fn update(&mut self, dt: f32) {
-        Script::update(self, dt);
+        self.run(|script| T::update_many(&mut crate::Many::one(script), dt));
     }
 
     fn message(&mut self, value: f32) {
-        Script::message(self, &crate::message_name(), value);
+        self.run(|script| {
+            if let Some(script) = script {
+                script.message(&crate::message_name(), value);
+            }
+        });
     }
 }
 
@@ -99,7 +126,7 @@ pub struct NativeScript {
 impl NativeScript {
     /// The script type `T`, as [`crate::script!`] registers it.
     pub fn of<T: Script>() -> Self {
-        Self { new: || Box::new(T::default()) }
+        Self { new: || Box::new(Native { script: Some(T::default()), read: false }) }
     }
 
     /// A fresh value of the script for one object.

@@ -3,7 +3,7 @@
 # as libraries; the benchmark builds the same sources into itself for native mode.
 [workspace]
 resolver = "3"
-members = ["spin", "bob", "follow", "empty", "fields"]
+members = ["spin", "bob", "follow", "empty", "fields", "spin-many", "bob-many", "follow-many"]
 
 [workspace.package]
 version = "0.1.0"

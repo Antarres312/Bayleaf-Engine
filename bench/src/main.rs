@@ -25,15 +25,23 @@ use serde_json::json;
 // that `bench/scripts` compiles to WebAssembly, here compiled for this computer.
 #[path = "../scripts/bob/src/lib.rs"]
 mod bob;
+#[path = "../scripts/bob-many/src/lib.rs"]
+mod bob_many;
 #[path = "../scripts/empty/src/lib.rs"]
 mod empty;
 #[path = "../scripts/follow/src/lib.rs"]
 mod follow;
+#[path = "../scripts/follow-many/src/lib.rs"]
+mod follow_many;
 #[path = "../scripts/spin/src/lib.rs"]
 mod spin;
+#[path = "../scripts/spin-many/src/lib.rs"]
+mod spin_many;
 
 /// The script names, in the order each object runs them.
 const SCRIPTS: [&str; 3] = ["spin", "bob", "follow"];
+/// The same scripts written for many objects: properties in fields, one update for all.
+const SCRIPTS_MANY: [&str; 3] = ["spin_many", "bob_many", "follow_many"];
 /// The script whose update does nothing.
 const EMPTY: &str = "empty";
 /// The same, in a module that imports the host's component functions.
@@ -56,6 +64,8 @@ enum Mode {
 enum Kind {
     /// Rust scripts (`bench/scripts`).
     Rust,
+    /// The same Rust scripts written for many objects (`bench/scripts/*-many`).
+    RustMany,
     /// Visual scripts (`bench/graphs`).
     Graph,
     /// Three Rust scripts per object whose update does nothing: the cost of running a script.
@@ -134,11 +144,11 @@ fn prepare_work(args: &Args) -> anyhow::Result<PathBuf> {
     let scripts = work.join("scripts");
     std::fs::create_dir_all(&scripts).with_context(|| format!("cannot make {}", scripts.display()))?;
     let graphs = Path::new(env!("CARGO_MANIFEST_DIR")).join("graphs");
-    for name in SCRIPTS.into_iter().chain([EMPTY, FIELDS]) {
+    for name in SCRIPTS.into_iter().chain(SCRIPTS_MANY).chain([EMPTY, FIELDS]) {
         let wasm = args.wasm.join(format!("{name}.wasm"));
         std::fs::copy(&wasm, scripts.join(format!("{name}.wasm")))
             .with_context(|| format!("cannot copy {}; build bench/scripts first (bench/README.md)", wasm.display()))?;
-        if name == EMPTY || name == FIELDS {
+        if !SCRIPTS.contains(&name) {
             continue;
         }
         // Compiled once, as an export keeps visual scripts: the host would otherwise compile the
@@ -186,7 +196,7 @@ fn load_against_target(host: &mut ScriptHost, scene: &mut Scene, work: &Path, in
 /// Per-object property values: varied, and the same formulas as `bench/cpp/bench.cpp`.
 fn properties(name: &str, i: usize) -> BTreeMap<String, PropertyValue> {
     let n = |v: f64| PropertyValue::Number(v);
-    let pairs: Vec<(&str, f64)> = match name {
+    let pairs: Vec<(&str, f64)> = match name.trim_end_matches("_many") {
         "spin" => vec![("speed", 30.0 + (i % 7) as f64 * 10.0)],
         "bob" => vec![("speed", 1.0 + (i % 5) as f64 * 0.25), ("height", 0.25 + (i % 3) as f64 * 0.1), ("base", 0.5)],
         "follow" => vec![("rate", 0.05 + (i % 4) as f64 * 0.05)],
@@ -220,6 +230,7 @@ fn build_scene(n: usize, kind: Kind) -> anyhow::Result<Scene> {
             let names = match kind {
                 Kind::Empty => [EMPTY; 3],
                 Kind::Fields => [FIELDS; 3],
+                Kind::RustMany => SCRIPTS_MANY,
                 _ => SCRIPTS,
             };
             let scripts = names.iter().map(|name| ScriptRef { module: format!("scripts/{name}.{extension}"), properties: properties(name, i) }).collect();
@@ -236,6 +247,9 @@ fn natives() -> Vec<(PathBuf, NativeScript)> {
         (PathBuf::from("scripts/bob.wasm"), bob::bayleaf_native()),
         (PathBuf::from("scripts/follow.wasm"), follow::bayleaf_native()),
         (PathBuf::from("scripts/empty.wasm"), empty::bayleaf_native()),
+        (PathBuf::from("scripts/spin_many.wasm"), spin_many::bayleaf_native()),
+        (PathBuf::from("scripts/bob_many.wasm"), bob_many::bayleaf_native()),
+        (PathBuf::from("scripts/follow_many.wasm"), follow_many::bayleaf_native()),
     ]
 }
 

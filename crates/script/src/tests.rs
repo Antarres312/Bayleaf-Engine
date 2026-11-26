@@ -416,8 +416,35 @@ mod natives {
         }
     }
 
+    /// Keeps `speed` in a field, counting how often it read it, and turns all its objects at once:
+    /// around Y by `speed`, to x = how many times it read its properties.
+    #[derive(Default)]
+    pub struct Counted {
+        speed: f32,
+        reads: u32,
+    }
+
+    impl Script for Counted {
+        const PROPERTIES: &'static [Property] = &[Property::Number("speed", 0.0)];
+
+        fn read_properties(&mut self) {
+            self.reads += 1;
+            self.speed = property("speed").unwrap_or(0.0);
+        }
+
+        fn update_many(objects: &mut bayleaf_script_sdk::Many<'_, Self>, dt: f32) {
+            for (counted, t) in objects.iter_mut() {
+                t.rotation[1] += counted.speed * dt;
+                t.position[0] = counted.reads as f32;
+            }
+        }
+    }
+
     pub mod spin {
         bayleaf_script_sdk::script!(super::Spin);
+    }
+    pub mod counted {
+        bayleaf_script_sdk::script!(super::Counted);
     }
     pub mod alarm {
         bayleaf_script_sdk::script!(super::Alarm);
@@ -481,6 +508,50 @@ fn native_scripts_run_through_the_host_each_object_with_its_own_value() {
     assert!((rotation_y(&scene, plain) - 180.0).abs() < 1e-3, "the declared default: {}", rotation_y(&scene, plain));
     let x = |id| scene.get::<Transform>(id).unwrap().position[0];
     assert_eq!((x(fast), x(plain)), (2.0, 2.0), "each object counts its own steps");
+}
+
+#[test]
+fn a_native_script_reads_its_properties_once_and_again_after_another_script_sets_one() {
+    let input = Arc::new(Input::default());
+    let mut host = super::test_host();
+    host.set_natives(vec![(std::path::PathBuf::from("test.wasm"), natives::counted::bayleaf_native())]);
+    let (mut scene, id, script) = setup(&[("speed", 45.0)]);
+    scene.set(id, Scripts(vec![script])).unwrap();
+    load_native(&mut host, &mut scene, id, "test.wasm").unwrap();
+    // In its second update, sets `speed` of the script `test` on the object named Scripted.
+    let writer = format!(
+        r#"(module {IMPORTS}
+            (import "bayleaf" "find" (func $find (param i32 i32) (result i32)))
+            (import "bayleaf" "component_set" (func $component_set (param i32 i32 i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 16) "Scriptedtestspeed")
+            (global $steps (mut i32) (i32.const 0))
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_update") (param $dt f32)
+              (global.set $steps (i32.add (global.get $steps) (i32.const 1)))
+              (if (i32.eq (global.get $steps) (i32.const 2))
+                (then
+                  (f32.store (i32.const 64) (f32.const 5))
+                  (drop (call $component_set (call $find (i32.const 16) (i32.const 8)) (i32.const 24) (i32.const 4) (i32.const 28) (i32.const 5) (i32.const 64)))))))"#
+    );
+    let setter = scene.create_object(None, "Setter").unwrap();
+    let none = ScriptRef { module: "setter.wasm".into(), properties: BTreeMap::new() };
+    host.load_bytes(setter, 0, Path::new("setter.wasm"), None, &wat::parse_str(writer).unwrap(), &none, &mut scene, 0.0, &input).unwrap();
+    let mut step = |scene: &mut Scene| {
+        host.update(scene, 1.0, 0.0, &input);
+        let t = scene.get::<Transform>(id).unwrap();
+        (t.position[0], t.rotation[1])
+    };
+    let (reads, _) = step(&mut scene);
+    let (same, turned) = step(&mut scene);
+    assert_eq!(reads, same, "not read again while nothing changed");
+    assert!((turned - 90.0).abs() < 1e-3, "the scene's speed, from the field: {turned}");
+    let (again, _) = step(&mut scene);
+    assert!(again > same, "read again after another script set one");
+    let (_, faster) = step(&mut scene);
+    let (_, fastest) = step(&mut scene);
+    assert!((fastest - faster - 5.0).abs() < 1e-3, "the new speed: {}", fastest - faster);
+    assert!(host.take_faults().is_empty());
 }
 
 #[test]
@@ -769,6 +840,43 @@ fn a_module_that_runs_many_objects_moves_them_all_through_one_frame() {
     assert!(host.take_faults().is_empty());
     for id in [first, other] {
         assert!((rotation_y(&scene, id) - 4.0).abs() < 1e-6, "each object turned through the frame, twice: {}", rotation_y(&scene, id));
+    }
+}
+
+#[test]
+fn a_frame_given_back_with_a_number_that_is_not_finite_stops_the_module_and_moves_nothing() {
+    let input = Arc::new(Input::default());
+    let (mut scene, first, script) = setup(&[]);
+    let other = scene.create_object(None, "Other").unwrap();
+    // Turns the first object by 2 degrees and sets the second's to not-a-number, both marked
+    // changed, and hands the frame back.
+    let text = format!(
+        r#"(module {IMPORTS}
+            (import "bayleaf" "frame_get" (func $frame_get (param i32 i32) (result i32)))
+            (import "bayleaf" "frame_set" (func $frame_set (param i32 i32)))
+            (memory (export "memory") 1)
+            (func (export "bayleaf_abi") (result i32) i32.const 1)
+            (func (export "bayleaf_attach") (param i32))
+            (func (export "bayleaf_detach") (param i32))
+            (func (export "bayleaf_update_all") (param $dt f32) (local $n i32)
+              (local.set $n (call $frame_get (i32.const 4096) (i32.const 16)))
+              (f32.store offset=16 (i32.const 4096) (f32.const 2))
+              (i32.store offset=36 (i32.const 4096) (i32.or (i32.load offset=36 (i32.const 4096)) (i32.const 4)))
+              (f32.store offset=16 (i32.const 4160) (f32.div (f32.const 0) (f32.const 0)))
+              (i32.store offset=36 (i32.const 4160) (i32.or (i32.load offset=36 (i32.const 4160)) (i32.const 4)))
+              (call $frame_set (i32.const 4096) (local.get $n))))"#
+    );
+    let bytes = wat::parse_str(text).unwrap();
+    let mut host = super::test_host();
+    load(&mut host, &mut scene, first, &script, &bytes).unwrap();
+    load(&mut host, &mut scene, other, &script, &bytes).unwrap();
+    host.update(&mut scene, 0.1, 0.0, &input);
+    let faults = host.take_faults();
+    assert_eq!(faults.len(), 1, "{faults:?}");
+    assert!(faults[0].error.to_string().contains("finite"), "{}", faults[0].error);
+    assert_eq!(host.running(), 0, "the module stops, with every object it runs");
+    for id in [first, other] {
+        assert_eq!(rotation_y(&scene, id), 0.0, "nothing of that frame is applied");
     }
 }
 

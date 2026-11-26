@@ -299,6 +299,25 @@ fn list_and_map_script_properties_come_back_from_the_file_as_they_went() {
 }
 
 #[test]
+fn a_key_sets_its_object_s_transform_until_the_object_is_deleted() {
+    use crate::components::Transform;
+    let (mut scene, [a, _, _, b]) = tree();
+    let key = scene.key(a).unwrap();
+    let mark = scene.transform_mark();
+    let moved = Transform { position: [3.0, 0.0, 0.0], ..Transform::default() };
+    assert!(scene.set_transform(key, moved.clone()));
+    assert_eq!(scene.get::<Transform>(a), Some(&moved));
+    assert_eq!(scene.transforms_written_since(mark), Some(&[a][..]), "logged as a write");
+    assert!(!scene.set_transform(key, Transform { position: [f64::NAN, 0.0, 0.0], ..Transform::default() }), "not finite");
+    scene.delete_object(a).unwrap();
+    // The deleted object's place may be another object's now; the key reaches neither.
+    let c = scene.create_object(None, "C").unwrap();
+    assert!(!scene.set_transform(key, moved.clone()));
+    assert_ne!(scene.get::<Transform>(c), Some(&moved));
+    assert_ne!(scene.get::<Transform>(b), Some(&moved));
+}
+
+#[test]
 fn transform_writes_since_a_mark_are_listed_and_a_mark_too_old_says_so() {
     let (mut scene, [a, child, _, b]) = tree();
     let mark = scene.transform_mark();

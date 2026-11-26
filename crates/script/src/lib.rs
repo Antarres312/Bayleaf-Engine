@@ -498,6 +498,8 @@ pub const MAX_SUBSCRIPTIONS: usize = 65_536;
 struct Layout {
     structure: u64,
     ids: Vec<StableId>,
+    /// Where the scene keeps each object, to write its transform back without a lookup.
+    keys: Vec<Option<bayleaf_scene::ObjectKey>>,
     names: Vec<Arc<str>>,
     /// Each object's parent's place; parents come before their children.
     parents: Vec<Option<usize>>,
@@ -534,6 +536,7 @@ impl Layout {
         let index: bayleaf_core::hash::IdMap<StableId, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         Self {
             structure: scene.structure(),
+            keys: ids.iter().map(|id| scene.key(*id)).collect(),
             parents: ids.iter().map(|id| scene.parent(*id).and_then(|p| index.get(&p).copied())).collect(),
             index,
             by_name,
@@ -889,9 +892,9 @@ struct StepFrame {
     active: bool,
     /// 64 bytes per slot, as `frame_get` writes them.
     entries: Vec<u8>,
-    /// What `frame_set` took back, and how many entries.
-    returned: Vec<u8>,
-    returned_count: usize,
+    /// Where in the module's memory the frame `frame_set` gave back is, and how many entries: read
+    /// there when the call ends.
+    returned_at: Option<(usize, usize)>,
     touched: Vec<usize>,
     touched_flag: Vec<bool>,
 }
@@ -902,7 +905,7 @@ impl StepFrame {
         self.active = true;
         self.entries.clear();
         self.entries.resize(slots * FRAME_ENTRY, 0);
-        self.returned_count = 0;
+        self.returned_at = None;
         self.touched.clear();
         self.touched_flag.clear();
         self.touched_flag.resize(slots, false);

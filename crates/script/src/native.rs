@@ -29,6 +29,7 @@ const HOST_FUNCTIONS: &[(&str, &str, &str)] = &[
     ("math_pow", "f32 f32", "f32"),
     ("mouse_down", "i32", "i32"),
     ("self_handle", "", "i32"),
+    ("slot_select", "i32", "i32"),
     ("find", "i32 i32", "i32"),
     ("find_with", "i32 i32 i32", "i32"),
     ("count_with", "i32 i32", "i32"),
