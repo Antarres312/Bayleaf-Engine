@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L4: opt-in gameplay roles (Player Control, Game Rules). The roles read the scene and plain
+       numbers; the engine applies what they ask for, so a project can leave a role out or write its own. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Gameplay</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+    <ProjectReference Include="..\Bayleaf.Scene\Bayleaf.Scene.csproj" />
+  </ItemGroup>
+
+</Project>

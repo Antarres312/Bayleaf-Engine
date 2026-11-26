@@ -234,6 +234,9 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    states' catalog, written back, compiled and run on the arm fixture in both engines, and compared with
    what the Rust engine writes (`BAYLEAF_BLESS=1 cargo test -p bayleaf-animation`); the players in the
    session and the `animation.*` commands wait for play mode.
+   *Gameplay ported, 2026-11-26* (`src/Bayleaf.Gameplay`, an opt-in module like streaming: Player
+   Control's steering and following camera, Game Rules' start, respawn and time limit), with the Rust
+   behaviour tests; play mode applies them when it is ported.
 6. **The editor.** Panel by panel, each with its headless tests and its accessibility check.
 7. **The player and export.** NativeAOT players for Windows, macOS and Linux; the web decision.
 8. **Switch.** The C# editor becomes the release; the Rust tree stays for one release and is then

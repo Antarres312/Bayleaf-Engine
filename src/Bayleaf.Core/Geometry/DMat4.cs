@@ -23,6 +23,23 @@ public readonly record struct DMat4(Double4 XAxis, Double4 YAxis, Double4 ZAxis,
 
     public static DMat4 operator *(DMat4 a, DMat4 b) => new(a.Apply(b.XAxis), a.Apply(b.YAxis), a.Apply(b.ZAxis), a.Apply(b.WAxis));
 
+    /// <summary>A direction transformed: rotated and scaled, not moved.</summary>
+    public Double3 TransformVector3(Double3 v) => (XAxis * v.X + YAxis * v.Y + ZAxis * v.Z).Xyz;
+
+    /// <summary>
+    /// A right-handed view matrix: the world as seen from <paramref name="eye"/> looking at
+    /// <paramref name="center"/>, <paramref name="up"/> upwards (the camera looks down its -Z).
+    /// </summary>
+    public static DMat4 LookAtRh(Double3 eye, Double3 center, Double3 up)
+    {
+        var direction = center - eye;
+        var f = direction * (1 / direction.Length);
+        var side = f.Cross(up);
+        var s = side * (1 / side.Length);
+        var u = s.Cross(f);
+        return new(new(s.X, u.X, -f.X, 0), new(s.Y, u.Y, -f.Y, 0), new(s.Z, u.Z, -f.Z, 0), new(-eye.Dot(s), -eye.Dot(u), eye.Dot(f), 1));
+    }
+
     /// <summary>Scales, then rotates, then moves.</summary>
     public static DMat4 FromScaleRotationTranslation(Double3 scale, DQuat rotation, Double3 translation)
     {
