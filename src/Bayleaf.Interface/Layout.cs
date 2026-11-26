@@ -55,7 +55,7 @@ public static class Kinds
     /// <summary>Whether the player can press, change or type into it (and so move focus to it).</summary>
     public static bool IsControl(this Kind kind) => kind is Kind.Button or Kind.Toggle or Kind.Slider or Kind.TextField;
 
-    internal static Kind Read(JsonValue value) => (Kind)JsonRead.Variant(value, Names);
+    public static Kind Read(JsonValue value) => (Kind)JsonRead.Variant(value, Names);
 }
 
 /// <summary>One element of a layout.</summary>
@@ -125,7 +125,7 @@ public sealed class Element(Kind kind)
     };
 
     /// <summary>Takes everything of <paramref name="other"/>, as a part takes the place of its element.</summary>
-    internal void Become(Element other)
+    public void Become(Element other)
     {
         (Kind, Name, Classes, Text, Image, OnClick, LayoutFile) = (other.Kind, other.Name, other.Classes, other.Text, other.Image, other.OnClick, other.LayoutFile);
         (Value, Min, Max, Bind, Style, Texts, Children) = (other.Value, other.Min, other.Max, other.Bind, other.Style, other.Texts, other.Children);
@@ -147,7 +147,8 @@ public sealed class Element(Kind kind)
         return all;
     }
 
-    internal static Element Read(JsonValue value)
+    /// <summary>An element as files and commands write it; throws <see cref="JsonShapeException"/> for a wrong shape.</summary>
+    public static Element Read(JsonValue value)
     {
         var f = JsonFields.Of(value, "struct Element", true, "kind", "name", "classes", "text", "image", "onClick", "layout", "value", "min", "max", "bind", "style", "texts", "children");
         return new Element(f.Required("kind", Kinds.Read))
@@ -168,7 +169,8 @@ public sealed class Element(Kind kind)
         };
     }
 
-    internal JsonValue Write()
+    /// <summary>The element as files write it: fields with their default values left out.</summary>
+    public JsonObject Write()
     {
         var o = new JsonObject { { "kind", J.S(Kind.Name()) } };
         void Put(string key, string text)
@@ -273,14 +275,17 @@ public sealed class Layout(string format, uint version, List<string> styles, Ele
         return Of(root);
     }
 
+    /// <summary>A layout as files and commands write it, not yet checked; throws <see cref="JsonShapeException"/> for a wrong shape.</summary>
+    public static Layout Read(JsonValue value)
+    {
+        var f = JsonFields.Of(value, "struct Layout", true, "format", "version", "styles", "root");
+        return new Layout(f.Required("format", JsonRead.Str), f.Required("version", JsonRead.U32), f.Optional("styles", v => JsonRead.List(v, JsonRead.Str), []), f.Required("root", Element.Read));
+    }
+
     public static Result<Layout, string> FromText(string text)
     {
         var read = JsonReader.Parse(text).TryGet(out var value, out var parseError)
-            ? JsonRead.Try(() =>
-            {
-                var f = JsonFields.Of(value, "struct Layout", true, "format", "version", "styles", "root");
-                return new Layout(f.Required("format", JsonRead.Str), f.Required("version", JsonRead.U32), f.Optional("styles", v => JsonRead.List(v, JsonRead.Str), []), f.Required("root", Element.Read));
-            })
+            ? JsonRead.Try(() => Read(value))
             : Result.Fail(parseError);
         if (!read.TryGet(out var layout, out var error))
         {
@@ -291,7 +296,10 @@ public sealed class Layout(string format, uint version, List<string> styles, Ele
     }
 
     /// <summary>The file's text.</summary>
-    public string ToText()
+    public string ToText() => ToJson().ToPretty() + "\n";
+
+    /// <summary>The layout as its file holds it.</summary>
+    public JsonObject ToJson()
     {
         var o = new JsonObject { { "format", J.S(Format) }, { "version", J.U(Version) } };
         if (Styles.Count > 0)
@@ -299,7 +307,7 @@ public sealed class Layout(string format, uint version, List<string> styles, Ele
             o.Add("styles", J.Strings(Styles));
         }
         o.Add("root", Root.Write());
-        return o.ToPretty() + "\n";
+        return o;
     }
 
     public static Result<Layout, string> Load(string path) => FileText.Load(path).TryGet(out var text, out var error) ? FromText(text).MapError(e => $"{path}: {e}") : Result.Fail(error);

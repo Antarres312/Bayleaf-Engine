@@ -1,0 +1,14 @@
+{
+  "error": "invalid params: there is no element at [5]",
+  "failedStep": 2,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "path": "$out/p/hud.bui"
+    }
+  ]
+}

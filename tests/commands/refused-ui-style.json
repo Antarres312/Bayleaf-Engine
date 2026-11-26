@@ -1,0 +1,4 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/p"}},
+  {"cmd": "ui.style.set", "params": {"path": "look.bstyle", "style": {"format": "bayleaf.style", "version": 2, "rules": [{"kind": "text", "class": "big", "set": {}}]}}}
+]

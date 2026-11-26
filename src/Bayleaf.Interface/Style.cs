@@ -68,14 +68,17 @@ public sealed class StyleSheet
 
     public List<Rule> Rules { get; }
 
+    /// <summary>A style file as files and commands write it, not yet checked; throws <see cref="JsonShapeException"/> for a wrong shape.</summary>
+    public static StyleSheet Read(JsonValue value)
+    {
+        var f = JsonFields.Of(value, "struct StyleSheet", true, "format", "version", "rules");
+        return new StyleSheet(f.Required("format", JsonRead.Str), f.Required("version", JsonRead.U32), f.Required("rules", v => JsonRead.List(v, Rule.Read)));
+    }
+
     public static Result<StyleSheet, string> FromText(string text)
     {
         var read = JsonReader.Parse(text).TryGet(out var value, out var parseError)
-            ? JsonRead.Try(() =>
-            {
-                var f = JsonFields.Of(value, "struct StyleSheet", true, "format", "version", "rules");
-                return new StyleSheet(f.Required("format", JsonRead.Str), f.Required("version", JsonRead.U32), f.Required("rules", v => JsonRead.List(v, Rule.Read)));
-            })
+            ? JsonRead.Try(() => Read(value))
             : Result.Fail(parseError);
         if (!read.TryGet(out var sheet, out var error))
         {
@@ -86,8 +89,10 @@ public sealed class StyleSheet
     }
 
     /// <summary>The file's text.</summary>
-    public string ToText() =>
-        new JsonObject { { "format", J.S(Format) }, { "version", J.U(Version) }, { "rules", new JsonArray(Rules.Select(r => r.Write())) } }.ToPretty() + "\n";
+    public string ToText() => ToJson().ToPretty() + "\n";
+
+    /// <summary>The style file as it is written.</summary>
+    public JsonObject ToJson() => new() { { "format", J.S(Format) }, { "version", J.U(Version) }, { "rules", new JsonArray(Rules.Select(r => r.Write())) } };
 
     public static Result<StyleSheet, string> Load(string path) => FileText.Load(path).TryGet(out var text, out var error) ? FromText(text).MapError(e => $"{path}: {e}") : Result.Fail(error);
 

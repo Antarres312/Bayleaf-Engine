@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: give a .bui file",
+  "failedStep": 1,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    }
+  ]
+}

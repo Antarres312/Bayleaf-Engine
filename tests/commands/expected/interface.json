@@ -1,0 +1,276 @@
+{
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "path": "$out/p/hud.bui"
+    },
+    {
+      "path": "$out/p/look.bstyle"
+    },
+    {
+      "layout": {
+        "format": "bayleaf.interface",
+        "root": {
+          "children": [
+            {
+              "kind": "text",
+              "name": "Title",
+              "style": {
+                "fontSize": "40px"
+              },
+              "text": "My Game"
+            },
+            {
+              "kind": "button",
+              "name": "Start",
+              "text": "Start"
+            }
+          ],
+          "kind": "panel",
+          "name": "Screen",
+          "style": {
+            "alignItems": "center",
+            "gap": "16px",
+            "height": "100%",
+            "justify": "center",
+            "width": "100%"
+          }
+        },
+        "version": 2
+      }
+    },
+    {
+      "at": [
+        2
+      ]
+    },
+    {
+      "at": [
+        2,
+        0
+      ]
+    },
+    {
+      "at": [
+        2,
+        0
+      ]
+    },
+    {
+      "at": [
+        2,
+        2
+      ]
+    },
+    {},
+    {},
+    {
+      "at": [
+        1,
+        1
+      ]
+    },
+    {
+      "at": [
+        0
+      ]
+    },
+    {},
+    {
+      "layout": {
+        "format": "bayleaf.interface",
+        "root": {
+          "children": [
+            {
+              "kind": "toggle",
+              "text": "Toggle"
+            },
+            {
+              "kind": "text",
+              "name": "Title",
+              "style": {
+                "fontSize": "40px"
+              },
+              "text": "My Game"
+            },
+            {
+              "children": [
+                {
+                  "kind": "button",
+                  "name": "Go",
+                  "onClick": "go",
+                  "style": {
+                    "width": "120px"
+                  },
+                  "text": "Go!"
+                },
+                {
+                  "bind": "game:volume",
+                  "kind": "slider",
+                  "max": 2.5,
+                  "name": "Volume",
+                  "value": 0.25
+                }
+              ],
+              "kind": "row"
+            }
+          ],
+          "kind": "panel",
+          "name": "Screen",
+          "style": {
+            "alignItems": "center",
+            "gap": "16px",
+            "height": "100%",
+            "justify": "center",
+            "width": "100%"
+          }
+        },
+        "version": 2
+      }
+    },
+    {
+      "path": "$out/p/parts/bar.bui"
+    },
+    {
+      "layout": {
+        "format": "bayleaf.interface",
+        "root": {
+          "children": [
+            {
+              "kind": "toggle",
+              "text": "Toggle"
+            },
+            {
+              "kind": "text",
+              "name": "Title",
+              "style": {
+                "fontSize": "40px"
+              },
+              "text": "My Game"
+            },
+            {
+              "kind": "part",
+              "layout": "parts/bar.bui"
+            }
+          ],
+          "kind": "panel",
+          "name": "Screen",
+          "style": {
+            "alignItems": "center",
+            "gap": "16px",
+            "height": "100%",
+            "justify": "center",
+            "width": "100%"
+          }
+        },
+        "version": 2
+      }
+    },
+    {
+      "layout": {
+        "format": "bayleaf.interface",
+        "root": {
+          "children": [
+            {
+              "kind": "button",
+              "name": "Go",
+              "onClick": "go",
+              "style": {
+                "width": "120px"
+              },
+              "text": "Go!"
+            },
+            {
+              "bind": "game:volume",
+              "kind": "slider",
+              "max": 2.5,
+              "name": "Volume",
+              "value": 0.25
+            }
+          ],
+          "kind": "row"
+        },
+        "version": 2
+      }
+    },
+    {
+      "style": {
+        "format": "bayleaf.style",
+        "rules": [
+          {
+            "kind": "button",
+            "set": {
+              "background": "#2d3440e6",
+              "padding": "8px 16px",
+              "radius": "6px"
+            }
+          }
+        ],
+        "version": 2
+      }
+    },
+    {
+      "path": "$out/p/look.bstyle"
+    },
+    {
+      "style": {
+        "format": "bayleaf.style",
+        "rules": [
+          {
+            "kind": "text",
+            "set": {
+              "color": "#ffcc00"
+            }
+          },
+          {
+            "class": "big",
+            "set": {
+              "fontSize": "32px"
+            }
+          },
+          {
+            "name": "Go",
+            "set": {
+              "background": "#203040"
+            }
+          }
+        ],
+        "version": 2
+      }
+    },
+    {
+      "path": "$out/p/menu.bui"
+    },
+    {
+      "layout": {
+        "format": "bayleaf.interface",
+        "root": {
+          "children": [
+            {
+              "kind": "text",
+              "text": "Paused"
+            },
+            {
+              "kind": "part",
+              "layout": "parts/bar.bui",
+              "name": "Bar"
+            }
+          ],
+          "classes": [
+            "big"
+          ],
+          "kind": "column",
+          "name": "Menu"
+        },
+        "styles": [
+          "look.bstyle"
+        ],
+        "version": 2
+      }
+    }
+  ]
+}

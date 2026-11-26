@@ -1,0 +1,14 @@
+{
+  "error": "invalid params: two elements are named \"Title\"; a name is used once",
+  "failedStep": 2,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "path": "$out/p/hud.bui"
+    }
+  ]
+}

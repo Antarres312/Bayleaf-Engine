@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: rule 1: picks elements by exactly one of kind, class or name",
+  "failedStep": 1,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    }
+  ]
+}

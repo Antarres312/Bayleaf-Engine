@@ -1,0 +1,5 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/p"}},
+  {"cmd": "asset.create", "params": {"kind": "interface", "folder": "", "name": "hud"}},
+  {"cmd": "ui.element.move", "params": {"path": "hud.bui", "at": [], "into": [1], "index": 0}}
+]

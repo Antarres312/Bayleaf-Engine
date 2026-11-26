@@ -1,0 +1,4 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/p"}},
+  {"cmd": "ui.layout.get", "params": {"path": "scenes/main.bscene"}}
+]

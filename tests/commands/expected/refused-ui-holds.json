@@ -1,0 +1,14 @@
+{
+  "error": "invalid params: a text holds no other elements; add into a panel, row, column or list",
+  "failedStep": 2,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "path": "$out/p/hud.bui"
+    }
+  ]
+}
