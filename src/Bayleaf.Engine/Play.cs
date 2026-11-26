@@ -78,6 +78,15 @@ public sealed partial class Session
     /// <summary>Turns an opt-in module on for this session's play mode (gameplay roles, world streaming).</summary>
     public void Use(IPlayModule module) => modules.Add(module);
 
+    /// <summary>The editor's frame: play mode moves on by <paramref name="dt"/> seconds unless it is paused.</summary>
+    public void Tick(float dt)
+    {
+        if (Play is { Paused: false })
+        {
+            PlayLoop.Step(this, dt);
+        }
+    }
+
     /// <summary>The folder whose scripts a consent is for: the project folder, or the scene's folder outside a project.</summary>
     private string ScriptFolder => Path.GetFullPath(ScriptDir).TrimEnd(Path.DirectorySeparatorChar);
 
