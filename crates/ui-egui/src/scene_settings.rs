@@ -5,6 +5,7 @@ use bayleaf_engine::scene::lighting::Lighting;
 use serde_json::json;
 
 use crate::Editor;
+use crate::drag_wrap::WrapDrag;
 use crate::i18n::{tf, tl};
 use crate::theme::{self, ROW_HEIGHT};
 use crate::value_editor::row;
@@ -115,7 +116,7 @@ pub(crate) fn lighting_editor(ui: &mut egui::Ui, lighting: &mut Lighting) -> boo
     let mut changed = false;
     let color = |ui: &mut egui::Ui, label: egui::Id, value: &mut [f32; 3]| ui.color_edit_button_rgb(value).labelled_by(label).changed();
     let number = |ui: &mut egui::Ui, label: egui::Id, width: f32, value: &mut f32, range: std::ops::RangeInclusive<f32>, speed: f64| {
-        ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(value).range(range).speed(speed).max_decimals(2)).labelled_by(label).changed()
+        ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(value).range(range).speed(speed).max_decimals(2)).wrap_drag().labelled_by(label).changed()
     };
     theme::headed(t, "Sky").show(ui, |ui| {
         changed |= row(ui, t, "Sky Color", |ui, label, _| color(ui, label, &mut lighting.sky_color));
@@ -135,6 +136,7 @@ pub(crate) fn lighting_editor(ui: &mut egui::Ui, lighting: &mut Lighting) -> boo
                 for value in &mut lighting.sun.rotation {
                     any |= ui
                         .add_sized([(width / 3.0 - 4.0).max(30.0), ROW_HEIGHT], egui::DragValue::new(value).speed(0.5).suffix("°").max_decimals(1))
+                        .wrap_drag()
                         .labelled_by(label)
                         .changed();
                 }
@@ -209,7 +211,7 @@ pub(crate) fn post_editor(ui: &mut egui::Ui, post: &mut bayleaf_engine::scene::p
     let t = theme::tokens(ui);
     let mut changed = false;
     let number = |ui: &mut egui::Ui, label: egui::Id, width: f32, value: &mut f32, range: std::ops::RangeInclusive<f32>, speed: f64| {
-        ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(value).range(range).speed(speed).max_decimals(2)).labelled_by(label).changed()
+        ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(value).range(range).speed(speed).max_decimals(2)).wrap_drag().labelled_by(label).changed()
     };
     let switch = |ui: &mut egui::Ui, on: &mut bool| row(ui, t, "On", |ui, label, _| ui.checkbox(on, "").labelled_by(label).changed());
     let note = |ui: &mut egui::Ui, text: &str| {

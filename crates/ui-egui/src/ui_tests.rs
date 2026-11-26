@@ -1551,6 +1551,53 @@ fn dragging_a_script_property_from_its_default_keeps_going_and_reset_turns_on_an
 }
 
 #[test]
+fn dragging_a_number_field_to_the_window_edge_wraps_the_pointer_and_keeps_going() {
+    let mut harness = harness();
+    add_empty_object(&mut harness);
+    let x = |harness: &Harness<'static, Editor>| {
+        let id = harness.state().selected.unwrap();
+        harness.state().session.scene().get::<bayleaf_engine::scene::components::Transform>(id).unwrap().position[0]
+    };
+    let jumps = |harness: &Harness<'static, Editor>| -> Vec<egui::Pos2> {
+        let commands = harness.output().viewport_output.values().flat_map(|viewport| viewport.commands.iter());
+        commands.filter_map(|command| if let egui::ViewportCommand::CursorPosition(at) = command { Some(*at) } else { None }).collect()
+    };
+    let field = harness.get_all_by_role_and_label(egui::accesskit::Role::SpinButton, "X").next().unwrap().rect().center();
+    let edge = harness.ctx.viewport_rect().max.x - 1.0;
+    harness.hover_at(field);
+    harness.drag_at(field);
+    harness.run();
+    for step in 1..6 {
+        harness.hover_at(egui::pos2(field.x + (edge - 20.0 - field.x) * step as f32 / 6.0, field.y));
+        harness.run();
+    }
+    harness.hover_at(egui::pos2(edge, field.y));
+    harness.step();
+    let at_edge = x(&harness);
+    let target = *jumps(&harness).first().expect("at the window's edge the pointer is moved");
+    assert!(target.x < field.x, "the pointer goes to the opposite edge");
+    harness.run();
+    // The platform moves the pointer where it was asked to.
+    harness.hover_at(target);
+    harness.run();
+    assert_eq!(x(&harness), at_edge, "the jump does not change the value");
+    let on = target + egui::vec2(60.0, 0.0);
+    harness.hover_at(on);
+    harness.run();
+    assert!(x(&harness) > at_edge, "the drag goes on past the edge: {at_edge} then {}", x(&harness));
+    // Only the release, so this step's output is the frame that handles it.
+    harness.event(egui::Event::PointerButton { pos: on, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    harness.step();
+    let back = jumps(&harness);
+    assert!(back.iter().any(|at| at.distance(field) < 1.0), "letting go brings the pointer back to where the drag began: {back:?}");
+    harness.run();
+    let field_now = harness.get_all_by_role_and_label(egui::accesskit::Role::SpinButton, "X").next().unwrap().rect().center();
+    harness.hover_at(field_now);
+    harness.run();
+    assert!(x(&harness) > at_edge, "the value stays where the drag left it");
+}
+
+#[test]
 fn the_add_node_menu_opens_categories_on_a_click_and_keeps_its_size_while_searching() {
     let mut harness = graph_harness("script");
     harness.get_by_label("Add Node").click();

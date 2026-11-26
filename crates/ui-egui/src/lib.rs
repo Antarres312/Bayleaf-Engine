@@ -10,6 +10,7 @@ pub mod brand;
 mod console;
 mod dialog;
 mod dock;
+mod drag_wrap;
 mod export_window;
 mod file_drop;
 mod file_inspector;

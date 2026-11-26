@@ -17,6 +17,7 @@ use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::Editor;
+use crate::drag_wrap::WrapDrag;
 use crate::theme::{self, Tokens};
 
 /// Node width, title height and row height, in canvas units.
@@ -1429,7 +1430,7 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
             };
             let current = value_or(node, pin.name, json!(default));
             if let Some(mut v) = bayleaf_engine::graph::as_f32(&current) {
-                let response = ui.put(rect, egui::DragValue::new(&mut v).speed(0.01).max_decimals(3)).on_hover_text(&hint);
+                let response = ui.put(rect, egui::DragValue::new(&mut v).speed(0.01).max_decimals(3)).wrap_drag().on_hover_text(&hint);
                 labelled(ui, &response, &name);
                 commit(&response, requests, || ("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": v })), key);
             } else {
@@ -1472,7 +1473,7 @@ fn input_editor(ui: &mut egui::Ui, node: &Node, def: &NodeDef, pin: &PinDef, rec
                 _ => 0,
             };
             let mut v = value_or(node, pin.name, json!(default)).as_i64().and_then(|n| i32::try_from(n).ok()).unwrap_or(default);
-            let response = ui.put(rect, egui::DragValue::new(&mut v).speed(0.1)).on_hover_text(&hint);
+            let response = ui.put(rect, egui::DragValue::new(&mut v).speed(0.1)).wrap_drag().on_hover_text(&hint);
             labelled(ui, &response, &name);
             commit(&response, requests, || ("graph.node.set", json!({ "node": node.id, "name": pin.name, "value": v })), key);
         }
@@ -1500,7 +1501,7 @@ fn vec3_editor(ui: &mut egui::Ui, rect: Rect, v: &mut [f32; 3], name: &str, hint
     let mut ended = false;
     for (i, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
         let cell = Rect::from_min_size(rect.min + vec2(i as f32 * (width + 2.0), 0.0), vec2(width, rect.height()));
-        let response = ui.put(cell, egui::DragValue::new(&mut v[i]).speed(0.01).max_decimals(2));
+        let response = ui.put(cell, egui::DragValue::new(&mut v[i]).speed(0.01).max_decimals(2)).wrap_drag();
         let response = match hint {
             Some(hint) => response.on_hover_text(hint),
             None => response,
@@ -1595,7 +1596,7 @@ fn setting_row(
         SettingKind::Names => {}
         SettingKind::Float(default) => {
             let mut v = bayleaf_engine::graph::as_f32(&value_or(node, setting.name, json!(default))).unwrap_or(default);
-            let response = ui.put(field, egui::DragValue::new(&mut v).speed(0.01).max_decimals(3));
+            let response = ui.put(field, egui::DragValue::new(&mut v).speed(0.01).max_decimals(3)).wrap_drag();
             labelled(ui, &response, &name);
             commit(&response, requests, || ("graph.node.set", json!({ "node": node.id, "name": setting.name, "value": v })), key);
         }

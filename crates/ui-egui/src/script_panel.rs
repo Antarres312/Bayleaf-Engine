@@ -12,6 +12,7 @@ use bayleaf_engine::graph::{Graph, Shape, VariableType};
 use serde_json::{Value, json};
 
 use crate::Editor;
+use crate::drag_wrap::WrapDrag;
 use crate::theme::{self, ROW_HEIGHT, Tokens};
 
 /// Names being typed, by the variable they rename, until the field is left.
@@ -158,7 +159,7 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
     match ty {
         VariableType::Number => {
             let mut v = start.as_f64().unwrap_or(0.0);
-            let field = ui.add(egui::DragValue::new(&mut v).speed(0.05).max_decimals(3));
+            let field = ui.add(egui::DragValue::new(&mut v).speed(0.05).max_decimals(3)).wrap_drag();
             ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Start of {name}", &[("name", name)])));
             field.changed().then(|| json!(v))
         }
@@ -166,7 +167,7 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
             let mut v: Vec<f64> = (0..3).map(|i| start[i].as_f64().unwrap_or(0.0)).collect();
             let mut changed = false;
             for (i, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
-                let field = ui.add(egui::DragValue::new(&mut v[i]).speed(0.05).max_decimals(2));
+                let field = ui.add(egui::DragValue::new(&mut v[i]).speed(0.05).max_decimals(2)).wrap_drag();
                 ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Start of {name} {axis}", &[("name", name), ("axis", axis)])));
                 changed |= field.changed();
             }
@@ -180,7 +181,7 @@ fn start_editor(ui: &mut egui::Ui, ty: VariableType, start: &Value, name: &str) 
         }
         VariableType::WholeNumber => {
             let mut v = start.as_i64().and_then(|n| i32::try_from(n).ok()).unwrap_or(0);
-            let field = ui.add(egui::DragValue::new(&mut v).speed(0.1));
+            let field = ui.add(egui::DragValue::new(&mut v).speed(0.1)).wrap_drag();
             ui.ctx().accesskit_node_builder(field.id, |node| node.set_label(crate::i18n::tf("Start of {name}", &[("name", name)])));
             field.changed().then(|| json!(v))
         }
@@ -894,8 +895,8 @@ fn inspector_options(
                     options.slider &= on;
                 }
                 if let Some(range) = options.range.as_mut() {
-                    ui.add(egui::DragValue::new(&mut range[0]).speed(0.1).prefix(tl("from "))).labelled_by(label);
-                    ui.add(egui::DragValue::new(&mut range[1]).speed(0.1).prefix(tl("to "))).labelled_by(label);
+                    ui.add(egui::DragValue::new(&mut range[0]).speed(0.1).prefix(tl("from "))).wrap_drag().labelled_by(label);
+                    ui.add(egui::DragValue::new(&mut range[1]).speed(0.1).prefix(tl("to "))).wrap_drag().labelled_by(label);
                 }
             });
             if options.range.is_some() {
@@ -969,6 +970,7 @@ fn show_when(ui: &mut egui::Ui, t: &Tokens, graph: &Graph, property: &bayleaf_en
                 let whole = other.ty == VariableType::WholeNumber;
                 if ui
                     .add(egui::DragValue::new(&mut number).speed(if whole { 0.1 } else { 0.05 }).max_decimals(if whole { 0 } else { 3 }))
+                    .wrap_drag()
                     .labelled_by(label)
                     .changed()
                 {

@@ -10,6 +10,7 @@ use bayleaf_interface::{Element, Kind, Layout};
 use serde_json::{Value, json};
 
 use crate::Editor;
+use crate::drag_wrap::WrapDrag;
 use crate::i18n::{tf, tl};
 use crate::theme::{self, ROW_HEIGHT};
 
@@ -476,7 +477,7 @@ fn element_fields(
                     continue;
                 }
                 crate::value_editor::row(ui, t, name, |ui, label, _| {
-                    let r = ui.add(egui::DragValue::new(value).speed(0.01)).labelled_by(label);
+                    let r = ui.add(egui::DragValue::new(value).speed(0.01)).wrap_drag().labelled_by(label);
                     done |= finished(&r);
                 });
             }

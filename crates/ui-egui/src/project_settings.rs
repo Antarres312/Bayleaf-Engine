@@ -6,6 +6,7 @@ use bayleaf_engine::project_cmds::{MAX_SHADOW_DISTANCE, PhysicsPrecision, Physic
 use serde_json::json;
 
 use crate::Editor;
+use crate::drag_wrap::WrapDrag;
 use crate::theme::{self, ROW_HEIGHT};
 
 /// The settings shown, and the project folder they belong to.
@@ -130,10 +131,12 @@ fn physics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut ProjectS
             ui.horizontal(|ui| {
                 ui.label(tl("Gravity"));
                 for (axis, value) in ["X", "Y", "Z"].iter().zip(settings.physics.gravity.iter_mut()) {
-                    let field = ui.add_sized(
-                        [64.0, ROW_HEIGHT - 4.0],
-                        egui::DragValue::new(value).speed(0.05).range(-1000.0..=1000.0).max_decimals(2).prefix(format!("{axis} ")),
-                    );
+                    let field = ui
+                        .add_sized(
+                            [64.0, ROW_HEIGHT - 4.0],
+                            egui::DragValue::new(value).speed(0.05).range(-1000.0..=1000.0).max_decimals(2).prefix(format!("{axis} ")),
+                        )
+                        .wrap_drag();
                     ui.ctx().accesskit_node_builder(field.id, |node| {
                         node.set_label(crate::i18n::tf("Gravity {axis}, metres per second squared", &[("axis", axis)]))
                     });
@@ -186,6 +189,7 @@ fn graphics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut Project
         });
         crate::value_editor::row(ui, t, "Shadow Lights", |ui, label, width| {
             ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(&mut graphics.shadow_lights).range(1..=4).speed(0.05))
+                .wrap_drag()
                 .labelled_by(label)
                 .on_hover_text(tl("How many lights cast shadows at once, 1 to 4; sun-like lights come first, then the nearest"));
         });
@@ -195,6 +199,7 @@ fn graphics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut Project
     theme::headed(t, "Sun Shadows").show(ui, |ui| {
         crate::value_editor::row(ui, t, "Cascades", |ui, label, width| {
             ui.add_sized([width, ROW_HEIGHT], egui::DragValue::new(&mut graphics.shadow_cascades).range(1..=4).speed(0.05))
+                .wrap_drag()
                 .labelled_by(label)
                 .on_hover_text(tl("How many maps a sun's shadow is split into by distance, 1 to 4: near shadows stay sharp in a large scene"));
         });
@@ -204,6 +209,7 @@ fn graphics_section(ui: &mut egui::Ui, t: &theme::Tokens, settings: &mut Project
                 [width, ROW_HEIGHT],
                 egui::DragValue::new(&mut graphics.shadow_distance).range(0.0..=MAX_SHADOW_DISTANCE).speed(speed).max_decimals(1),
             )
+            .wrap_drag()
             .labelled_by(label)
             .on_hover_text(tl("How far from the camera a sun's shadow reaches, in world units; 0 for the whole scene"));
         });
