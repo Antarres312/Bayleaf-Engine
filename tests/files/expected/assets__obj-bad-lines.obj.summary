@@ -1,0 +1,15 @@
+model
+files 0
+vertices 3
+indices 6 1ca71e7d5cb2abb5
+min 0.0000 0.0000 0.0000
+max 1.0000 1.0000 0.0000
+v 0 0.0000 0.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+v 1 1.0000 0.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+v 2 0.0000 1.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+parts 1
+part 0 6 none
+material none
+warnings 1
+warning 4 vertex or face line(s) could not be read and were left out
+skeleton none

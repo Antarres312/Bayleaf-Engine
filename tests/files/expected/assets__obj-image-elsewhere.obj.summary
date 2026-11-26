@@ -1,0 +1,17 @@
+model
+files 2
+file obj-image-elsewhere.mtl
+file normal.png
+vertices 3
+indices 3 756241e1be8c9396
+min 0.0000 0.0000 0.0000
+max 1.0000 1.0000 0.0000
+v 0 0.0000 0.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+v 1 1.0000 0.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+v 2 0.0000 1.0000 0.0000 0.0000 0.0000 1.0000 0.0000 0.0000
+parts 1
+part 0 3 base 1.0000 1.0000 1.0000 1.0000 metallic 0.0000 roughness 0.5000 image 2x2 data=false 30244da3d3593a30 metal-roughness none normal none
+material base 1.0000 1.0000 1.0000 1.0000 metallic 0.0000 roughness 0.5000 image 2x2 data=false 30244da3d3593a30 metal-roughness none normal none
+warnings 1
+warning material A: image missing.png left out: it is not beside the model
+skeleton none

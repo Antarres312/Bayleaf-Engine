@@ -4,6 +4,7 @@
     <Project Path="src/Bayleaf.Ecs/Bayleaf.Ecs.csproj" />
     <Project Path="src/Bayleaf.Graph/Bayleaf.Graph.csproj" />
     <Project Path="src/Bayleaf.Interface/Bayleaf.Interface.csproj" />
+    <Project Path="src/Bayleaf.Assets/Bayleaf.Assets.csproj" />
     <Project Path="src/Bayleaf.Scene/Bayleaf.Scene.csproj" />
     <Project Path="src/Bayleaf.Streaming/Bayleaf.Streaming.csproj" />
     <Project Path="src/Bayleaf.Engine/Bayleaf.Engine.csproj" />
@@ -12,6 +13,7 @@
     <Project Path="apps/Bayleaf.Cli/Bayleaf.Cli.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Bayleaf.Assets.Tests/Bayleaf.Assets.Tests.csproj" />
     <Project Path="tests/Bayleaf.Core.Tests/Bayleaf.Core.Tests.csproj" />
     <Project Path="tests/Bayleaf.Ecs.Tests/Bayleaf.Ecs.Tests.csproj" />
     <Project Path="tests/Bayleaf.Graph.Tests/Bayleaf.Graph.Tests.csproj" />

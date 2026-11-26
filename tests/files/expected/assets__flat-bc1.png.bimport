@@ -1,0 +1,9 @@
+{
+  "format": "bayleaf.import",
+  "version": 1,
+  "image": {
+    "mipmaps": false,
+    "colorSpace": "color",
+    "compression": "bc1"
+  }
+}

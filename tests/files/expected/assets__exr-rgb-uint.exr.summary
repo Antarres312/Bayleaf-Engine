@@ -1,0 +1,7 @@
+image
+format exr
+size 4 3
+mipmaps true
+data false
+rgba~1 000000ffff0000ffff0000ffff0000ff0000ffffff00ffffff00ffffff00ffff0000ffffff00ffffff00ffffff00ffff
+blocks none

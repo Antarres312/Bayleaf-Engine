@@ -1,0 +1,128 @@
+{
+ "scenes": [
+  {
+   "nodes": [
+    0,
+    1
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "mesh": 0
+  },
+  {
+   "mesh": 1
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0
+     }
+    }
+   ]
+  },
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 1
+     }
+    }
+   ]
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 48
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 48,
+   "byteLength": 2
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 52,
+   "byteLength": 24
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 76,
+   "byteLength": 6
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 84,
+   "byteLength": 36
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 3,
+   "type": "VEC3",
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    2,
+    1,
+    0
+   ],
+   "sparse": {
+    "count": 1,
+    "indices": {
+     "bufferView": 1,
+     "componentType": 5121
+    },
+    "values": {
+     "bufferView": 2
+    }
+   }
+  },
+  {
+   "componentType": 5126,
+   "count": 3,
+   "type": "VEC3",
+   "min": [
+    0,
+    0,
+    5
+   ],
+   "max": [
+    1,
+    1,
+    5
+   ],
+   "sparse": {
+    "count": 3,
+    "indices": {
+     "bufferView": 3,
+     "componentType": 5123
+    },
+    "values": {
+     "bufferView": 4
+    }
+   }
+  }
+ ],
+ "asset": {
+  "version": "2.0",
+  "generator": "Bayleaf Engine test fixture"
+ },
+ "buffers": [
+  {
+   "uri": "gltf-sparse.bin",
+   "byteLength": 120
+  }
+ ]
+}
