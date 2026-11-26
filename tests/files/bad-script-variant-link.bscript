@@ -1,0 +1,1 @@
+{"format":"bayleaf.graph","version":8,"domain":"script","nodes":[{"id":2,"kind":"getComponent","position":[0,0],"values":{"component":"Point Light"}},{"id":3,"kind":"setComponent","position":[200,0],"values":{"component":"pointLight"}}],"links":[{"from":{"node":2,"pin":"shadows"},"to":{"node":3,"pin":"intensity"}}]}

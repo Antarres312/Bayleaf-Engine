@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L4: game scripts. For now the visual script catalog: node kinds, the pins their settings give
+       them, the upgrade of older .bscript files, and the checks the editor makes of a script's
+       Inspector layout. Scripts are C# (docs/csharp-redesign.md); the compiler from visual scripts to
+       C# and the script host come with stage 4. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Script</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+    <ProjectReference Include="..\Bayleaf.Graph\Bayleaf.Graph.csproj" />
+    <ProjectReference Include="..\Bayleaf.Scene\Bayleaf.Scene.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Script.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,1 @@
+{"format":"bayleaf.graph","version":8,"domain":"script","nodes":[{"id":1,"kind":"getList","position":[0,0],"values":{"name":"words","item":["text"]}},{"id":2,"kind":"listLength","position":[200,0]}],"links":[{"from":{"node":1,"pin":"list"},"to":{"node":2,"pin":"list"}}],"variables":[{"name":"words","type":"text","shape":"list","start":[]}]}

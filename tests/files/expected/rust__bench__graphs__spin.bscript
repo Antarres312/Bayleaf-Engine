@@ -19,7 +19,6 @@
         200.0
       ],
       "values": {
-        "default": 90.0,
         "name": "speed"
       }
     },
@@ -98,6 +97,13 @@
         "node": 5,
         "pin": "degrees"
       }
+    }
+  ],
+  "properties": [
+    {
+      "name": "speed",
+      "type": "number",
+      "default": 90.0
     }
   ]
 }

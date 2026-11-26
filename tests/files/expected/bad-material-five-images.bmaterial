@@ -1,0 +1,194 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "material",
+  "nodes": [
+    {
+      "id": 1,
+      "kind": "output",
+      "position": [
+        600.0,
+        0.0
+      ]
+    },
+    {
+      "id": 2,
+      "kind": "texture",
+      "position": [
+        0.0,
+        0.0
+      ],
+      "values": {
+        "image": "a.png"
+      }
+    },
+    {
+      "id": 3,
+      "kind": "texture",
+      "position": [
+        0.0,
+        100.0
+      ],
+      "values": {
+        "image": "b.png"
+      }
+    },
+    {
+      "id": 4,
+      "kind": "texture",
+      "position": [
+        0.0,
+        200.0
+      ],
+      "values": {
+        "image": "c.png"
+      }
+    },
+    {
+      "id": 5,
+      "kind": "texture",
+      "position": [
+        0.0,
+        300.0
+      ],
+      "values": {
+        "image": "d.png"
+      }
+    },
+    {
+      "id": 6,
+      "kind": "texture",
+      "position": [
+        0.0,
+        400.0
+      ],
+      "values": {
+        "image": "e.png"
+      }
+    },
+    {
+      "id": 7,
+      "kind": "add",
+      "position": [
+        200.0,
+        0.0
+      ]
+    },
+    {
+      "id": 8,
+      "kind": "add",
+      "position": [
+        200.0,
+        200.0
+      ]
+    },
+    {
+      "id": 9,
+      "kind": "add",
+      "position": [
+        400.0,
+        0.0
+      ]
+    },
+    {
+      "id": 10,
+      "kind": "add",
+      "position": [
+        400.0,
+        200.0
+      ]
+    }
+  ],
+  "links": [
+    {
+      "from": {
+        "node": 2,
+        "pin": "color"
+      },
+      "to": {
+        "node": 7,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 3,
+        "pin": "color"
+      },
+      "to": {
+        "node": 7,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 4,
+        "pin": "color"
+      },
+      "to": {
+        "node": 8,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 5,
+        "pin": "color"
+      },
+      "to": {
+        "node": 8,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 7,
+        "pin": "result"
+      },
+      "to": {
+        "node": 9,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 8,
+        "pin": "result"
+      },
+      "to": {
+        "node": 9,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 9,
+        "pin": "result"
+      },
+      "to": {
+        "node": 10,
+        "pin": "a"
+      }
+    },
+    {
+      "from": {
+        "node": 6,
+        "pin": "color"
+      },
+      "to": {
+        "node": 10,
+        "pin": "b"
+      }
+    },
+    {
+      "from": {
+        "node": 10,
+        "pin": "result"
+      },
+      "to": {
+        "node": 1,
+        "pin": "baseColor"
+      }
+    }
+  ]
+}

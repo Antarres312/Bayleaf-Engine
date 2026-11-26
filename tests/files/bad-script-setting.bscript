@@ -1,0 +1,1 @@
+{"format":"bayleaf.graph","version":8,"domain":"script","nodes":[{"id":1,"kind":"gameValue","position":[0,0],"values":{"name":"score","scope":"Everyone"}}],"links":[]}

@@ -225,8 +225,16 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    automation port, which also brings `mcp`.
 3. **Rendering.** `scene.render` images of the test scenes close to the Rust ones (a difference
    threshold, not exact pixels).
+   *Materials ported, 2026-11-26* (`src/Bayleaf.Render`: the material node catalog, the compiler to
+   the WGSL `surface` function, and the material library). Every `.bmaterial` file compiles to the
+   same WGSL, byte for byte, and the catalog matches the Rust one in every detail
+   (`BAYLEAF_BLESS=1 cargo test -p bayleaf-render parity_tests`). The renderer itself comes next.
 4. **Scripts.** C# scripts and visual scripts, hot reload, play mode. Gate: the script-step figures
    of `runtime-rebuild.md` at 20,000 and 100,000 objects, no worse than the Rust engine's at the time.
+   *Visual script catalog ported, 2026-11-26* (`src/Bayleaf.Script`: every node kind, the pins their
+   settings give them, the upgrade of older files and the Inspector check); `.bscript` files and the
+   catalog match the Rust engine's (`-p bayleaf-script parity_tests`). Compiling them to C# comes with
+   the script host.
 5. **Physics, audio, animation, particles, game interface, gameplay, streaming.** Their behaviour
    tests ported and passing.
    *Animation ported, 2026-11-26* (`src/Bayleaf.Animation`: clips, motions, players, animation states

@@ -1,0 +1,14 @@
+{
+  "format": "bayleaf.graph",
+  "version": 8,
+  "domain": "material",
+  "nodes": [
+    { "id": 1, "kind": "output", "position": [300, 0] },
+    { "id": 2, "kind": "position", "position": [0, 0] },
+    { "id": 3, "kind": "add", "position": [150, 0] }
+  ],
+  "links": [
+    { "from": { "node": 2, "pin": "position" }, "to": { "node": 3, "pin": "a" } },
+    { "from": { "node": 3, "pin": "result" }, "to": { "node": 1, "pin": "roughness" } }
+  ]
+}

@@ -97,6 +97,63 @@ public sealed record NodeDef(
     public PinDef? Output(string name) => Outputs.FirstOrDefault(p => Say.Equal(p.Name, name));
 
     public SettingDef? Setting(string name) => Settings.FirstOrDefault(s => Say.Equal(s.Name, name));
+
+    /// <summary>
+    /// Every detail of the kind as JSON, defaults and setting kinds too: what the parity tests compare
+    /// with the Rust engine's catalogs (docs/csharp-redesign.md).
+    /// </summary>
+    public JsonValue Spec()
+    {
+        static JsonValue Triple(Vector3 v) => new JsonArray([J.F(v.X), J.F(v.Y), J.F(v.Z)]);
+        static JsonValue One(string key, JsonValue value) => new JsonObject { { key, value } };
+        static JsonValue Pin(PinDef p) => new JsonObject
+        {
+            { "name", J.S(p.Name) },
+            { "label", J.S(p.Label) },
+            { "type", p.Type.ToJson() },
+            {
+                "default", p.Default switch
+                {
+                    PinDefault.Number n => One("float", J.F(n.Value)),
+                    PinDefault.Vec3 v => One("vec3", Triple(v.Value)),
+                    PinDefault.Color c => One("color", Triple(c.Value)),
+                    PinDefault.Bool b => One("bool", J.B(b.Value)),
+                    PinDefault.Text t => One("text", J.S(t.Value)),
+                    PinDefault.WholeNumber w => One("int", JsonNumber.Of((long)w.Value)),
+                    PinDefault.Implicit i => One("implicit", J.S(i.What)),
+                    _ => JsonValue.Null,
+                }
+            },
+        };
+        static JsonValue Setting(SettingDef s) => new JsonObject
+        {
+            { "name", J.S(s.Name) },
+            { "label", J.S(s.Label) },
+            {
+                "kind", s.Kind switch
+                {
+                    SettingKind.Number n => One("float", J.F(n.Value)),
+                    SettingKind.Color c => One("color", Triple(c.Value)),
+                    SettingKind.Vec3 v => One("vec3", Triple(v.Value)),
+                    SettingKind.Text t => One("text", J.S(t.Value)),
+                    SettingKind.Name n => One("name", J.S(n.Value)),
+                    SettingKind.Choice c => One("choice", J.Strings(c.Words)),
+                    _ => J.S("names"),
+                }
+            },
+        };
+        return new JsonObject
+        {
+            { "kind", J.S(Kind) },
+            { "label", J.S(Label) },
+            { "category", J.S(Category) },
+            { "description", J.S(Description) },
+            { "inputs", new JsonArray(Inputs.Select(Pin)) },
+            { "outputs", new JsonArray(Outputs.Select(Pin)) },
+            { "settings", new JsonArray(Settings.Select(Setting)) },
+            { "unique", J.B(Unique) },
+        }.Canonical();
+    }
 }
 
 /// <summary>The node kinds of one domain.</summary>
@@ -163,4 +220,15 @@ public sealed class Catalog
         }));
         return new JsonObject { { "domain", J.S(Domain) }, { "label", J.S(Label) }, { "extension", J.S(Extension) }, { "nodes", nodes } }.Canonical();
     }
+
+    /// <summary>Every detail of the catalog as JSON (<see cref="NodeDef.Spec"/> for each kind), for the parity tests.</summary>
+    public JsonValue Spec() => new JsonObject
+    {
+        { "domain", J.S(Domain) },
+        { "label", J.S(Label) },
+        { "extension", J.S(Extension) },
+        { "nodes", new JsonArray(Nodes.Select(n => n.Spec())) },
+        { "starter", new JsonArray(Starter.Select(s => (JsonValue)new JsonArray([J.S(s.Kind), J.V2(s.Position)]))) },
+        { "fractional", J.Strings(Fractional) },
+    }.Canonical();
 }

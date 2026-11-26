@@ -1,0 +1,11 @@
+{
+  "format": "bayleaf.graph",
+  "version": 1,
+  "domain": "material",
+  "nodes": [
+    { "id": 2, "kind": "output", "position": [300, 0], "values": { "opacity": 0.5, "roughness": 1, "outlineWidth": -1, "outlineColor": [1, 0, 0] } },
+    { "id": 3, "kind": "add", "position": [0, 0], "values": { "a": [1, 0.5, 0.25] } },
+    { "id": 4, "kind": "number", "position": [0, 100], "values": { "value": 2 } }
+  ],
+  "links": [{ "from": { "node": 3, "pin": "result" }, "to": { "node": 2, "pin": "baseColor" } }]
+}

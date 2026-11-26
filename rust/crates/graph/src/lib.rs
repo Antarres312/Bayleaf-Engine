@@ -206,6 +206,46 @@ impl NodeDef {
     pub fn setting(&self, name: &str) -> Option<&SettingDef> {
         self.settings.iter().find(|s| s.name == name)
     }
+
+    /// Every detail of the kind as JSON, defaults and setting kinds too: what the C# port's tests
+    /// compare its catalogs with (docs/csharp-redesign.md).
+    pub fn spec(&self) -> Value {
+        let pin = |p: &PinDef| {
+            let default = match p.default {
+                PinDefault::None => Value::Null,
+                PinDefault::Float(v) => serde_json::json!({ "float": v }),
+                PinDefault::Vec3(v) => serde_json::json!({ "vec3": v }),
+                PinDefault::Color(v) => serde_json::json!({ "color": v }),
+                PinDefault::Bool(v) => serde_json::json!({ "bool": v }),
+                PinDefault::Text(v) => serde_json::json!({ "text": v }),
+                PinDefault::Int(v) => serde_json::json!({ "int": v }),
+                PinDefault::Implicit(v) => serde_json::json!({ "implicit": v }),
+            };
+            serde_json::json!({ "name": p.name, "label": p.label, "type": p.ty, "default": default })
+        };
+        let setting = |s: &SettingDef| {
+            let kind = match s.kind {
+                SettingKind::Float(v) => serde_json::json!({ "float": v }),
+                SettingKind::Color(v) => serde_json::json!({ "color": v }),
+                SettingKind::Vec3(v) => serde_json::json!({ "vec3": v }),
+                SettingKind::Text(v) => serde_json::json!({ "text": v }),
+                SettingKind::Name(v) => serde_json::json!({ "name": v }),
+                SettingKind::Choice(v) => serde_json::json!({ "choice": v }),
+                SettingKind::Names => serde_json::json!("names"),
+            };
+            serde_json::json!({ "name": s.name, "label": s.label, "kind": kind })
+        };
+        serde_json::json!({
+            "kind": self.kind,
+            "label": self.label,
+            "category": self.category,
+            "description": self.description,
+            "inputs": self.inputs.iter().map(pin).collect::<Vec<_>>(),
+            "outputs": self.outputs.iter().map(pin).collect::<Vec<_>>(),
+            "settings": self.settings.iter().map(setting).collect::<Vec<_>>(),
+            "unique": self.unique,
+        })
+    }
 }
 
 /// The node kinds of one domain.
@@ -268,6 +308,18 @@ impl Catalog {
             })
             .collect();
         serde_json::json!({ "domain": self.domain, "label": self.label, "extension": self.extension, "nodes": nodes })
+    }
+
+    /// Every detail of the catalog as JSON ([`NodeDef::spec`] for each kind), for the C# port's tests.
+    pub fn spec(&self) -> Value {
+        serde_json::json!({
+            "domain": self.domain,
+            "label": self.label,
+            "extension": self.extension,
+            "nodes": self.nodes.iter().map(NodeDef::spec).collect::<Vec<_>>(),
+            "starter": self.starter.iter().map(|(kind, at)| serde_json::json!([kind, at])).collect::<Vec<_>>(),
+            "fractional": self.fractional,
+        })
     }
 }
 

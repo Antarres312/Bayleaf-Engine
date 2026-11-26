@@ -1371,5 +1371,7 @@ fn transform_from(v: &[f32; 9], position: [f64; 3]) -> Transform {
 #[cfg(feature = "compiled")]
 mod compiled;
 mod interpreted;
+#[cfg(test)]
+mod parity_tests;
 mod runtime;
 pub use runtime::{Runtime, ScriptHost};
