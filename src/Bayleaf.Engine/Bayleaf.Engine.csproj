@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L5: editing session, command registry, undo history and (later) play mode. Every action is a
+       command; the editor, the CLI and agents all dispatch the same command ids (AGENTS.md rule 14). -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Engine</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
+    <ProjectReference Include="..\Bayleaf.Ecs\Bayleaf.Ecs.csproj" />
+    <ProjectReference Include="..\Bayleaf.Scene\Bayleaf.Scene.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Pending.json" LogicalName="Bayleaf.Engine.Pending.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Engine.Tests" />
+  </ItemGroup>
+
+</Project>

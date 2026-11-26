@@ -1,2 +1,3 @@
 # The files both engines' tests read and the rewrites they must give stay byte for byte as written.
 /tests/files/** text eol=lf
+/tests/commands/** text eol=lf

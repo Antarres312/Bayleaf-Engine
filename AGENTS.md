@@ -150,7 +150,10 @@ recommended analyzers) with no suppressions; `unsafe` only in `Bayleaf.Native`, 
 comment. Both engines read and write each file the same, to the byte: `tests/files/expected/` holds what the Rust
 engine writes back for every file of `examples/` and `tests/files/` (`BAYLEAF_BLESS=1 cargo test -p bayleaf-scene`,
 in `rust/`, writes it), and both engines' tests compare with it, so a format change updates both trees and the
-expected files in one change. Checks for the C# projects you changed: `dotnet build Bayleaf.slnx`,
+expected files in one change. Commands work the same way: `tests/commands/expected/` holds what the Rust engine gives
+back for each batch of `tests/commands/` (`BAYLEAF_BLESS=1 cargo test -p bayleaf-engine parity_tests`), and a command
+the C# engine has not ported yet stays listed from `src/Bayleaf.Engine/Pending.json` (the Rust engine's list),
+disabled with a reason, until a ported spec of the same id takes its place. Checks for the C# projects you changed: `dotnet build Bayleaf.slnx`,
 `dotnet test --solution Bayleaf.slnx`, `Bayleaf.Check -- layers`, and after a package change
 `Bayleaf.Check -- licences`.
 

@@ -1,0 +1,461 @@
+{
+  "results": [
+    {
+      "name": "Bayleaf Engine",
+      "version": "0.3.0"
+    },
+    {
+      "id": "<id 0>"
+    },
+    {
+      "id": "<id 1>"
+    },
+    {
+      "id": "<id 2>"
+    },
+    {
+      "children": [],
+      "components": {
+        "mesh": {
+          "color": [
+            1.0,
+            0.5,
+            0.25,
+            1.0
+          ],
+          "metallic": 0.0,
+          "roughness": 0.30000001192092896,
+          "shape": "sphere"
+        },
+        "name": "Lamp",
+        "pointLight": {
+          "color": [
+            1.0,
+            0.949999988079071,
+            0.8500000238418579
+          ],
+          "intensity": 8.0,
+          "range": 8.0,
+          "shadows": false
+        },
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "id": "<id 1>",
+      "parent": "<id 0>"
+    },
+    {},
+    {},
+    {},
+    {
+      "id": "<id 3>"
+    },
+    {
+      "id": "<id 4>"
+    },
+    {
+      "parent": null
+    },
+    {
+      "parent": null
+    },
+    {
+      "parent": "<id 4>"
+    },
+    {
+      "parent": null
+    },
+    {},
+    {},
+    {
+      "index": 0
+    },
+    {
+      "index": 1
+    },
+    {},
+    {},
+    {},
+    {},
+    {},
+    {
+      "from": "defaults"
+    },
+    {
+      "from": "defaults"
+    },
+    {},
+    {
+      "format": "bayleaf.objects",
+      "objects": [
+        {
+          "components": {
+            "name": "Root",
+            "transform": {
+              "position": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "scale": [
+                1.0,
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "id": "<id 0>",
+          "parent": null
+        },
+        {
+          "components": {
+            "mesh": {
+              "color": [
+                0.800000011920929,
+                0.800000011920929,
+                0.800000011920929,
+                1.0
+              ],
+              "metallic": 0.0,
+              "roughness": 0.5,
+              "shape": "cube"
+            },
+            "name": "Lamp",
+            "scripts": [
+              {
+                "module": "scripts/flicker.wasm"
+              }
+            ],
+            "transform": {
+              "position": [
+                1.5,
+                2.0,
+                -3.0
+              ],
+              "rotation": [
+                0.0,
+                90.0,
+                0.0
+              ],
+              "scale": [
+                2.0,
+                2.0,
+                2.0
+              ]
+            }
+          },
+          "id": "<id 1>",
+          "parent": "<id 0>"
+        }
+      ],
+      "version": 26
+    },
+    {
+      "ids": [
+        "<id 5>"
+      ]
+    },
+    [
+      {
+        "children": [],
+        "id": "<id 2>",
+        "name": "Crate"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "<id 6>",
+            "name": "Lamp"
+          }
+        ],
+        "id": "<id 5>",
+        "name": "Root"
+      },
+      {
+        "children": [],
+        "id": "<id 4>",
+        "name": "Crate 3"
+      },
+      {
+        "children": [],
+        "id": "<id 3>",
+        "name": "Crate 2"
+      },
+      {
+        "children": [
+          {
+            "children": [],
+            "id": "<id 1>",
+            "name": "Lamp"
+          }
+        ],
+        "id": "<id 0>",
+        "name": "Root"
+      }
+    ],
+    {
+      "undone": "scene.object.paste"
+    },
+    {
+      "undone": "scene.component.remove"
+    },
+    {
+      "redone": "scene.component.remove"
+    },
+    {
+      "deleted": 2
+    },
+    [
+      {
+        "label": "Name",
+        "name": "name",
+        "removable": false
+      },
+      {
+        "label": "Transform",
+        "name": "transform",
+        "removable": false
+      },
+      {
+        "label": "Mesh",
+        "name": "mesh",
+        "removable": true
+      },
+      {
+        "label": "Sprite",
+        "name": "sprite",
+        "removable": true
+      },
+      {
+        "label": "Camera",
+        "name": "camera",
+        "removable": true
+      },
+      {
+        "label": "Directional Light",
+        "name": "directionalLight",
+        "removable": true
+      },
+      {
+        "label": "Point Light",
+        "name": "pointLight",
+        "removable": true
+      },
+      {
+        "label": "Spot Light",
+        "name": "spotLight",
+        "removable": true
+      },
+      {
+        "label": "Environment",
+        "name": "environment",
+        "removable": true
+      },
+      {
+        "label": "Rigid Body",
+        "name": "rigidBody",
+        "removable": true
+      },
+      {
+        "label": "Collider",
+        "name": "collider",
+        "removable": true
+      },
+      {
+        "label": "Character",
+        "name": "characterBody",
+        "removable": true
+      },
+      {
+        "label": "Joint",
+        "name": "joint",
+        "removable": true
+      },
+      {
+        "label": "Model Animation",
+        "name": "modelAnimation",
+        "removable": true
+      },
+      {
+        "label": "Keyframe Animation",
+        "name": "keyframeAnimation",
+        "removable": true
+      },
+      {
+        "label": "Follow Joint",
+        "name": "followJoint",
+        "removable": true
+      },
+      {
+        "label": "Audio Source",
+        "name": "audioSource",
+        "removable": true
+      },
+      {
+        "label": "Particle Emitter",
+        "name": "particleEmitter",
+        "removable": true
+      },
+      {
+        "label": "Interface",
+        "name": "interface",
+        "removable": true
+      },
+      {
+        "label": "Streamed Area",
+        "name": "streamedArea",
+        "removable": true
+      },
+      {
+        "label": "Player Control",
+        "name": "playerControl",
+        "removable": true
+      },
+      {
+        "label": "Game Rules",
+        "name": "gameRules",
+        "removable": true
+      },
+      {
+        "label": "Player Start",
+        "name": "playerStart",
+        "removable": true
+      },
+      {
+        "label": "Input Map",
+        "name": "inputMap",
+        "removable": true
+      },
+      {
+        "label": "Scripts",
+        "name": "scripts",
+        "removable": true
+      },
+      {
+        "label": "Tags",
+        "name": "tags",
+        "removable": true
+      },
+      {
+        "label": "Prefab",
+        "name": "prefab",
+        "removable": true
+      }
+    ],
+    {
+      "dirty": true,
+      "path": null,
+      "scene": {
+        "format": "bayleaf.scene",
+        "objects": [
+          {
+            "components": {
+              "name": "Crate",
+              "tags": [
+                "box",
+                "loot"
+              ],
+              "transform": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              }
+            },
+            "id": "<id 2>",
+            "parent": null
+          },
+          {
+            "components": {
+              "name": "Crate 3",
+              "tags": [
+                "box",
+                "loot"
+              ],
+              "transform": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              }
+            },
+            "id": "<id 4>",
+            "parent": null
+          },
+          {
+            "components": {
+              "name": "Crate 2",
+              "tags": [
+                "box",
+                "loot"
+              ],
+              "transform": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": [
+                  1.0,
+                  1.0,
+                  1.0
+                ]
+              }
+            },
+            "id": "<id 3>",
+            "parent": null
+          }
+        ],
+        "version": 26
+      }
+    }
+  ]
+}

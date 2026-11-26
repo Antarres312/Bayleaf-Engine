@@ -1,0 +1,1 @@
+[{"cmd": "scene.object.create", "params": {"name": "A"}}, {"cmd": "scene.object.create", "params": {"name": "B", "parent": "$0.id"}}, {"cmd": "scene.object.reparent", "params": {"id": "$0.id", "parent": "$1.id"}}]

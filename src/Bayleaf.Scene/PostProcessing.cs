@@ -165,6 +165,12 @@ public sealed record PostProcessing(ToneMapping ToneMapping, Bloom Bloom, ColorA
         { "antialiasing", J.S(AntialiasingNames[(int)Antialiasing]) },
     };
 
+    /// <summary>The effects as commands give and take them (the file's <c>post</c>).</summary>
+    public JsonObject ToJson() => WritePost();
+
+    /// <summary>Reads the effects as commands take them; throws <see cref="JsonShapeException"/> for another shape.</summary>
+    public static PostProcessing FromJson(JsonValue value) => ReadPost(value);
+
     private static Result<Unit, string> Within(string name, float value, float low, float high) =>
         float.IsFinite(value) && J.Within(value, low, high) ? Checks.Ok : Checks.Fail($"{name} must be between {Text.Number(low)} and {Text.Number(high)}");
 

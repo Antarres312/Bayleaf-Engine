@@ -1,0 +1,20 @@
+{
+  "error": "a new scene: the prefab ground.bprefab is open; save it and go back first (prefab.close)",
+  "failedStep": 3,
+  "results": [
+    {
+      "name": "p",
+      "path": "$out/p",
+      "scene": "$out/p/scenes/main.bscene"
+    },
+    {
+      "path": "$out/p/ground.bprefab",
+      "source": "ground.bprefab"
+    },
+    {
+      "depth": 1,
+      "problems": [],
+      "source": "ground.bprefab"
+    }
+  ]
+}

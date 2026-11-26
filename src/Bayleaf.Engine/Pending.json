@@ -1,0 +1,1620 @@
+[
+  {
+    "id": "app.version",
+    "label": "About Bayleaf Engine",
+    "menu": "Help/About Bayleaf Engine",
+    "shortcut": "",
+    "params": "none",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "edit.undo",
+    "label": "Undo",
+    "menu": "Edit/Undo",
+    "shortcut": "Ctrl+Z",
+    "params": "none",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "nothing to undo"
+  },
+  {
+    "id": "edit.redo",
+    "label": "Redo",
+    "menu": "Edit/Redo",
+    "shortcut": "Ctrl+Y",
+    "params": "none",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "nothing to redo"
+  },
+  {
+    "id": "scene.new",
+    "label": "New Scene",
+    "menu": "File/New Scene",
+    "shortcut": "Ctrl+N",
+    "params": "none",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.open",
+    "label": "Open Scene…",
+    "menu": "File/Open Scene…",
+    "shortcut": "Ctrl+O",
+    "params": "{path}",
+    "prompt": "openScene",
+    "enabled": true
+  },
+  {
+    "id": "scene.save",
+    "label": "Save Scene",
+    "menu": "File/Save Scene",
+    "shortcut": "Ctrl+S",
+    "params": "none",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "the scene has no file yet; use Save Scene As"
+  },
+  {
+    "id": "scene.saveAs",
+    "label": "Save Scene As…",
+    "menu": "File/Save Scene As…",
+    "shortcut": "Ctrl+Shift+S",
+    "params": "{path}",
+    "prompt": "saveScene",
+    "enabled": true
+  },
+  {
+    "id": "scene.render",
+    "label": "Render Image…",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path?, width?, height?, camera?, grid?}; writes a PNG, or without a path returns it as {png: base64} (at most 2048 on a side). camera: an object with a camera component; default: the first camera in the scene, else a view framing every object",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.objects",
+    "label": "List Objects",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns the object tree",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.document",
+    "label": "Show Scene Document",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns {path, dirty, scene}: every object and component, as the scene file holds them",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.components",
+    "label": "List Component Types",
+    "menu": "",
+    "shortcut": "",
+    "params": "none",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.create",
+    "label": "Create Object",
+    "menu": "Object/Create Empty Object",
+    "shortcut": "Ctrl+Shift+N",
+    "params": "{parent?, name?, index?, components?: {name: value or null}}; returns {id}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.delete",
+    "label": "Delete Object",
+    "menu": "Object/Delete Object",
+    "shortcut": "Delete",
+    "params": "{id}",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.duplicate",
+    "label": "Duplicate",
+    "menu": "Edit/Duplicate",
+    "shortcut": "Ctrl+D",
+    "params": "{id}; the copy, with its children, goes right after the original. Returns {id}",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.copy",
+    "label": "Copy",
+    "menu": "",
+    "shortcut": "",
+    "params": "{ids: [id, ...]}; returns the objects and their children as clipboard data for scene.object.paste",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.paste",
+    "label": "Paste",
+    "menu": "",
+    "shortcut": "",
+    "params": "{objects: <data from scene.object.copy>, parent?: id, index?: n}; returns the new {ids}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.moveUp",
+    "label": "Move Up",
+    "menu": "Object/Move Up",
+    "shortcut": "Alt+ArrowUp",
+    "params": "{id}; moves before the previous sibling",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.moveDown",
+    "label": "Move Down",
+    "menu": "Object/Move Down",
+    "shortcut": "Alt+ArrowDown",
+    "params": "{id}; moves after the next sibling",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.indent",
+    "label": "Make Child of Previous",
+    "menu": "Object/Make Child of Previous",
+    "shortcut": "Alt+ArrowRight",
+    "params": "{id}; becomes the last child of the previous sibling",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.outdent",
+    "label": "Move Out of Parent",
+    "menu": "Object/Move Out of Parent",
+    "shortcut": "Alt+ArrowLeft",
+    "params": "{id}; moves right after its parent",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.script.add",
+    "label": "Add Script",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, module}; module: .wasm or .bscript path relative to the project folder (or the scene file's folder outside a project); returns {index}",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.script.remove",
+    "label": "Remove Script",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, index}",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.script.setProperty",
+    "label": "Set Script Property",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, index, name, value}: value is a number, true/false, three numbers or text, as the script declares the property (an object property: the object's name); null returns to the script's default",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.inspect",
+    "label": "Inspect Object",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}; returns {id, parent, children, components}",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.object.reparent",
+    "label": "Move Object",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, parent?, index?, keepWorld? = true}; parent null moves to the root",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.component.set",
+    "label": "Set Component Value",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, component, value}",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.component.add",
+    "label": "Add Component",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, component}",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.component.remove",
+    "label": "Remove Component",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, component}",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "scene.component.reset",
+    "label": "Reset Component",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, component, script?}: puts every field back to its default; with script (an index, component \"scripts\") only that script's properties, to their declared defaults. On a prefab copy the prefab file's values are used instead, where the file has them. Returns {from: \"defaults\"} or {from: \"prefab\", source}",
+    "prompt": "selectedObject",
+    "enabled": true
+  },
+  {
+    "id": "play.start",
+    "label": "Play",
+    "menu": "Play/Play",
+    "shortcut": "Ctrl+P",
+    "params": "{scripts?: \"interpreted\" | \"compiled\"} (default interpreted); returns {scripts, running, runtime}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "play.stop",
+    "label": "Stop",
+    "menu": "Play/Stop",
+    "shortcut": "Ctrl+P",
+    "params": "none; restores the scene as it was before play",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "play.pause",
+    "label": "Pause or Resume",
+    "menu": "Play/Pause or Resume",
+    "shortcut": "Ctrl+Shift+P",
+    "params": "none; toggles pause",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "play.step",
+    "label": "Step",
+    "menu": "Play/Step",
+    "shortcut": "",
+    "params": "{seconds? = 1/60, steps? = 1}; advances play mode, also when paused",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "play.input",
+    "label": "Set Held Keys",
+    "menu": "",
+    "shortcut": "",
+    "params": "{keys: [names], pointer?: [x, y] (-1 to 1, +y up; null when outside the view), buttons?: n (bit 0 left, 1 right, 2 middle), pad?: {axes: [left x, left y, right x, right y, left trigger, right trigger], buttons: [South, East, …]}}; what scripts see as held, until the next call or the next editor frame",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "console.read",
+    "label": "Read Console",
+    "menu": "",
+    "shortcut": "",
+    "params": "{last?: n (default 100), errors?: true for errors only}; returns {lines: [{level, text}], total}: the newest lines, oldest first",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "console.clear",
+    "label": "Clear Console",
+    "menu": "",
+    "shortcut": "",
+    "params": "none",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "game.state",
+    "label": "Game State",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; the game's values and each player's (both empty at first), saved values kept between plays (in the project's saves/progress.json), and outcome: \"won\", \"lost\" or null",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "game.state.set",
+    "label": "Set Game Value",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name, value, player?, saved?}: sets a value in the game's state, a player's (an object with Player Control) or, with saved: true, a saved one; play mode only",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "game.saved.clear",
+    "label": "Clear Saved Values",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; forgets the values the game saved in the project, and in play mode the ones it holds",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "physics.raycast",
+    "label": "Cast Physics Ray",
+    "menu": "",
+    "shortcut": "",
+    "params": "{origin: [x, y, z], direction: [x, y, z], distance? = 1000}; the first collider or character hit (triggers left out), in play mode or in the scene as it is: {hit, object?, name?, distance?, point?, normal?}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "play.scene.load",
+    "label": "Load Scene in Play",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, additive?}: a .bscene relative to the project; added to the playing scene, or in its place (scripts restart, the game state stays); returns {objects}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "play.scene.unload",
+    "label": "Unload Scene in Play",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: removes the scenes added from that file while playing; returns {removed}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "play.scene.list",
+    "label": "Scenes Added in Play",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns {added: [{path, objects}]}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "play.status",
+    "label": "Play Status",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns {playing, paused, time, scripts, running, console}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "play.message",
+    "label": "Send Message",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name, value?, id?}: sends the scripts of object id (or of every object) the message now, as a script's send does",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "messages go to scripts while the game plays"
+  },
+  {
+    "id": "audio.playing",
+    "label": "Sounds Playing",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns {heard, sounds: [{id, source, object, seconds, looping, volume}]}: the sounds playing now (heard is false where play is silent)",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "audio.play",
+    "label": "Play Sound",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}: plays the object's Audio Source; returns {sound}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "audio.stop",
+    "label": "Stop Sound",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}: stops the sounds the object plays; returns {stopped}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "stream.areas",
+    "label": "Streamed Areas",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns {areas: [{id, name, scene, loadDistance, keepMargin, state, objects, problem?}]}: every Streamed Area in the playing scene; state is away, waiting, reading, here or failed",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "stream.wait",
+    "label": "Wait for Streamed Areas",
+    "menu": "",
+    "shortcut": "",
+    "params": "{seconds?}: waits (at most seconds, default 10, up to 60) until no Streamed Area is being read, and adds those that arrived; returns {here, busy}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "stream.split",
+    "label": "Split into Streamed Areas…",
+    "menu": "Object/Split into Streamed Areas…",
+    "shortcut": "",
+    "params": "{cellSize, folder, loadDistance?, keepMargin?}: moves the open scene's top objects into one .bscene per grid cell (cellSize wide, by X and Z) in folder (relative to the project; the files must not be there yet), and puts a Streamed Area for each cell under a new Streamed World object. Cameras, sun lights, environment, game rules, player starts and players stay. loadDistance defaults to 1.5 cells, keepMargin to a quarter cell; returns {world, areas: [{id, scene, objects}], moved}",
+    "prompt": {
+      "fields": [
+        {
+          "name": "cellSize",
+          "label": "Cell Size",
+          "default": "100",
+          "number": true
+        },
+        {
+          "name": "folder",
+          "label": "Folder",
+          "default": "cells",
+          "number": false
+        }
+      ]
+    },
+    "enabled": true
+  },
+  {
+    "id": "project.export",
+    "label": "Export Game…",
+    "menu": "File/Export Game…",
+    "shortcut": "",
+    "params": "{folder, platform?, mode?, player?}: writes the open project as a game into a new folder named after it inside folder: the player program under the game's name, and its scenes, assets and scripts in one file, game.pack, beside it (visual scripts compiled; Rust sources, build output and saved values left out; in native mode the pack is built into the program). platform is windows, linux, mac or web (default: this computer's); mode is how scripts run: interpreted, compiled or native (default: the project's choice for the platform); player is the program built on another system, or for the web the folder of the web player (default: the one cargo xtask web-player built). For the web the folder holds index.html, the web player and game.pack (the game's files in one file) instead. Refused, with the reasons, when project.export.check finds an error; returns {path, program, files, compiled, skipped}",
+    "prompt": "dialog",
+    "enabled": false,
+    "disabledReason": "open a project first"
+  },
+  {
+    "id": "project.export.check",
+    "label": "Check Export",
+    "menu": "",
+    "shortcut": "",
+    "params": "{platform?, mode?, player?}: whether the open project can be exported for platform with its scripts run in mode (defaults as for project.export), without writing anything; returns {platform, mode, ready, findings: [{severity: error|warning|note, message, file?}], scripts: [{path, kind, runs, note}], files}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open a project first"
+  },
+  {
+    "id": "scene.settings",
+    "label": "Scene Settings",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns the open scene's own settings: {lighting}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.settings.set",
+    "label": "Change Scene Settings",
+    "menu": "",
+    "shortcut": "",
+    "params": "{lighting?, postProcessing?}: the lighting asset (.blight, relative to the project folder; empty for the engine's light) and the post-processing asset (.bpost; empty for none) the scene uses; returns the settings",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "lighting.get",
+    "label": "Read Lighting",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: a lighting asset (.blight); returns {lighting: {skyColor, horizonColor, groundColor, ambient, showSky, fogDistance, sun: {enabled, rotation, color, intensity, shadows}}}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "lighting.set",
+    "label": "Change Lighting",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, lighting}: writes a lighting asset (the whole lighting, as lighting.get returns it); every scene that names it changes",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "post.get",
+    "label": "Read Post-processing",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: a post-processing asset (.bpost); returns {post: {toneMapping, bloom, color (with lookup, lookupStrength), vignette, depthFog, occlusion, antialiasing}}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "post.set",
+    "label": "Change Post-processing",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, post}: writes a post-processing asset (all of it, as post.get returns it); every scene and camera that names it changes. A colour lookup image (color.lookup) of the wrong size is refused; one not there yet is a warning",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "post.lookup.neutral",
+    "label": "Make Neutral Lookup",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, steps?}: writes a colour lookup image (.png) that changes no colour, steps (2 to 64, default 16) squares of steps by steps side by side, to recolour in an image editor and name in color.lookup; returns {path, relative} (relative to the project). Refuses a file that is already there",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "data.shape.get",
+    "label": "Read Data Shape",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: a data shape (.bshape, relative to the project folder or absolute); returns {shape: {fields: [{name, type, default, label?, hint?, range?, slider?, group?}]}}. type is as scripts declare property types: number, whole, bool, vector, color, text, object, prefab, sound, material, data, or list:<type>, map:<type> (text keys), map:<key type>:<type>",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "data.shape.set",
+    "label": "Change Data Shape",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, shape}: writes a data shape (all of it, as data.shape.get returns it); every data file that names it reads its fields from then on: a value that no longer fits reads as the field's default and is reported by data.get",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "data.get",
+    "label": "Read Data File",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: a data file (.bdata); returns {data: {shape, values}, fields: [{name, type, value, set}] (every field of its shape as it reads, set when the file gives the value), problems: [text]}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "data.set",
+    "label": "Change Data File",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, data: {shape, values}}: writes a data file (all of it): the shape it names (.bshape, relative to the project folder; empty for none) and the values that differ from the shape's defaults, by field name",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "data.field.set",
+    "label": "Change Data Field",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, name, value}: sets one field of a data file to a value that fits the field in its shape (as data.get shows values); value null returns it to the shape's default. Refuses names the shape lacks",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "profile.start",
+    "label": "Record Profile",
+    "menu": "",
+    "shortcut": "",
+    "params": "none: records each play step's time by part, and what the views draw, until profile.stop",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "profile.stop",
+    "label": "Stop Profile",
+    "menu": "",
+    "shortcut": "",
+    "params": "none: stops recording; the frames recorded stay",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "profile.clear",
+    "label": "Clear Profile",
+    "menu": "",
+    "shortcut": "",
+    "params": "none: forgets the frames recorded",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "profile.frames",
+    "label": "Profile Frames",
+    "menu": "",
+    "shortcut": "",
+    "params": "{last?}: the last frames recorded (all, at most 3000): {recording, gpuMeasured, frames: [{time, step, scripts, byScript, physics, streaming, sound, particles, extract, draw, gpu, drawCalls, triangles, meshBytes, imageBytes}], average}; gpu is the GPU's own time (null where the device gives no timestamps: gpuMeasured false; null while unknown)",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.catalog",
+    "label": "Graph Node Kinds",
+    "menu": "",
+    "shortcut": "",
+    "params": "{domain: \"material\" | \"script\" | \"animation\"}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.new",
+    "label": "New Graph",
+    "menu": "",
+    "shortcut": "",
+    "params": "{domain: \"material\" | \"script\" | \"animation\"}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.open",
+    "label": "Open Graph",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path} (.bmaterial or .bscript)",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.save",
+    "label": "Save Graph",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path?} (needed for a graph that has no file yet)",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.close",
+    "label": "Close Graph",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id?}: closes the graph in use (or the open graph id) with its undo steps; the one opened before it is then in use",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.get",
+    "label": "Show Graph",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns the graph in use: {id, domain, path, dirty, graph, problems, outputTypes}; outputTypes says what each number-or-vector output gives now, by its inputs: [{node, pin, type}]",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.list",
+    "label": "Open Graphs",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; the open graphs, each in a tab of its own: {graphs: [{id, domain, path, dirty, inUse}]}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.activate",
+    "label": "Use Graph",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id} or {path}: makes that open graph the one the graph.* commands work on",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.node.add",
+    "label": "Add Node",
+    "menu": "",
+    "shortcut": "",
+    "params": "{kind, position: [x, y]}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.node.remove",
+    "label": "Remove Node",
+    "menu": "",
+    "shortcut": "",
+    "params": "{node}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.node.move",
+    "label": "Move Node",
+    "menu": "",
+    "shortcut": "",
+    "params": "{node, position: [x, y]}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.node.set",
+    "label": "Set Node Value",
+    "menu": "",
+    "shortcut": "",
+    "params": "{node, name, value} (null restores the default)",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.node.copy",
+    "label": "Copy Nodes",
+    "menu": "",
+    "shortcut": "",
+    "params": "{nodes: [id]}: returns {text}, the nodes and the links between them as clipboard text",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.node.paste",
+    "label": "Paste Nodes",
+    "menu": "",
+    "shortcut": "",
+    "params": "{text, offset?: [x, y]}: adds copies of copied nodes with new ids; returns {nodes, skipped}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.node.duplicate",
+    "label": "Duplicate Nodes",
+    "menu": "",
+    "shortcut": "",
+    "params": "{nodes: [id]}: adds copies beside them, linked as the originals are to each other; returns {nodes, skipped}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.link.add",
+    "label": "Link Pins",
+    "menu": "",
+    "shortcut": "",
+    "params": "{from: {node, pin}, to: {node, pin}}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.link.remove",
+    "label": "Unlink Pin",
+    "menu": "",
+    "shortcut": "",
+    "params": "{node, pin}: removes every link at that pin",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.comment.add",
+    "label": "Add Comment",
+    "menu": "",
+    "shortcut": "",
+    "params": "{position: [x, y], size?: [w, h], text?}: a box behind nodes, with a note; returns {comment}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.comment.set",
+    "label": "Edit Comment",
+    "menu": "",
+    "shortcut": "",
+    "params": "{comment, text?, position?, size?}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.comment.remove",
+    "label": "Remove Comment",
+    "menu": "",
+    "shortcut": "",
+    "params": "{comment}: the nodes in it stay",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a graph first"
+  },
+  {
+    "id": "graph.variable.add",
+    "label": "Add Variable",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name, type: \"number\" | \"wholeNumber\" | \"vector\" | \"trueFalse\" | \"text\" | \"object\" | \"color\", shape?, key?, start?}: declares a variable of a visual script, starting at start (else zero); shape \"list\" or \"map\" makes it a list (items in order, by index from 0) or a map (values under keys of type key, else text) of that type, starting empty or with start ([...] or {...})",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.variable.set",
+    "label": "Change Variable",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name, rename?, type?, shape?, key?, start?}: a new start value, a new name that the variable's nodes follow, or a new type, shape (\"single\", \"list\", \"map\") or map key type (key); the start stays where it still fits, else it goes to zero, and its nodes follow the new type",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.variable.remove",
+    "label": "Remove Variable",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name}: its nodes keep working, starting from zero",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.property.add",
+    "label": "Add Property",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name, type, shape?, key?, default?}: declares a property of a visual script (type and shape as for variables), with a default (else zero); the Inspector sets it per object",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.property.set",
+    "label": "Change Property",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name, rename?, type?, shape?, key?, default?, inspector?}: a new default, a new type or shape (as for variables; options that no longer fit go), a new name that its Property and Set Property nodes follow, or how the Inspector shows it ({label?, hint?, group?, range?, slider?, readOnly?, choices?, showIf?}; {} for a plain row)",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.property.remove",
+    "label": "Remove Property",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name}: its nodes stay, reading zero where no object sets it",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.function.add",
+    "label": "Add Function",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name}: declares a function of a visual script, with no inputs or outputs yet; its Function node begins its actions, Return gives back its outputs and Call Function runs it",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.function.set",
+    "label": "Change Function",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name, rename?, inputs?, outputs?}: a new name, or new inputs or outputs ([{name, type}], type as for variables); the function's nodes follow, and links to pins that went away go",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.function.remove",
+    "label": "Remove Function",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name}: its nodes stay, and say they name no function",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.event.add",
+    "label": "Add Event",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name}: declares an event of a visual script, bringing no values yet; its On Event nodes run when a script or the interface triggers it on the object, and Trigger Event nodes trigger it",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.event.set",
+    "label": "Change Event",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name, rename?, params?}: a new name, or new values ([{name, type}], type as for variables); the event's nodes follow, and links to pins that went away go",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.event.remove",
+    "label": "Remove Event",
+    "menu": "",
+    "shortcut": "",
+    "params": "{name}: its nodes stay (a Trigger Event may name another script's event)",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "graph.menu.set",
+    "label": "Set Menu Path",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: where Add Component lists the visual script (Light/Flicker); empty for under Scripts",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "project.new",
+    "label": "New Project…",
+    "menu": "File/New Project…",
+    "shortcut": "",
+    "params": "{path, name?}: makes the folder `path` (it must not exist or be empty) with a starting scene, a material and a visual script, then opens the scene",
+    "prompt": "newProject",
+    "enabled": true
+  },
+  {
+    "id": "project.open",
+    "label": "Open Project…",
+    "menu": "File/Open Project…",
+    "shortcut": "",
+    "params": "{path}: a .bproject file or its folder; opens the project's main scene",
+    "prompt": "openProject",
+    "enabled": true
+  },
+  {
+    "id": "project.info",
+    "label": "Project Info",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; the open project's folder, name and main scene, or null",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "project.settings",
+    "label": "Project Settings",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns {project, settings}: the open project's settings (physics: {enabled, gravity, precision: \"single\" | \"double\"}, input: {map: the project's Input Map, a .binput file (see input.asset)}), or the defaults and project: false outside a project",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "project.settings.set",
+    "label": "Change Project Settings",
+    "menu": "",
+    "shortcut": "",
+    "params": "{settings}: the whole settings object, written to the project file; play mode uses it from its next start",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open a project first; scenes outside a project use the default settings"
+  },
+  {
+    "id": "scene.prefab.create",
+    "label": "Save as Prefab",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, path}: saves the object and its children to a .bprefab file and links the object to it",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.prefab.place",
+    "label": "Place Prefab",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, parent?, index?}: adds a linked copy of a .bprefab file; returns {id}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.prefab.apply",
+    "label": "Apply to Prefab",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}: writes this copy to its prefab file and updates the other copies in the scene; returns {updated}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.prefab.revert",
+    "label": "Revert to Prefab",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}: replaces this copy's objects with the prefab file's, keeping its name and transform",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "prefab.open",
+    "label": "Open Prefab",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: edits the prefab on its own: the scene and its undo history wait underneath, and prefab.close goes back; returns {source, depth}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "prefab.save",
+    "label": "Save Prefab",
+    "menu": "",
+    "shortcut": "",
+    "params": "none: writes the open prefab to its file; returns {path}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "no prefab is open"
+  },
+  {
+    "id": "prefab.close",
+    "label": "Back from Prefab",
+    "menu": "",
+    "shortcut": "",
+    "params": "{discard?}: goes back to the scene (or the prefab) underneath, whose copies update from the file; refuses unsaved changes unless discard",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "no prefab is open"
+  },
+  {
+    "id": "script.new",
+    "label": "New Script",
+    "menu": "",
+    "shortcut": "",
+    "params": "{folder, name}: makes a Rust script crate `folder/<name>/` from a template; returns {path, module}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "script.build",
+    "label": "Build Script",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: a script crate folder; builds it to WebAssembly next to the folder; returns {module, log}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "asset.info",
+    "label": "File Info",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: a file or folder, relative to the project folder or absolute; returns {path, kind, bytes, rows: [[label, value]], problems, text?}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "asset.create",
+    "label": "Create Asset",
+    "menu": "",
+    "shortcut": "",
+    "params": "{kind: \"folder\" | \"scene\" | \"material\" | \"visualScript\" | \"script\" | \"inputMap\" | \"lighting\" | \"postProcessing\" | \"interface\" | \"interfaceStyle\" | \"dataShape\" | \"dataFile\", folder, name}: makes it in the folder (relative to the project folder or absolute); returns {path}, and for a script {path, module}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "asset.list",
+    "label": "List Assets",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path?, recursive?}: what a folder of the project holds (the project folder when left out), as the Project panel lists it: hidden and build folders left out. Returns {entries: [{path, kind}], truncated}, paths relative to the project folder",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "asset.delete",
+    "label": "Delete Asset",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, permanent?}: moves a file or folder of the project (relative to the project folder or absolute) to the Recycle Bin; permanent: true deletes it for good, for where there is no Recycle Bin. Never the project folder itself. A Rust script leaves the project's workspace with it",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "asset.rename",
+    "label": "Rename Asset",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, name}: renames a file or folder of the project (relative to the project folder or absolute); a file keeps its extension when the name leaves it out; a Rust script's folder renames its crate, its built module and its workspace entry too. Never over another file. Returns {path}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "asset.import",
+    "label": "Import Files",
+    "menu": "",
+    "shortcut": "",
+    "params": "{files: [path], folder?}: copies models (.glb, .gltf with the files it names), images (.png, .jpg) and sounds into a folder of the project (relative to the project folder; the project folder when left out), each read first, so a file that cannot be read says why and nothing is copied. A name already taken gets a number. Models and images get import settings beside them. A file already in the project stays where it is. Returns {imported: [{path, kind, source}]}, paths relative to the project folder",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "asset.importSettings.get",
+    "label": "Import Settings",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: how a model or image of the project is read: {settings: {model?: {scale, upAxis: \"y\" | \"z\"}, image?: {mipmaps}}, saved}; saved is false while it has only the defaults",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "asset.importSettings.set",
+    "label": "Set Import Settings",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, settings: {model?: {scale, upAxis}, image?: {mipmaps}}}: saves how a model or image is read, beside it; scenes using it read it again. Returns {path} of the settings file",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.file.place",
+    "label": "Place File",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, parent?, index?, position?: [x, y, z]}: a model or a sound of the project as a new object named after it (a Mesh drawing the model, or an Audio Source playing the sound), at position (world units; the origin when left out). Returns {id}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "scene.image.apply",
+    "label": "Apply Image",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, image}: an image of the project becomes the object's look: a sprite shows it; a mesh gets a new material beside the image that shows it (named after it). Returns {material?}: the material made",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "ui.layout.get",
+    "label": "Read Interface",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: an interface layout (.bui) as {layout: {format, version, styles, root}}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "ui.layout.set",
+    "label": "Write Interface",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, layout}: checks and writes an interface layout (.bui): elements {kind, name?, classes?, text?, image?, value?, min?, max?, bind?, style?, children?}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "ui.element.add",
+    "label": "Add Interface Element",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, into?, kind, index?}: adds an element of kind to a layout, inside the element at into (child indices from the root; the root when left out), at index or last. Returns {at}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "ui.element.remove",
+    "label": "Remove Interface Element",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, at}: removes the element at at (child indices from the root) and what it holds",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "ui.element.move",
+    "label": "Move Interface Element",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, at, into, index}: moves the element at at into the element at into, at index (counted without it). Returns {at}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "ui.element.set",
+    "label": "Edit Interface Element",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, at, element: {kind?, name?, classes?, text?, image?, layout?, onClick?, value?, min?, max?, bind?, style?}}: changes the given fields of the element at at; style replaces the element's whole style",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "ui.element.saveAsPart",
+    "label": "Save Interface Part",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, at, to}: writes the element at at, with what it holds, as a layout file of its own (to, a new .bui) and puts a part using it in its place; inside it, its names are then <part>/<name>",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "ui.style.get",
+    "label": "Read Interface Style",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: an interface style file (.bstyle) as {style: {format, version, rules}}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "ui.style.set",
+    "label": "Write Interface Style",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, style}: checks and writes a style file (.bstyle): rules {kind | class | name, set: {property: value}}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "play.ui.state",
+    "label": "Interface State",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}: while playing, the object's interface as it shows: {visible, elements: [{name, kind, text, value, visible}]} for its named elements",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "play.ui.press",
+    "label": "Press Interface Element",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, element}: while playing, presses a button or an element with On Click (its scripts get pressed:<name>, and the On Click message) or flips a toggle (changed:<name>), as the player would",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "play.ui.change",
+    "label": "Change Interface Element",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, element, value? | text?}: while playing, sets a slider's or toggle's value or a text field's text as the player would; its scripts get changed:<name>",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "input.asset",
+    "label": "Read Input Map",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path}: a .binput file; returns {asset: {start, maps: [{name, actions: [{name, kind: \"trigger\" | \"held\" | \"value\", bindings: [key:W | mouse:Left | pad:South | axis:LeftX+]}]}]}, maps, problem}; scripts name an action map/action",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "input.asset.set",
+    "label": "Change Input Map",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path, asset: {start, maps: [{name, actions: [{name, kind, bindings}]}]}}: checks the maps and actions (names of letters, digits and _, unique; known bindings) and writes the file; play mode reads it from its next start",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "input.map.set",
+    "label": "Set Input Map",
+    "menu": "",
+    "shortcut": "",
+    "params": "{map, object?}: makes a map active, in the project's Input Map or an object's own (Input Map component); play mode only",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "input.state",
+    "label": "Input State",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; in play mode the active map of the project's Input Map and of each object's own, with their maps",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "timeline.new",
+    "label": "New Keyframe Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "{prefab, length?, path?}: opens a new timeline for the .bprefab file (length in seconds, 2 if left out); with path it is written there at once",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "timeline.open",
+    "label": "Open Keyframe Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path} (.btimeline)",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "timeline.save",
+    "label": "Save Keyframe Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "{path?} (needed for a timeline that has no file yet)",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.close",
+    "label": "Close Keyframe Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "{discard?}: closes the timeline with its undo steps; refuses unsaved changes unless discard",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.get",
+    "label": "Show Keyframe Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "none; returns {path, dirty, playhead, recording, posed, timeline, parts: [{id, name, object}]}; object is the scene object that stands for the part, when the prefab is open or placed",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.set",
+    "label": "Change Keyframe Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "{length?, looping?}: a shorter length drops the keys after it; returns {dropped}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.part.add",
+    "label": "Add Animated Part",
+    "menu": "",
+    "shortcut": "",
+    "params": "{part}: an object of the prefab, by its id in the prefab file",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.part.remove",
+    "label": "Remove Animated Part",
+    "menu": "",
+    "shortcut": "",
+    "params": "{part}: with its tracks",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.track.add",
+    "label": "Add Track",
+    "menu": "",
+    "shortcut": "",
+    "params": "{part, track}: track is {component, field} (transform position, rotation or scale; a field of another component, dotted inside an object field) or {script, property} (a property of the part's script with that module); the part is added too",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.track.remove",
+    "label": "Remove Track",
+    "menu": "",
+    "shortcut": "",
+    "params": "{part, track}: with its keys",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.key.set",
+    "label": "Set Key",
+    "menu": "",
+    "shortcut": "",
+    "params": "{part, track, time?, value?, ease?}: places a key (at the playhead when time is left out) or changes the one there; value left out keeps the key's or reads the part's value now; ease \"step\", \"linear\" or \"smooth\" (the default) says how it goes to the next key; the track and part are added too",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.key.move",
+    "label": "Move Keys",
+    "menu": "",
+    "shortcut": "",
+    "params": "{keys: [{part, track, time}], by}: moves the keys by seconds, inside the length; a key moved onto another's moment replaces it; returns {keys}, where they are now",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.key.remove",
+    "label": "Delete Keys",
+    "menu": "",
+    "shortcut": "",
+    "params": "{keys: [{part, track, time}]}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.key.copy",
+    "label": "Copy Keys",
+    "menu": "",
+    "shortcut": "",
+    "params": "{keys: [{part, track, time}]}: returns {text}, the keys as clipboard text",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.key.paste",
+    "label": "Paste Keys",
+    "menu": "",
+    "shortcut": "",
+    "params": "{text, time?, part?, track?}: adds copied keys, the earliest at time (else the playhead), on their own tracks, or all on part and track when given; returns {keys}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.key.record",
+    "label": "Record Key",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, component, value} or {id, index, name, value}: what scene.component.set and scene.script.setProperty take; keys the changed values of the posed part at the playhead (recording turns this on for those commands); returns {keys}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.seek",
+    "label": "Move Playhead",
+    "menu": "",
+    "shortcut": "",
+    "params": "{time}: shows the prefab's pose at that moment, without play mode or an undo step; any other command puts the values back first; returns {time, problems}",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.pose.end",
+    "label": "Show Without Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "none: puts back the values the pose replaced",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.record",
+    "label": "Record Keys",
+    "menu": "",
+    "shortcut": "",
+    "params": "{on}: while on, edits of a posed part (scene.component.set, scene.script.setProperty) become keys at the playhead",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "open or create a timeline first (timeline.open, timeline.new)"
+  },
+  {
+    "id": "timeline.play",
+    "label": "Play Keyframe Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}: in play mode, plays the object's Keyframe Animation from its start",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "timeline.stop",
+    "label": "Stop Keyframe Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}: in play mode, stops the object's Keyframe Animation where it is",
+    "prompt": "none",
+    "enabled": false,
+    "disabledReason": "play mode is not running"
+  },
+  {
+    "id": "animation.get",
+    "label": "Read Animation",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}: the object's animation: {clips: [{name, duration}], joints: [names], layers: [{joint, motion, time, fading}], parameters: {name: value}, playing, state (the animation state it is in, or null), states (its states' names, or null)}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "animation.play",
+    "label": "Play Clip",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, clip? | mix?: [{clip, at}], by?: number or parameter name, layer?: joint, fade?: seconds, loop?: true, speed?: 1}: plays a clip (or a mix of clips by where `by` lies among their points) on the object, fading from what played over `fade` (0 to 60, default 0.25); `layer` plays it on that joint and the ones under it only, over the rest",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "animation.stop",
+    "label": "Stop Clip",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, layer?: joint, fade?: seconds}: the whole skeleton fades to rest; a layer fades out and goes",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "animation.parameter.set",
+    "label": "Set Animation Parameter",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, name, value: number | true/false}: a parameter mixes and animation states read",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "animation.trigger",
+    "label": "Trigger Animation Parameter",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, name}: sets a trigger, which the first transition that uses it uses up",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "animation.preview",
+    "label": "Preview Clip",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, clip, time?: seconds, playing?: true/false}: outside play mode, shows the clip on the object's model in the views (the Inspector's preview), looping: from `time` when given (scrubbing), moving while `playing`; the scene file does not change",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "animation.preview.stop",
+    "label": "Stop Preview",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id}: ends the object's preview; the views show its Model Animation again",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "animation.joint.get",
+    "label": "Read Joint",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, joint}: where the joint of the object's model is in the world now, as its animation poses it (at rest when nothing plays): {position, rotation (degrees), scale}",
+    "prompt": "none",
+    "enabled": true
+  },
+  {
+    "id": "animation.state.set",
+    "label": "Go to Animation State",
+    "menu": "",
+    "shortcut": "",
+    "params": "{id, state, fade?: seconds}: an object running animation states goes to that state now, fading over `fade` (default 0.25)",
+    "prompt": "none",
+    "enabled": true
+  }
+]

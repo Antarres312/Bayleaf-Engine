@@ -1,0 +1,1 @@
+[{"cmd": "scene.object.create", "params": {"name": "Only"}}, {"cmd": "scene.object.moveUp", "params": {"id": "$0.id"}}]

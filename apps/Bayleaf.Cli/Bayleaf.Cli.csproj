@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L7: the headless engine. Runs commands and batch jobs, as the Rust bayleaf-cli does; the MCP
+       server for agents comes with Bayleaf.Automation. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Bayleaf.Cli</RootNamespace>
+    <AssemblyName>bayleaf-cli</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Bayleaf.Engine\Bayleaf.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bayleaf.Cli.Tests" />
+  </ItemGroup>
+
+</Project>

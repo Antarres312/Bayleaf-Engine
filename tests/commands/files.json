@@ -1,0 +1,19 @@
+[
+  {"cmd": "scene.object.create", "params": {"name": "Saved", "components": {"camera": null}}},
+  {"cmd": "scene.saveAs", "params": {"path": "$out/first.bscene"}},
+  {"cmd": "scene.new"},
+  {"cmd": "scene.document"},
+  {"cmd": "scene.open", "params": {"path": "$out/first.bscene"}},
+  {"cmd": "scene.object.create", "params": {"name": "Added"}},
+  {"cmd": "scene.save"},
+  {"cmd": "scene.open", "params": {"path": "$out/first.bscene"}},
+  {"cmd": "scene.objects"},
+  {"cmd": "scene.settings"},
+  {"cmd": "scene.settings.set", "params": {"lighting": " scenes\\sky.blight ", "postProcessing": "post/warm.bpost"}},
+  {"cmd": "scene.settings"},
+  {"cmd": "lighting.get", "params": {"path": "$root/examples/showcase/scenes/daylight.blight"}},
+  {"cmd": "post.get", "params": {"path": "$root/examples/showcase/post/showcase.bpost"}},
+  {"cmd": "scene.open", "params": {"path": "$root/examples/showcase/scenes/main.bscene"}},
+  {"cmd": "scene.objects"},
+  {"cmd": "scene.document"}
+]

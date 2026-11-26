@@ -183,7 +183,7 @@ public static class Files
     private static bool IsSeparator(char c) => c == '/' || c == Path.DirectorySeparatorChar || c == Path.AltDirectorySeparatorChar;
 
     /// <summary>The parts of a plain path: its root (empty for a relative path) and its names.</summary>
-    internal static (string Root, List<string> Names) Parts(string path)
+    public static (string Root, List<string> Names) Parts(string path)
     {
         var root = Path.GetPathRoot(path) ?? "";
         var names = new List<string>();

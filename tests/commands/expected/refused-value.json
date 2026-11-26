@@ -1,0 +1,10 @@
+{
+  "error": "invalid \"camera\" value: fov must be between 1 and 179 degrees",
+  "failedStep": 2,
+  "results": [
+    {
+      "id": "<id 0>"
+    },
+    {}
+  ]
+}

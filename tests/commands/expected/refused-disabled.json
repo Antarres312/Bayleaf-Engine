@@ -1,0 +1,9 @@
+{
+  "error": "command scene.save is disabled: the scene has no file yet; use Save Scene As",
+  "failedStep": 1,
+  "results": [
+    {
+      "id": "<id 0>"
+    }
+  ]
+}

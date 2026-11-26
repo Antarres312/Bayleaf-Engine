@@ -1,0 +1,1 @@
+[{"cmd": "scene.object.create", "params": {"name": "A"}}, {"cmd": "scene.component.add", "params": {"id": "$0.id", "component": "camera"}}, {"cmd": "scene.component.set", "params": {"id": "$0.id", "component": "camera", "value": {"projection": "perspective", "fov": 0, "size": 5, "near": 0.1, "far": 100}}}, {"cmd": "scene.document"}]

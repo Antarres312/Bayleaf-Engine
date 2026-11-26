@@ -66,6 +66,12 @@ public sealed record Lighting(Vector3 SkyColor, Vector3 HorizonColor, Vector3 Gr
         { "sun", Sun.Write() },
     };
 
+    /// <summary>The lighting as commands give and take it (the file's <c>lighting</c>).</summary>
+    public JsonObject ToJson() => WriteLighting();
+
+    /// <summary>Reads the lighting as commands take it; throws <see cref="JsonShapeException"/> for another shape.</summary>
+    public static Lighting FromJson(JsonValue value) => ReadLighting(value);
+
     /// <summary>Checks every value is in its range.</summary>
     public Result<Unit, string> Validate()
     {

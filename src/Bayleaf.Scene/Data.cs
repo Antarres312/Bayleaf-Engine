@@ -210,6 +210,16 @@ public sealed record DataShape(IReadOnlyList<DataField> Fields)
 
     public string ToText() => new JsonObject { { "format", J.S(Format) }, { "version", J.U(Version) }, { "fields", new JsonArray(Fields.Select(f => f.Write())) } }.ToPretty() + "\n";
 
+    /// <summary>The shape as commands give and take it: <c>{fields}</c>.</summary>
+    public JsonObject ToJson() => new() { { "fields", new JsonArray(Fields.Select(f => f.Write())) } };
+
+    /// <summary>Reads the shape as commands take it; throws <see cref="JsonShapeException"/> for another shape.</summary>
+    public static DataShape FromJson(JsonValue value)
+    {
+        var f = JsonFields.Of(value, "struct DataShape", true, "fields");
+        return new(f.Optional("fields", v => (IReadOnlyList<DataField>)JsonRead.List(v, DataField.Read), []));
+    }
+
     public static Result<DataShape, SceneError> FromText(string text)
     {
         var read = JsonReader.Parse(text).TryGet(out var value, out var parseError)
@@ -333,6 +343,20 @@ public sealed record DataFile(string Shape, SortedDictionary<string, PropertyVal
         { "shape", J.S(Shape) },
         { "values", new JsonObject(Values.Select(v => new KeyValuePair<string, JsonValue>(v.Key, v.Value.Write()))) },
     }.ToPretty() + "\n";
+
+    /// <summary>The data file as commands give and take it: <c>{shape, values}</c>.</summary>
+    public JsonObject ToJson() => new()
+    {
+        { "shape", J.S(Shape) },
+        { "values", new JsonObject(Values.Select(v => new KeyValuePair<string, JsonValue>(v.Key, v.Value.Write()))) },
+    };
+
+    /// <summary>Reads a data file as commands take it; throws <see cref="JsonShapeException"/> for another shape.</summary>
+    public static DataFile FromJson(JsonValue value)
+    {
+        var f = JsonFields.Of(value, "struct DataFile", true, "shape", "values");
+        return new(f.Optional("shape", JsonRead.Str, ""), f.Optional("values", v => JsonRead.Map(v, PropertyValue.Read), new SortedDictionary<string, PropertyValue>(Utf8Order.Instance)));
+    }
 
     public static Result<DataFile, SceneError> FromText(string text)
     {

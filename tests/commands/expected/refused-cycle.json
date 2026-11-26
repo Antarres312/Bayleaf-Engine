@@ -1,0 +1,12 @@
+{
+  "error": "an object cannot become a child of itself or of its own descendant",
+  "failedStep": 2,
+  "results": [
+    {
+      "id": "<id 0>"
+    },
+    {
+      "id": "<id 1>"
+    }
+  ]
+}

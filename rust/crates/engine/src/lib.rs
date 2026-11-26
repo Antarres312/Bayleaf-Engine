@@ -717,3 +717,6 @@ fn not_playing(session: &Session) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod parity_tests;

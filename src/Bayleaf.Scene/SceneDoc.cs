@@ -6,20 +6,22 @@ namespace Bayleaf.Scene;
 /// <summary>One object. Its position among its siblings is its order in <see cref="SceneDoc.Objects"/>.</summary>
 public sealed record ObjectDoc(StableId Id, StableId? Parent, SortedDictionary<string, JsonValue> Components)
 {
-    public bool Equals(ObjectDoc? other) => other is not null && Id == other.Id && Parent == other.Parent && Write().Equals(other.Write());
+    public bool Equals(ObjectDoc? other) => other is not null && Id == other.Id && Parent == other.Parent && ToJson().Equals(other.ToJson());
 
     public override int GetHashCode() => Id.GetHashCode();
 
     /// <summary>A copy whose component map can be changed without changing this one's.</summary>
     public ObjectDoc Copy() => this with { Components = new SortedDictionary<string, JsonValue>(Components, Utf8Order.Instance) };
 
-    internal static ObjectDoc Read(JsonValue value)
+    /// <summary>Reads an object as scene files and clipboard data hold it; throws <see cref="JsonShapeException"/> for another shape.</summary>
+    public static ObjectDoc FromJson(JsonValue value)
     {
         var f = JsonFields.Of(value, "struct ObjectDoc", true, "id", "parent", "components");
         return new(f.Required("id", JsonRead.Id), f.NullableValue("parent", JsonRead.Id), f.Required("components", v => JsonRead.Map(v, c => c.Canonical())));
     }
 
-    internal JsonObject Write() => new()
+    /// <summary>The object as scene files hold it.</summary>
+    public JsonObject ToJson() => new()
     {
         { "id", J.S(Id.ToHex()) },
         { "parent", Parent is { } parent ? J.S(parent.ToHex()) : JsonValue.Null },
@@ -53,7 +55,7 @@ public sealed record SceneDoc(string Format, uint Version, SceneSettings Setting
     {
         var f = JsonFields.Of(value, "struct SceneDoc", true, "format", "version", "settings", "objects");
         return new SceneDoc(f.Required("format", JsonRead.Str), f.Required("version", JsonRead.U32), f.Optional("settings", SceneSettings.Read, SceneSettings.Default),
-            f.Required("objects", v => (IReadOnlyList<ObjectDoc>)JsonRead.List(v, ObjectDoc.Read)));
+            f.Required("objects", v => (IReadOnlyList<ObjectDoc>)JsonRead.List(v, ObjectDoc.FromJson)));
     });
 
     public static Result<SceneDoc, string> FromText(string text) => JsonReader.Parse(text).TryGet(out var value, out var error) ? Read(value) : Result.Fail(error);
@@ -65,7 +67,7 @@ public sealed record SceneDoc(string Format, uint Version, SceneSettings Setting
         {
             o.Add("settings", Settings.Write());
         }
-        o.Add("objects", new JsonArray(Objects.Select(obj => obj.Write())));
+        o.Add("objects", new JsonArray(Objects.Select(obj => obj.ToJson())));
         return o;
     }
 

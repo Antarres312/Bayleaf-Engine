@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\apps\Bayleaf.Cli\Bayleaf.Cli.csproj" />
+  </ItemGroup>
+
+</Project>
