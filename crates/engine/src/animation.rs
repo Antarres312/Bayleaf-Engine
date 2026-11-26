@@ -70,6 +70,19 @@ impl Session {
         &self.animation.poses
     }
 
+    /// The preview of object `id` outside play mode: the clip its player shows, how far in, and
+    /// whether it moves.
+    pub fn animation_preview(&self, id: StableId) -> Option<PreviewState> {
+        if self.is_playing() {
+            return None;
+        }
+        let a = self.animation.objects.get(&id)?;
+        match a.player.layer("")?.current()? {
+            (Motion::Clip { clip, .. }, time) => Some(PreviewState { clip: clip.clone(), time, playing: !a.paused }),
+            _ => None,
+        }
+    }
+
     /// Whether an animation preview moves outside play mode (the editor then keeps calling
     /// [`Session::animate`]).
     pub fn animation_previewing(&self) -> bool {
@@ -91,6 +104,15 @@ impl Session {
             }
         }
     }
+}
+
+/// What an object's preview shows (see [`Session::animation_preview`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreviewState {
+    pub clip: String,
+    /// Seconds since the clip started (it loops).
+    pub time: f32,
+    pub playing: bool,
 }
 
 /// A view's assets with the session's poses: what the views pass to `extract_with`, so the
@@ -343,6 +365,28 @@ pub(crate) fn commands() -> Vec<CommandSpec> {
             parameter_set,
         ),
         spec("animation.trigger", "Trigger Animation Parameter", "{id, name}: sets a trigger, which the first transition that uses it uses up", trigger),
+        CommandSpec {
+            id: "animation.preview",
+            label: "Preview Clip",
+            menu: "",
+            shortcut: "",
+            params: "{id, clip, time?: seconds, playing?: true/false}: outside play mode, shows the clip on the object's model in the views (the Inspector's preview), looping: from `time` when given (scrubbing), moving while `playing`; the scene file does not change",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: outside_play,
+            run: preview,
+        },
+        CommandSpec {
+            id: "animation.preview.stop",
+            label: "Stop Preview",
+            menu: "",
+            shortcut: "",
+            params: "{id}: ends the object's preview; the views show its Model Animation again",
+            prompt: Prompt::None,
+            mutates: Mutates::No,
+            enabled: outside_play,
+            run: preview_stop,
+        },
         spec(
             "animation.joint.get",
             "Read Joint",
@@ -662,6 +706,55 @@ fn state_set(session: &mut Session, params: &Value) -> Result<Value, CommandErro
     Ok(out)
 }
 
+fn outside_play(session: &Session) -> Result<(), String> {
+    if session.is_playing() { Err("previews are for outside play mode".to_owned()) } else { Ok(()) }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviewParams {
+    id: StableId,
+    clip: String,
+    #[serde(default)]
+    time: Option<f32>,
+    #[serde(default)]
+    playing: Option<bool>,
+}
+
+fn preview(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: PreviewParams = parse(params)?;
+    check_name("clip", &p.clip)?;
+    if p.time.is_some_and(|t| !(t.is_finite() && (0.0..=1.0e6).contains(&t))) {
+        return Err(CommandError::BadParams("time must be from 0 to a million seconds".to_owned()));
+    }
+    let a = animated(session, p.id)?;
+    let shown = matches!(a.player.layer("").and_then(|l| l.current()), Some((Motion::Clip { clip, .. }, _)) if *clip == p.clip);
+    if !shown {
+        let motion = Motion::clip(&p.clip);
+        if let Some(problem) = motion.problems(&a.skeleton, &a.clips).first() {
+            return Err(CommandError::Failed(problem.clone()));
+        }
+        a.player.play("", motion, 0.0).map_err(CommandError::Failed)?;
+    }
+    if let Some(time) = p.time {
+        a.player.seek("", time);
+    }
+    if let Some(playing) = p.playing {
+        a.paused = !playing;
+    }
+    let world = Arc::new(a.world());
+    let out = describe(a);
+    session.animation.poses.insert(p.id, world);
+    Ok(out)
+}
+
+fn preview_stop(session: &mut Session, params: &Value) -> Result<Value, CommandError> {
+    let p: IdParams = parse(params)?;
+    session.animation.objects.remove(&p.id);
+    session.animation.poses.remove(&p.id);
+    Ok(json!({ "stopped": p.id }))
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -862,6 +955,34 @@ mod tests {
         );
         let found = session.console().iter().filter(|l| l.text.contains("found")).count();
         assert!(found > 0, "the script read the raised Hand joint: {:?}", session.console().iter().map(|l| &l.text).collect::<Vec<_>>());
+        run(&mut session, "play.stop", Value::Null).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_preview_scrubs_and_plays_a_clip_outside_play_mode_without_changing_the_scene() {
+        let (registry, mut session, id, dir) = arm_scene("preview");
+        let run = |session: &mut Session, command: &str, params: Value| registry.execute(session, command, &params);
+        let object = bayleaf_core::StableId::parse_hex(&id).unwrap();
+        let before = session.scene().to_doc();
+        run(&mut session, "animation.preview", json!({"id": id, "clip": "Stretch", "time": 0.5, "playing": false})).unwrap();
+        let scrubbed = arm_joint(&session, &id).x;
+        assert!((scrubbed - 0.75).abs() < 1e-3, "half way through Stretch: {scrubbed}");
+        session.animate(1.0);
+        assert!((arm_joint(&session, &id).x - scrubbed).abs() < 1e-6 && !session.animation_previewing(), "paused, it holds");
+        run(&mut session, "animation.preview", json!({"id": id, "clip": "Stretch", "playing": true})).unwrap();
+        assert!(session.animation_previewing());
+        session.animate(0.25);
+        assert!(arm_joint(&session, &id).x > scrubbed + 0.2, "playing, it moves on");
+        let shown = session.animation_preview(object).unwrap();
+        assert_eq!((shown.clip.as_str(), shown.playing), ("Stretch", true));
+        assert!(run(&mut session, "animation.preview", json!({"id": id, "clip": "Walk"})).is_err());
+        run(&mut session, "animation.preview.stop", json!({"id": id})).unwrap();
+        assert!(session.animation_poses().is_empty() && session.animation_preview(object).is_none());
+        assert_eq!(session.scene().to_doc(), before, "a preview never changes the scene");
+        assert!(!session.is_dirty(), "nor marks it changed");
+        run(&mut session, "play.start", Value::Null).unwrap();
+        assert!(run(&mut session, "animation.preview", json!({"id": id, "clip": "Stretch"})).is_err(), "not in play mode");
         run(&mut session, "play.stop", Value::Null).unwrap();
         std::fs::remove_dir_all(&dir).ok();
     }

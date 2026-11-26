@@ -117,3 +117,12 @@ the host functions in `docs/script-abi.md`. Changes are made after the step, as 
 `animation.stop`, `animation.parameter.set` and `animation.trigger` make them; what they cannot do
 (a clip the model lacks) goes to the console with the script's object. Reads see the objects as the
 last step posed them. A clip event arrives as a script event with the object as its value.
+
+## Previewing in the editor
+
+Outside play mode the Model Animation card of the Inspector previews a clip on the model: pick it
+under **Preview**, **Play** or **Pause** it, drag **Time** to scrub, and **Stop** to end the preview;
+the scene file never changes. The card does this with `animation.preview` (`{id, clip, time?,
+playing?}`) and `animation.preview.stop` (`{id}`), which agents can use as well; both refuse in play
+mode. The scene view's **Skeletons** switch draws the joints of every model with a skeleton (a line
+from each joint to its parent, as the model is posed now); selected objects always show theirs.

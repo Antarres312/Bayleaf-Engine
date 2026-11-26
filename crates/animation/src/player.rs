@@ -180,6 +180,17 @@ impl Player {
         }
     }
 
+    /// Puts what plays on the layer of `joint` at `time` seconds since it started, ending any fade
+    /// into it (scrubbing a preview).
+    pub fn seek(&mut self, joint: &str, time: f32) {
+        let time = if time.is_finite() { time.max(0.0) } else { 0.0 };
+        let Some(layer) = self.layers.iter_mut().find(|l| l.joint == joint) else { return };
+        if let Some(last) = layer.entries.pop() {
+            layer.entries.clear();
+            layer.entries.push(Entry { time, fade: 0.0, ..last });
+        }
+    }
+
     /// Sets a parameter (a number, a true/false or a trigger).
     pub fn set_parameter(&mut self, name: &str, value: Parameter) -> Result<(), String> {
         if !self.parameters.contains_key(name) && self.parameters.len() >= MAX_PARAMETERS {
