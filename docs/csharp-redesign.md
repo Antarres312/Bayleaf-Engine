@@ -1,8 +1,9 @@
 # Bayleaf in C#: a redesign
 
 Status: design, 2026-11-26. Asked for by the operator after the comparison of a C# port with the Rust
-engine. Stages 0 and 1 are done and 2 to 5 under way (see Stages; stage 4 has C# scripts and play mode): the C# tree, now at the repository's root, holds the core, the ECS and the
-scene with its files; the Rust tree is still the one users run.
+engine. Stages 0 to 3 are done and stage 4 is done but for compiling visual scripts to C# (see Stages); stages 5 to 8
+are not started. The C# tree is at the repository's root; the Rust tree is still the one users run. How to pick
+the work up: `csharp-port-handoff.md`.
 
 ## What is decided and what is not
 
@@ -362,7 +363,7 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
 
 1. ~~Keep the web player?~~ Kept (2026-11-26).
 2. ~~Keep sandboxed WebAssembly scripts?~~ No: C# scripts only (2026-11-26).
-3. Stage 1 is done: start stage 2 (the engine, its commands and the parity harness)?
+3. ~~Start stage 2?~~ Done, with stages 3 and most of 4 (2026-11-26); the operator stopped the work after stage 4.
 4. The script host's choices of stage 4, under "Scripts" above: the consent per project folder, given by
    the person through `project.scripts.allow` (refused to agents) or `--allow-scripts`, with play running
    without the scripts until then; the watchdog's limit of 2 s per step; one assembly per project, so any

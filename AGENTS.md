@@ -64,7 +64,7 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119
 Bayleaf Engine is a game engine and editor. It follows the Craft Apps conventions but is not a member of the
 suite. The vision, decisions and milestones are in `docs/vision.md`.
 
-**Two trees.** The engine is being ported from Rust to C# 14 on .NET 10 (`docs/csharp-redesign.md`). The C# tree is
+**Two trees.** The engine is being ported from Rust to C# 14 on .NET 10 (`docs/csharp-redesign.md`; where the port stands, how to check it and what is left: `docs/csharp-port-handoff.md`). The C# tree is
 the repository's root (`Bayleaf.slnx`: `src/`, `tests/`, `tools/`); the Rust tree is in `rust/` (its workspace,
 crates, apps, xtask, scripts and benchmarks) and stays the one users run until the port's stage 8. `examples/`,
 `assets/` and `docs/` are shared. Rust paths in the paragraphs below up to **The C# tree** are relative to `rust/`,
