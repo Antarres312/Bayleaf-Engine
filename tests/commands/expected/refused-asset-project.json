@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: the project folder itself, or a folder holding it, is never deleted",
+  "failedStep": 1,
+  "results": [
+    {
+      "name": "r",
+      "path": "$out/r",
+      "scene": "$out/r/scenes/main.bscene"
+    }
+  ]
+}

@@ -23,6 +23,13 @@ scene with its files; the Rust tree is still the one users run.
   `.bscript`, `.banim`, `.btimeline`, `.bshape`, `.bdata`, `.blight`, `.bimport`, `.build` and the
   rest), with the same `VERSION` numbers. A project made in the Rust editor opens in the C# one and
   back, with no conversion.
+- **Compatibility with old projects may go (the operator, 2026-11-26).** The C# engine reads and writes
+  today's formats as the Rust one does, which the parity tests keep checking while Rust is the
+  reference. Where keeping older projects working costs more than it gives (reading old format
+  versions, moving old data on open, `.wasm` scripts, a format that a C# design does better), the C#
+  engine may drop it: it then refuses the old file with a message that says what to do, the parity
+  test of that case is removed in the same change, and the change says so. Today's files of the
+  examples keep opening in both engines until stage 8.
 - **Decided by the operator, 2026-11-26:** game scripts are C# only (with visual scripts compiled to C#);
   there is no WebAssembly script module, so the Rust tree's `.wasm` scripts are rewritten in C# when their
   games move. The web player stays, on .NET's WebAssembly build, at the cost named under Risks.
@@ -202,18 +209,18 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    `Bayleaf.Cli`. A parity harness runs the same command lists against both CLIs and compares what
    comes back. From here on, new features land in C# only; the Rust tree takes fixes.
    *In progress, 2026-11-26.* `src/Bayleaf.Engine` holds the session, the command registry with its
-   undo steps (merged by key, as the editor drags), the automation confinement, and 77 of the Rust
+   undo steps (merged by key, as the editor drags), the automation confinement, and 81 of the Rust
    engine's 172 commands: the scene's files, objects, hierarchy, components and scripts, its settings,
    lighting and post-processing assets, data files and shapes, Input Maps, projects and prefabs (with
-   overrides, nesting and editing a prefab on its own) and keyframe animations (editing, the playhead's pose, recording, copying keys; their undo steps share the scene's history), the console, clearing saved values and splitting a scene into Streamed Areas (`src/Bayleaf.Streaming`, the opt-in module that streams them in play mode, is ported with its tests and waits for play mode). `apps/Bayleaf.Cli` runs `commands`, `run` and
-   `batch` as the Rust CLI does. The other 95 are listed with the Rust engine's id, label, menu,
+   overrides, nesting and editing a prefab on its own) and keyframe animations (editing, the playhead's pose, recording, copying keys; their undo steps share the scene's history), the console, clearing saved values and splitting a scene into Streamed Areas (`src/Bayleaf.Streaming`, the opt-in module that streams them in play mode, is ported with its tests and waits for play mode), and the project's files (`asset.create`, `asset.list`, `asset.rename`, `asset.delete`; for now without a Recycle Bin, so a delete needs `permanent: true`, and without new materials, visual scripts and Rust scripts, each refused with why). `apps/Bayleaf.Cli` runs `commands`, `run` and
+   `batch` as the Rust CLI does. The other 91 are listed with the Rust engine's id, label, menu,
    shortcut, params and prompt, but disabled with a reason, until their part is ported
    (`src/Bayleaf.Engine/Pending.json` is the Rust engine's list): graphs, play mode, sound, streaming,
    export, the profiler, assets and importing, the game interface, playing timelines, skeletal animation, and
    `scene.render`. The harness: each batch in `tests/commands/` runs in both engines' tests
    (`rust/crates/engine/src/parity_tests.rs`, `tests/Bayleaf.Cli.Tests`), as `bayleaf-cli batch` runs
    it, and what comes back (folders as `$root`/`$out`, ids as `<id N>`) is compared with
-   `tests/commands/expected/`, which the Rust test writes with `BAYLEAF_BLESS=1`. All 15 batches agree,
+   `tests/commands/expected/`, which the Rust test writes with `BAYLEAF_BLESS=1`. All 18 batches agree,
    and every ported command lists the same as in Rust. Running both CLIs as programs comes with the
    automation port, which also brings `mcp`.
 3. **Rendering.** `scene.render` images of the test scenes close to the Rust ones (a difference

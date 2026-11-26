@@ -1,0 +1,1 @@
+[{"cmd": "project.new", "params": {"path": "$out/r"}}, {"cmd": "asset.rename", "params": {"path": "scenes/main.bscene", "name": "a/b"}}]

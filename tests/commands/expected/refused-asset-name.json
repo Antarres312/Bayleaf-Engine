@@ -1,0 +1,11 @@
+{
+  "error": "invalid params: a name has 1 to 100 characters and none of / \\ : * ? \" < > |",
+  "failedStep": 1,
+  "results": [
+    {
+      "name": "r",
+      "path": "$out/r",
+      "scene": "$out/r/scenes/main.bscene"
+    }
+  ]
+}

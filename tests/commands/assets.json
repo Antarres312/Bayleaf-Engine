@@ -1,0 +1,23 @@
+[
+  {"cmd": "project.new", "params": {"path": "$out/a"}},
+  {"cmd": "asset.list", "params": {"recursive": true}},
+  {"cmd": "asset.create", "params": {"kind": "folder", "folder": "", "name": "levels"}},
+  {"cmd": "asset.create", "params": {"kind": "scene", "folder": "levels", "name": "First"}},
+  {"cmd": "asset.create", "params": {"kind": "inputMap", "folder": "input", "name": "menus.binput"}},
+  {"cmd": "asset.create", "params": {"kind": "lighting", "folder": "scenes", "name": "night"}},
+  {"cmd": "asset.create", "params": {"kind": "postProcessing", "folder": "assets", "name": "soft"}},
+  {"cmd": "asset.create", "params": {"kind": "interface", "folder": "assets", "name": "hud"}},
+  {"cmd": "asset.create", "params": {"kind": "interfaceStyle", "folder": "assets", "name": "look"}},
+  {"cmd": "asset.create", "params": {"kind": "dataShape", "folder": "assets", "name": "enemy"}},
+  {"cmd": "asset.create", "params": {"kind": "dataFile", "folder": "assets", "name": "goblin"}},
+  {"cmd": "lighting.get", "params": {"path": "scenes/night.blight"}},
+  {"cmd": "asset.list", "params": {"path": "assets"}},
+  {"cmd": "asset.rename", "params": {"path": "assets/hud.bui", "name": "overlay"}},
+  {"cmd": "asset.rename", "params": {"path": "scenes", "name": "maps"}},
+  {"cmd": "scene.document"},
+  {"cmd": "asset.delete", "params": {"path": "assets/goblin.bdata", "permanent": true}},
+  {"cmd": "asset.delete", "params": {"path": "levels", "permanent": true}},
+  {"cmd": "asset.list", "params": {"recursive": true}},
+  {"cmd": "scene.open", "params": {"path": "$out/a/maps/main.bscene"}},
+  {"cmd": "asset.create", "params": {"kind": "scene", "folder": "maps", "name": "main"}}
+]

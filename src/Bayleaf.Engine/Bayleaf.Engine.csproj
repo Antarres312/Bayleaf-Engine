@@ -10,6 +10,8 @@
     <ProjectReference Include="..\Bayleaf.Core\Bayleaf.Core.csproj" />
     <ProjectReference Include="..\Bayleaf.Ecs\Bayleaf.Ecs.csproj" />
     <ProjectReference Include="..\Bayleaf.Scene\Bayleaf.Scene.csproj" />
+    <ProjectReference Include="..\Bayleaf.Assets\Bayleaf.Assets.csproj" />
+    <ProjectReference Include="..\Bayleaf.Interface\Bayleaf.Interface.csproj" />
   </ItemGroup>
 
   <ItemGroup>

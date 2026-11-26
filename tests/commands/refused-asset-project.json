@@ -1,0 +1,1 @@
+[{"cmd": "project.new", "params": {"path": "$out/r"}}, {"cmd": "asset.delete", "params": {"path": ".", "permanent": true}}]
