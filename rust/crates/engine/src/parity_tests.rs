@@ -176,3 +176,85 @@ fn the_command_batches_give_back_what_the_expected_files_say() {
         assert_eq!(written, expected, "{} gives back something else than {}", batch.display(), expected_path.display());
     }
 }
+
+/// The scenes whose pictures both engines' `scene.render` must draw alike (stage 3 of
+/// docs/csharp-redesign.md), each with the project it opens in: the examples, and test files that hold
+/// every component, an old environment and the first format.
+const RENDERED: [(&str, Option<&str>); 5] = [
+    ("examples/demo/demo.bscene", None),
+    ("examples/showcase/scenes/main.bscene", Some("examples/showcase")),
+    ("tests/files/every-component.bscene", None),
+    ("tests/files/old-environment.bscene", None),
+    ("tests/files/version-1.bscene", None),
+];
+
+/// Pixels across and down of the compared pictures.
+const RENDER_SIZE: (u32, u32) = (192, 108);
+
+/// How far two pictures of the same scene may differ, per channel out of 255: on average over every
+/// pixel, and in the pixel that differs most (why these, in docs/csharp-redesign.md, stage 3).
+const MEAN_LIMIT: f64 = 1.0;
+const MAX_LIMIT: u8 = 64;
+
+/// The mean and the largest difference of each colour channel between two RGBA pictures of one size.
+fn picture_difference(a: &[u8], b: &[u8]) -> ([f64; 3], [u8; 3]) {
+    let (mut sum, mut max) = ([0u64; 3], [0u8; 3]);
+    for (p, q) in a.chunks(4).zip(b.chunks(4)) {
+        for c in 0..3 {
+            let d = p[c].abs_diff(q[c]);
+            sum[c] += u64::from(d);
+            max[c] = max[c].max(d);
+        }
+    }
+    let pixels = (a.len() / 4).max(1) as f64;
+    (sum.map(|s| s as f64 / pixels), max)
+}
+
+/// Each scene of `RENDERED`, opened and drawn by `scene.render`, looks as `tests/files/expected/renders`
+/// says: this test writes the pictures with `BAYLEAF_BLESS=1` (on a machine with a GPU) and otherwise
+/// checks that this engine still draws them within the limits the C# engine's test is held to. It skips
+/// without a GPU, unless `BAYLEAF_GPU_REQUIRED=1`.
+#[test]
+fn the_shared_scenes_render_as_the_expected_pictures() {
+    let bless = std::env::var_os("BAYLEAF_BLESS").is_some_and(|v| v == "1");
+    let expected_dir = root().join("tests").join("files").join("expected").join("renders");
+    let out = std::env::temp_dir().join(format!("bayleaf-render-parity-{}", std::process::id()));
+    std::fs::create_dir_all(&out).unwrap();
+    for (scene, project) in RENDERED {
+        let registry = CommandRegistry::with_builtins();
+        let mut session = Session::default();
+        if let Some(project) = project {
+            registry.execute(&mut session, "project.open", &json!({"path": root().join(project)})).unwrap();
+        }
+        let name = format!("{}.png", scene.replace('/', "__"));
+        // A test file is opened from a copy: opening an old one moves its environment into a lighting
+        // file beside it.
+        let opened = if scene.starts_with("tests/") {
+            let copy = out.join(Path::new(scene).file_name().unwrap());
+            std::fs::copy(root().join(scene), &copy).unwrap();
+            copy
+        } else {
+            root().join(scene)
+        };
+        registry.execute(&mut session, "scene.open", &json!({"path": opened})).unwrap();
+        let drawn = out.join(&name);
+        let params = json!({"path": drawn, "width": RENDER_SIZE.0, "height": RENDER_SIZE.1});
+        match registry.execute(&mut session, "scene.render", &params) {
+            Ok(_) => {}
+            Err(e) if std::env::var_os("BAYLEAF_GPU_REQUIRED").is_none() && e.to_string().contains("no usable graphics adapter") => {
+                eprintln!("skipped: {e}");
+                return;
+            }
+            Err(e) => panic!("{scene}: {e}"),
+        }
+        if bless {
+            std::fs::create_dir_all(&expected_dir).unwrap();
+            std::fs::copy(&drawn, expected_dir.join(&name)).unwrap();
+        }
+        let (now, expected) = (bayleaf_render::assets::load_image(&drawn).unwrap(), bayleaf_render::assets::load_image(&expected_dir.join(&name)).unwrap());
+        assert_eq!((now.width, now.height), (expected.width, expected.height), "{scene}");
+        let (mean, max) = picture_difference(&now.rgba, &expected.rgba);
+        assert!(mean.iter().all(|m| *m <= MEAN_LIMIT) && max.iter().all(|m| *m <= MAX_LIMIT), "{scene} differs from {name}: mean {mean:?}, largest {max:?}");
+    }
+    std::fs::remove_dir_all(&out).ok();
+}

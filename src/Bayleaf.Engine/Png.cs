@@ -47,8 +47,8 @@ internal static class Png
         output.Write(word);
     }
 
-    /// <summary>The PNG file of an RGBA image (4 bytes a pixel, rows top first).</summary>
-    public static byte[] Encode(int width, int height, ReadOnlySpan<byte> rgba)
+    /// <summary>The PNG file of an RGBA image (4 bytes a pixel, rows top first); marked as sRGB (perceptual) when <paramref name="srgb"/> is set, as rendered pictures are.</summary>
+    public static byte[] Encode(int width, int height, ReadOnlySpan<byte> rgba, bool srgb = false)
     {
         using var output = new MemoryStream();
         output.Write([0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A]);
@@ -58,6 +58,10 @@ internal static class Png
         header[8] = 8;
         header[9] = 6;
         Chunk(output, "IHDR", header);
+        if (srgb)
+        {
+            Chunk(output, "sRGB", [0]);
+        }
         using (var raw = new MemoryStream())
         {
             using (var z = new ZLibStream(raw, CompressionLevel.Optimal, true))

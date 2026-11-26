@@ -165,6 +165,16 @@ internal static class Licences
         "IJG", "NCSA", "CDLA-Permissive-2.0", "CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0", "OFL-1.1", "Ubuntu-font-1.0", "Bitstream-Vera", "LicenseRef-Public-Domain", "MPL-2.0",
     };
 
+    /// <summary>
+    /// Packages that name their licence only in a file, read by hand: package and version, and the
+    /// licence the file holds (each is recorded in ATTRIBUTION.md too). Another version is read again.
+    /// </summary>
+    private static readonly Dictionary<string, string> CheckedByHand = new(StringComparer.Ordinal)
+    {
+        // Through Silk.NET.Core; its LICENSE.TXT is the MIT licence of the .NET Foundation.
+        ["Microsoft.DotNet.PlatformAbstractions/3.1.6"] = "MIT",
+    };
+
     /// <summary>The identifiers in a licence expression; it is allowed when every one is.</summary>
     private static IEnumerable<string> Identifiers(string expression) =>
         expression.Replace('(', ' ').Replace(')', ' ').Split(" OR ").SelectMany(p => p.Split(" AND ")).Select(p => string.Join(' ', p.Split(' ', StringSplitOptions.RemoveEmptyEntries)))
@@ -194,6 +204,7 @@ internal static class Licences
                 var path = library.Value.GetProperty("path").GetString() ?? "";
                 var nuspec = folders.Select(f => Path.Join(f, path)).Where(Directory.Exists).SelectMany(d => Directory.EnumerateFiles(d, "*.nuspec")).FirstOrDefault();
                 var licence = nuspec is null ? null : XDocument.Load(nuspec).Descendants().FirstOrDefault(e => e.Name.LocalName == "license" && (string?)e.Attribute("type") == "expression")?.Value;
+                licence ??= CheckedByHand.GetValueOrDefault(library.Name);
                 seen[library.Name] = licence ?? "";
                 if (licence is null)
                 {

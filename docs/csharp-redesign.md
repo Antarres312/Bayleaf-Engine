@@ -108,6 +108,8 @@ through WebGPU. The WGSL shaders and the material graph's WGSL output stay as th
   renderer uses), through **Silk.NET.WebGPU** (MIT). Silk.NET's 2.x line is now updated only now and
   then, so the bindings are thin and kept in `Bayleaf.Native`; if they fall behind, we generate our
   own from `webgpu.h`.
+  (Since stage 3 they have: the wgpu-native Silk.NET 2.23 carries is of wgpu 0.19's time, against the Rust
+  renderer's wgpu 30. Everything draws alike, but nothing newer than that `webgpu.h` can be used.)
 - Windows, input and the player's window come from **SDL3** (Zlib).
 - `bayleaf-cli run --cmd scene.render` keeps writing a PNG without a window, and GPU tests keep
   skipping without an adapter unless `BAYLEAF_GPU_REQUIRED=1`.
@@ -209,15 +211,15 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    `Bayleaf.Cli`. A parity harness runs the same command lists against both CLIs and compares what
    comes back. From here on, new features land in C# only; the Rust tree takes fixes.
    *In progress, 2026-11-26.* `src/Bayleaf.Engine` holds the session, the command registry with its
-   undo steps (merged by key, as the editor drags), the automation confinement, and 138 of the Rust
+   undo steps (merged by key, as the editor drags), the automation confinement, and 139 of the Rust
    engine's 172 commands: the scene's files, objects, hierarchy, components and scripts, its settings,
    lighting and post-processing assets, data files and shapes, Input Maps, projects and prefabs (with
    overrides, nesting and editing a prefab on its own) and keyframe animations (editing, the playhead's pose, recording, copying keys; their undo steps share the scene's history), the console, clearing saved values and splitting a scene into Streamed Areas (`src/Bayleaf.Streaming`, the opt-in module that streams them in play mode, is ported with its tests and waits for play mode), and the project's files (`asset.create`, `asset.list`, `asset.rename`, `asset.delete`; for now without a Recycle Bin, so a delete needs `permanent: true`, and without Rust scripts, refused with why), what a file is and holds (`asset.info`; a visual script's properties are the ones its graph declares, and a `.wasm` module is not described, since the C# engine's scripts are C#), the graph editor's commands (`graph.*`: material graphs, visual scripts and animation states, several open at once, their edits undo steps in the scene's history; a visual script's problems say it is not compiled, until the script host compiles visual scripts to C#), making an image an object's look (`scene.image.apply`), and bringing files in (`asset.import` with its import settings, `asset.importSettings.get`/`.set`, `scene.file.place`; until sound is ported a sound is checked only for its size, as the Rust engine does without its `audio` feature), and editing game interface layouts and their style files (`ui.layout.*`, `ui.element.*`, `ui.style.*`), and skeletal animation outside play mode (the `animation.*` commands on a player the first command makes for an object, the editor's preview that scrubs and plays a clip, `Session.Animate` moving previews on, and the poses the views will draw; what Rust does only while playing, a Model Animation's own clip or animation states, root motion, clip events and scripts' animation, comes with play mode; joint places agree to the bit except where a turn is interpolated, which the Rust engine does with glam's approximate arc cosine and sine, so the last digit can differ and the batch reads joints where no turn is interpolated). `apps/Bayleaf.Cli` runs `commands`, `run` and
-   `batch` as the Rust CLI does. The other 34 are listed with the Rust engine's id, label, menu,
+   `batch` as the Rust CLI does. The other 33 are listed with the Rust engine's id, label, menu,
    shortcut, params and prompt, but disabled with a reason, until their part is ported
    (`src/Bayleaf.Engine/Pending.json` is the Rust engine's list): play mode, sound, streaming,
-   export, the profiler, the game interface in play mode, playing timelines, and
-   `scene.render`. The harness: each batch in `tests/commands/` runs in both engines' tests
+   export, the profiler, the game interface in play mode and playing timelines (`scene.render` came
+   with stage 3). The harness: each batch in `tests/commands/` runs in both engines' tests
    (`rust/crates/engine/src/parity_tests.rs`, `tests/Bayleaf.Cli.Tests`), as `bayleaf-cli batch` runs
    it, and what comes back (folders as `$root`/`$out`, ids as `<id N>`) is compared with
    `tests/commands/expected/`, which the Rust test writes with `BAYLEAF_BLESS=1`. A difference kept on purpose
@@ -232,7 +234,39 @@ Each stage ends with its gate met and the Rust tree still the one users run, unt
    *Materials ported, 2026-11-26* (`src/Bayleaf.Render`: the material node catalog, the compiler to
    the WGSL `surface` function, and the material library). Every `.bmaterial` file compiles to the
    same WGSL, byte for byte, and the catalog matches the Rust one in every detail
-   (`BAYLEAF_BLESS=1 cargo test -p bayleaf-render parity_tests`). The renderer itself comes next.
+   (`BAYLEAF_BLESS=1 cargo test -p bayleaf-render parity_tests`).
+   *Renderer ported, 2026-11-26; the gate is met.* `src/Bayleaf.Render` now holds extraction (a scene,
+   its files and the engine's animation poses to a GPU-independent `Frame`: draw items with their
+   models, parts, skins and images, lights, camera, sky, fog, shadow settings and post-processing,
+   picking and bounds), the built-in shapes, and the WebGPU renderer (shadow maps for suns, cascades,
+   spot and point lights; instanced opaque draws, material outlines, the grid, transparent and additive
+   items; GPU and CPU skinning; bloom, tone mapping, colour adjustment and lookups, vignette, depth fog,
+   ambient occlusion and antialiasing; the selection outline; headless read-back). It draws with the Rust
+   tree's WGSL, embedded from `rust/crates/render/src/shaders` (one copy; it moves with stage 8).
+   `src/Bayleaf.Native` (L0, the one project with unsafe code) wraps wgpu-native, through
+   `Silk.NET.WebGPU` 2.23.0 and `Silk.NET.WebGPU.Native.WGPU` 2.23.0 (both MIT; wgpu-native MIT or
+   Apache-2.0), in safe types, and keeps validation errors no error scope catches instead of letting
+   wgpu-native end the process. The wgpu-native it carries is an older one (its `webgpu.h` is of early 2024,
+   wgpu 0.19's; it reports no version) while the Rust renderer is on wgpu 30; the shaders and every material compile on both. `scene.render` is
+   ported, with the project's graphics settings, the camera object's post-processing and the poses of
+   the animation previews. Checked: the Rust renderer's behaviour tests, ported (`tests/Bayleaf.Render.Tests`,
+   on the GPU, skipping without one unless `BAYLEAF_GPU_REQUIRED=1`); each scene of `examples/` and
+   `tests/files` extracts to the frame the Rust engine extracts (`*.bscene.frame.json`, written by
+   `-p bayleaf-render parity_tests`; counts, flags and names the same, every number within a millionth
+   of its size); and `scene.render` draws five scenes (the demo, the showcase project, and the test
+   files with every component, an old environment and the first format) at 192 by 108 close to the
+   Rust engine's pictures (`tests/files/expected/renders`, written by `BAYLEAF_BLESS=1 cargo test -p
+   bayleaf-engine parity_tests`). The limit is per colour channel, out of 255: at most 1.0 on average
+   over the picture and 64 in the pixel that differs most. Both engines run the same shaders in the same
+   order, so on one machine the pictures should differ only by rounding; another GPU or driver changes
+   them by a level or two across the picture and by part of the contrast at an antialiased edge, which
+   the largest-pixel limit allows, while a missing light, shadow, model, texture or effect moves the
+   average by far more than 1.0 or a pixel by far more than 64. Measured on the machine that wrote the
+   pictures: every channel of every scene the same, mean 0.000 and largest 0. What waits: the GPU's own
+   time per frame (the profiler's), since this wgpu-native does not say how long a timestamp tick is;
+   drawing into a window and the editor's viewport, with stage 6; the poses play mode gives (animation
+   states, root motion, clips scripts play), with stage 4: the renderer draws whatever poses the
+   session holds, and a Model Animation's clip at the frame's time.
 4. **Scripts.** C# scripts and visual scripts, hot reload, play mode. Gate: the script-step figures
    of `runtime-rebuild.md` at 20,000 and 100,000 objects, no worse than the Rust engine's at the time.
    *Visual script catalog ported, 2026-11-26* (`src/Bayleaf.Script`: every node kind, the pins their

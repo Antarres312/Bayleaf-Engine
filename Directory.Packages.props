@@ -8,6 +8,10 @@
 
   <ItemGroup>
     <PackageVersion Include="xunit.v3" Version="4.0.3" />
+    <!-- WebGPU for the renderer (docs/csharp-redesign.md, "Rendering"): the bindings and the
+         wgpu-native library they load, both MIT. -->
+    <PackageVersion Include="Silk.NET.WebGPU" Version="2.23.0" />
+    <PackageVersion Include="Silk.NET.WebGPU.Native.WGPU" Version="2.23.0" />
   </ItemGroup>
 
 </Project>

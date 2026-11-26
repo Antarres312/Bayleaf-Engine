@@ -16,7 +16,7 @@ public class MaterialTests
     private static uint Add(Graph.Graph graph, string kind) => graph.AddNode(Catalog, kind, Vector2.Zero).Value;
 
     /// <summary>A material that uses every node kind, wired into the output.</summary>
-    private static Graph.Graph EveryNodeMaterial()
+    internal static Graph.Graph EveryNodeMaterial()
     {
         var g = Graph.Graph.Create(Catalog);
         var output = g.Nodes[0].Id;

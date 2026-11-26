@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- L0: the one project that reaches native code (docs/csharp-redesign.md, "Interop"). It wraps
+       wgpu-native, through Silk.NET's WebGPU bindings, in safe types the renderer uses; every unsafe
+       block here keeps a // SAFETY: comment saying why it is sound. -->
+  <PropertyGroup>
+    <RootNamespace>Bayleaf.Native</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Silk.NET.WebGPU" />
+    <PackageReference Include="Silk.NET.WebGPU.Native.WGPU" />
+  </ItemGroup>
+
+</Project>

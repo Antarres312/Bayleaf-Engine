@@ -37,7 +37,7 @@ internal static class SceneCommands
         {
             Id = "scene.render", Label = "Render Image…",
             Params = "{path?, width?, height?, camera?, grid?}; writes a PNG, or without a path returns it as {png: base64} (at most 2048 on a side). camera: an object with a camera component; default: the first camera in the scene, else a view framing every object",
-            Enabled = static _ => PendingCommands.Reason("scene.render"), Run = static (_, _) => throw Stop.Failed(PendingCommands.Reason("scene.render")!),
+            Run = RenderCommands.Render,
         },
         new() { Id = "scene.objects", Label = "List Objects", Params = "none; returns the object tree", Run = Objects },
         new()
